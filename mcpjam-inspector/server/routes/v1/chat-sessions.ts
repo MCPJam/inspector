@@ -128,9 +128,9 @@ type TurnTraceRow = {
  * Preflight semantics for a caller-supplied session id.
  *
  * `getSession` refuses with a plain error that production Convex redacts to
- * "Server Error"; without `redactedIsRefusal` a cross-workspace probe answers
- * 502 — an existence oracle plus a Sentry page — instead of the 404 the
- * preflight exists to guarantee.
+ * "Server Error". `redactedIsRefusal` reads that as the refusal it is, so the
+ * preflight answers the 404 it exists to guarantee for a session the caller
+ * cannot see, rather than a 502.
  */
 function translatePreflightReadError(error: unknown): WebRouteError {
   return translateConvexReadError(error, {

@@ -76,7 +76,10 @@ WITHOUT stopping its session, because the crash it simulates is the input to
 
 `MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION` stamps the manifest these scripts
 build; CI sets it to the job's own identifier so a recorded conformance version
-always names the run that produced it.
+always names the run that produced it. In a non-hosted Inspector with
+`ENVIRONMENT=dev`, the same variable also supplies missing Claude Code
+conformance evidence to the normal local-turn availability check. Production
+and hosted builds ignore that override; it never replaces recorded evidence.
 
 `MOCK_LATENCY_MS` holds every mock upstream response for that many
 milliseconds. CI sets it to 50 and a local run should too. An upstream that
@@ -95,3 +98,16 @@ Two facts are darwin-specific and need a `macos-latest` job: the `(node)`
 command an exiting process reports, and the `ps -g` group probe. Everything
 else is portable — the SDK ships linux binaries and nodejs.org ships linux
 tarballs — so `ubuntu-latest` covers the rest.
+
+### Workspace delivery smoke check
+
+After building the pack and preparing the isolated conformance home/runtime as
+above, run `run-native-turn.ts delivery`. This uses the product Claude Code
+adapter with session-config MCP delivery. It verifies a real MCP tool call,
+a write in the granted workspace, a materialized test secret in Bash, a skill
+under the synthetic home, and that an existing workspace `.mcp.json` remains
+unchanged. That file names a live workspace-only MCP server, which must receive
+zero TCP connections while the MCPJam-selected server executes its tool. The
+bridge enforces `strictMcpConfig: true` for local and cloud sessions. It also runs the usual approval, resume, and teardown checks.
+The upstream model and model gateway are deterministic local test servers;
+this is not the signed-in Playground/broker billing check.
