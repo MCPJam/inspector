@@ -18,6 +18,7 @@ import {
 } from "../evals/helpers";
 import { EnvironmentChip } from "../evals/run-context-chip";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import { iterationTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 
 function Fact({
   label,
@@ -45,12 +46,22 @@ export function modelsFromRun(
   if (run.effectiveModelId) {
     return [compactModelIdTail(run.effectiveModelId)];
   }
-  const models = new Set<string>();
+  // One entry per TARGET: two efforts of one model read "model · Low" and
+  // "model · High"; a default target reads as its model alone.
+  const targets = new Map<string, string>();
   for (const iteration of iterations) {
     const raw = iteration.testCaseSnapshot?.model?.trim();
     if (!raw) continue;
+    const key = iterationTargetKey(iteration) ?? raw;
+    if (!targets.has(key)) targets.set(key, raw);
+  }
+  const keys = [...targets.keys()];
+  const models = new Set<string>();
+  for (const [key, raw] of targets) {
     const labelled = compactModelLabel(raw);
-    models.add(compactModelIdTail(labelled || raw));
+    models.add(
+      `${compactModelIdTail(labelled || raw)}${targetKeySuffix(key, keys)}`,
+    );
   }
   return [...models];
 }

@@ -98,7 +98,7 @@ import { createManualHostedConnection } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
-import { backendModelSelection } from "../../utils/model-resolution-local.js";
+import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
@@ -130,6 +130,7 @@ import {
   assertHarnessDispatchable,
   assertHostPointerAgreement,
   engineLabel,
+  hostRoutingSelectionForModel,
   hostSelectionForModel,
   resolveChatSessionEngine,
   type ChatSessionEngine,
@@ -1415,7 +1416,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // off every named one and send the whole turn back to raw ids.
     const serverLabels = serverLabelsFor(selected);
 
-    const modelDefinition = await resolveHostModelDefinition({
+    const resolvedModelDefinition = await resolveHostModelDefinition({
       modelId: pins.modelId,
       projectId,
       auth: { authHeader },
@@ -1427,7 +1428,19 @@ async function handleTurn(c: Context): Promise<Response> {
     // runtime resolution and the resume record cannot disagree about the effort.
     const hostSelection = hostSelectionForModel(
       target.host?.runtimeConfig,
-      String(modelDefinition.id),
+      String(resolvedModelDefinition.id),
+    );
+    // What decides the rail: the same saved selection, or a stored legacy one.
+    const routingSelection = hostRoutingSelectionForModel(
+      target.host?.runtimeConfig,
+      resolvedModelDefinition,
+    );
+    // Every check below (the harness gate, skill gating, dispatch) reads the
+    // definition the rail agrees with: a non-hosted selection is `hosted:
+    // false`, as on the web and MCP chat routes.
+    const modelDefinition = withSelectionRouting(
+      resolvedModelDefinition,
+      routingSelection,
     );
     // The session's pinned effort (first turn's request, reloaded from
     // `resumeConfig` on a continuation) wins over the host's saved one, the
@@ -1466,6 +1479,7 @@ async function handleTurn(c: Context): Promise<Response> {
         ...(modelDefinition.provider
           ? { provider: modelDefinition.provider }
           : {}),
+        ...(modelDefinition.hosted === false ? { hosted: false } : {}),
         ...(modelDefinition.supportedReasoningEfforts
           ? {
               supportedReasoningEfforts:
@@ -1801,13 +1815,13 @@ async function handleTurn(c: Context): Promise<Response> {
       chatSessionId: runtimeChatSessionId,
       serverIds: selectedServerIds,
       tools,
-      // The host's saved selection and its effort: the rail applies it (provider
-      // options on the direct engine, the forwarded selection / top-level field
-      // on the hosted rails) or refuses it, instead of dropping it. Only a
-      // backend-resolvable selection is sent (never `local`).
-      ...(hostSelection && backendModelSelection(hostSelection)
-        ? { modelSelection: backendModelSelection(hostSelection) }
-        : {}),
+      // The host's saved selection DECIDES THE RAIL (hosted / org / own key;
+      // a stored legacy one never reaches MCPJam credits), and its effort is
+      // applied on that rail (provider options on the direct engine, the
+      // forwarded selection / top-level field on the hosted rails) or refused,
+      // instead of dropped. Only a backend-resolvable selection is sent
+      // (never `local` or legacy). An unlabelled host takes today's path.
+      ...(routingSelection ? { modelSelection: routingSelection } : {}),
       ...(turnReasoningEffort !== undefined
         ? { settings: { reasoningEffort: turnReasoningEffort } }
         : {}),

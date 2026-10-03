@@ -467,6 +467,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     return updateCall?.[1] as {
       metadata?: Record<string, string | number | boolean>;
       tokensUsed?: number;
+      usage?: Record<string, number>;
     };
   }
 
@@ -1498,6 +1499,39 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const updatePayload = await runQuickTestCase();
 
     expect(updatePayload.tokensUsed).toBe(10);
+  });
+
+  it("carries reasoning and cached-input tokens onto the iteration usage", async () => {
+    streamTextMock.mockImplementationOnce(() => ({
+      consumeStream: async () => {},
+      response: Promise.resolve({
+        modelId: "gpt-5-mini",
+        messages: [{ role: "assistant", content: "Done" }],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 40,
+        inputTokenDetails: {
+          noCacheTokens: 30,
+          cacheReadTokens: 10,
+          cacheWriteTokens: undefined,
+        },
+        outputTokens: 60,
+        outputTokenDetails: { textTokens: 35, reasoningTokens: 25 },
+        totalTokens: 100,
+      }),
+      finishReason: Promise.resolve("stop"),
+    }));
+
+    const updatePayload = await runQuickTestCase();
+
+    expect(updatePayload.usage).toEqual({
+      inputTokens: 40,
+      outputTokens: 60,
+      totalTokens: 100,
+      reasoningTokens: 25,
+      cachedInputTokens: 10,
+    });
   });
 
   it("resolves persisted hosted server names to the live manager ids", async () => {

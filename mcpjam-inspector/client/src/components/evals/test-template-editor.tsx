@@ -221,10 +221,13 @@ import {
   resolveIterationModelValue,
   resolveLatestCompareRunId,
   resolveModelOptionLabel,
+  caseModelEntriesForCompareValues,
+  caseModelEntriesUnchanged,
 } from "./compare-playground-helpers";
 import type {
   CompareRunRecord,
   EditorMode,
+  EvalCase,
   EvalIteration,
   EvalSuiteRun,
   RunColumnTab,
@@ -2814,17 +2817,19 @@ export function TestTemplateEditor({
       return;
     }
 
-    const nextModels = buildSelectedCompareModels(modelValues);
-
-    const currentModels: Array<{ provider: string; model: string }> =
-      currentTestCase.models ?? [];
-    const modelsUnchanged =
-      currentModels.length === nextModels.length &&
-      currentModels.every(
-        (model, index) =>
-          model.provider === nextModels[index]?.provider &&
-          model.model === nextModels[index]?.model,
-      );
+    const currentModels: EvalCase["models"] = currentTestCase.models ?? [];
+    // Saved entries keep their selections (efforts, and two entries of one
+    // model); only newly picked models are built from the catalog row.
+    const nextModels = caseModelEntriesForCompareValues(
+      modelValues,
+      currentModels,
+      (modelValue) => buildSelectedCompareModels([modelValue])[0]!,
+    );
+    // Selection-aware: an effort-only edit is a change.
+    const modelsUnchanged = caseModelEntriesUnchanged(
+      currentModels,
+      nextModels,
+    );
 
     if (!hasUnsavedChanges && modelsUnchanged) {
       return;

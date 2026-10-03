@@ -793,6 +793,71 @@ describe("v1 project environment routes", () => {
     });
   });
 
+  describe("store-once selections", () => {
+    const LEGACY = { source: "legacy", modelId: "llama3" };
+
+    it("computes modelId from the selection and returns the conversion marker", async () => {
+      // A store-once row: no bare `modelId`, the selection is the only copy.
+      convexMutationMock.mockResolvedValue({
+        ...ENV_ROW,
+        modelSelection: LEGACY,
+        modelSelectionOrigin: "backfill",
+      });
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", modelId: "llama3" },
+      });
+      expect(res.status).toBe(201);
+      expect(await res.json()).toMatchObject({
+        modelId: "llama3",
+        modelSelection: LEGACY,
+        modelSelectionOrigin: "backfill",
+      });
+    });
+
+    it("sends a bare modelId as the shorthand, with no invented selection", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", modelId: "openai/gpt-5" },
+      });
+      const args = mutationArgs("projectEnvironments:createEnvironment");
+      expect(args.modelId).toBe("openai/gpt-5");
+      expect("modelSelection" in args).toBe(false);
+    });
+
+    it("accepts a stored legacy selection sent back verbatim, and refuses a malformed one", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      const ok = await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, modelSelection: LEGACY },
+      });
+      expect(ok.status).toBe(200);
+      expect(mutationArgs("projectEnvironments:updateEnvironment")).toMatchObject({
+        modelId: "llama3",
+        modelSelection: LEGACY,
+      });
+
+      convexMutationMock.mockClear();
+      const bad = await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: {
+          expectedRevision: 3,
+          modelSelection: { source: "legacy", modelId: "llama3", apiKey: "sk" },
+        },
+      });
+      expect(bad.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("never reports a marker without a selection beside it", async () => {
+      convexMutationMock.mockResolvedValue({
+        ...ENV_ROW,
+        modelSelectionOrigin: "backfill",
+      });
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1" },
+      });
+      expect(await res.json()).not.toHaveProperty("modelSelectionOrigin");
+    });
+  });
+
   describe("capabilities", () => {
     it("reports what the deployment accepts", async () => {
       mockQuery({

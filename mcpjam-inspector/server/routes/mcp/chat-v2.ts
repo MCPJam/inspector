@@ -46,7 +46,13 @@ import type { RuntimeStandaloneSkill } from "../../services/environments/effecti
 import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
-import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
+import {
+  decideTurnRail,
+  readRoutingSelection,
+  routingSelectionForModel,
+  withSelectionRouting,
+} from "../../utils/selection-rail.js";
+import { backendModelSelection } from "../../utils/model-resolution-local.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
@@ -1176,9 +1182,53 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "messages are required" }, 400);
     }
 
-    const modelDefinition = resolvedModelOverride ?? model;
-    if (!modelDefinition) {
+    const unroutedModelDefinition = resolvedModelOverride ?? model;
+    if (!unroutedModelDefinition) {
       return c.json({ error: "model is not supported" }, 400);
+    }
+    // THE SAVED SELECTION DECIDES THE RAIL (`selection-rail.ts`): the turn's
+    // own `modelSelection` (a Playground card's), else the selected host's
+    // saved one — each only when it is for this turn's model. A scenario turn
+    // takes the host's alone: a share-link visitor owns the body. A stored
+    // legacy selection is "own key only"; NO selection keeps today's
+    // hosted-list routing, byte for byte.
+    const routingSelection =
+      (isScenarioSession
+        ? undefined
+        : routingSelectionForModel(
+            readRoutingSelection(
+              (body as { modelSelection?: unknown }).modelSelection,
+            ),
+            unroutedModelDefinition,
+          )) ??
+      routingSelectionForModel(
+        resolvedExecution.routingSelection,
+        unroutedModelDefinition,
+      );
+    // A non-hosted selection stamps `hosted: false`, so every downstream check
+    // (harness eligibility, skills, the dispatch) agrees with the rail.
+    const modelDefinition = withSelectionRouting(
+      unroutedModelDefinition,
+      routingSelection,
+    );
+    const turnRail = decideTurnRail({
+      selection: routingSelection,
+      model: modelDefinition,
+    });
+    // An `org` selection runs on its org connection or not at all: never on a
+    // request key, never on MCPJam credits.
+    if (
+      turnRail === "org" &&
+      !(process.env.CONVEX_HTTP_URL && typeof body.projectId === "string" && body.projectId)
+    ) {
+      return c.json(
+        {
+          error:
+            "credential_missing: this model is saved to run on an organization connection, which needs a project to resolve it in.",
+          code: "credential_missing",
+        },
+        400,
+      );
     }
 
     // Reasoning effort: the body's top-level field, else the selected host's
@@ -1210,8 +1260,10 @@ chatV2.post("/", async (c) => {
     // hosted id (`gpt-5-nano` + `openai`) still canonicalizes to its prefixed
     // MCPJam form, and the picker's explicit `hosted: false` on a "Your
     // providers" row with the same bare id still routes to the org's key.
+    //
+    // With a saved selection its `source` decides instead (`turnRail`).
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id && isHostedModelDefinition(modelDefinition),
+      modelDefinition.id && turnRail === "hosted",
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -2313,11 +2365,16 @@ chatV2.post("/", async (c) => {
     // and the caller hasn't supplied a client-side apiKey, use the org's
     // Convex config. Cloud runtime stays in Convex; local runtime resolves a
     // scoped provider config and executes in this inspector.
+    //
+    // An `org` selection takes this branch even when the request carries a
+    // key (the connection is the choice); a `local` one never takes it (it
+    // runs on this request's own key, below).
     if (
       process.env.CONVEX_HTTP_URL &&
       typeof body.projectId === "string" &&
       body.projectId &&
-      !apiKey
+      (!apiKey || turnRail === "org") &&
+      turnRail !== "local"
     ) {
       const providerKeyResult = deriveOrgProviderKey(modelDefinition);
       if (!providerKeyResult.ok) {
@@ -2362,6 +2419,11 @@ chatV2.post("/", async (c) => {
                   tools: allTools,
                   messages: modelMessages,
                 }),
+                // The saved org connection, re-checked by the backend before
+                // it hands back any key.
+                ...(routingSelection?.source === "org"
+                  ? { modelSelection: backendModelSelection(routingSelection) }
+                  : {}),
               },
             )
           : { runtimeLocation: "cloud", providerKey };

@@ -405,6 +405,11 @@ export interface SwarmOverviewFinding {
 export interface SwarmOverviewTarget {
   hostName: string;
   modelId: string;
+  /**
+   * `comparisonKey` of the target's selection (the bare `modelId` when
+   * default). Absent on older backends — read `targetKey ?? modelId`.
+   */
+  targetKey?: string | null;
   /** Present when the target resolved from a project environment. */
   environmentName?: string;
 }

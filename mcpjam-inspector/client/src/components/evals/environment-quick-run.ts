@@ -21,7 +21,11 @@
  */
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type {
+  ModelReasoningEffort,
+  ModelSelection,
+} from "@mcpjam/sdk/browser";
+import { modelTarget, sameModelTarget } from "@/lib/model-target";
 import {
   chooseTemplate,
   lacksServerSource,
@@ -35,6 +39,13 @@ export type QuickRunTargetRequest = {
   hostId: string;
   /** Explicit model id; absent means the client's own model. */
   modelId?: string;
+  /**
+   * The saved selection behind `modelId`, when the caller knows which target
+   * (which effort) it means. With it an environment is matched by
+   * `comparisonKey`, so Sonnet·High and Sonnet·Low are two targets; without
+   * it every environment running the model id matches, as before.
+   */
+  modelSelection?: ModelSelection;
 };
 
 export type QuickRunTargetPlan =
@@ -46,6 +57,7 @@ export type QuickRunTargetPlan =
       overrides: {
         hostId: string;
         modelId: string | null;
+        modelSelection?: ModelSelection;
         serverAttachmentId: string;
       };
     }
@@ -116,7 +128,14 @@ function runsModel(
 ): boolean {
   if (target.modelId === undefined) return environment.modelId === undefined;
   if (environment.modelId !== undefined) {
-    return environment.modelId === target.modelId;
+    if (environment.modelId !== target.modelId) return false;
+    return (
+      !target.modelSelection ||
+      sameModelTarget(
+        modelTarget(environment.modelId, environment.modelSelection),
+        modelTarget(target.modelId, target.modelSelection),
+      )
+    );
   }
   // An environment that inherits its client's model runs that model.
   return clientModelId?.(environment.hostId) === target.modelId;
@@ -126,7 +145,9 @@ function runsModel(
  * The reasoning effort a quick run of `modelId` on `hostId` will run at: the
  * suite environment's own saved effort. The environment wins (a quick run
  * reuses or copies it), so the run sheet shows this read-only and offers no
- * effort control of its own. `undefined` when no environment pins one.
+ * effort control of its own. `undefined` when no environment pins one, or
+ * when the client runs the model at two efforts (no single answer — the
+ * quick run refuses that case as ambiguous rather than picking the first).
  */
 export function quickRunEnvironmentEffort(
   attached: readonly ProjectEnvironmentView[],
@@ -135,13 +156,16 @@ export function quickRunEnvironmentEffort(
   clientModelId?: (hostId: string) => string | undefined,
 ): ModelReasoningEffort | undefined {
   const target = { key: modelId, hostId, modelId };
-  const environment = attached.find(
-    (candidate) =>
-      candidate.hostId === hostId &&
-      candidate.modelSelection !== undefined &&
-      runsModel(candidate, target, clientModelId),
+  const efforts = new Set(
+    attached
+      .filter(
+        (candidate) =>
+          candidate.hostId === hostId &&
+          runsModel(candidate, target, clientModelId),
+      )
+      .map((candidate) => candidate.modelSelection?.settings?.reasoningEffort),
   );
-  return environment?.modelSelection?.settings?.reasoningEffort;
+  return efforts.size === 1 ? [...efforts][0] : undefined;
 }
 
 /**
@@ -227,6 +251,9 @@ export function planQuickRunTargets(args: {
       overrides: {
         hostId: target.hostId,
         modelId: target.modelId ?? null,
+        ...(target.modelId && target.modelSelection?.modelId === target.modelId
+          ? { modelSelection: target.modelSelection }
+          : {}),
         serverAttachmentId: group,
       },
     };

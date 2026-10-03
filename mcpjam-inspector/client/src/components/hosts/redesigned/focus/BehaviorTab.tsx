@@ -393,30 +393,27 @@ export function BehaviorTab({
           <FieldRow
             label="Reasoning effort"
             description={
-              effortNotice ??
-              "How hard the model thinks before answering."
+              effortNotice ?? "How hard the model thinks before answering."
             }
             control={
-              <div className="w-[180px]">
-                <SelectionEffortControl
-                  variant="field"
-                  row={resolvedModelRow}
-                  selection={draft.modelSelection}
-                  purpose={HOST_MODEL_SELECTION_PURPOSE}
-                  selectionsSupported={modelSelectionsSupported}
-                  harness={draft.harness}
-                  bareIds="canonicalize"
-                  disabled={readOnly}
-                  disabledReason="This host is read-only."
-                  onChange={(write) => {
-                    setEffortNotice(null);
-                    update({
-                      modelId: write.modelId,
-                      modelSelection: write.selection,
-                    });
-                  }}
-                />
-              </div>
+              <SelectionEffortControl
+                variant="buttons"
+                row={resolvedModelRow}
+                selection={draft.modelSelection}
+                purpose={HOST_MODEL_SELECTION_PURPOSE}
+                selectionsSupported={modelSelectionsSupported}
+                harness={draft.harness}
+                bareIds="canonicalize"
+                disabled={readOnly}
+                disabledReason="This host is read-only."
+                onChange={(write) => {
+                  setEffortNotice(null);
+                  update({
+                    modelId: write.modelId,
+                    modelSelection: write.selection,
+                  });
+                }}
+              />
             }
           />
         ) : null}

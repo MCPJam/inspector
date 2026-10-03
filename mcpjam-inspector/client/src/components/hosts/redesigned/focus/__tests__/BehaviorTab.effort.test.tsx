@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@mcpjam/design-system/tooltip";
 import {
@@ -8,6 +8,7 @@ import {
 } from "@/lib/client-config-v2";
 import type { ModelDefinition } from "@/shared/types";
 import { BehaviorTab } from "../BehaviorTab";
+import { pickEffort } from "@/test/effort";
 
 const GPT5: ModelDefinition = {
   id: "openai/gpt-5",
@@ -69,7 +70,10 @@ const GPT5_SELECTION = {
 };
 
 function setup(partial: Partial<HostConfigInputV2>) {
-  const draft = { ...emptyHostConfigInputV2(), ...partial } as HostConfigInputV2;
+  const draft = {
+    ...emptyHostConfigInputV2(),
+    ...partial,
+  } as HostConfigInputV2;
   const onDraftChange = vi.fn();
   render(
     <TooltipProvider>
@@ -92,8 +96,7 @@ describe("BehaviorTab reasoning effort", () => {
       modelId: "openai/gpt-5",
       modelSelection: GPT5_SELECTION as never,
     });
-    await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    await userEvent.click(await screen.findByRole("radio", { name: "High" }));
+    await pickEffort("High");
     expect(applied().modelId).toBe("openai/gpt-5");
     expect(applied().modelSelection?.settings?.reasoningEffort).toBe("high");
   });
@@ -141,7 +144,7 @@ describe("BehaviorTab reasoning effort", () => {
         settings: { reasoningEffort: "max" },
       } as never,
     });
-    expect(screen.getByTestId("effort-control-trigger")).toHaveTextContent(
+    expect(screen.getByTestId("effort-control-stale")).toHaveTextContent(
       "no longer supported",
     );
   });
@@ -149,7 +152,7 @@ describe("BehaviorTab reasoning effort", () => {
   it("shows nothing on a harness host with no effort saved", () => {
     models.supported = true;
     setup({ modelId: "openai/gpt-5", harness: "claude-code" });
-    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    expect(screen.queryByTestId("effort-control-buttons")).toBeNull();
     expect(screen.queryByText("Reasoning effort")).toBeNull();
     expect(screen.queryByText(/doesn't support a reasoning effort/)).toBeNull();
   });
@@ -164,16 +167,13 @@ describe("BehaviorTab reasoning effort", () => {
         settings: { reasoningEffort: "high" },
       } as never,
     });
-    expect(screen.getByTestId("effort-control-trigger")).toHaveTextContent(
+    expect(screen.getByTestId("effort-control-stale")).toHaveTextContent(
       "no longer supported",
     );
     expect(
       screen.getByText(/Claude Code doesn't support a reasoning effort yet/),
     ).toBeInTheDocument();
-    await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    await userEvent.click(
-      await screen.findByRole("radio", { name: "Default" }),
-    );
+    await userEvent.click(screen.getByRole("radio", { name: "Default" }));
     expect(applied().modelSelection?.settings).toBeUndefined();
   });
 
@@ -186,6 +186,11 @@ describe("BehaviorTab reasoning effort", () => {
   it("is disabled where the deployment stores no selections", () => {
     models.supported = false;
     setup({ modelId: "openai/gpt-5" });
-    expect(screen.getByTestId("effort-control-trigger")).toBeDisabled();
+    const effort = screen.getByRole("radiogroup", {
+      name: "Reasoning effort",
+    });
+    for (const radio of within(effort).getAllByRole("radio")) {
+      expect(radio).toBeDisabled();
+    }
   });
 });

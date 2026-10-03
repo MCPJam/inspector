@@ -96,6 +96,11 @@ export {
   reasoningEffortProviderOptions,
   selectionConfigKey,
   selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
   supportedReasoningEfforts,
   harnessReasoningEfforts,
 } from "./reasoning-effort.js";

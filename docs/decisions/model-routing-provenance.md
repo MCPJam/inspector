@@ -59,3 +59,32 @@ Final checks: 437 tests passed across 18 relevant client/server suites; client
 production typecheck and inspector pretest (including browserd bundle freshness)
 passed. Server typecheck remains red with 1,003 diagnostics, identical to the
 untouched PR head under the same dependency setup after normalizing line numbers.
+
+## Store once: the saved selection decides (PLB-162)
+
+The persistence boundary above is now complete. The saved `ModelSelection` is
+the one stored copy of a config's model (host configs, environment overrides,
+case `models[]` entries, judges, personas); records of what ran keep their
+plain model string. Routing reads it first (`server/utils/selection-rail.ts`):
+
+| Saved selection             | Rail                                     | Who pays          |
+| --------------------------- | ---------------------------------------- | ----------------- |
+| none (an older row)         | today's path (`isHostedModelDefinition`) | hosted list check |
+| `source: "hosted"`          | MCPJam `/stream`                         | MCPJam credits    |
+| `source: "org"`             | the org connection                       | the organization  |
+| `source: "local"`           | the caller's own provider                | own key           |
+| `source: "legacy"` (stored) | own key only                             | never MCPJam      |
+
+The backend chooses a selection for every bare id ONCE, on save and in a
+one-time backfill, by hosted-catalog membership read from its own tables
+(ever hosted ⇒ `hosted`, else the stored `legacy` form) and marks it
+`origin: "backfill"`. It never moves a call onto MCPJam credits and still
+never infers anything from current key availability. Rows the backfill has
+not labelled yet keep the hosted-list check unchanged; retiring that check and
+`shared/hosted-model-ids.generated.ts` is the follow-up once the backfill ran
+on prod.
+
+Two choices of one model are compared by `comparisonKey` (the bare model id
+for a default selection, so existing history keeps its keys; the model id plus
+the canonical selection otherwise), and labels show only what differs
+(`selectionDistinguishers`).

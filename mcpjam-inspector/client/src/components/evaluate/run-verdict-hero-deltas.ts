@@ -12,6 +12,7 @@ import {
 } from "../evals/helpers";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import { runTargetKey, sameRunTarget } from "@/lib/eval-target-key";
 import type { HeroStats } from "./run-verdict-hero-model";
 import { resultCounts } from "./run-results-matrix-model";
 
@@ -81,6 +82,8 @@ export type HeroPairingSource = {
   run: EvalSuiteRun;
   client: string;
   modelId: string;
+  /** What this pairing ran: `comparisonKey` of its selection (`modelId` when default). */
+  targetKey?: string;
   model: string;
   iterations: readonly EvalIteration[];
 };
@@ -190,7 +193,10 @@ export function previousCompletedRunOf(
           run._id !== current._id &&
           run.status === "completed" &&
           runClientIdentity(run).key === runClientIdentity(current).key &&
-          run.effectiveModelId === current.effectiveModelId &&
+          // Same TARGET, not just the same model id: Sonnet at High is not
+          // the baseline for Sonnet at Low. Falls back to the model id when
+          // either run predates `targetKey`.
+          sameRunTarget(run, current) &&
           (!current.runGroupId || run.runGroupId !== current.runGroupId) &&
           compareRunsBySequence(run, current) < 0,
       )
@@ -198,9 +204,14 @@ export function previousCompletedRunOf(
   );
 }
 
-export function pairingKey(run: EvalSuiteRun, modelId?: string): string {
+/**
+ * `client::target`. The target is the run's `targetKey` (bare model id for a
+ * default selection, so default pairings key exactly as before), else its
+ * effective or client model.
+ */
+export function pairingKey(run: EvalSuiteRun, targetKey?: string): string {
   return `${runClientIdentity(run).key}::${
-    modelId ?? run.effectiveModelId ?? run.client?.modelId ?? ""
+    targetKey ?? runTargetKey(run) ?? run.client?.modelId ?? ""
   }`;
 }
 
@@ -336,7 +347,7 @@ function previousRowsFor(
 ): EvalIteration[] | null {
   if (!previousIterations || previousIterations.length === 0) return null;
   if (previousLaunch && previousLaunch.length > 0) {
-    const key = pairingKey(target.run, target.modelId);
+    const key = pairingKey(target.run, target.targetKey ?? target.modelId);
     const twin = previousLaunch.find((run) => pairingKey(run) === key);
     if (!twin) return null;
     const rows = previousIterations.filter(

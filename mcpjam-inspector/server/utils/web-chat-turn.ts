@@ -54,6 +54,7 @@ import { directChatEffort } from "./chat-reasoning-effort.js";
 import type {
   Harness,
   MCPClientManager,
+  RequestedModelSelection,
   ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import type {
@@ -77,7 +78,8 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
+import { decideTurnRail } from "./selection-rail.js";
+import { backendModelSelection } from "./model-resolution-local.js";
 import {
   buildWidgetModelContextSystemPrompt,
   guardPageToolRefresh,
@@ -369,6 +371,15 @@ export interface WebChatTurnPersistContext {
 export interface WebChatTurnPrepareInputs {
   selectedServerIds: string[];
   modelDefinition: ModelDefinition;
+  /**
+   * The saved selection for `modelDefinition` that DECIDES THE RAIL
+   * (`decideTurnRail`): `hosted` → MCPJam `/stream`; `org` → the org
+   * connection (forwarded to `/stream/org/resolve` for a re-check); `local`
+   * and a stored legacy one → the org-BYOK path, never MCPJam credits (this
+   * surface holds no key of the caller's machine). Absent → today's
+   * hosted-list check, unchanged.
+   */
+  routingSelection?: RequestedModelSelection;
   systemPrompt?: string;
   temperature?: number;
   /**
@@ -1165,9 +1176,14 @@ export async function streamWebChatTurn(
   // turn. And the same pair, sent from the picker's "Your providers" row, means
   // the OPPOSITE: the user chose their own key. Only the picker's explicit
   // `hosted: false` tells the two apart; see `isHostedModelDefinition`.
+  //
+  // With a saved selection its `source` decides instead (`decideTurnRail`).
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isHostedModelDefinition(prepare.modelDefinition);
+    decideTurnRail({
+      selection: prepare.routingSelection,
+      model: prepare.modelDefinition,
+    }) === "hosted";
   // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
   // (`cursor/auto`) that is deliberately not MCPJam-hosted.
   //
@@ -1444,6 +1460,15 @@ export async function streamWebChatTurn(
               tools: localTools.tools,
               messages: scrubbedMessages,
             }),
+            // The saved org connection, re-checked by the backend before it
+            // hands back any key.
+            ...(prepare.routingSelection?.source === "org"
+              ? {
+                  modelSelection: backendModelSelection(
+                    prepare.routingSelection,
+                  ),
+                }
+              : {}),
           },
         )
       : { runtimeLocation: "cloud", providerKey };

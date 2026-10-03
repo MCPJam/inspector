@@ -19,7 +19,12 @@ import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
-import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
+import {
+  decideTurnRail,
+  readRoutingSelection,
+  routingSelectionForModel,
+  withSelectionRouting,
+} from "../../utils/selection-rail.js";
 import {
   listCloudRuntimeSkills,
   shouldEnableCloudSkillTools,
@@ -970,6 +975,30 @@ chatV2.post("/", async (c) => {
       );
       modelDefinition = hostModel;
     }
+    // THE SAVED SELECTION DECIDES THE RAIL (`selection-rail.ts`): the turn's
+    // own `modelSelection` (a Playground card's), else the selected host's
+    // saved one — each only when it is for this turn's model. A scenario turn
+    // takes the host's alone (a share-link visitor owns the body). A stored
+    // legacy selection is "own key only"; NO selection keeps today's
+    // hosted-list routing, byte for byte. A non-hosted selection stamps
+    // `hosted: false` so the harness gate, skill gating and the dispatch in
+    // `streamWebChatTurn` all agree with the rail.
+    const routingSelection =
+      (isScenarioSession
+        ? undefined
+        : routingSelectionForModel(
+            readRoutingSelection(rawBody.modelSelection),
+            modelDefinition,
+          )) ??
+      routingSelectionForModel(
+        resolvedExecution.routingSelection,
+        modelDefinition,
+      );
+    modelDefinition = withSelectionRouting(modelDefinition, routingSelection);
+    const turnRail = decideTurnRail({
+      selection: routingSelection,
+      model: modelDefinition,
+    });
     const systemPrompt = resolvedExecution.systemPrompt;
     const temperature = resolvedExecution.temperature;
     // Reasoning effort: the body's top-level field, else the selected host's
@@ -1202,7 +1231,7 @@ chatV2.post("/", async (c) => {
     // because the SAME manager (same advertised/gated tool set) drives it.
     const isEmulatedMcpjam =
       Boolean(modelDefinition.id) &&
-      isHostedModelDefinition(modelDefinition) &&
+      turnRail === "hosted" &&
       !resolvedExecution.harness;
     const rawMrtrVersion = (rawBody as Record<string, unknown>)
       .hostedMrtrVersion;
@@ -2086,6 +2115,7 @@ chatV2.post("/", async (c) => {
         prepare: {
           selectedServerIds: effectiveServerIds,
           modelDefinition,
+          ...(routingSelection ? { routingSelection } : {}),
           systemPrompt: effectiveSystemPrompt,
           temperature,
           ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),

@@ -5060,3 +5060,223 @@ describe("v1 eval routes: model selections and reasoning effort", () => {
     });
   });
 });
+
+// ── Store-once DTOs: computed model ids, stored legacy selections, markers ──
+
+describe("v1 eval routes: store-once selections", () => {
+  const LEGACY = { source: "legacy", modelId: "llama3", provider: "ollama" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args),
+    );
+  });
+
+  function withQuery(name: string, value: unknown) {
+    convexQueryMock.mockImplementation((query: string) =>
+      query === name ? Promise.resolve(value) : defaultQueryImpl(query),
+    );
+  }
+
+  it("case models: `model` is computed from the selection, and the marker rides beside it", async () => {
+    withQuery("testSuites:getTestCase", {
+      ...CASE_DOC,
+      models: [
+        // A store-once entry: the selection is the only copy of the model.
+        { selection: HAIKU_SELECTION, selectionOrigin: "backfill" },
+        { model: "llama3", provider: "ollama", selection: LEGACY, selectionOrigin: "backfill" },
+        { model: "openai/gpt-5", provider: "openai" },
+      ],
+    });
+    const res = await request("GET", CASE_URL);
+    expect(((await res.json()) as any).models).toEqual([
+      { model: HAIKU, selection: HAIKU_SELECTION, selectionOrigin: "backfill" },
+      {
+        model: "llama3",
+        provider: "ollama",
+        selection: LEGACY,
+        selectionOrigin: "backfill",
+      },
+      { model: "openai/gpt-5", provider: "openai" },
+    ]);
+  });
+
+  it("a case `models` PATCH accepts a stored legacy selection sent back verbatim", async () => {
+    withQuery("testSuites:getTestCase", CASE_DOC);
+    const res = await request("PATCH", CASE_URL, {
+      models: [{ model: "llama3", provider: "ollama", selection: LEGACY }],
+    });
+    expect(res.status).toBe(200);
+    expect(updateArgs().models).toEqual([
+      { model: "llama3", provider: "ollama", selection: LEGACY },
+    ]);
+  });
+
+  it("a case `models` PATCH that omits the selection keeps it AND its marker", async () => {
+    withQuery("testSuites:getTestCase", {
+      ...CASE_DOC,
+      models: [
+        { model: "llama3", provider: "ollama", selection: LEGACY, selectionOrigin: "backfill" },
+      ],
+    });
+    const res = await request("PATCH", CASE_URL, {
+      models: [{ model: "llama3", provider: "ollama" }],
+    });
+    expect(res.status).toBe(200);
+    expect(updateArgs().models).toEqual([
+      {
+        model: "llama3",
+        provider: "ollama",
+        selection: LEGACY,
+        selectionOrigin: "backfill",
+      },
+    ]);
+  });
+
+  it("a malformed legacy selection is refused, never stored", async () => {
+    withQuery("testSuites:getTestCase", CASE_DOC);
+    const res = await request("PATCH", CASE_URL, {
+      models: [
+        { model: "llama3", selection: { source: "legacy", modelId: "llama3", apiKey: "sk" } },
+      ],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("suite executionConfig: `model` is computed, the selection and its marker are returned", async () => {
+    const { modelId: _bare, ...withoutModelId } = EXEC_CONFIG;
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...withoutModelId,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("GET", SUITE_URL);
+    expect(((await res.json()) as any).executionConfig).toMatchObject({
+      model: HAIKU,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+  });
+
+  it("suite executionConfig PATCH re-sending the same `model` keeps the selection and its marker", async () => {
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...EXEC_CONFIG,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: { model: HAIKU, temperature: 0.2 },
+    });
+    expect(res.status).toBe(200);
+    const input = setSuiteConfigInput();
+    expect(input.modelSelection).toEqual(HAIKU_SELECTION);
+    expect(input.modelSelectionOrigin).toBe("backfill");
+  });
+
+  it("suite executionConfig PATCH with a new selection drops the old marker", async () => {
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...EXEC_CONFIG,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: {
+        modelSelection: { ...HAIKU_SELECTION, settings: { reasoningEffort: "low" } },
+      },
+    });
+    expect(res.status).toBe(200);
+    expect("modelSelectionOrigin" in setSuiteConfigInput()).toBe(false);
+  });
+
+  it("suite executionConfig PATCH accepts a stored legacy selection", async () => {
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: { modelSelection: { source: "legacy", modelId: "llama3" } },
+    });
+    expect(res.status).toBe(200);
+    const input = setSuiteConfigInput();
+    expect(input.modelSelection).toEqual({ source: "legacy", modelId: "llama3" });
+    expect(input.modelId).toBe("llama3");
+  });
+
+  it("judge: returns judgeSelection and computes `model` from it", async () => {
+    const judgeSelection = {
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+    };
+    withQuery("testSuites:getTestSuite", {
+      ...SUITE_DOC,
+      judgeConfig: {
+        goalCompletion: {
+          enabled: true,
+          judgeSelection,
+          judgeSelectionOrigin: "backfill",
+        },
+      },
+    });
+    const res = await request("GET", SUITE_URL);
+    expect(((await res.json()) as any).settings.judge).toMatchObject({
+      model: "openai/gpt-5",
+      judgeSelection,
+      judgeSelectionOrigin: "backfill",
+    });
+  });
+
+  it("judge PATCH: a bare model change drops a selection saved for the old model", async () => {
+    withQuery("testSuites:getTestSuite", {
+      ...SUITE_DOC,
+      judgeConfig: {
+        goalCompletion: {
+          enabled: true,
+          judgeModel: "openai/gpt-5-mini",
+          judgeSelection: { source: "legacy", modelId: "openai/gpt-5-mini" },
+          judgeSelectionOrigin: "backfill",
+        },
+      },
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      settings: { judge: { model: "anthropic/claude-haiku-4.5" } },
+    });
+    expect(res.status).toBe(200);
+    const call = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    );
+    expect(call![1].judgeConfig.goalCompletion).toEqual({
+      enabled: true,
+      judgeModel: "anthropic/claude-haiku-4.5",
+    });
+  });
+
+  it("judge PATCH: re-sending the same model keeps its selection and marker", async () => {
+    const judgeSelection = { source: "legacy", modelId: "openai/gpt-5-mini" };
+    withQuery("testSuites:getTestSuite", {
+      ...SUITE_DOC,
+      judgeConfig: {
+        goalCompletion: {
+          enabled: true,
+          judgeModel: "openai/gpt-5-mini",
+          judgeSelection,
+          judgeSelectionOrigin: "backfill",
+        },
+      },
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      settings: { judge: { model: "openai/gpt-5-mini", threshold: 0.5 } },
+    });
+    expect(res.status).toBe(200);
+    const call = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    );
+    expect(call![1].judgeConfig.goalCompletion).toMatchObject({
+      judgeSelection,
+      judgeSelectionOrigin: "backfill",
+    });
+  });
+});

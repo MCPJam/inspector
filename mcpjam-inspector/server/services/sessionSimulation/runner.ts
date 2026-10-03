@@ -668,6 +668,9 @@ export async function runSyntheticHostSession(
         scenarioId,
         accessVersion,
         serverIds: selectedServerIds,
+        // The same selection the turns route by, so this attribution row
+        // cannot name a different source than a real turn would have.
+        ...(modelSelection ? { modelSelection } : {}),
       });
       emptySessionModelSource = resolution.source;
     } catch {

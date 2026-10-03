@@ -10,6 +10,11 @@ import {
   type TestStep,
 } from "@/shared/steps";
 import { computeIterationResult } from "./pass-criteria";
+import {
+  comparisonKey,
+  selectionConfigKey,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type {
   CompareModelOverride,
   CompareRunRecord,
@@ -394,6 +399,87 @@ export function resolveInitialCompareModelValues(params: {
   }
 
   return values.slice(0, maxModels);
+}
+
+/** A case `models[]` entry as the compare editor reads and writes it. */
+export type CompareCaseModelEntry = {
+  provider: string;
+  model: string;
+  selection?: RequestedModelSelection | null;
+};
+
+/**
+ * The full identity of a saved selection, settings included (so an
+ * effort-only edit is a change). A stored legacy selection has no settings.
+ */
+function selectionIdentity(selection: RequestedModelSelection): string {
+  return selection.source === "legacy"
+    ? JSON.stringify({
+        modelId: selection.modelId,
+        source: selection.source,
+        provider: selection.provider ?? null,
+      })
+    : selectionConfigKey(selection);
+}
+
+function sameCaseModelEntry(
+  a: CompareCaseModelEntry,
+  b: CompareCaseModelEntry,
+): boolean {
+  if (a.provider !== b.provider || a.model !== b.model) return false;
+  const aSelection = a.selection ?? undefined;
+  const bSelection = b.selection ?? undefined;
+  if (aSelection && bSelection) {
+    return selectionIdentity(aSelection) === selectionIdentity(bSelection);
+  }
+  // An entry with no saved selection runs as its bare id: only a DEFAULT
+  // selection (its `comparisonKey` is that id) is the same entry.
+  const present = aSelection ?? bSelection;
+  return present === undefined || comparisonKey(present) === a.model;
+}
+
+/**
+ * Whether the compare editor's next `models[]` equals the saved one. Compares
+ * the selection too (by its full config, or by `comparisonKey` against an
+ * entry that has none), so an effort-only edit — Sonnet Low → High — counts
+ * as a change and is saved.
+ */
+export function caseModelEntriesUnchanged(
+  current: readonly CompareCaseModelEntry[],
+  next: readonly CompareCaseModelEntry[],
+): boolean {
+  return (
+    current.length === next.length &&
+    current.every((entry, index) => {
+      const other = next[index];
+      return other !== undefined && sameCaseModelEntry(entry, other);
+    })
+  );
+}
+
+/**
+ * The `models[]` to save for the compare editor's `provider/model` values.
+ * A value the case already lists keeps EVERY saved entry for it, selections
+ * included — the editor picks models, not efforts, so re-saving must neither
+ * strip a saved effort nor collapse two entries of one model (Low and High)
+ * into one. A new value gets `build(value)`.
+ */
+export function caseModelEntriesForCompareValues<
+  Entry extends CompareCaseModelEntry,
+>(
+  modelValues: readonly string[],
+  currentModels: readonly Entry[],
+  build: (modelValue: string) => Entry,
+): Entry[] {
+  const entries: Entry[] = [];
+  for (const modelValue of modelValues) {
+    const saved = currentModels.filter(
+      (entry) => `${entry.provider}/${entry.model}` === modelValue,
+    );
+    if (saved.length > 0) entries.push(...saved);
+    else entries.push(build(modelValue));
+  }
+  return entries;
 }
 
 export function resolveIterationModelValue(

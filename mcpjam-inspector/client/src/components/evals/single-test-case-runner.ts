@@ -98,6 +98,11 @@ const TEST_CASE_MODEL_SELECTION_STORAGE_PREFIX =
  * second copy would let a future filter or dedupe-key change diverge silently
  * from what the estimates price, which is exactly the mispricing this feature
  * has to avoid.
+ *
+ * Two entries of one model at different efforts (Low / High) are ONE runnable
+ * model here: a quick run's request names `{ provider, model }` only and runs
+ * at the default effort, so listing both would run (and price) the same call
+ * twice. Suite runs execute each entry as its own variant.
  */
 export function getRunnableCaseModels(
   testCase: Pick<EvalCase, "models"> | null | undefined,

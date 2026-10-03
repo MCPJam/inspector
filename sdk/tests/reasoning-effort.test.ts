@@ -11,7 +11,12 @@ import {
   selectionKey,
   supportedReasoningEfforts,
   harnessReasoningEfforts,
+  isDefaultSelection,
+  comparisonKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
   type ModelSelection,
+  type RequestedModelSelection,
 } from "../src/host-config/index.js";
 import * as browser from "../src/browser.js";
 
@@ -352,6 +357,157 @@ describe("selectionIfMatches", () => {
   });
 });
 
+describe("comparisonKey", () => {
+  it("keys a default selection as the bare model id (byte-identical to pre-selection keys)", () => {
+    const legacy: RequestedModelSelection = {
+      source: "legacy",
+      modelId: "openai/gpt-5",
+    };
+    expect(isDefaultSelection(legacy)).toBe(true);
+    expect(comparisonKey(legacy)).toBe("openai/gpt-5");
+    expect(
+      comparisonKey({ ...legacy, provider: "openai" } as RequestedModelSelection)
+    ).toBe("openai/gpt-5");
+    expect(isDefaultSelection(HOSTED)).toBe(true);
+    expect(comparisonKey(HOSTED)).toBe("openai/gpt-5");
+    // An empty settings object and a different fallback are still default.
+    expect(
+      comparisonKey({
+        ...HOSTED,
+        settings: {},
+        fallback: { provider: "openrouter", model: "none" },
+      })
+    ).toBe("openai/gpt-5");
+  });
+
+  it("splits on effort, temperature, native id, source and connection", () => {
+    const high = { ...HOSTED, settings: { reasoningEffort: "high" as const } };
+    const low = { ...HOSTED, settings: { reasoningEffort: "low" as const } };
+    const native = { ...HOSTED, nativeModelId: "gpt-5-2025" };
+    const org: ModelSelection = {
+      ...HOSTED,
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "p1" },
+    };
+    const keys = [HOSTED, high, low, native, org].map(comparisonKey);
+    expect(new Set(keys).size).toBe(5);
+    for (const s of [high, low, native, org]) {
+      expect(isDefaultSelection(s)).toBe(false);
+    }
+  });
+
+  it("ignores fallback and key order", () => {
+    const a = {
+      ...HOSTED,
+      settings: { reasoningEffort: "high" as const, temperature: 0.5 },
+    };
+    const b = {
+      fallback: { model: "none", provider: "openrouter" },
+      settings: { temperature: 0.5, reasoningEffort: "high" },
+      source: "hosted",
+      modelId: "openai/gpt-5",
+    } as ModelSelection;
+    expect(comparisonKey(a)).toBe(comparisonKey(b));
+  });
+
+  it("matches the backend golden byte for byte", () => {
+    expect(
+      comparisonKey({ ...HOSTED, settings: { reasoningEffort: "high" } })
+    ).toBe(
+      'openai/gpt-5\u0000{"modelId":"openai/gpt-5","source":"hosted","settings":{"reasoningEffort":"high"}}'
+    );
+    expect(
+      comparisonKey({
+        modelId: "anthropic/claude-sonnet-4-5",
+        source: "local",
+        connectionRef: {
+          kind: "localProvider",
+          providerKey: "custom",
+          customProviderName: "mine",
+        },
+        nativeModelId: "native",
+        settings: { temperature: 0.2, reasoningEffort: "low" },
+        fallback: { provider: "openrouter", model: "none" },
+      })
+    ).toBe(
+      "anthropic/claude-sonnet-4-5\u0000" +
+        '{"modelId":"anthropic/claude-sonnet-4-5","source":"local",' +
+        '"connectionRef":{"kind":"localProvider","providerKey":"custom","customProviderName":"mine"},' +
+        '"nativeModelId":"native","settings":{"reasoningEffort":"low","temperature":0.2}}'
+    );
+  });
+});
+
+describe("selectionDistinguishers", () => {
+  const high = { ...HOSTED, settings: { reasoningEffort: "high" as const } };
+  const low = { ...HOSTED, settings: { reasoningEffort: "low" as const } };
+
+  it("shows nothing for a lone model or other model ids", () => {
+    expect(selectionDistinguishers(high, [high])).toEqual([]);
+    expect(
+      selectionDistinguishers(high, [
+        high,
+        { ...HOSTED, modelId: "openai/gpt-5-mini" },
+      ])
+    ).toEqual([]);
+  });
+
+  it("shows only the effort when only the effort differs", () => {
+    expect(selectionDistinguishers(high, [high, low])).toEqual(["High"]);
+    expect(selectionDistinguishers(low, [high, low])).toEqual(["Low"]);
+    expect(selectionDistinguishers(HOSTED, [HOSTED, high])).toEqual([
+      "Default",
+    ]);
+  });
+
+  it("shows source and effort when both differ", () => {
+    const org: ModelSelection = {
+      ...high,
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "p1" },
+    };
+    expect(selectionDistinguishers(org, [org, low])).toEqual([
+      "Org key",
+      "High",
+    ]);
+    expect(selectionDistinguishers(low, [org, low])).toEqual(["MCPJam", "Low"]);
+  });
+
+  it("labels temperature", () => {
+    const warm = { ...HOSTED, settings: { temperature: 0.7 } };
+    expect(selectionDistinguishers(warm, [warm, HOSTED])).toEqual(["Temp 0.7"]);
+    expect(selectionDistinguishers(HOSTED, [warm, HOSTED])).toEqual([
+      "Default temp",
+    ]);
+  });
+});
+
+describe("defaultReasoningEffort", () => {
+  it("answers the provider default per family", () => {
+    expect(defaultReasoningEffort("anthropic/claude-sonnet-4-6", "hosted")).toBe(
+      "high"
+    );
+    expect(defaultReasoningEffort("openai/gpt-5", "hosted")).toBe("medium");
+    expect(defaultReasoningEffort("openai/gpt-5.2", "hosted")).toBe("none");
+    expect(defaultReasoningEffort("openai/o3", "hosted")).toBe("medium");
+    expect(defaultReasoningEffort("google/gemini-3-pro-preview", "hosted")).toBe(
+      "high"
+    );
+    expect(defaultReasoningEffort("gpt-5", "direct", "openai")).toBe("medium");
+  });
+
+  it("is undefined when unknown or the runtime is unresolved", () => {
+    expect(defaultReasoningEffort("anthropic/claude-haiku-4-5", "hosted")).toBe(
+      undefined
+    );
+    expect(defaultReasoningEffort("mistralai/mistral-large", "hosted")).toBe(
+      undefined
+    );
+    expect(defaultReasoningEffort("openai/gpt-5", "org")).toBeUndefined();
+    expect(defaultReasoningEffort("gpt-5", "direct")).toBeUndefined();
+  });
+});
+
 describe("browser entry", () => {
   it("keeps the level tables off the public entries", () => {
     const record = browser as Record<string, unknown>;
@@ -370,5 +526,9 @@ describe("browser entry", () => {
     expect(typeof browser.reasoningEffortProviderOptions).toBe("function");
     expect(typeof browser.selectionConfigKey).toBe("function");
     expect(typeof browser.selectionIfMatches).toBe("function");
+    expect(typeof browser.comparisonKey).toBe("function");
+    expect(typeof browser.isDefaultSelection).toBe("function");
+    expect(typeof browser.selectionDistinguishers).toBe("function");
+    expect(typeof browser.defaultReasoningEffort).toBe("function");
   });
 });

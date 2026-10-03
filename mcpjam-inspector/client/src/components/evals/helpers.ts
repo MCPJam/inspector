@@ -350,7 +350,7 @@ export function runClientLogo(
 
 export function snapshotTestModels(
   test: Pick<EvalSuiteConfigTest, "models" | "model" | "provider">,
-): Array<{ model: string; provider: string }> {
+): NonNullable<EvalSuiteConfigTest["models"]> {
   if (Array.isArray(test.models))
     return test.models.filter((entry) => Boolean(entry.model));
   return test.model

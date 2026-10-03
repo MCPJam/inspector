@@ -20,6 +20,11 @@ import {
 } from "../evals/run-metrics";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
 import { RUN_ORIGIN_META, resolveRunOrigin } from "@/lib/evals/run-origin";
+import {
+  iterationTargetKey,
+  modelEffortTargetKey,
+  runTargetKey,
+} from "@/lib/eval-target-key";
 import type {
   EvalCase,
   EvalIteration,
@@ -225,10 +230,14 @@ function runClientLabel(
   return runHostLabel(run, hostNamesById);
 }
 
+/**
+ * The TARGETS a run's iterations ran (`targetKey`; the bare model id when
+ * default), so two efforts of one model are two filter values.
+ */
 function runModels(iterations: readonly EvalIteration[]): string[] {
   const models = new Set<string>();
   for (const iteration of iterations) {
-    const model = iteration.testCaseSnapshot?.model?.trim();
+    const model = iterationTargetKey(iteration)?.trim();
     if (model) models.add(model);
   }
   return [...models];
@@ -345,7 +354,7 @@ export function buildSuiteRunHistoryRows(
       return {
         passRate: computeRunEffectiveStats(run, iterations).passRate,
         models: run.effectiveModelId
-          ? [run.effectiveModelId]
+          ? [runTargetKey(run) ?? run.effectiveModelId]
           : runModels(iterations),
         latencyMs: iterationLatencyP50(iterations),
         tokens: sumTokens(iterations),
@@ -377,8 +386,16 @@ export function buildSuiteRunHistoryRowsFromMetrics(
       return {
         passRate: computeRunEffectiveStatsFromMetrics(run, metrics).passRate,
         models: run.effectiveModelId
-          ? [run.effectiveModelId]
-          : (metrics?.models.map((row) => row.model) ?? []),
+          ? [runTargetKey(run) ?? run.effectiveModelId]
+          : // Rollup rows are per model × effective effort; an effort-less
+            // row keys as the bare model id, exactly as before.
+            [
+              ...new Set(
+                metrics?.models.map((row) =>
+                  modelEffortTargetKey(row.model, row.reasoningEffort),
+                ) ?? [],
+              ),
+            ],
         latencyMs: metrics?.latencyP50Ms ?? null,
         tokens: metrics?.tokensTotal ?? null,
         toolCalls: metrics?.toolCallsTotal ?? null,
