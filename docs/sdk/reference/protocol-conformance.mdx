@@ -115,6 +115,10 @@ writeFileSync(
 | `checkIds` | `MCPCheckId[]` | No | all checks | Restrict checks to specific ids |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch implementation |
 | `clientName` | `string` | No | SDK default | Custom MCP client name |
+| `protocolVersion` | `string` | No | | Pin to a specific MCP protocol version (`2025-03-26`, `2025-06-18`, `2025-11-25`, or `2026-07-28`). Absent means legacy era. |
+| `logProbe` | `{ toolName: string; arguments?: Record<string, unknown> }` | No | | Tool to call so the server emits log records, used by `modern-logs-require-log-level`. Without this, that check reports `could-not-run` — silence on an ordinary request cannot distinguish a conforming server from one that never logs. |
+| `inputRequiredProbe` | `{ toolName: string; arguments?: Record<string, unknown> }` | No | | Tool to call to trigger an `input_required` round trip, used by `modern-undeclared-capability-error`. Without this, that check reports `could-not-run`. |
+| `fixtures` | `MCPConformanceFixtures` | No | | Safe-to-execute tool calls and prompt renders that widen coverage for `modern-tool-output-schema-conformant` and `wire-schema-valid`. |
 
 ## Available categories and check ids
 
@@ -150,6 +154,30 @@ Check ids:
 - `get-stream-or-405` (2025 revisions only)
 - `session-id-visible-ascii` (2025 revisions only)
 - `post-response-content-type`
+- `modern-client-handshake` (2026-07-28 only)
+- `modern-server-discover` (2026-07-28 only)
+- `modern-result-type-present` (2026-07-28 only)
+- `modern-cacheable-result-hints` (2026-07-28 only)
+- `modern-cache-hint-coverage` (2026-07-28 only)
+- `modern-cache-hint-values-valid` (2026-07-28 only)
+- `modern-cache-scope-stable-across-pages` (2026-07-28 only)
+- `modern-protocol-version-header-mismatch` (2026-07-28 only)
+- `modern-method-header-mismatch` (2026-07-28 only)
+- `modern-name-header-mismatch` (2026-07-28 only)
+- `modern-unsupported-version-error` (2026-07-28 only)
+- `modern-missing-method-header-rejected` (2026-07-28 only)
+- `modern-header-names-case-insensitive` (2026-07-28 only)
+- `modern-undeclared-capability-error` (2026-07-28 only) — requires `inputRequiredProbe`; reports `could-not-run` without it
+- `modern-no-session-id` (2026-07-28 only) — reports `could-not-run` when no successful exchange occurred (e.g. every request returned 401)
+- `modern-removed-methods-not-found` (2026-07-28 only)
+- `modern-resource-not-found-invalid-params` (2026-07-28 only)
+- `modern-resource-read-no-empty-contents` (2026-07-28 only)
+- `modern-tool-output-schema-conformant` (2026-07-28 only) — requires `fixtures.toolCalls`; reports `could-not-run` without it
+- `modern-logs-require-log-level` (2026-07-28 only) — requires `logProbe`; reports `could-not-run` without it
+- `modern-subscription-ack-precedes-notifications` (2026-07-28 only)
+- `modern-subscription-filter-and-tagging` (2026-07-28 only)
+- `modern-subscription-graceful-close` (2026-07-28 only)
+- `wire-schema-valid`
 
 ## Result types
 
@@ -170,7 +198,7 @@ Check ids:
 Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"`:
 
 - `"not-applicable"` — the check cannot apply to this server (era-gated check on the wrong protocol version, unadvertised capability, localhost-only requirement against a remote server). These never hold a run back.
-- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe`, subscription stream unavailable). These make the run `incomplete`.
+- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe` or `logProbe`, no successful exchange for `modern-no-session-id`, subscription stream unavailable). These make the run `incomplete`.
 
 `MCPConformanceSuite.run()` returns an `MCPConformanceSuiteResult`:
 
@@ -215,6 +243,8 @@ Current readiness checks:
 
 - `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
 - `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns a 5xx. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
+- `readiness-protocol-version-header-required` — fires when the server accepts a POST that omits `MCP-Protocol-Version`. The header is required by SEP-2243, but servers supporting pre-2025-06-18 clients may treat its absence as `2025-03-26`, so this is `MAY` advice.
+- `readiness-resource-error-echoes-uri` — fires when a resource-not-found error does not echo the requested URI in `error.data.uri`. SEP-2164 shows this in an example but does not state it as a MUST or SHOULD.
 
 ## CI reporting
 
