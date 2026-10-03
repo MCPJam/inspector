@@ -31,13 +31,18 @@ export function usesScopedSessionCookies(c: Context): boolean {
   }
 }
 
-function isSecureRequest(c: Context): boolean {
-  try {
-    return new URL(c.req.url).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
+/**
+ * Scoped cookies are never `Secure`, not even on `https://localhost`.
+ *
+ * They exist on loopback hosts only, which browsers already treat as secure
+ * contexts, so the attribute buys nothing there. It would cost something: a
+ * cookie an https instance wrote WITH `Secure` cannot be touched by a
+ * plain-http instance on the same host (browsers refuse to let an insecure
+ * origin overwrite or delete a Secure cookie), so that instance's pruning
+ * would be silently dropped and the namespace/byte budgets would stop holding
+ * the moment two instances disagree on the scheme.
+ */
+const SCOPED_COOKIES_SECURE = false;
 
 export function currentNamespace(): LocalSessionNamespace {
   return getLocalSessionNamespace();
@@ -66,7 +71,7 @@ export function applyScopedCookieWrites(
     nsId: ns.id,
     writes,
     nowMs: Date.now(),
-    secure: isSecureRequest(c),
+    secure: SCOPED_COOKIES_SECURE,
   });
   for (const header of plan.setCookies) {
     c.header("Set-Cookie", header, { append: true });
