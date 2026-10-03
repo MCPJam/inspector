@@ -1141,6 +1141,53 @@ describe("PlaygroundMain", () => {
         mockUseChatSession.availableModels = [];
       });
 
+      // A host SWITCH in the session (a new config id on the previewed host).
+      const switchHost = (configId: string, modelSelection: unknown) => {
+        mockHostQueryState.result = {
+          hostId,
+          name: `Host ${configId}`,
+          config: {
+            id: configId,
+            modelId: "openai/gpt-5",
+            modelSelection,
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          },
+        };
+      };
+
+      it("keeps pane 1 on a reload: the host does not replace a saved compare pane", async () => {
+        const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+        const saved = [
+          {
+            modelId: "openai/gpt-5",
+            source: "hosted",
+            settings: { reasoningEffort: "low" },
+            fallback: { provider: "openrouter", model: "none" },
+          },
+          {
+            modelId: "openai/gpt-5",
+            source: "hosted",
+            settings: { reasoningEffort: "high" },
+            fallback: { provider: "openrouter", model: "none" },
+          },
+        ];
+        localStorage.setItem(V2_KEY, JSON.stringify(saved));
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        // The single chat still takes the host's model, as it always has…
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        // …but the compare panes are exactly what the user saved.
+        expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toEqual(saved);
+        mockUseChatSession.availableModels = [];
+      });
+
       it("puts a BYOK host's High on the lead compare card on the user's key, and clears it on a switch to a host with none", async () => {
         const V2_KEY = "mcp-inspector-selected-model-selections.v2";
         localStorage.setItem(
@@ -1154,8 +1201,17 @@ describe("PlaygroundMain", () => {
           ]),
         );
         mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
-        previewHost(selection("high"));
+        previewHost(undefined);
         const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+
+        // Switch to a BYOK host saved at High: pane 1 follows it.
+        switchHost("cfg-a", selection("high"));
+        rerender(
           <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
         );
         await waitFor(() => {
@@ -1171,18 +1227,7 @@ describe("PlaygroundMain", () => {
           ]);
         });
 
-        mockHostQueryState.result = {
-          hostId,
-          name: "Host B",
-          config: {
-            id: "cfg-b",
-            modelId: "openai/gpt-5",
-            modelSelection: selection(),
-            systemPrompt: "",
-            temperature: 0.7,
-            requireToolApproval: false,
-          },
-        };
+        switchHost("cfg-b", selection());
         rerender(
           <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
         );
@@ -1194,7 +1239,7 @@ describe("PlaygroundMain", () => {
         mockUseChatSession.availableModels = [];
       });
 
-      it("keeps a saved compare card whose row has not loaded yet when a host seeds the lead", async () => {
+      it("keeps a saved compare card whose row has not loaded yet when a host switch seeds the lead", async () => {
         const V2_KEY = "mcp-inspector-selected-model-selections.v2";
         // The second card runs on an org connection whose row arrives later
         // (the org-provider query resolves after the host).
@@ -1216,8 +1261,15 @@ describe("PlaygroundMain", () => {
           ])
         );
         mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
-        previewHost(selection("high"));
-        render(
+        previewHost(undefined);
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        switchHost("cfg-a", selection("high"));
+        rerender(
           <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
         );
         await waitFor(() => {
