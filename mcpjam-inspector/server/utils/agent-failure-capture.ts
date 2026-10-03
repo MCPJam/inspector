@@ -59,6 +59,17 @@ export const MCPJAM_AGENT_FAILURE_CAPTURE: FailureCapture = {
 };
 
 /**
+ * Ask MCPJam's capture rule for a failure a route ANSWERS (as opposed to one
+ * the engine streams), for `mapRuntimeError`'s `capture` option: every one
+ * reaches Sentry, classified by the status and code it is answered with. The
+ * capture is decided inside the mapping, because that is where the error is
+ * first stamped.
+ */
+export const agentRouteCapture =
+  (source: string) => (mapped: { status: number; code: string }) =>
+    agentCapturePolicy({ source, httpStatus: mapped.status, code: mapped.code });
+
+/**
  * The MCP server an error names, when it names one.
  *
  * Every connect/call failure the SDK's `MCPClientManager` raises quotes the

@@ -23,6 +23,19 @@ describe("agentPageClass", () => {
       { source: "s", code: "platform_capacity", scope: "organization" },
     ],
     ["a user's own spend limit", { source: "s", code: "user_rate_limit" }],
+    ["a bare 429 from a rate limiter", { source: "s", httpStatus: 429 }],
+    [
+      "a server demanding a grant (v1)",
+      { source: "s", httpStatus: 401, code: "OAUTH_REQUIRED" },
+    ],
+    [
+      "the v1 agent answering a self-hosted call",
+      { source: "s", httpStatus: 422, code: "FEATURE_NOT_SUPPORTED" },
+    ],
+    [
+      "an unknown job id",
+      { source: "s", httpStatus: 404, code: "NOT_FOUND" },
+    ],
   ])("is routine for %s", (_label, facts) => {
     expect(agentPageClass(facts)).toBe("routine");
   });
@@ -56,6 +69,27 @@ describe("agentPageClass", () => {
     ["a 5xx", { source: "s", httpStatus: 502 }],
     ["a throw", { source: "s" }],
     ["an empty stream", { source: "s", code: "provider_empty_response" }],
+    // A code outranks the status: these are ours even on a 4xx.
+    [
+      "MCPJam's own provider key being refused (401)",
+      { source: "s", httpStatus: 401, code: "mcpjam_api_error" },
+    ],
+    [
+      "a retired pinned model (400)",
+      { source: "s", httpStatus: 400, code: "model_retired" },
+    ],
+    [
+      "an unknown pinned model (400)",
+      { source: "s", httpStatus: 400, code: "invalid_model" },
+    ],
+    [
+      "Convex rejecting a request our engine built (400)",
+      { source: "s", httpStatus: 400, code: "invalid_request" },
+    ],
+    [
+      "an unlisted code on a 401",
+      { source: "s", httpStatus: 401, code: "something_new" },
+    ],
   ])("is an incident for %s", (_label, facts) => {
     expect(agentPageClass(facts)).toBe("incident");
   });

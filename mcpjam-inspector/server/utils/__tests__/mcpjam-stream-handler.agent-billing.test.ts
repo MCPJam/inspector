@@ -299,6 +299,10 @@ describe("Ask MCPJam billing claim on the wire", () => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
     const { headers, body } = await runTurn({ billingFeature: "mcpjam_agent" });
     expect(global.fetch).toHaveBeenCalled();
+    // To the platform route, never the ordinary one that bills the customer.
+    const url = (global.fetch as unknown as { mock: { calls: any[][] } }).mock
+      .calls[0]?.[0];
+    expect(String(url)).toContain("/stream/platform");
     expect(body.billingFeature).toBe("mcpjam_agent");
     expect(headers["x-inspector-service-token"]).toBeUndefined();
   });

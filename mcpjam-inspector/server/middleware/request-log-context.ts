@@ -294,8 +294,10 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     : status;
 
   // Ask MCPJam: capture what nothing else did, and say so on the response.
-  // A throw is left to `onError`, which reports it on its own path; 499 is
-  // the client going away, which is the user pressing Stop.
+  // A throw is left to `onError`, which reports it on its own path. A caller
+  // that went away is the user pressing Stop, whatever status the route then
+  // answered with (the v1 agent answers a disconnect with 504 TIMEOUT), so an
+  // aborted request is never captured here; 499 is kept for routes that use it.
   if (!thrown && isAgentRequestPath(c.req.path)) {
     const meta =
       c.var.webErrorMeta?.status === effectiveStatus
@@ -303,7 +305,13 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
         : undefined;
     let captured =
       meta?.captured === true || c.var.failureCaptured === true;
-    if (!captured && effectiveStatus >= 400 && effectiveStatus !== 499) {
+    const callerAborted = c.req.raw.signal?.aborted === true;
+    if (
+      !captured &&
+      !callerAborted &&
+      effectiveStatus >= 400 &&
+      effectiveStatus !== 499
+    ) {
       captured = captureUnreportedAgentFailure(
         c,
         effectiveStatus,

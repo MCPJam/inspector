@@ -207,8 +207,16 @@ export function createAgentFailureTracker(report: Report = reportChatFailure) {
             : "Ask MCPJam stream ended without finishing",
         );
       // No response at all, or the connection dropped under one: the
-      // browser's transport, which is routine unless it spikes.
-      const transport = state.meta === null || flags.isDisconnect;
+      // browser's transport, which is routine unless it spikes. The SDK only
+      // flags a disconnect for a TypeError that says "fetch"/"network", so a
+      // body read that dies with WebKit's "Load failed" is caught here too: a
+      // TypeError under a 2xx with no error chunk is the connection, not us.
+      const droppedMidStream =
+        state.meta?.ok === true &&
+        state.error instanceof TypeError &&
+        !state.sawErrorChunk;
+      const transport =
+        state.meta === null || flags.isDisconnect || droppedMidStream;
       const requestFailed = state.meta !== null && !state.meta.ok;
       const refusal = requestFailed ? parseRefusal(state.error?.message) : {};
       const source = transport

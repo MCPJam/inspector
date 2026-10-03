@@ -48,25 +48,42 @@ export type FailureFacts = {
  * Deliberately NOT here: `agent_billing_rejected` (every reason, including
  * `credential_not_allowed` — our own client sending a credential the backend
  * will not take is our bug), `platform_generation_unavailable` (the lane guard
- * failing closed), and `platform_capacity` without a user/org scope (MCPJam's
- * budget for everyone).
+ * failing closed), `platform_capacity` without a user/org scope (MCPJam's
+ * budget for everyone), and `invalid_request` / `bad_request`: only Convex
+ * sends those, about a request our own engine built.
+ *
+ * A code that is not listed is an incident whatever its status. A 400 or 401
+ * can be ours: a retired pinned model (`model_retired`), or MCPJam's own
+ * provider key revoked (`mcpjam_api_error`), fails every turn.
  */
 const ROUTINE_CODES: ReadonlySet<string> = new Set([
   // Sign-in.
   "auth_required",
   "unauthorized",
   "session_revoked",
+  "oauth_required",
   // Validation.
   "validation_error",
-  "invalid_request",
-  "bad_request",
   "guest_input_too_large",
-  // The caller's own quotas and account state.
+  // Deliberate v1 answers: self-hosted has no v1 agent; an unknown job id.
+  "feature_not_supported",
+  "not_found",
+  // The caller's own quotas and account state. Mirrors the account-state half
+  // of the server's `USER_OWNED_DENIAL_CODES` (mcpjam-stream-handler.ts); the
+  // other half (`platform_capacity`, `agent_billing_rejected`) is decided
+  // above. Guests reach some of these on the customer rail.
   "agent_turn_limit",
   "user_rate_limit",
   "rate_limited",
   "wallet_locked",
   "guest_model_not_allowed",
+  "platform_free_budget_exhausted",
+  "account_suspended",
+  "org_rate_limit",
+  "billing_limit_reached",
+  "billing_feature_not_included",
+  "spend_budget_reached",
+  "free_tier_model_restricted",
 ]);
 
 /** Lane scopes that are one caller at their own share of the budget. */
@@ -75,13 +92,20 @@ const ROUTINE_LANE_SCOPES: ReadonlySet<string> = new Set([
   "organization",
 ]);
 
+/** Statuses that are the caller's own state when nothing more is known. */
+const ROUTINE_STATUSES_WITHOUT_CODE: ReadonlySet<number> = new Set([
+  400, 401, 429,
+]);
+
 /**
  * The plan's rule, in one place:
  *
- * routine — a 401; a 400 validation error; `agent_turn_limit`; a lane refusal
- * scoped to the user or the organization; and (client-side only) a transport
- * failure while online. Everything else is an incident: a platform-scoped
- * lane refusal, the 503 when the guard failed closed, every
+ * routine — a sign-in or validation code; `agent_turn_limit` and the caller's
+ * other own quotas; a lane refusal scoped to the user or the organization; a
+ * bare 400/401/429 with no code at all (answered in front of the route); and
+ * (client-side only) a transport failure while online. Everything else is an
+ * incident: any unlisted code whatever its status, a platform-scoped lane
+ * refusal, the 503 when the guard failed closed, every
  * `agent_billing_rejected` reason, 5xx and throws, and malformed or empty
  * streams.
  */
@@ -94,9 +118,14 @@ export function agentPageClass(facts: FailureFacts): PageClass {
       : "incident";
   }
   if (code === "agent_billing_rejected") return "incident";
-  if (code && ROUTINE_CODES.has(code)) return "routine";
-  if (facts.httpStatus === 401 || facts.httpStatus === 400) return "routine";
-  return "incident";
+  // A code is the better evidence: it decides, and an unlisted one is ours.
+  if (code) return ROUTINE_CODES.has(code) ? "routine" : "incident";
+  // No code to go on: the status alone. These are answered in front of the
+  // route (bearer auth, rate limiters) without a code.
+  return facts.httpStatus !== undefined &&
+    ROUTINE_STATUSES_WITHOUT_CODE.has(facts.httpStatus)
+    ? "routine"
+    : "incident";
 }
 
 /** One issue per distinct failure shape, not per stack or per message. */

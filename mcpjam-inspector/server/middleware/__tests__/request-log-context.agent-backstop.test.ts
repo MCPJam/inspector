@@ -214,6 +214,17 @@ describe("request-log backstop for Ask MCPJam", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
+  it("leaves a request the caller aborted alone, whatever it answered", async () => {
+    // The v1 agent answers a caller disconnect with 504 TIMEOUT.
+    const stop = new AbortController();
+    stop.abort();
+    await app((a) =>
+      a.post(AGENT, (c) => c.json({ code: "TIMEOUT" }, 504)),
+    ).request(AGENT, { method: "POST", signal: stop.signal });
+
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it("leaves every other route exactly as it was", async () => {
     const res = await app((a) =>
       a.post("/api/web/chat-v2", (c) => c.json({ error: "no" }, 401)),

@@ -114,18 +114,9 @@ import { describeError } from "@mcpjam/sdk";
 import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
 import {
   agentCapturePolicy,
+  agentRouteCapture,
   MCPJAM_AGENT_FAILURE_CAPTURE,
 } from "../../utils/agent-failure-capture.js";
-
-/**
- * Ask MCPJam's capture rule for a failure this route ANSWERS (as opposed to
- * one the engine streams): every one reaches Sentry, classified by the status
- * and code it is answered with. The capture is decided inside
- * `mapRuntimeError`, because that is where the error is first stamped.
- */
-const agentRouteCapture =
-  (source: string) => (mapped: { status: number; code: string }) =>
-    agentCapturePolicy({ source, httpStatus: mapped.status, code: mapped.code });
 
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";

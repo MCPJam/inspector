@@ -148,6 +148,25 @@ describe("Ask MCPJam failure tracker", () => {
     );
   });
 
+  it("treats WebKit's mid-stream \"Load failed\" as a disconnect, not an incident", async () => {
+    // The SDK only flags isDisconnect for a TypeError naming fetch/network.
+    const { tracker, report } = await request(sse([{ type: "start" }]));
+    tracker.noteError(new TypeError("Load failed"));
+    tracker.onFinish({ isAbort: false, isDisconnect: false, isError: true });
+
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.anything(),
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          source: "disconnect",
+          pageClass: "routine",
+        }),
+      }),
+    );
+  });
+
   it("does not capture an error chunk the server already captured", async () => {
     const { tracker, report } = await request(
       sse([
