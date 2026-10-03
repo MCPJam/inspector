@@ -24,9 +24,17 @@
  *     vendor or model segment;
  *   - a different case (`MCPJam/…`, `…/Anthropic/…`): every other parser of
  *     this prefix, and the catalog itself, is case-sensitive.
+ * Catalog membership alone rules out every one of these; the explicit
+ * `rest === rest.trim()` check is there because `isHostedCatalogModel` trims
+ * its input, and a padded id must not be rewritten into a different one.
+ *
+ * The catalog consulted is the Inspector's cached copy (the seed snapshot plus
+ * a periodic fetch), not the backend's. A model the backend has just started
+ * serving is forwarded as typed until the next refresh, and refused with the
+ * CONVEX-33X message: no worse than before this rewrite existed, and gone once
+ * the rewrite moves into the backend's judge-write path.
  */
 import { z } from "zod";
-import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 const HOSTED_PREFIX = "mcpjam/";
@@ -35,20 +43,7 @@ export function canonicalJudgeModelId(model: string): string {
   const trimmed = model.trim();
   if (!trimmed.startsWith(HOSTED_PREFIX)) return trimmed;
   const rest = trimmed.slice(HOSTED_PREFIX.length);
-  const segments = rest.split("/");
-  if (
-    segments.length < 2 ||
-    segments[0] === "mcpjam" ||
-    segments.some((segment) => segment === "" || segment !== segment.trim())
-  ) {
-    return trimmed;
-  }
-  // `getCanonicalModelId` is the identity on an id already in catalog
-  // spelling; anything it would rewrite is not a catalog id as written.
-  if (getCanonicalModelId(rest) !== rest || !isHostedCatalogModel(rest)) {
-    return trimmed;
-  }
-  return rest;
+  return rest === rest.trim() && isHostedCatalogModel(rest) ? rest : trimmed;
 }
 
 /**

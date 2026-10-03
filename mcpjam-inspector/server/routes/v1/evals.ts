@@ -8545,6 +8545,11 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         // the same model, and the backend refuses a pair that disagrees. This
         // body cannot carry a selection, so a stored one survives only while it
         // still names the model: the backend's `selectionIfMatches` rule.
+        // Dropping it also drops the judge's saved reasoning effort
+        // (`judgeSelection.settings.reasoningEffort`). That is deliberate:
+        // effort is resolved per model, so it does not carry to a new one, and
+        // the new model starts with no saved effort. The caller still gets a
+        // 200, which is why the changeset says so.
         const selection = goalCompletion.judgeSelection as
           | { modelId?: unknown }
           | undefined;
