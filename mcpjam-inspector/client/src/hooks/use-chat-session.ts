@@ -684,6 +684,16 @@ export interface UseChatSessionReturn {
     model: ModelDefinition,
     effort: ModelReasoningEffort | undefined,
   ) => void;
+  /** Levels `model` supports here (the model menu's per-row efforts). */
+  reasoningEffortLevelsFor: (model: ModelDefinition) => ModelReasoningEffort[];
+  /**
+   * User pick for `model` (picked with its effort in the model menu), before
+   * it is the selected model. Remembered for it, like `setReasoningEffort`.
+   */
+  setReasoningEffortForModel: (
+    model: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ) => void;
 
   // Tools metadata
   toolsMetadata: Record<string, Record<string, unknown>>;
@@ -2792,16 +2802,20 @@ export function useChatSession(
     () => reasoningEffortMemoryKey(selectedModel),
     [selectedModel],
   );
-  const reasoningEffortLevels = useMemo(
-    () =>
+  const reasoningEffortLevelsFor = useCallback(
+    (model: ModelDefinition): ModelReasoningEffort[] =>
       !reasoningEffortEnabled
         ? []
         : reasoningEffortOptions(
-        selectedModel,
-        reasoningEffortRouteForRow(selectedModel),
-        reasoningEffortHarness,
-      ),
-    [selectedModel, reasoningEffortHarness, reasoningEffortEnabled],
+            model,
+            reasoningEffortRouteForRow(model),
+            reasoningEffortHarness,
+          ),
+    [reasoningEffortHarness, reasoningEffortEnabled],
+  );
+  const reasoningEffortLevels = useMemo(
+    () => reasoningEffortLevelsFor(selectedModel),
+    [selectedModel, reasoningEffortLevelsFor],
   );
   const rememberedEffort = useMemo(
     () => loadRememberedReasoningEffort(effortKey),
@@ -2826,6 +2840,14 @@ export function useChatSession(
       saveRememberedReasoningEffort(effortKey, effort);
     },
     [effortKey],
+  );
+  const setReasoningEffortForModel = useCallback(
+    (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
+      const key = reasoningEffortMemoryKey(model);
+      setEffortByModel((prev) => ({ ...prev, [key]: effort }));
+      saveRememberedReasoningEffort(key, effort);
+    },
+    [],
   );
   // Keys whose effort came from a restored chat, so a new chat forgets them.
   const restoredEffortKeysRef = useRef<Set<string>>(new Set());
@@ -5599,6 +5621,8 @@ export function useChatSession(
     reasoningEffortLevels,
     setReasoningEffort,
     seedReasoningEffort,
+    reasoningEffortLevelsFor,
+    setReasoningEffortForModel,
 
     // Tools metadata
     toolsMetadata,

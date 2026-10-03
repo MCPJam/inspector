@@ -7,11 +7,10 @@ import {
 } from "@/components/chat-v2/shared/model-selection";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
+import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
 import {
-  addCompareEffortCard,
   compareSelectionForRow,
   mergePickedRows,
-  nextCompareEffort,
   replaceLeadCompareSelection,
   resolveCompareCards,
   setCompareCardEffort,
@@ -783,8 +782,9 @@ export function PlaygroundMain({
   const prevCompareIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
   // A card that replaces another (its effort changed, so its
-  // `comparisonKey` did) or copies one ("Compare another effort") is seeded
-  // from that card's transcript rather than the lead's: new key → source key.
+  // `comparisonKey` did) or joins beside one of the same model (another
+  // effort, picked in the model menu) is seeded from that card's transcript
+  // rather than the lead's: new key → source key.
   const compareSeedSourceRef = useRef<Record<string, string>>({});
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
@@ -1168,6 +1168,8 @@ export function PlaygroundMain({
     reasoningEffortLevels,
     setReasoningEffort,
     seedReasoningEffort,
+    reasoningEffortLevelsFor,
+    setReasoningEffortForModel,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -4285,18 +4287,28 @@ export function PlaygroundMain({
     [compareCards, setCompareSelections],
   );
 
-  // "Compare another effort": the same model at another supported level,
-  // right after the card, seeded from its transcript. Capped.
-  const handleCompareAnotherEffort = useCallback(
-    (cardKey: string) => {
-      if (!compareCards) return;
-      const next = addCompareEffortCard(compareCards, cardKey);
-      if (!next) return;
-      compareSeedSourceRef.current[next.key] = cardKey;
-      setCompareSelections(next.selections);
-    },
-    [compareCards, setCompareSelections],
-  );
+  // Efforts in the model menu: a model and its effort in one pick; in
+  // compare, each model × effort is its own pane.
+  const seedCompareCard = useCallback((key: string, fromKey: string) => {
+    compareSeedSourceRef.current[key] = fromKey;
+  }, []);
+  const modelEfforts = useModelPickerEfforts({
+    enabled: true,
+    isMultiModelMode,
+    selectedModel,
+    reasoningEffort,
+    levelsFor: reasoningEffortLevelsFor,
+    onSingleModelChange: handleSingleModelChange,
+    setReasoningEffortForModel,
+    compareCards,
+    compareSelections,
+    availableModels,
+    orgConfig: hostedOrgModelConfig,
+    setCompareSelections,
+    setSelectedModel,
+    setSelectedModelIds,
+    seedCard: seedCompareCard,
+  });
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
@@ -5208,6 +5220,7 @@ export function PlaygroundMain({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
+    modelEfforts,
     // Client chip in the chat input toolbar (sibling to the model chip).
     // Replaces the standalone "Compare" button that used to live in the
     // playground header. Shared sessions can't switch hosts, so leave it off.
@@ -6098,14 +6111,6 @@ export function PlaygroundMain({
                                         card.key,
                                         effort,
                                       ),
-                                    onCompareAnotherEffort:
-                                      modelCompareCards.length <
-                                        MAX_COMPARE_SELECTIONS &&
-                                      compareCards &&
-                                      nextCompareEffort(compareCards, card)
-                                        ? () =>
-                                            handleCompareAnotherEffort(card.key)
-                                        : undefined,
                                     disabled: isStreamingActive,
                                   }
                                 : undefined

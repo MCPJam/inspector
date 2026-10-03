@@ -132,16 +132,46 @@ interface ModelSelectorProps {
   /** A surface's own tag for a row ("Not eligible", "Not in catalog"). */
   rowTag?: (model: ModelDefinition) => string | undefined;
   /**
-   * Single-select only: the reasoning efforts a row can be picked at. A row
-   * that returns some gets a chevron that opens its efforts to the side, and
-   * picking it means picking one of them ("Default" sends none) through
-   * `onModelEffortSelect`. Rows that return nothing pick as before.
+   * The reasoning efforts a row can be picked at. A row that returns some
+   * gets a chevron that opens its efforts to the side, and picking it means
+   * picking one of them ("Default" sends none) through `onModelEffortSelect`:
+   * in single-select that picks the row at that effort; in multi-select it
+   * toggles that model × effort in or out of the line-up. Rows that return
+   * nothing pick as before.
    */
   rowEfforts?: (model: ModelDefinition) => ModelSelectorRowEfforts | undefined;
   onModelEffortSelect?: (
     model: ModelDefinition,
     effort: ModelReasoningEffort | undefined,
   ) => void;
+  /**
+   * Multi-select with efforts: the line-up as picked (one entry per model ×
+   * effort, so one model can appear twice). The chips and the limit read
+   * these instead of `selectedModels`.
+   */
+  pickedEntries?: readonly ModelSelectorPickedEntry[];
+  onRemovePickedEntry?: (key: string) => void;
+  onPromotePickedEntry?: (key: string) => void;
+}
+
+/** The model menu's per-row effort props, as a surface passes them through. */
+export type ModelSelectorEffortProps = Pick<
+  ModelSelectorProps,
+  | "rowEfforts"
+  | "onModelEffortSelect"
+  | "pickedEntries"
+  | "onRemovePickedEntry"
+  | "onPromotePickedEntry"
+>;
+
+export interface ModelSelectorPickedEntry {
+  key: string;
+  model: ModelDefinition;
+  /** Chip label ("Sonnet 5 · High"). */
+  label: string;
+  /** What tells it apart from same-model picks ("High"); kept visible on
+   * the trigger while the model name truncates. */
+  detail?: string;
 }
 
 export interface ModelSelectorRowEfforts {
@@ -152,6 +182,11 @@ export interface ModelSelectorRowEfforts {
   /** A level already picked elsewhere (shown greyed out). `undefined` is
    * Default. */
   isTaken?: (effort: ModelReasoningEffort | undefined) => boolean;
+  /** Multi-select: this model × level is in the line-up (checked). */
+  isPicked?: (effort: ModelReasoningEffort | undefined) => boolean;
+  /** Multi-select: whether another level can join (a surface's own budget);
+   * default true. Picked levels stay removable. */
+  canAdd?: boolean;
 }
 
 export interface ModelSelectorExtraOption {
@@ -339,6 +374,9 @@ export function ModelSelector({
   rowTag,
   rowEfforts,
   onModelEffortSelect,
+  pickedEntries,
+  onRemovePickedEntry,
+  onPromotePickedEntry,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   // The row whose efforts are open to the side. `focus` is set when it was
@@ -549,7 +587,16 @@ export function ModelSelector({
     !!onMultiModelEnabledChange &&
     availableModels.length > 1;
   const leadModel = selectedModelsData[0] ?? currentModel;
-  const isComparingModels = multiModelEnabled && selectedModelsData.length > 1;
+  // One trigger chip per pick: with efforts, one model can be picked twice.
+  const triggerEntries: ModelSelectorPickedEntry[] =
+    pickedEntries && pickedEntries.length > 0
+      ? [...pickedEntries]
+      : selectedModelsData.map((model) => ({
+          key: modelRowKey(model),
+          model,
+          label: compactModelLabel(model.name),
+        }));
+  const isComparingModels = multiModelEnabled && triggerEntries.length > 1;
   const triggerLabel = isComparingModels
     ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
     : compactModelLabel(leadModel.name);
@@ -580,8 +627,10 @@ export function ModelSelector({
       ),
     };
   }, [modelSections, search]);
+  // With efforts, one model can be picked twice: count what is picked.
+  const pickedCount = pickedEntries?.length ?? selectedModelsData.length;
   const selectedLimitReached =
-    multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
+    multiModelEnabled && pickedCount >= maxSelectedModels;
 
   // Counterpart of the nonce subscription below: tell the store a picker is
   // on screen that will actually honour the intent. The out-of-credits
@@ -748,9 +797,7 @@ export function ModelSelector({
   };
 
   const effortsFor = (model: ModelDefinition) =>
-    !multiModelEnabled && onModelEffortSelect
-      ? rowEfforts?.(model)
-      : undefined;
+    onModelEffortSelect ? rowEfforts?.(model) : undefined;
   const effortRowAttr = (rowKey: string) => `${effortRowScope}:${rowKey}`;
   const effortAnchor =
     effortRow && typeof document !== "undefined"
@@ -763,6 +810,12 @@ export function ModelSelector({
     model: ModelDefinition,
     effort: ModelReasoningEffort | undefined,
   ) => {
+    if (multiModelEnabled) {
+      // A toggle: the menu stays open to pick more, as model rows do.
+      requestPopoverStayOpen();
+      onModelEffortSelect?.(model, effort);
+      return;
+    }
     onModelEffortSelect?.(model, effort);
     setEffortRow(null);
     setIsOpen(false);
@@ -804,7 +857,7 @@ export function ModelSelector({
           aria-expanded={efforts ? effortRow?.key === rowKey : undefined}
           data-effort-row={effortRowAttr(rowKey)}
           onMouseEnter={
-            onModelEffortSelect && !multiModelEnabled
+            onModelEffortSelect
               ? () =>
                   setEffortRow(
                     efforts ? { key: rowKey, model, focus: false } : null,
@@ -852,7 +905,12 @@ export function ModelSelector({
               {tag}
             </span>
           ))}
-          {multiModelEnabled ? (
+          {multiModelEnabled && efforts ? (
+            <>
+              <SelectionCheck checked={isSelected} />
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+            </>
+          ) : multiModelEnabled ? (
             <SelectionCheck checked={isSelected} />
           ) : efforts ? (
             <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
@@ -904,18 +962,21 @@ export function ModelSelector({
                   className={cn(
                     "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
                     isComparingModels
-                      ? "max-w-[280px] gap-1"
+                      ? // Narrow: one stacked logo per pick, so the trigger
+                        // grows to fit them instead of one logo's width.
+                        "max-w-[360px] gap-1 @max-2xl/toolbar:w-auto @max-2xl/toolbar:px-1.5"
                       : "max-w-[180px] gap-1",
                   )}
                   data-testid="model-selector-trigger"
                 >
                   {isComparingModels ? (
                     <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
-                      {selectedModelsData.map((model, index) => (
+                      {triggerEntries.map(({ key, model, detail }, index) => (
                         <span
-                          key={modelRowKey(model)}
+                          key={key}
+                          data-testid="model-selector-trigger-chip"
                           className={cn(
-                            "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                            "inline-flex h-5 min-w-0 max-w-[112px] items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
                             index === 0
                               ? "border-primary/25 text-foreground"
                               : "border-border/50 text-muted-foreground",
@@ -929,6 +990,11 @@ export function ModelSelector({
                           <span className="truncate">
                             {compactModelLabel(model.name)}
                           </span>
+                          {detail ? (
+                            <span className="shrink-0 text-muted-foreground">
+                              {detail}
+                            </span>
+                          ) : null}
                         </span>
                       ))}
                     </span>
@@ -944,11 +1010,22 @@ export function ModelSelector({
                     </>
                   )}
                   {isComparingModels ? (
-                    <ProviderLogo
-                      provider={leadModel.provider}
-                      customProviderName={leadModel.customProviderName}
-                      className="hidden size-3 shrink-0 @max-2xl/toolbar:block"
-                    />
+                    <span className="hidden shrink-0 items-center -space-x-1 @max-2xl/toolbar:flex">
+                      {triggerEntries.map(({ key, model }) => (
+                        // The client chip's logo size (size-4), so the two
+                        // chips line up; a ring of background separates them.
+                        <span
+                          key={key}
+                          className="flex size-4 items-center justify-center rounded-full bg-background ring-1 ring-background"
+                        >
+                          <ProviderLogo
+                            provider={model.provider}
+                            customProviderName={model.customProviderName}
+                            className="size-4 shrink-0"
+                          />
+                        </span>
+                      ))}
+                    </span>
                   ) : null}
                 </Button>
               )}
@@ -995,11 +1072,18 @@ export function ModelSelector({
                     className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
                     title="First chip is the lead model. Click a chip to promote it."
                   >
-                    {selectedModelsData.map((model, index) => {
+                    {(
+                      pickedEntries ??
+                      selectedModelsData.map((model) => ({
+                        key: modelRowKey(model),
+                        model,
+                        label: compactModelLabel(model.name),
+                      }))
+                    ).map(({ key: entryKey, model, label }, index) => {
                       const isLead = index === 0;
                       return (
                         <button
-                          key={modelRowKey(model)}
+                          key={entryKey}
                           type="button"
                           className={cn(
                             "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
@@ -1007,24 +1091,31 @@ export function ModelSelector({
                               ? "border-primary/25 bg-primary/5 text-foreground"
                               : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
                           )}
-                          onClick={() => handlePromoteLeadModel(model)}
+                          onClick={() =>
+                            pickedEntries
+                              ? index > 0 && onPromotePickedEntry?.(entryKey)
+                              : handlePromoteLeadModel(model)
+                          }
                         >
                           <ProviderLogo
                             provider={model.provider}
                             customProviderName={model.customProviderName}
                             className="size-3"
                           />
-                          <span className="truncate">
-                            {compactModelLabel(model.name)}
-                          </span>
-                          {selectedModelsData.length > 1 ? (
+                          <span className="truncate">{label}</span>
+                          {pickedCount > 1 ? (
                             <span
                               role="button"
                               tabIndex={-1}
                               className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                handleMultiModelSelect(model);
+                                if (pickedEntries) {
+                                  requestPopoverStayOpen();
+                                  onRemovePickedEntry?.(entryKey);
+                                } else {
+                                  handleMultiModelSelect(model);
+                                }
                               }}
                             >
                               <X className="h-2.5 w-2.5" />
@@ -1248,16 +1339,29 @@ export function ModelSelector({
                 <div role="menu" aria-label={`${compactModelLabel(effortRow.model.name)} effort`}>
                   {[undefined, ...openEfforts.levels].map((level) => {
                     const taken = openEfforts.isTaken?.(level) ?? false;
-                    const checked =
-                      openEfforts.current !== undefined &&
-                      (openEfforts.current ?? undefined) === level;
+                    const checked = multiModelEnabled
+                      ? (openEfforts.isPicked?.(level) ?? false)
+                      : openEfforts.current !== undefined &&
+                        (openEfforts.current ?? undefined) === level;
+                    // Multi: an unpicked level can't join past the limit, and
+                    // the last pick can't go unless the surface allows empty.
+                    const blocked = multiModelEnabled
+                      ? checked
+                        ? pickedCount <= 1 && !allowEmptySelection
+                        : selectedLimitReached ||
+                          openEfforts.canAdd === false
+                      : taken && !checked;
                     return (
                       <button
                         key={level ?? "default"}
                         type="button"
-                        role="menuitemradio"
+                        role={
+                          multiModelEnabled
+                            ? "menuitemcheckbox"
+                            : "menuitemradio"
+                        }
                         aria-checked={checked}
-                        disabled={taken && !checked}
+                        disabled={blocked}
                         className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:text-muted-foreground disabled:opacity-60"
                         onClick={() =>
                           handleEffortSelect(effortRow.model, level)

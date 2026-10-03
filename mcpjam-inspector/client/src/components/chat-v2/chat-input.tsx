@@ -46,7 +46,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  ModelSelector,
+  type ModelSelectorEffortProps,
+} from "@/components/chat-v2/chat-input/model-selector";
 import { EffortControl } from "@/components/effort/effort-control";
 import { reasoningEffortDefaultForRow } from "@/lib/reasoning-effort-options";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
@@ -328,6 +331,12 @@ interface ChatInputProps {
   reasoningEffort?: ModelReasoningEffort;
   reasoningEffortLevels?: readonly ModelReasoningEffort[];
   onReasoningEffortChange?: (effort: ModelReasoningEffort | undefined) => void;
+  /**
+   * Efforts in the model menu: each model opens its efforts to the side
+   * (single mode picks model + effort; compare mode toggles model × effort
+   * panes). Omitted, the menu picks models only.
+   */
+  modelEfforts?: ModelSelectorEffortProps;
   hasMessages?: boolean;
   onResetChat: () => void;
   tokenUsage?: {
@@ -467,6 +476,7 @@ export function ChatInput({
   reasoningEffort,
   reasoningEffortLevels,
   onReasoningEffortChange,
+  modelEfforts,
   onResetChat,
   hasMessages = false,
   tokenUsage,
@@ -2019,6 +2029,7 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  {...modelEfforts}
                   // Servers attached means the turn can call tools.
                   workload={
                     (selectedServers?.length ?? 0) > 0 ? "mcpChat" : "chat"

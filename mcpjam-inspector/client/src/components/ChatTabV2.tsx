@@ -3,11 +3,10 @@ import { resolveRestoredModel } from "@/lib/model-selection";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
+import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
 import {
-  addCompareEffortCard,
   compareSelectionForRow,
   mergePickedRows,
-  nextCompareEffort,
   resolveCompareCards,
   setCompareCardEffort,
   MAX_COMPARE_SELECTIONS,
@@ -302,8 +301,9 @@ export function ChatTabV2({
   const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
   // A card that replaces another (its effort, so its `comparisonKey`,
-  // changed) or copies one ("Compare another effort") is seeded from that
-  // card's transcript rather than the lead's: new key → source key.
+  // changed) or joins beside one of the same model (another effort, picked
+  // in the model menu) is seeded from that card's transcript rather than the
+  // lead's: new key → source key.
   const compareSeedSourceRef = useRef<Record<string, string>>({});
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
@@ -454,6 +454,8 @@ export function ChatTabV2({
     reasoningEffort,
     reasoningEffortLevels,
     setReasoningEffort,
+    reasoningEffortLevelsFor,
+    setReasoningEffortForModel,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -2100,18 +2102,29 @@ export function ChatTabV2({
     [compareCards, setCompareSelections]
   );
 
-  // "Compare another effort": the same model at another supported level,
-  // right after the card, seeded from its transcript. Capped.
-  const handleCompareAnotherEffort = useCallback(
-    (cardKey: string) => {
-      if (!compareCards) return;
-      const next = addCompareEffortCard(compareCards, cardKey);
-      if (!next) return;
-      compareSeedSourceRef.current[next.key] = cardKey;
-      setCompareSelections(next.selections);
-    },
-    [compareCards, setCompareSelections]
-  );
+  // Efforts in the model menu: a model and its effort in one pick; in
+  // compare, each model × effort is its own card. A scenario's effort is
+  // fixed, as the composer chip's is.
+  const seedCompareCard = useCallback((key: string, fromKey: string) => {
+    compareSeedSourceRef.current[key] = fromKey;
+  }, []);
+  const modelEfforts = useModelPickerEfforts({
+    enabled: !hostedContext?.scenarioId,
+    isMultiModelMode,
+    selectedModel,
+    reasoningEffort,
+    levelsFor: reasoningEffortLevelsFor,
+    onSingleModelChange: handleSingleModelChange,
+    setReasoningEffortForModel,
+    compareCards,
+    compareSelections,
+    availableModels,
+    orgConfig: hostedOrgModelConfig,
+    setCompareSelections,
+    setSelectedModel,
+    setSelectedModelIds,
+    seedCard: seedCompareCard,
+  });
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
@@ -2365,6 +2378,7 @@ export function ChatTabV2({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
+    modelEfforts,
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
@@ -2705,14 +2719,6 @@ export function ChatTabV2({
                                       card.key,
                                       effort
                                     ),
-                                  onCompareAnotherEffort:
-                                    modelCompareCards.length <
-                                      MAX_COMPARE_SELECTIONS &&
-                                    compareCards &&
-                                    nextCompareEffort(compareCards, card)
-                                      ? () =>
-                                          handleCompareAnotherEffort(card.key)
-                                      : undefined,
                                   disabled: isStreamingActive,
                                 }
                               : undefined

@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   ModelsPill,
   modelsPillTriggerLabel,
 } from "../models-pill";
 import type { ModelSelection } from "../environment-stack";
-import { pickEffort } from "@/test/effort";
 
 const mockModels = vi.hoisted(() => ({
   availableModels: [
@@ -530,28 +529,56 @@ describe("ModelsPill — reasoning effort", () => {
     supportedReasoningEfforts: undefined,
   };
 
-  it("writes the effort onto the picked model's saved selection", async () => {
+  const hostedAt = (effort?: "low" | "high") => ({
+    modelId: "openai/gpt-5",
+    selection: {
+      modelId: "openai/gpt-5",
+      source: "hosted" as const,
+      fallback: { provider: "none" as const, model: "none" as const },
+      ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+    },
+  });
+  const efforts = (value: ModelSelection) =>
+    value.explicitTargets.map((t) => t.selection?.settings?.reasoningEffort);
+  /** Open the pill, then GPT-5's efforts to the side. */
+  async function openEfforts() {
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.click(await screen.findByRole("option", { name: /GPT-5/ }));
+    return within(await screen.findByTestId("model-effort-menu"));
+  }
+
+  it("ticks a second effort of a picked model as its own target", async () => {
     mockModels.availableModels = [GPT5];
     const onChange = renderPill({
       includeClientDefaults: false,
-      explicitTargets: [
-        {
-          modelId: "openai/gpt-5",
-          selection: {
-            modelId: "openai/gpt-5",
-            source: "hosted",
-            fallback: { provider: "none", model: "none" },
-          },
-        },
-      ],
+      explicitTargets: [hostedAt()],
     } as ModelSelection);
-    await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    await pickEffort("High");
+    const menu = await openEfforts();
+    expect(
+      menu.getByRole("menuitemcheckbox", { name: "Default" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(menu.getByRole("menuitemcheckbox", { name: "High" }));
     const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
-    expect(next.explicitTargets.map((t) => t.modelId)).toEqual(["openai/gpt-5"]);
-    expect(next.explicitTargets[0]?.selection?.settings?.reasoningEffort).toBe(
-      "high",
+    expect(next.explicitTargets.map((t) => t.modelId)).toEqual([
+      "openai/gpt-5",
+      "openai/gpt-5",
+    ]);
+    expect(efforts(next)).toEqual([undefined, "high"]);
+  });
+
+  it("keeps two efforts of one model as two targets, and unticks one alone", async () => {
+    mockModels.availableModels = [GPT5];
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [hostedAt("low"), hostedAt("high")],
+    } as ModelSelection);
+    expect(screen.getByRole("button", { name: "Models" })).toHaveTextContent(
+      "2 models",
     );
+    const menu = await openEfforts();
+    await userEvent.click(menu.getByRole("menuitemcheckbox", { name: "Low" }));
+    const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
+    expect(efforts(next)).toEqual(["high"]);
   });
 
   it("offers a Claude Code target no level (its adapter verifies none), but a Codex target its own", async () => {
@@ -560,16 +587,7 @@ describe("ModelsPill — reasoning effort", () => {
     ];
     const value = {
       includeClientDefaults: false,
-      explicitTargets: [
-        {
-          modelId: "openai/gpt-5",
-          selection: {
-            modelId: "openai/gpt-5",
-            source: "hosted",
-            fallback: { provider: "none", model: "none" },
-          },
-        },
-      ],
+      explicitTargets: [hostedAt()],
     } as ModelSelection;
     const { unmount } = render(
       <ModelsPill
@@ -581,7 +599,9 @@ describe("ModelsPill — reasoning effort", () => {
         harnessTargets={[{ harnessId: "claude-code" }]}
       />
     );
-    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.hover(await screen.findByRole("option", { name: /GPT-5/ }));
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
     unmount();
     render(
       <ModelsPill
@@ -593,56 +613,34 @@ describe("ModelsPill — reasoning effort", () => {
         harnessTargets={[{ harnessId: "codex" }]}
       />
     );
-    await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    expect(await screen.findByTestId("effort-stop-xhigh")).toBeInTheDocument();
-    expect(screen.queryByTestId("effort-stop-max")).toBeNull();
-  });
-
-  it("keeps two efforts of one model as two targets: one row, one chip each", async () => {
-    mockModels.availableModels = [GPT5];
-    const at = (effort: "low" | "high") => ({
-      modelId: "openai/gpt-5",
-      selection: {
-        modelId: "openai/gpt-5",
-        source: "hosted" as const,
-        fallback: { provider: "none" as const, model: "none" as const },
-        settings: { reasoningEffort: effort },
-      },
-    });
-    const onChange = renderPill({
-      includeClientDefaults: false,
-      explicitTargets: [at("low"), at("high")],
-    } as ModelSelection);
-    expect(screen.getByRole("button", { name: "Models" })).toHaveTextContent(
-      "2 models",
-    );
-    const chips = screen.getAllByTestId("effort-control-trigger");
-    expect(chips).toHaveLength(2);
-    await userEvent.click(chips[0]!);
-    await pickEffort("Default");
-    const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
+    const menu = await openEfforts();
     expect(
-      next.explicitTargets.map((t) => t.selection?.settings?.reasoningEffort),
-    ).toEqual([undefined, "high"]);
+      menu.getByRole("menuitemcheckbox", { name: "X-High" }),
+    ).toBeInTheDocument();
+    expect(menu.queryByRole("menuitemcheckbox", { name: "Max" })).toBeNull();
   });
 
-  it("shows no chip for a model with no known capability", () => {
+  it("offers no efforts for a model with no known capability", async () => {
     mockModels.availableModels = [{ ...GPT5, supportedReasoningEfforts: [] }];
     renderPill({
       includeClientDefaults: false,
       explicitTargets: [{ modelId: "openai/gpt-5" }],
     });
-    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.hover(await screen.findByRole("option", { name: /GPT-5/ }));
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
   });
 
-  it("disables the chip with a tooltip for a bare-id BYOK row", () => {
+  it("offers no efforts for a bare-id BYOK row (no saveable selection)", async () => {
     mockModels.availableModels = [
-      { ...BYOK, supportedReasoningEfforts: undefined },
+      { ...BYOK, supportedReasoningEfforts: ["low", "high"] },
     ];
     renderPill({
       includeClientDefaults: false,
       explicitTargets: [{ modelId: "gpt-5" }],
     });
-    expect(screen.getByTestId("effort-control-trigger")).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.hover(await screen.findByRole("option", { name: /GPT-5/ }));
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
   });
 });

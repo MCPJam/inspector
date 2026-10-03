@@ -229,58 +229,120 @@ export function setCompareCardEffort(
 }
 
 /**
- * The level "Compare another effort" adds for `card`: a supported level no
- * card of the same row already runs. Prefers the far end of the scale from
- * the card's own level: High when free (Default/Low → High), else the
- * highest free level; from the upper half, Low, else the lowest free level.
- * `null` when none is free or the card cannot carry an effort.
+ * The selection a pick of `row` at `effort` is stored as in a line-up, or
+ * `null` when the row can't carry an effort (an own-key row with no
+ * canonical id is stored as legacy, which has no settings).
  */
-export function nextCompareEffort(
-  cards: readonly CompareCard[],
-  card: CompareCard,
-): ModelReasoningEffort | null {
-  if (!card.editableSelection || card.reasoningEffortLevels.length === 0) {
-    return null;
-  }
-  const rowKey = modelRowKey(card.model);
-  const used = new Set(
-    cards
-      .filter((entry) => modelRowKey(entry.model) === rowKey)
-      .map((entry) => entry.reasoningEffort),
-  );
-  const levels = card.reasoningEffortLevels;
-  const free = levels.filter((level) => !used.has(level));
-  if (free.length === 0) return null;
-  const ownIndex = card.reasoningEffort
-    ? levels.indexOf(card.reasoningEffort)
-    : -1;
-  const upperHalf = ownIndex >= 0 && ownIndex >= (levels.length - 1) / 2;
-  // The familiar pair first (Low vs High), then the far end of the scale.
-  const preferred: ModelReasoningEffort = upperHalf ? "low" : "high";
-  if (free.includes(preferred)) return preferred;
-  return upperHalf ? free[0]! : free[free.length - 1]!;
+export function compareEffortSelection(
+  row: ModelDefinition,
+  orgConfig: OrgVisibleConfig | undefined,
+  effort: ModelReasoningEffort | undefined,
+): ModelSelection | null {
+  const selection = modelSelectionFromDefinition(row, orgConfig, "chat");
+  return selection ? withReasoningEffort(selection, effort) : null;
 }
 
 /**
- * The line-up with a card of the same model at another supported level,
- * inserted right after `cardKey`. `null` at the cap or when no level is free.
+ * `selections` plus the saved ones whose rows have not loaded (not in
+ * `cards`, so the user can't have removed them), deduped and capped — as
+ * {@link mergePickedRows} keeps them.
  */
-export function addCompareEffortCard(
+function withUnresolvedSaved(
   cards: readonly CompareCard[],
-  cardKey: string,
-): { selections: RequestedModelSelection[]; key: string } | null {
+  selections: readonly RequestedModelSelection[],
+  saved: readonly RequestedModelSelection[],
+): RequestedModelSelection[] {
+  const next: RequestedModelSelection[] = [];
+  const seen = new Set<string>();
+  const resolved = new Set(cards.map((card) => card.key));
+  for (const selection of [
+    ...selections,
+    ...saved.filter((entry) => !resolved.has(comparisonKey(entry))),
+  ]) {
+    const key = comparisonKey(selection);
+    if (seen.has(key) || next.length >= MAX_COMPARE_SELECTIONS) continue;
+    seen.add(key);
+    next.push(selection);
+  }
+  return next;
+}
+
+/**
+ * The line-up after the model menu toggled `row` × `effort`: its card goes
+ * if it is there (never the last one), else a card joins right after the
+ * row's other cards (at the end for a new row), seeded from the nearest
+ * sibling's transcript. `null` when nothing changes (the last card, the
+ * cap, or a row that can't carry an effort).
+ */
+export function toggleCompareEffortCard(
+  cards: readonly CompareCard[],
+  saved: readonly RequestedModelSelection[],
+  row: ModelDefinition,
+  orgConfig: OrgVisibleConfig | undefined,
+  effort: ModelReasoningEffort | undefined,
+): {
+  selections: RequestedModelSelection[];
+  /** The added card and the card to seed it from. */
+  added?: { key: string; seedFrom?: string };
+} | null {
+  const selection = compareEffortSelection(row, orgConfig, effort);
+  if (!selection) return null;
+  const key = comparisonKey(selection);
+  if (cards.some((card) => card.key === key)) {
+    if (cards.length <= 1) return null;
+    return {
+      selections: withUnresolvedSaved(
+        cards,
+        cards.filter((card) => card.key !== key).map((card) => card.selection),
+        saved,
+      ),
+    };
+  }
   if (cards.length >= MAX_COMPARE_SELECTIONS) return null;
-  const index = cards.findIndex((entry) => entry.key === cardKey);
-  const card = cards[index];
-  if (!card?.editableSelection) return null;
-  const level = nextCompareEffort(cards, card);
-  if (!level) return null;
-  const added = withReasoningEffort(card.editableSelection, level);
-  const key = comparisonKey(added);
-  if (cards.some((entry) => entry.key === key)) return null;
-  const selections = cards.map((entry) => entry.selection);
-  selections.splice(index + 1, 0, added);
-  return { selections, key };
+  const rowKey = modelRowKey(row);
+  let last = -1;
+  cards.forEach((card, index) => {
+    if (modelRowKey(card.model) === rowKey) last = index;
+  });
+  const selections = cards.map((card) => card.selection);
+  selections.splice(last >= 0 ? last + 1 : selections.length, 0, selection);
+  return {
+    selections: withUnresolvedSaved(cards, selections, saved),
+    added: { key, ...(last >= 0 ? { seedFrom: cards[last]!.key } : {}) },
+  };
+}
+
+/** The line-up without card `key` (never the last one). */
+export function removeCompareCard(
+  cards: readonly CompareCard[],
+  saved: readonly RequestedModelSelection[],
+  key: string,
+): RequestedModelSelection[] | null {
+  if (cards.length <= 1 || !cards.some((card) => card.key === key)) {
+    return null;
+  }
+  return withUnresolvedSaved(
+    cards,
+    cards.filter((card) => card.key !== key).map((card) => card.selection),
+    saved,
+  );
+}
+
+/** The line-up with card `key` moved to the lead slot. */
+export function promoteCompareCard(
+  cards: readonly CompareCard[],
+  saved: readonly RequestedModelSelection[],
+  key: string,
+): RequestedModelSelection[] | null {
+  const card = cards.find((entry) => entry.key === key);
+  if (!card || cards[0]?.key === key) return null;
+  return withUnresolvedSaved(
+    cards,
+    [card, ...cards.filter((entry) => entry.key !== key)].map(
+      (entry) => entry.selection,
+    ),
+    saved,
+  );
 }
 
 /**
