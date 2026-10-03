@@ -3406,9 +3406,20 @@ export async function runHarnessTurn(
               (part as { approvalId?: unknown }).approvalId ??
                 crypto.randomUUID(),
             );
+            // HarnessAgent's fullStream nests the call under `toolCall`
+            // (`{ approvalId, toolCall: { toolCallId, … } }`); a flat
+            // `toolCallId` is the adapter-level shape. Without the nested read
+            // the UI got an empty id and could not render the approval.
+            const approvalPart = part as {
+              toolCall?: { toolCallId?: unknown };
+              toolCallId?: unknown;
+            };
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
+              approvalPart.toolCall?.toolCallId ?? approvalPart.toolCallId ?? "",
             );
+            if (!toolCallId) {
+              throw new Error("Tool approval request is missing its tool call id.");
+            }
             closeReasoning();
             if (textId !== undefined) {
               emitTextEnd(writer, textId);

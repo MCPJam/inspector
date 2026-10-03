@@ -334,6 +334,17 @@ describe("runHarnessTurn local continuity", () => {
     expect(harnessState.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session", continueFrom: expect.any(Object) }));
   });
 
+  it("maps HarnessAgent's nested approval toolCall onto the UI approval", async () => {
+    // HarnessAgent's fullStream shape; the flat `toolCallId` is adapter-level.
+    harnessState.streamParts = [{
+      type: "tool-approval-request", approvalId: "approval-1",
+      toolCall: { toolCallId: "call-1", toolName: "bash", input: { command: "ls" } },
+    }];
+    const result = await runHarnessTurn(baseOptions() as any, "ui");
+    const stream = await result.response!.text();
+    expect(stream).toContain('"type":"tool-approval-request","approvalId":"approval-1","toolCallId":"call-1"');
+  });
+
   it("retains state after committing a paused approval", async () => {
     harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
     await runHarnessTurn(baseOptions() as any, "none");
