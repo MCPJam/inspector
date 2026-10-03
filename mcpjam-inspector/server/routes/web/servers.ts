@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
-import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import {
+  HOSTED_MODE,
+  WEB_CONNECT_TIMEOUT_MS,
+  WEB_SERVER_CHECK_DEADLINE_MS,
+} from "../../config.js";
+import { withinToolListingBudget } from "../../utils/within-budget.js";
 import {
   mapRuntimeError,
   webErrorFromRoute,
@@ -48,7 +53,15 @@ servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
     projectServerSchema,
-    (manager, body) => validateServerCore(c, manager, body),
+    // Hosted, bounded by the Connect button's own deadline (counted from the
+    // request's arrival, queue wait included); on expiry the ephemeral
+    // connection's cleanup stops the stuck connect.
+    (manager, body) =>
+      withinToolListingBudget(
+        validateServerCore(c, manager, body),
+        remainingServerCheckBudget(c.get("serverCheckStartedAt")),
+        () => `"${body.serverId}"`,
+      ),
     {
       timeoutMs: WEB_CONNECT_TIMEOUT_MS,
       ...(HOSTED_MODE
@@ -57,6 +70,19 @@ servers.post("/validate", async (c) =>
     },
   ),
 );
+
+/**
+ * What is left of `WEB_SERVER_CHECK_DEADLINE_MS` for a check that reached the
+ * server at `startedAt`. No start time means no server-check middleware ran
+ * (outside hosted), and then no deadline.
+ */
+export function remainingServerCheckBudget(
+  startedAt: number | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (startedAt === undefined) return undefined;
+  return Math.max(0, WEB_SERVER_CHECK_DEADLINE_MS - (now - startedAt));
+}
 
 /**
  * Connect-and-inspect core shared by POST /api/web/servers/validate and the
