@@ -2,14 +2,16 @@ import { useMemo, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { ClientSelector } from "@/components/chat-v2/chat-input/client-selector";
-import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  ModelSelector,
+  type ModelSelectorRowEfforts,
+} from "@/components/chat-v2/chat-input/model-selector";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
-import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
-import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
 import {
   applyHarnessModelLocks,
@@ -17,7 +19,7 @@ import {
 } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
-import { ChevronDown, CopyPlus, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   emptyModelSelection,
@@ -37,7 +39,10 @@ import {
   selectionReasoningEffort,
   setEffortForRow,
 } from "@/lib/reasoning-effort-selection";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type {
+  ModelReasoningEffort,
+  ModelSelection as SavedModelSelection,
+} from "@mcpjam/sdk/browser";
 
 import type { HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
@@ -437,8 +442,9 @@ export function EvalModelChoices({
   effortEditable = true,
 }: {
   /**
-   * Show a reasoning-effort chip per explicit model. Off where the surface
-   * cannot persist a selection (the case run sheet writes model strings).
+   * Offer each model's reasoning efforts in the model menus. Off where the
+   * surface cannot persist a selection (the case run sheet writes model
+   * strings).
    */
   effortEditable?: boolean;
   inModal?: boolean;
@@ -513,28 +519,8 @@ export function EvalModelChoices({
       model,
     );
   };
-  // The catalog row a target was saved from (hosted-first for a legacy pick).
-  const rowFor = (target: ModelTarget): ModelDefinition | undefined =>
-    findModelForStoredChoice(
-      { modelId: target.modelId, selection: target.selection },
-      availableModels,
-      undefined,
-    ) ?? undefined;
-  // A new target goes right after the chip it was duplicated from.
-  const insertAfter = (key: string, added: ModelTarget) => {
-    const index = targets.findIndex((target) => modelTargetKey(target) === key);
-    emit({
-      ...value,
-      explicitTargets: [
-        ...targets.slice(0, index + 1),
-        added,
-        ...targets.slice(index + 1),
-      ],
-    });
-  };
-  // An effort a sibling target of the model already runs is not applied
-  // (the slider walks past it): two targets never share a comparisonKey, and
-  // merging them mid-drag would drop the chip being edited.
+  // An effort a sibling target of the model already runs is not applied:
+  // two targets never share a comparisonKey (the menu greys that level out).
   const replaceTarget = (key: string, next: ModelTarget) => {
     const nextKey = modelTargetKey(next);
     if (
@@ -549,132 +535,154 @@ export function EvalModelChoices({
       ),
     });
   };
+  const effortsOn = effortEditable && selectionsSupported;
   /**
-   * "Add another effort": the chip's model again, as a second target at the
-   * next supported level no target of this model uses yet. `null` when the
-   * model offers no unused level or its effort cannot be saved here.
+   * The target a pick of `row` at `effort` saves (`base` is the selection it
+   * keeps, when the pick stays on the same model), or null when an effort
+   * can't be saved for this row here (a bare-id model on your own key).
    */
-  const anotherEffortTarget = (
-    target: ModelTarget,
-    row: ModelDefinition | undefined,
+  const targetAt = (
+    row: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+    base?: SavedModelSelection,
   ): ModelTarget | null => {
-    if (!row || !effortEditable || !selectionsSupported) return null;
-    const options = reasoningEffortOptions(
-      row,
-      reasoningEffortRouteForRow(row),
-      harness?.harnessId as Harness | undefined,
-    );
-    if (options.length === 0) return null;
-    const used = new Set<ModelReasoningEffort | undefined>(
-      targets
-        .filter((other) => other.modelId === target.modelId)
-        .map((other) => selectionReasoningEffort(other.selection)),
-    );
-    const current = selectionReasoningEffort(target.selection);
-    const start = current === undefined ? 0 : options.indexOf(current) + 1;
-    const next = [...options.slice(start), ...options.slice(0, start)].find(
-      (level) => !used.has(level),
-    );
-    if (next === undefined) return null;
     const write = setEffortForRow({
       row,
-      selection: target.selection,
-      effort: next,
+      selection: base,
+      effort,
       purpose: "evalTarget",
     });
-    if (!write?.selection) return null;
-    const added = modelTarget(write.modelId, write.selection);
-    return targets.some(
-      (other) => modelTargetKey(other) === modelTargetKey(added),
-    )
-      ? null
-      : added;
+    return write ? modelTarget(write.modelId, write.selection) : null;
+  };
+  /**
+   * The efforts a menu offers for `row`. `current` is the target the menu
+   * edits (absent for "Add model" and the client's own model); its own key
+   * never counts as taken, so its current level stays pickable.
+   */
+  const effortsFor =
+    (current?: ModelTarget) =>
+    (row: ModelDefinition): ModelSelectorRowEfforts | undefined => {
+      if (!effortsOn) return undefined;
+      const levels = reasoningEffortOptions(
+        row,
+        reasoningEffortRouteForRow(row),
+        harness?.harnessId as Harness | undefined,
+      );
+      if (levels.length === 0 || !targetAt(row, levels[0])) return undefined;
+      const sameModel = current?.modelId === String(row.id);
+      const base = sameModel ? current?.selection : undefined;
+      const currentKey = current ? modelTargetKey(current) : undefined;
+      const takenKeys = new Set(
+        targets
+          .map((target) => modelTargetKey(target))
+          .filter((key) => key !== currentKey),
+      );
+      return {
+        levels,
+        ...(sameModel
+          ? { current: selectionReasoningEffort(current?.selection) ?? null }
+          : {}),
+        isTaken: (effort) => {
+          const next = targetAt(row, effort, base);
+          return next !== null && takenKeys.has(modelTargetKey(next));
+        },
+      };
+    };
+  // A model "Add model" can still add: one with an effort left to pick, or
+  // (no efforts) one that is not picked yet.
+  const addable = (model: ModelDefinition) => {
+    const efforts = effortsFor()(model);
+    if (!efforts) {
+      return !choices.some(
+        (choice) => String(choice.model.id) === String(model.id),
+      );
+    }
+    return [undefined, ...efforts.levels].some(
+      (level) => !efforts.isTaken?.(level),
+    );
   };
   return (
     <div data-testid={testId} className="space-y-1">
-      {choices.map(({ key, model, inherited, target }) => (
-        <div key={key} className="flex min-w-0 items-start">
-          <ModelSelector
-            inModal={inModal}
-            currentModel={model}
-            availableModels={availableModels}
-            disabled={disabled}
-            analyticsLocation="eval_suite"
-            workload="evalTarget"
-            onModelChange={(next) => changeChoice(key, inherited, next)}
-            trigger={
+      {choices.map(({ key, model, inherited, target }) => {
+        const effort = selectionReasoningEffort(target?.selection);
+        return (
+          <div key={key} className="flex min-w-0 items-start">
+            <ModelSelector
+              inModal={inModal}
+              currentModel={model}
+              availableModels={availableModels}
+              disabled={disabled}
+              analyticsLocation="eval_suite"
+              workload="evalTarget"
+              onModelChange={(next) => changeChoice(key, inherited, next)}
+              rowEfforts={effortsFor(target)}
+              onModelEffortSelect={(row, level) => {
+                const next = targetAt(
+                  row,
+                  level,
+                  target?.modelId === String(row.id)
+                    ? target.selection
+                    : undefined,
+                );
+                if (!next) return;
+                // Only this target changes; a sibling effort stays. The
+                // client's own model becomes an explicit pick, as a model
+                // change there already does.
+                if (inherited || !target) {
+                  emit(
+                    {
+                      includeClientDefaults: false,
+                      explicitTargets: [...targets, next],
+                    },
+                    row,
+                  );
+                } else {
+                  replaceTarget(key, next);
+                }
+              }}
+              trigger={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled}
+                  className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
+                >
+                  <ProviderLogo
+                    provider={model.provider}
+                    customProviderName={model.customProviderName}
+                    className="size-4 shrink-0"
+                  />
+                  <span className="min-w-0 flex-1 break-words">
+                    {compactModelLabel(model.name)}
+                    {effort ? (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        {reasoningEffortLabel(effort)}
+                      </span>
+                    ) : null}
+                  </span>
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                </Button>
+              }
+            />
+            {choices.length > 1 ? (
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 disabled={disabled}
-                className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
+                className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                aria-label={`Remove ${model.name} model`}
+                title={`Remove ${model.name} model`}
+                onClick={() => changeChoice(key, inherited)}
               >
-                <ProviderLogo
-                  provider={model.provider}
-                  customProviderName={model.customProviderName}
-                  className="size-4 shrink-0"
-                />
-                <span className="min-w-0 flex-1 break-words">
-                  {compactModelLabel(model.name)}
-                </span>
-                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                <X className="size-3.5" />
               </Button>
-            }
-          />
-          {!inherited && target && effortEditable ? (
-            <SelectionEffortControl
-              variant="suffix"
-              row={rowFor(target)}
-              selection={target.selection}
-              purpose="evalTarget"
-              selectionsSupported={selectionsSupported}
-              harness={harness?.harnessId as Harness | undefined}
-              disabled={disabled}
-              disabledReason="Editing is disabled."
-              hint={`Applies to ${compactModelLabel(model.name)}`}
-              onChange={(write) =>
-                // Only this target changes; a sibling effort stays.
-                replaceTarget(key, modelTarget(write.modelId, write.selection))
-              }
-            />
-          ) : null}
-          {!inherited && target
-            ? (() => {
-                const another = anotherEffortTarget(target, rowFor(target));
-                return another ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    disabled={disabled}
-                    className="size-8 shrink-0 text-muted-foreground"
-                    aria-label={`Add another effort of ${model.name}`}
-                    title="Add another effort"
-                    data-testid={`${testId}-add-effort`}
-                    onClick={() => insertAfter(key, another)}
-                  >
-                    <CopyPlus className="size-3.5" />
-                  </Button>
-                ) : null;
-              })()
-            : null}
-          {choices.length > 1 ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              disabled={disabled}
-              className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-              aria-label={`Remove ${model.name} model`}
-              title={`Remove ${model.name} model`}
-              onClick={() => changeChoice(key, inherited)}
-            >
-              <X className="size-3.5" />
-            </Button>
-          ) : null}
-        </div>
-      ))}
+            ) : null}
+          </div>
+        );
+      })}
       <ModelSelector
         inModal={inModal}
         currentModel={{
@@ -682,12 +690,7 @@ export function EvalModelChoices({
           name: "Add model",
           provider: "unknown",
         }}
-        availableModels={availableModels.filter(
-          (model) =>
-            !choices.some(
-              (choice) => String(choice.model.id) === String(model.id),
-            ),
-        )}
+        availableModels={availableModels.filter(addable)}
         disabled={disabled}
         analyticsLocation="eval_suite"
         workload="evalTarget"
@@ -700,6 +703,13 @@ export function EvalModelChoices({
             model,
           )
         }
+        rowEfforts={effortsFor()}
+        onModelEffortSelect={(row, level) => {
+          const next = targetAt(row, level);
+          if (next) {
+            emit({ ...value, explicitTargets: [...targets, next] }, row);
+          }
+        }}
         trigger={
           <Button
             type="button"
