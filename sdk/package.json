@@ -158,7 +158,7 @@
     "@modelcontextprotocol/server": "2.2.0",
     "@modelcontextprotocol/server-everything": "^2026.8.31",
     "@sentry/cli": "^2.58.4",
-    "@sentry/node": "^8.55.0",
+    "@sentry/node": "^11.1.0",
     "@types/jest": "^29.5.12",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^20.11.0",
@@ -179,25 +179,25 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "^3.0.101",
-    "@ai-sdk/anthropic": "^2.0.17",
-    "@ai-sdk/azure": "^2.0.79",
-    "@ai-sdk/deepseek": "^1.0.5",
-    "@ai-sdk/google": "^2.0.11",
-    "@ai-sdk/mistral": "^2.0.19",
-    "@ai-sdk/openai": "^2.0.32",
-    "@ai-sdk/xai": "^2.0.29",
+    "@ai-sdk/amazon-bedrock": "^5.0.103",
+    "@ai-sdk/anthropic": "^4.0.70",
+    "@ai-sdk/azure": "^4.0.87",
+    "@ai-sdk/deepseek": "^3.0.58",
+    "@ai-sdk/google": "^4.0.87",
+    "@ai-sdk/mistral": "^4.0.56",
+    "@ai-sdk/openai": "^4.0.83",
+    "@ai-sdk/xai": "^5.0.14",
     "@cfworker/json-schema": "^4.1.1",
     "@mcpjam/evaluators": "^0.4.0",
     "@modelcontextprotocol/client": "2.2.0",
-    "@modelcontextprotocol/ext-apps": "^1.7.4",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@noble/hashes": "^2.4.0",
-    "@openrouter/ai-sdk-provider": "^2.2.0",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
     "@xmldom/xmldom": "^0.8.13",
-    "ai": "^6.0.141",
+    "ai": "^7.0.124",
     "ajv": "^8.20.0",
     "jszip": "^3.10.2",
-    "ollama-ai-provider-v2": "^1.5.2",
+    "ollama-ai-provider-v2": "^4.0.1",
     "posthog-node": "^5.54.1",
     "xml-crypto": "^6.3.2",
     "xpath": "^0.0.34",
@@ -205,7 +205,7 @@
     "zod": "^4.2.0"
   },
   "peerDependencies": {
-    "@sentry/node": "^8.55.0"
+    "@sentry/node": "^11.1.0"
   },
   "peerDependenciesMeta": {
     "@sentry/node": {
