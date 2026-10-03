@@ -14,6 +14,7 @@ import {
   networkAccessLinks,
 } from "./access-link.mjs";
 import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
+import { computeInstanceEnv } from "./runtime-profile.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -921,6 +922,27 @@ async function main() {
       process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
     const baseHost = process.env.HOST || defaultHost;
     envVars.BASE_URL = `http://${baseHost}:${PORT}`;
+    // This instance's own addresses. The packaged server serves the app
+    // itself, so the browser port IS the server port: it names this
+    // instance's session namespace, and the public callback origins (CLI
+    // login, Slack/Discord linking) follow it. A configured NON-loopback
+    // origin is a deliberate public deployment and is kept; a loopback one
+    // from another port never survives `--port`.
+    const instanceEnv = computeInstanceEnv({
+      ports: { server: Number(PORT) },
+      browserPort: Number(PORT),
+      host: baseHost,
+      profile: process.env,
+    });
+    for (const key of [
+      "MCPJAM_BROWSER_PORT",
+      "CLI_AUTH_PUBLIC_ORIGIN",
+      "SLACK_LINK_PUBLIC_ORIGIN",
+      "DISCORD_LINK_PUBLIC_ORIGIN",
+    ]) {
+      envVars[key] = instanceEnv[key];
+    }
+    verboseInfo(`Browser origin ${envVars.CLI_AUTH_PUBLIC_ORIGIN}`);
     Object.assign(process.env, envVars);
   } catch (error) {
     logError(`Port configuration failed: ${error.message}`);

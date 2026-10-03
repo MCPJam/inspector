@@ -15,6 +15,26 @@ export interface ProbeFreePortOptions {
 }
 
 /**
+ * The port probing starts from: `SERVER_PORT` when the environment names a
+ * valid one, else `fallback`.
+ *
+ * `scripts/electron-dev.mjs` sets it to the free port it already pointed the
+ * renderer's `/api` proxy at, so main and renderer agree on which embedded
+ * server the window talks to. A packaged app honours an operator's
+ * `SERVER_PORT` the same way. Anything else (unset, empty, not a port) keeps
+ * the long-standing default.
+ */
+export function resolveServerStartPort(
+  env: NodeJS.ProcessEnv,
+  fallback: number,
+): number {
+  const raw = env.SERVER_PORT?.trim() ?? "";
+  if (!/^\d+$/.test(raw)) return fallback;
+  const port = Number(raw);
+  return port >= 1 && port <= 65535 ? port : fallback;
+}
+
+/**
  * Probe `startPort`, `startPort + 1`, ..., up to `maxAttempts` total, looking
  * for one that is free to bind on `hostname`. Returns the first port that
  * binds successfully (immediately closing the probe server before returning).

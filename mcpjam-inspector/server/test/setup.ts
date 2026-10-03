@@ -8,6 +8,12 @@
  */
 import { vi, afterEach, beforeAll, afterAll } from "vitest";
 
+// The default guest authority is the hosted Inspector (`app.mcpjam.com`). A
+// test that reaches a guest route without stubbing `fetch` must never mint a
+// real guest in production, so the default points at a name that cannot
+// resolve. Tests that assert the real default delete this first.
+process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN ??= "https://guest-authority.invalid";
+
 const isCI = process.env.CI === "true";
 const isVerbose = process.env.VERBOSE_TESTS === "1";
 const shouldSuppressConsole = !isCI && !isVerbose;
