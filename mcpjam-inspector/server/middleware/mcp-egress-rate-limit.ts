@@ -193,6 +193,9 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
         intent: metadata?.intent ?? "manual",
         resumed: metadata?.resumed ?? false,
       });
+      // When the request arrived, queue wait included: the hosted Connect
+      // route counts its deadline from here (`WEB_SERVER_CHECK_DEADLINE_MS`).
+      c.set("serverCheckStartedAt", started);
       await serverCheckScope.run(signal, next);
       if (preempted) return refused(c, "SERVER_CHECK_PREEMPTED", 409);
       if (leaseFailed) return refused(c, "SERVER_CHECK_QUEUE_UNAVAILABLE", 503);
