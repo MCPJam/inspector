@@ -1,0 +1,183 @@
+name: Ask MCPJam smoke
+
+# One signed-in Ask MCPJam turn through a SELF-HOSTED Inspector with NO
+# `INSPECTOR_SERVICE_TOKEN` — the configuration every npx, Docker, desktop and
+# source install runs, and the one nothing we ran used to look like. Since
+# v3.12.2 that configuration refused every agent turn for a week without
+# paging anyone (PLB-189); this is the guard against it coming back.
+#
+# Runs three ways:
+#   - nightly, from main, against STAGING (built from source);
+#   - from release.yml BEFORE publish-packages, against staging, on the
+#     release's own packed build (`source: artifact`) — a failure stops npm;
+#   - from release.yml AFTER publish, against PRODUCTION, on the version that
+#     was just published (`npx`-style install from npm).
+#
+# The script (.github/scripts/ask-mcpjam-smoke.mjs) explains what a pass
+# proves. Failures post to #mcpjam-alerts through the same webhook the prod
+# canary uses.
+#
+# Needs a dedicated canary user that has signed in once (so it has a project):
+#   vars.ASK_MCPJAM_CANARY_EMAIL         the user, in both WorkOS environments
+#   secrets.ASK_MCPJAM_CANARY_PASSWORD   optional; selects the password grant,
+#                                        else the run mints a Magic Auth code
+#   secrets.STAGING_WORKOS_API_KEY       already used by pr-preview.yml
+#   secrets.PRODUCTION_WORKOS_API_KEY    production runs only
+# Like the prod canary's v1 probe, a run with no canary configured is skipped
+# and says so rather than failing — it is not a pass.
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which backend the Inspector talks to"
+        type: choice
+        options: [staging, production]
+        default: staging
+      npm_spec:
+        description: "Install this from npm (e.g. @mcpjam/inspector@3.13.0) instead of building main"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        required: true
+      # `build` (from this checkout), `artifact` (the calling release's
+      # npm-dists), or `npm` (install `npm_spec` from the registry).
+      source:
+        type: string
+        required: true
+      npm_spec:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  NODE_VERSION: "24.14.0"
+  TARGET: ${{ inputs.target || 'staging' }}
+  SOURCE: ${{ inputs.source || (inputs.npm_spec != '' && 'npm') || 'build' }}
+  NPM_SPEC: ${{ inputs.npm_spec }}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Is a canary configured?
+        id: config
+        env:
+          CANARY_EMAIL: ${{ vars.ASK_MCPJAM_CANARY_EMAIL }}
+          STAGING_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
+          PRODUCTION_KEY: ${{ secrets.PRODUCTION_WORKOS_API_KEY }}
+        run: |
+          key="$STAGING_KEY"
+          [ "$TARGET" = "production" ] && key="$PRODUCTION_KEY"
+          if [ -z "$CANARY_EMAIL" ] || [ -z "$key" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            msg="Ask MCPJam smoke SKIPPED for $TARGET: set vars.ASK_MCPJAM_CANARY_EMAIL and the $TARGET WorkOS API key secret. This is not a pass."
+            echo "::warning::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.config.outputs.ok == 'true' && env.SOURCE != 'npm'
+        run: npm ci --legacy-peer-deps
+
+      - name: Build packages from this checkout
+        if: steps.config.outputs.ok == 'true' && env.SOURCE == 'build'
+        run: |
+          npm run build -w @mcpjam/evaluators
+          npm run build -w @mcpjam/sdk
+          npm run build -w @mcpjam/inspector
+        env:
+          MCPJAM_BUILD_SURFACE: npm
+
+      # The exact dist build-packages smoked and is about to publish.
+      - name: Download the release's package dists
+        if: steps.config.outputs.ok == 'true' && env.SOURCE == 'artifact'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-dists
+          path: .
+
+      - name: Pack the Inspector and the workspace packages it depends on
+        id: pack
+        if: steps.config.outputs.ok == 'true' && env.SOURCE != 'npm'
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/packs"
+          mkdir -p "$dest"
+          tarballs=""
+          for ws in @mcpjam/evaluators @mcpjam/sdk @mcpjam/inspector; do
+            file=$(npm pack --json --pack-destination "$dest" -w "$ws" | jq -r '.[0].filename')
+            case "$file" in /*) ;; *) file="$dest/$file" ;; esac
+            tarballs="$tarballs $file"
+          done
+          echo "tarballs=$tarballs" >> "$GITHUB_OUTPUT"
+
+      - name: Run one tokenless Ask MCPJam turn
+        id: smoke
+        if: steps.config.outputs.ok == 'true'
+        env:
+          INSPECTOR_TARBALLS: ${{ steps.pack.outputs.tarballs }}
+          INSPECTOR_NPM_SPEC: ${{ env.SOURCE == 'npm' && env.NPM_SPEC || '' }}
+          ASK_MCPJAM_CANARY_EMAIL: ${{ vars.ASK_MCPJAM_CANARY_EMAIL }}
+          ASK_MCPJAM_CANARY_PASSWORD: ${{ secrets.ASK_MCPJAM_CANARY_PASSWORD }}
+          WORKOS_API_KEY: ${{ env.TARGET == 'production' && secrets.PRODUCTION_WORKOS_API_KEY || secrets.STAGING_WORKOS_API_KEY }}
+          # Staging overrides the production values the package ships in its
+          # `.env.production`; production runs leave them unset so the
+          # Inspector boots on exactly what a user's install does.
+          WORKOS_CLIENT_ID: ${{ env.TARGET == 'staging' && vars.STAGING_WORKOS_CLIENT_ID || '' }}
+          CONVEX_URL: ${{ env.TARGET == 'staging' && vars.STAGING_VITE_CONVEX_URL || '' }}
+          CONVEX_HTTP_URL: ${{ env.TARGET == 'staging' && vars.STAGING_CONVEX_HTTP_URL || '' }}
+        run: |
+          # Empty values must be ABSENT, not empty, or they would shadow the
+          # packaged `.env.production` (dotenv never overrides a set var).
+          for name in WORKOS_CLIENT_ID CONVEX_URL CONVEX_HTTP_URL INSPECTOR_NPM_SPEC; do
+            if [ -z "${!name}" ]; then unset "$name"; fi
+          done
+          node .github/scripts/ask-mcpjam-smoke.mjs
+
+      - name: Post the failure to Slack
+        if: failure() && steps.config.outputs.ok == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WHAT: ${{ env.SOURCE == 'npm' && env.NPM_SPEC || format('{0} build of {1}', env.SOURCE, github.sha) }}
+        run: |
+          set -uo pipefail
+          if [ "$TARGET" = "production" ]; then
+            headline=":rotating_light: Ask MCPJam smoke FAILED against production on the version just published to npm ($WHAT). Self-hosted users (npx, Docker, desktop) are likely unable to use Ask MCPJam."
+          elif [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            headline=":rotating_light: Nightly Ask MCPJam smoke FAILED against staging ($WHAT). The next release would ship a self-hosted Inspector whose agent does not work."
+          else
+            headline=":rotating_light: Ask MCPJam smoke FAILED against staging ($WHAT). The release stopped before publishing to npm."
+          fi
+          body=$(printf '%s\n\nA signed-in turn through a self-hosted Inspector with no INSPECTOR_SERVICE_TOKEN did not stream text and finish. The run log has the reason.\n\n<%s|Smoke run>' "$headline" "$RUN_URL")
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::error::Ask MCPJam smoke failed but SLACK_ALERTS_WEBHOOK_URL is not set."
+            echo "$body"
+            exit 1
+          fi
+          # `-f`: a 4xx/5xx from Slack must fail this step, not claim delivery.
+          jq -n --arg text "$body" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"

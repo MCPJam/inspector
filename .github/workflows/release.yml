@@ -536,12 +536,40 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # One signed-in Ask MCPJam turn through THIS release's packed Inspector,
+  # self-hosted and with no INSPECTOR_SERVICE_TOKEN — what every npx, Docker
+  # and desktop user runs — against staging. Gates publish-packages: v3.12.2
+  # shipped an Inspector whose agent refused every turn on exactly that
+  # configuration, and nothing we ran before publishing looked like it.
+  # Ordered after the backend deploy so a backend that does not accept the
+  # claim yet never meets a client that sends it.
+  ask-mcpjam-smoke-staging:
+    needs:
+      - preflight
+      - build-packages
+      - deploy-backend-prod
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.build-packages.result == 'success' &&
+      needs.preflight.outputs.publish_inspector == 'true' &&
+      (
+        !fromJSON(inputs.deploy_backend_prod) ||
+        needs.deploy-backend-prod.result == 'success'
+      )
+    uses: ./.github/workflows/ask-mcpjam-smoke.yml
+    with:
+      target: staging
+      source: artifact
+    secrets: inherit
+
   publish-packages:
     needs:
       - preflight
       - artifact-gate
       - build-packages
       - deploy-backend-prod
+      - ask-mcpjam-smoke-staging
     # Publishing is gated on the backend deployment because a released client
     # can start sending a new field the moment it lands on npm. Shipping the
     # Convex schema first means the window where a fresh client talks to a
@@ -558,6 +586,10 @@ jobs:
       needs.artifact-gate.result == 'success' &&
       needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
+      (
+        needs.preflight.outputs.publish_inspector != 'true' ||
+        needs.ask-mcpjam-smoke-staging.result == 'success'
+      ) &&
       (
         !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
@@ -728,6 +760,25 @@ jobs:
             }
 
             core.setFailed("Timed out waiting for backend production deployment to finish.");
+
+  # The same turn against PRODUCTION, on the version npm now serves, installed
+  # the way `npx @mcpjam/inspector@<version>` installs it. Nothing can be
+  # unpublished by then; this exists so a broken self-hosted agent pages
+  # #mcpjam-alerts within minutes of the release rather than a week later.
+  ask-mcpjam-smoke-production:
+    needs:
+      - preflight
+      - publish-packages
+    if: |
+      always() &&
+      needs.publish-packages.result == 'success' &&
+      needs.preflight.outputs.inspector_version != ''
+    uses: ./.github/workflows/ask-mcpjam-smoke.yml
+    with:
+      target: production
+      source: npm
+      npm_spec: "@mcpjam/inspector@${{ needs.preflight.outputs.inspector_version }}"
+    secrets: inherit
 
   # The production deploy itself lives in deploy-webapp.yml so it can also be
   # dispatched on its own — a release is not the only reason to ship or roll
