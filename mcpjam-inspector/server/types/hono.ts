@@ -11,6 +11,12 @@ declare module "hono" {
   interface ContextVariableMap {
     bridgeCaller?: "local" | "tunnel";
     guestId?: string;
+    /**
+     * `Date.now()` when a hosted server check reached the server, before its
+     * queue wait. Set by the server-check middleware; the hosted Connect route
+     * counts `WEB_SERVER_CHECK_DEADLINE_MS` from it. Absent outside hosted.
+     */
+    serverCheckStartedAt?: number;
     requestLogContext?: RequestLogContext;
     /**
      * Code + message from the last `webError()` on this request. Set so
