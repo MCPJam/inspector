@@ -413,12 +413,16 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
     const tSusp = performance.now();
     const cont = await sessionRef.s.suspendTurn();
     sessionRef.s = await agent.createSession({ sessionId: sessionRef.s.sessionId, continueFrom: cont });
+    // Since `@ai-sdk/harness` 1.0.117 a continuation is the bare approval
+    // response; the paused tool call is recovered from the session state. The
+    // old `{ approvalResponse, toolCall }` wrapper has no top-level
+    // `approvalId`, so the bridge never gets the answer and the turn waits
+    // until the session's wall-clock ceiling.
     res = await agent.continueStream({
       session: sessionRef.s,
-      toolApprovalContinuations: [{
-        approvalResponse: { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
-        toolCall: { type: "tool-call", toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.input },
-      }],
+      toolApprovalContinuations: [
+        { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
+      ],
     });
     console.log(`[conformance] ${label}: suspend+continue took ${Math.round(performance.now() - tSusp)}ms`);
     stream = res.fullStream;
@@ -529,7 +533,6 @@ async function main() {
         mcpJson: { mcpServers: { delivery_probe: { type: "http", url: deliveryMcp.url } } },
       })
     : createClaudeCodeHarness({
-    model: "haiku",
     auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: gatewayUrl },
     thinking: { type: "disabled" },
     env: {
@@ -540,6 +543,9 @@ async function main() {
   });
   const agent: any = new HarnessAgent({
     harness: await withLocalPackBootstrap(harness, plan.runtime.rootPath) as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "You are running a conformance check.",
+    // The model rides on the agent: the adapter no longer reads one at
+    // construction. Both branches above are the haiku family.
+    model: "haiku",
     // Work-dir layout: "project" is the symlink to the granted workspace inside
     // session state, so Claude Code's cwd resolves to the user's checkout.
     sandboxConfig: { workDir: "project" },

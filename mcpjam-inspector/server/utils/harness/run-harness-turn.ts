@@ -2210,10 +2210,16 @@ export async function runHarnessTurn(
       // uses the same one).
       // (permissionMode was computed above, before the runtime fingerprint.)
 
-      // The adapter maps the host modelId to the harness's native model and
-      // constructs it (for Claude Code: the gateway `creator/model` id becomes a
-      // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
-      // do zero inference). Returns the HarnessAgent boundary type directly.
+      // The adapter maps the host modelId to the harness's native model (for
+      // Claude Code: the gateway `creator/model` id becomes a CLI-native alias
+      // `sonnet|opus|haiku`; the raw gateway id makes the CLI do zero
+      // inference). That model rides on `HarnessAgent` below, not on
+      // `createHarness`: the AI SDK adapters removed their deprecated
+      // construction-time `model` setting (harness 1.0.108), so a model handed
+      // only to the adapter would silently run the runtime's default model.
+      const nativeModel = harnessAdapter.toNativeModel?.(modelId);
+
+      // `createHarness` returns the HarnessAgent boundary type directly.
       //
       // Narrowed on the delivery MECHANISM rather than called through the
       // union: a `session-config` adapter's `createHarness` REQUIRES `mcpJson`
@@ -2318,6 +2324,7 @@ export async function runHarnessTurn(
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
+        ...(nativeModel ? { model: nativeModel } : {}),
         ...(localPrepared
           ? { sandboxConfig: { workDir: localPrepared.sandboxWorkDir } }
           : {}),

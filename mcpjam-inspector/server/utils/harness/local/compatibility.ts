@@ -12,7 +12,7 @@
  * whatever mode the SDK defaults to".
  *
  * ── Why Codex is not native-eligible ──────────────────────────────────────
- * Verified against the pinned packages: `@ai-sdk/harness-codex@1.0.98`
+ * Verified against the pinned packages: `@ai-sdk/harness-codex@1.0.119`
  * declares `supportsBuiltinToolApprovals: false` and rejects every permission
  * mode except `allow-all`, starting Codex unrestricted. That configuration
  * assumes the AI SDK sandbox provider IS the security boundary. A supervised
@@ -183,7 +183,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
 > = {
   "claude-code": {
     harnessId: "claude-code",
-    adapterVersion: "1.0.100",
+    adapterVersion: "1.0.121",
     runtime: {
       source: "managed-bundle",
       bundleName: "claude-code",
@@ -243,7 +243,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
   },
   codex: {
     harnessId: "codex",
-    adapterVersion: "1.0.98",
+    adapterVersion: "1.0.119",
     runtime: {
       source: "managed-bundle",
       bundleName: "codex",

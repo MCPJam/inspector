@@ -838,11 +838,11 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("claude-code"),
   supportsModel: supportsModelFor("claude-code"),
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, mcpJson }) {
-    const nativeModel = toClaudeCodeModel(modelId);
+  // No `model` here: the adapter no longer reads one at construction. The
+  // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
+  createHarness({ auth, mcpJson }) {
     return createClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
-      ...(nativeModel ? { model: nativeModel } : {}),
       auth,
       // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
       // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects
@@ -949,15 +949,12 @@ const codexExecAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth }) {
-    const nativeModel = toCodexModel(modelId);
+  createHarness({ auth }) {
     // Same dual-`ai` boundary cast as Claude Code. `auth.openaiCompatible` is
     // accepted by createCodex — the broker dummy auth always carries an
-    // explicit baseUrl so the CLI never reads the host env for it.
-    return createCodex({
-      ...(nativeModel ? { model: nativeModel } : {}),
-      auth,
-    }) as unknown as HarnessAgentAdapter;
+    // explicit baseUrl so the CLI never reads the host env for it. No `model`,
+    // for the same reason as Claude Code: the turn puts it on `HarnessAgent`.
+    return createCodex({ auth }) as unknown as HarnessAgentAdapter;
   },
 };
 

@@ -51,8 +51,8 @@ Per harness:
 
 | Harness     | Native                   | Why                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
-| codex       | **Never**                | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
+| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.121` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
+| codex       | **Never**                | `@ai-sdk/harness-codex@1.0.119` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
 | cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
 `isolatedBackends` is empty for every harness: no backend has passed escape
