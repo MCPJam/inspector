@@ -45,6 +45,7 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -2020,11 +2021,21 @@ export async function createAuthorizedManager(
           // builder that didn't thread the issuer (only callers holding the
           // request `Context` can resolve it). Fail loud here rather than
           // connecting tokenless and surfacing a confusing downstream 401.
-          throw new WebRouteError(
+          //
+          // Always MCPJam's own bug, so it is declared ours: the origin it
+          // carries reaches `http.request.failed`, where the MCPJam-fault
+          // monitor alerts on it.
+          const missingIssuer = new WebRouteError(
             500,
             ErrorCode.INTERNAL_ERROR,
             `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`,
           );
+          missingIssuer.origin = reportRouteFailure(
+            "[xaa] connect surface did not pass the issuer",
+            missingIssuer,
+            { source: "web.auth.xaa-issuer-missing", hop: "mcpjam_internal" },
+          ).origin;
+          throw missingIssuer;
         }
         let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
         if (
