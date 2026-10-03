@@ -557,10 +557,12 @@ using it as evidence:
   set it. That is what makes it trustworthy — and also why everything launched
   through the public API is `API`: from the server's side, a CLI run, a GitHub
   Actions job and an agent's MCP call are all API calls.
-- **Declared.** The launching process says which of those it is. The CLI declares
-  `CLI` (or `GitHub` inside an Actions job, with the commit, PR, and branch
-  filling the GitHub provenance columns); the hosted MCP worker declares `MCP`
-  and names the calling agent. Hovering a declared badge says so.
+- **Declared.** The launching process says which of those it is. The CLI always
+  declares `CLI` — even inside a GitHub Actions workflow. The `GitHub` badge
+  means the MCPJam GitHub App, not a workflow calling `mcpjam cloud eval run`.
+  CI provenance (commit, PR, branch) is still recorded in the CI envelope and
+  populates the provenance columns. The hosted MCP worker declares `MCP` and
+  names the calling agent. Hovering a declared badge says so.
 
 A declared origin is a label, not proof, so nothing is authorized on the
 strength of it. Alongside both, the platform records the credential the request
