@@ -148,7 +148,7 @@ describe("Ask MCPJam failure tracker", () => {
     );
   });
 
-  it("treats WebKit's mid-stream \"Load failed\" as a disconnect, not an incident", async () => {
+  it('treats WebKit\'s mid-stream "Load failed" as a disconnect, not an incident', async () => {
     // The SDK only flags isDisconnect for a TypeError naming fetch/network.
     const { tracker, report } = await request(sse([{ type: "start" }]));
     tracker.noteError(new TypeError("Load failed"));
@@ -183,6 +183,30 @@ describe("Ask MCPJam failure tracker", () => {
     tracker.onFinish({ isAbort: false, isDisconnect: false, isError: true });
 
     expect(report).not.toHaveBeenCalled();
+  });
+
+  it("keeps an uncaptured error chunk an incident when the socket also drops", async () => {
+    const { tracker, report } = await request(
+      sse([
+        { type: "start" },
+        {
+          type: "data-trace-event",
+          data: { type: "error", errorText: "boom", captured: false },
+          transient: true,
+        },
+        { type: "error", errorText: "boom" },
+      ]),
+    );
+    tracker.noteError(new TypeError("network error"));
+    tracker.onFinish({ isAbort: false, isDisconnect: true, isError: true });
+
+    expect(report).toHaveBeenCalledTimes(1);
+    const options = (report.mock.calls[0] as unknown[])[2] as {
+      agent: { source: string; pageClass?: string };
+    };
+    // The server's failure, seen first: not demoted to a routine disconnect.
+    expect(options.agent.source).toBe("stream_error");
+    expect(options.agent.pageClass).toBeUndefined();
   });
 
   it("captures an error chunk the server did not", async () => {

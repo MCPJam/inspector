@@ -211,12 +211,14 @@ export function createAgentFailureTracker(report: Report = reportChatFailure) {
       // flags a disconnect for a TypeError that says "fetch"/"network", so a
       // body read that dies with WebKit's "Load failed" is caught here too: a
       // TypeError under a 2xx with no error chunk is the connection, not us.
+      // An error chunk the stream already delivered outranks both: it is the
+      // server's own failure, not the connection's, even if the socket then
+      // dropped too.
       const droppedMidStream =
-        state.meta?.ok === true &&
-        state.error instanceof TypeError &&
-        !state.sawErrorChunk;
+        state.meta?.ok === true && state.error instanceof TypeError;
       const transport =
-        state.meta === null || flags.isDisconnect || droppedMidStream;
+        state.meta === null ||
+        (!state.sawErrorChunk && (flags.isDisconnect || droppedMidStream));
       const requestFailed = state.meta !== null && !state.meta.ok;
       const refusal = requestFailed ? parseRefusal(state.error?.message) : {};
       const source = transport
