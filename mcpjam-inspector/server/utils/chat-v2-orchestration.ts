@@ -28,6 +28,7 @@ import {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
   MCPClientManager,
@@ -1293,41 +1294,6 @@ export interface PrepareChatV2Result {
    * being re-derived from a partial view. See `guardPageToolRefresh`.
    */
   reservedAgainstPageTools: ReadonlySet<string>;
-}
-
-/**
- * Races a tool listing against `timeoutMs`; with no budget it is the listing.
- *
- * The listing that loses is abandoned, not cancelled — the caller's manager
- * cleanup (`disconnectAllServers`) is what stops the stuck connect. Its
- * eventual rejection is swallowed here so it cannot surface as unhandled.
- */
-async function withinToolListingBudget<T>(
-  listing: Promise<T>,
-  timeoutMs: number | undefined,
-  describeServers: () => string,
-): Promise<T> {
-  if (timeoutMs === undefined) return listing;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      listing,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          listing.catch(() => {});
-          reject(
-            new Error(
-              `MCP server ${describeServers()} timed out: connecting and listing tools took longer than ${Math.round(timeoutMs / 1000)}s.`,
-            ),
-          );
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    // Leaving the timer live would hold the event loop open for the rest of
-    // the budget on every healthy turn.
-    if (timer !== undefined) clearTimeout(timer);
-  }
 }
 
 /**
