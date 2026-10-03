@@ -37,7 +37,8 @@ rig; one `probe-*.mjs` per question). Raw wire logs were not committed.
 | `tool_timeout_sec = 0` fails every relay call in 8 ms; default is 300 s | `codex-home.ts` renders `3600` (verified to hold a 70 s call) |
 | Codex gates MCP calls itself: refused under `never`, an `mcp_tool_call` elicitation (auto-declined by the bridge) under `untrusted` | relay server gets `default_tools_approval_mode = "approve"`; MCPJam's host-side gate is the single authority for relayed tools |
 | Startup egress to github.com / api.github.com / chatgpt.com and a ~100 MB clone into each fresh `CODEX_HOME` | `[features] plugins = false` |
-| `thread/start.config.mcp_servers` **merges**; `{X: {enabled: false}}` disables X; `/etc/codex/{config,managed_config}.toml` servers are loaded | the bridge disables every MCP server a system/managed layer declares, per thread; the project layer is disabled because no project is ever trusted |
+| `thread/start.config.mcp_servers` **merges**; `{X: {enabled: false}}` disables X; `/etc/codex/{config,managed_config}.toml` servers are loaded | the bridge disables every MCP server a system/managed layer declares, per thread |
+| (b7) a `workspace-write` thread makes Codex record the cwd (or its git root) as **trusted** by itself, which loads the folder's `.codex/config.toml` servers, hooks and exec policies | every session's `CODEX_HOME` records the cwd, its real path and its git root `trust_level = "untrusted"` (`untrustedProjectPathsFor`); Codex respects the entry and never rewrites it; the Codex conformance run plants a server and fails if it starts |
 | `untrusted` asks about **every** command, `pwd` included; both `apply_patch` forms raise `fileChange` approval | product copy and comments say every command and file change prompts; no claim that reads are free |
 | explicit `workspaceWrite` policy: cwd and `$TMPDIR` writable, `/tmp` and `$HOME` not, reads allowed, all network (incl. loopback) blocked, escalation refused, fails closed when the sandbox cannot start | D2 policy as specified; unattended local Codex still refused until per-target conformance |
 | under `danger-full-access` a `setsid` child escapes the app-server's process group; under workspace-write nothing survives | local Codex never runs `danger-full-access` (the bridge refuses it under local supervision) |
@@ -146,6 +147,21 @@ With a real proxy (not the refusing one), codex also reached chatgpt.com and got
 - `thread/start {approvalPolicy:"never"}` **succeeded** but returned `approvalPolicy: "untrusted"` plus a `warning` notification: *"Configured value for `approval_policy` is disallowed by requirements; falling back to required value UnlessTrusted. ... (set by /etc/codex/requirements.toml)"*. This is a silent semantic change, not an error.
 - `config: {mcp_servers: {etc_system: {enabled:false}, etc_managed: {enabled:false}}}` disabled both. The session layer overrides even the legacy managed file.
 - No managed-config environment variable exists in 0.149.1. The binary strings contain only `CODEX_MANAGED_BY_{NPM,PNPM,BUN}` and `CODEX_MANAGED_PACKAGE_ROOT`, which are install hints. Managed config is file-based: `/etc/codex/managed_config.toml` and `/etc/codex/requirements.toml`, plus MDM on macOS.
+
+**(b7) Codex trusts a workspace-write cwd by itself** (`probe-trust.mjs`, `probe-trust-git.mjs`; 2026-10-03, darwin-arm64, 0.149.1). (b1)–(b3) ran with `sandbox: "read-only"`; every product thread uses `workspace-write`. Fresh `CODEX_HOME`, untrusted cwd holding `.codex/config.toml` with `[mcp_servers.project_planted]`, plain `thread/start`:
+
+| `sandbox` / `approvalPolicy` | `CODEX_HOME` entry seeded beforehand | trust after `thread/start` | planted server spawned |
+|---|---|---|---|
+| `read-only` / `never` | — | none | no |
+| `read-only` / `untrusted` | — | none | no |
+| `workspace-write` / `never` | — | **`trusted` (written by codex)** | **yes** |
+| `workspace-write` / `untrusted` | — | **`trusted` (written by codex)** | **yes** |
+| `workspace-write` / `untrusted` | `trust_level = "untrusted"` | `untrusted` (unchanged) | no |
+| `workspace-write` / `never` | `trust_level = "untrusted"` | `untrusted` (unchanged) | no |
+
+- With the cwd inside a git repo whose ROOT carries the config, codex writes the trust entry for the **repo root**. Seeding `untrusted` for the cwd alone, the root alone or both all keep the root's server from spawning.
+- `{mcp_servers: {project_planted: {enabled: false}}}` alone, on a project not yet trusted, fails `thread/start` (`invalid transport in mcp_servers.project_planted`): disabling by name is not a substitute for keeping the project untrusted, and would not cover hooks or exec policies anyway.
+- Found by the product E2E (a planted server's marker file appeared while its tools never reached the model, because the planted command was not a working MCP server). Reproduced through the real pack with `run-codex-turn.ts` in both modes: the parent of the planted command was the pack's `codex app-server`.
 
 ## (c) Sandbox: `probe-c-sandbox.mjs`, `probe-c0-toollist.mjs`
 

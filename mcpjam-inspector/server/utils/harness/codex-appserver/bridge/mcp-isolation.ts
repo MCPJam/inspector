@@ -3,8 +3,11 @@
  *
  * Measured on 0.149.1 (`PROBES.md` (b)): the per-session `CODEX_HOME` keeps a
  * user's `~/.codex` out, and an untrusted project's `.codex/config.toml` is
- * disabled (no project is ever trusted — trust is recorded in a `CODEX_HOME`
- * MCPJam renders). But codex ALSO applies the system and managed layers,
+ * disabled. The project is untrusted only because the `CODEX_HOME` MCPJam
+ * renders SAYS so (`untrustedProjectPathsFor` in `codex-home.ts`): left
+ * unrecorded, a workspace-write thread makes Codex trust the folder itself and
+ * spawn the folder's servers (`PROBES.md` (b7)). But codex ALSO applies the
+ * system and managed layers,
  * `/etc/codex/config.toml` and `/etc/codex/managed_config.toml`, and any MCP
  * server declared there is spawned and offered to the model next to the
  * relay. A `thread/start.config.mcp_servers` entry MERGES with those layers

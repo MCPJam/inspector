@@ -46,7 +46,7 @@ import type {
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
-import { prepareCodexHome } from "./codex-home.js";
+import { prepareCodexHome, untrustedProjectPathsFor } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
 import { createStreamTranslator } from "./stream-translator.js";
 
@@ -316,6 +316,9 @@ async function main(): Promise<void> {
       relayUrl: relay.url,
       relayCredential: relay.credential,
       webSearch: start.webSearch ?? false,
+      // Keeps the folder's own `.codex/config.toml` (MCP servers, hooks, exec
+      // policies) out: see `untrustedProjectPathsFor`.
+      untrustedProjectPaths: untrustedProjectPathsFor(args.workdir),
     });
 
     client = spawnAppServerClient({

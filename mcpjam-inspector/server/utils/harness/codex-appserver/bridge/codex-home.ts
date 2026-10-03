@@ -14,8 +14,8 @@
  * either in a bootstrap file would also break the framework's guarantee that a
  * bootstrap is byte-identical across credentials, which the registry asserts.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 
 /** TOML string literal. JSON's string grammar is a subset of TOML's basic
@@ -55,7 +55,51 @@ export type CodexHomeInput = {
   webSearch?: boolean;
   /** Node binary to launch the MCP server with. */
   nodeExecutable?: string;
+  /**
+   * Directories recorded as UNTRUSTED projects — the session's working
+   * directory and the git root above it (`untrustedProjectPathsFor`).
+   */
+  untrustedProjectPaths?: readonly string[];
 };
+
+/*
+ * WHY EVERY SESSION RECORDS ITS FOLDER AS UNTRUSTED.
+ *
+ * A trusted project's own `.codex/config.toml` is a config layer: its MCP
+ * servers are spawned next to MCPJam's relay (with no approval: an MCP server
+ * start is not a command), and its hooks and exec policies apply. Measured on
+ * 0.149.1 (`PROBES.md` (b7)): `thread/start` with `sandbox: "workspace-write"`
+ * — what every attended and unattended session uses — makes Codex WRITE
+ * `trust_level = "trusted"` for the cwd, or for the git root above it, into
+ * this file the first time it sees that folder. The folder's planted server
+ * then starts in the same session. Under `read-only` it writes nothing.
+ *
+ * An explicit `trust_level = "untrusted"` entry is respected and never
+ * rewritten, and keeps the project layer off for that cwd even when the git
+ * root above it carries the config. So the working directory, its resolved
+ * real path and its git root are all recorded untrusted, every session. Skills
+ * and AGENTS.md still load from an untrusted project (`PROBES.md` (b1), (b6)).
+ */
+export function untrustedProjectPathsFor(workdir: string): string[] {
+  const paths = new Set<string>([workdir]);
+  let real = workdir;
+  try {
+    real = realpathSync(workdir);
+    paths.add(real);
+  } catch {
+    // A workdir that does not exist yet has no project layer to load.
+  }
+  for (const start of new Set([workdir, real])) {
+    for (let dir = start; ; dir = dirname(dir)) {
+      if (existsSync(join(dir, ".git"))) {
+        paths.add(dir);
+        break;
+      }
+      if (dirname(dir) === dir) break;
+    }
+  }
+  return [...paths];
+}
 
 /**
  * Render `config.toml`. Pure and total, so it can be snapshot-tested — a config
@@ -138,6 +182,10 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
           ]
         : []),
     );
+  }
+
+  for (const path of new Set(input.untrustedProjectPaths ?? [])) {
+    lines.push("", `[projects.${tomlString(path)}]`, 'trust_level = "untrusted"');
   }
 
   return `${lines.join("\n")}\n`;

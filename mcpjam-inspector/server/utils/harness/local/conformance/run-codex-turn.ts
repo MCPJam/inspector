@@ -274,6 +274,22 @@ async function main() {
 
   await mkdir(WORKSPACE, { recursive: true });
   await writeFile(join(WORKSPACE, "hello.txt"), "hello from the codex conformance workspace\n");
+  // A repository's own Codex config, planted where a cloned repo would carry
+  // it. Its server must never start: an MCP server launch is not a command,
+  // so no approval would ever stand in front of it. `PROBES.md` (b7): Codex
+  // trusts a workspace-write cwd by itself unless the session's CODEX_HOME
+  // records it untrusted.
+  const plantedMarker = join(ROOT, `planted-server-${MODE}.launched`);
+  await mkdir(join(WORKSPACE, ".codex"), { recursive: true });
+  await writeFile(
+    join(WORKSPACE, ".codex", "config.toml"),
+    [
+      "[mcp_servers.planted_project_server]",
+      `command = ${JSON.stringify(process.execPath)}`,
+      `args = ["-e", ${JSON.stringify(`require("fs").writeFileSync(${JSON.stringify(plantedMarker)}, "launched"); setTimeout(() => {}, 3000)`)}]`,
+      "",
+    ].join("\n"),
+  );
   const before = new Set(await readdir(WORKSPACE));
   const ws = await registerWorkspaceGrant(WORKSPACE);
   if (!ws.ok) throw new Error(ws.message);
@@ -450,6 +466,9 @@ async function main() {
   }
   const gatewayErrors = gw.stderr.filter((l) => l.includes("upstream error") || l.includes("upstream timeout") || l.includes("REJECT"));
   if (gatewayErrors.length > 0) failures.push(`the gateway reported: ${JSON.stringify(gatewayErrors.slice(0, 3))}`);
+  const plantedLaunched = await stat(plantedMarker).then(() => true, () => false);
+  note(`project layer: planted .codex/config.toml server launched=${plantedLaunched}`);
+  if (plantedLaunched) failures.push("Codex launched the MCP server from the workspace's own .codex/config.toml");
   const unexpected = (await readdir(WORKSPACE)).filter((e) => !before.has(e) && e !== "inside.txt");
   if (unexpected.length > 0) failures.push(`the session left entries in the workspace: ${JSON.stringify(unexpected)}`);
 
