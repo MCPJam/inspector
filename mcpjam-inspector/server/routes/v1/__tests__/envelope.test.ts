@@ -8,7 +8,7 @@
  * to UNAUTHORIZED, defeating the v1 closed-union contract.
  */
 import { describe, it, expect } from "vitest";
-import { mapErrorToV1, v1Error } from "../envelope.js";
+import { mapErrorToV1, v1Error, v1OnError } from "../envelope.js";
 import { V1_ERROR_STATUS } from "../contract.js";
 import { ErrorCode, WebRouteError } from "../../web/errors.js";
 
@@ -491,4 +491,38 @@ describe("mapErrorToV1 — structured Convex refusals", () => {
     expect(result.details).toMatchObject({ code: "ENV_SECRET_MISSING" });
   });
 
+});
+
+describe("mapErrorToV1 / v1OnError — recorded capture outcome", () => {
+  // The request-log backstop for the v1 agent captures what nothing else
+  // did, so the mapping's outcome has to be RECORDED: the capture stamp means
+  // only that a decision was made, and a decline makes one too.
+  it("returns captured: false for a declined client outcome", () => {
+    const mapped = mapErrorToV1(
+      new WebRouteError(404, ErrorCode.NOT_FOUND, "no such thing"),
+    );
+    expect(mapped.captured).toBe(false);
+  });
+
+  it("returns captured: true for an internal failure it paged on", () => {
+    const mapped = mapErrorToV1(new Error("kaboom"), {
+      boundary: "mcpjam_internal",
+    });
+    expect(mapped.captured).toBe(true);
+  });
+
+  it("records the outcome on webErrorMeta", () => {
+    const meta: Record<string, any> = {};
+    const c = {
+      set: (key: string, value: unknown) => {
+        meta[key] = value;
+      },
+      get: (key: string) => meta[key],
+      var: meta,
+      json: (body: unknown, status: number) => ({ body, status }),
+      req: { header: () => undefined },
+    };
+    v1OnError(new WebRouteError(404, ErrorCode.NOT_FOUND, "nope"), c as never);
+    expect(meta.webErrorMeta).toMatchObject({ captured: false });
+  });
 });

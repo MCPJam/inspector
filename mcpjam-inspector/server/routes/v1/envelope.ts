@@ -120,6 +120,12 @@ export interface V1ErrorMapping {
   origin?: ErrorOrigin;
   /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
   slug?: string;
+  /**
+   * Whether the mapping's capture decision sent this to Sentry. Recorded on
+   * `webErrorMeta` by `v1OnError` so the request-log backstop captures only
+   * what nothing else did.
+   */
+  captured?: boolean;
 }
 
 /**
@@ -163,6 +169,7 @@ export function mapErrorToV1(
       message,
       origin: decision.origin,
       slug: decision.slug,
+      captured: decision.captured,
     };
   }
   if (isMcpMethodNotFound(error)) {
@@ -176,6 +183,7 @@ export function mapErrorToV1(
       message,
       origin: decision.origin,
       slug: decision.slug,
+      captured: decision.captured,
     };
   }
   // A DELIBERATE backend refusal — `ConvexError({ code, message })` — is
@@ -215,6 +223,7 @@ export function mapErrorToV1(
       headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
+      captured: routeError.captured === true,
     };
   }
   // The upstream server refused the credentials we presented. Mapped HERE
@@ -242,6 +251,7 @@ export function mapErrorToV1(
       headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
+      captured: routeError.captured === true,
     };
   }
   // A revoked session (MJ-011). Inspector-only for the same reason as the
@@ -255,6 +265,7 @@ export function mapErrorToV1(
       headers: routeError.headers,
       origin: routeError.origin,
       slug: routeError.normalized?.slug,
+      captured: routeError.captured === true,
     };
   }
   return {
@@ -264,6 +275,7 @@ export function mapErrorToV1(
     headers: routeError.headers,
     origin: routeError.origin,
     slug: routeError.normalized?.slug,
+    captured: routeError.captured === true,
   };
 }
 
@@ -333,7 +345,7 @@ export function v1OnError(
   },
 ) {
   const mapped = mapErrorToV1(error, { boundary: "mcpjam_internal" });
-  const { headers, origin, slug } = mapped;
+  const { headers, origin, slug, captured } = mapped;
   const code = override?.code ?? mapped.code;
   const message = override?.message ?? mapped.message;
   const details = override?.details
@@ -350,6 +362,7 @@ export function v1OnError(
     message,
     ...(origin ? { origin } : {}),
     ...(slug ? { slug } : {}),
+    ...(typeof captured === "boolean" ? { captured } : {}),
   });
   return v1Error(c, code, message, details, headers);
 }

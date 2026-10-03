@@ -4,6 +4,12 @@ import {
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { isAbortError } from "@/shared/abort-errors";
+import {
+  AGENT_SURFACE,
+  agentFingerprint,
+  agentPageClass,
+  type FailureFacts,
+} from "@/shared/agent-failure-class";
 import { reportCaught } from "./error-reporting";
 import { isErrorCaptureSurface } from "./PosthogUtils";
 
@@ -32,7 +38,39 @@ export type ChatResponseMeta = {
    * ever sees the failure.
    */
   origin?: string;
+  /**
+   * `x-mcpjam-failure-captured`: whether the server already sent a failure on
+   * this request to Sentry (`1`) or not (`0`). Ask MCPJam routes set it on
+   * every response; absent elsewhere. A stream's own later failures say so on
+   * their error trace events instead, since its headers left first.
+   */
+  failureCaptured?: boolean;
 };
+
+/**
+ * What a chat `fetch` saw, read off the Response before the AI SDK consumes
+ * it. Shared by the Playground's `chatFetch` and Ask MCPJam's fetch wrapper so
+ * the two cannot read the same headers differently.
+ */
+export function readChatResponseMeta(response: Response): ChatResponseMeta {
+  // `headers?.`: a wrapper in front of the SDK must never be what throws, and
+  // not every fetch shim hands back a full Response.
+  const header = (name: string) => response.headers?.get(name) ?? undefined;
+  const captured = header("x-mcpjam-failure-captured");
+  return {
+    ok: response.ok,
+    status: response.status,
+    contentType: header("content-type"),
+    requestId: header("x-request-id"),
+    // The route's own verdict on whose fault this was, when it had the
+    // error object in hand. Read from a header because the body is
+    // consumed by the AI SDK before the reporter ever runs.
+    origin: header("x-mcpjam-error-origin"),
+    ...(captured === "1" || captured === "0"
+      ? { failureCaptured: captured === "1" }
+      : {}),
+  };
+}
 
 /** Origins the server may assert, kept in sync with the SDK's `ErrorOrigin`. */
 const SERVER_ASSERTED_ORIGINS = new Set([
@@ -102,20 +140,40 @@ function attributeChatFailure(
 }
 
 /**
+ * Ask MCPJam's reporting mode. See {@link reportChatFailure}.
+ */
+export type AgentChatFailureOptions = {
+  agent: Omit<FailureFacts, "source"> & {
+    /** What went wrong, from the browser's side; part of the fingerprint. */
+    source: string;
+  };
+};
+
+/**
  * Report a chat-turn failure, if this surface reports at all.
  *
  * Returns whether anything was sent, so callers and tests can assert the
  * gating rather than infer it.
+ *
+ * AGENT MODE (`options.agent`): Ask MCPJam reports every failure the server
+ * did not, from every install, classified with the same `page_class` rules
+ * the server uses. It skips the hosted/desktop surface gate and the origin
+ * gate below — the agent is ours end to end, and those gates are what kept a
+ * week of self-hosted failures out of Sentry. It keeps the abort drop and the
+ * synthetic messages, and skips a browser that knows it is offline.
  */
 export function reportChatFailure(
   error: Error,
   meta: ChatResponseMeta | null,
+  options?: AgentChatFailureOptions,
 ): boolean {
   // Aborts are the user pressing Stop. They are filtered from Sentry by
   // message today, and the synthetic message above would smuggle them past
   // that filter — so drop them here, explicitly, rather than relying on a
   // string match that this function is specifically designed to defeat.
   if (isAbortError(error)) return false;
+
+  if (options?.agent) return reportAgentChatFailure(error, meta, options.agent);
 
   // `reportCaught`'s Sentry leg is UNGATED: it fires on self-hosted npx and
   // Docker installs too. Chat failures are high-volume and mostly other
@@ -149,6 +207,57 @@ export function reportChatFailure(
       rawMessage: normalized.rawMessage.slice(0, MAX_EXTRA_CHARS),
       slug: normalized.slug,
       origin,
+      ...(meta
+        ? {
+            httpStatus: meta.status,
+            ...(meta.contentType ? { contentType: meta.contentType } : {}),
+            ...(meta.requestId ? { requestId: meta.requestId } : {}),
+          }
+        : {}),
+    },
+  });
+  return true;
+}
+
+function reportAgentChatFailure(
+  error: Error,
+  meta: ChatResponseMeta | null,
+  facts: AgentChatFailureOptions["agent"],
+): boolean {
+  // A browser that knows it is offline: the user's network, not a signal.
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return false;
+  }
+  const normalized = describeError(error);
+  const pageClass = agentPageClass({
+    ...facts,
+    ...(meta && !meta.ok && facts.httpStatus === undefined
+      ? { httpStatus: meta.status }
+      : {}),
+  });
+  const fingerprintFacts = {
+    ...facts,
+    ...(meta && !meta.ok ? { httpStatus: meta.status } : {}),
+  };
+  const synthetic = new Error(syntheticMessage(meta));
+  reportCaught(synthetic, {
+    source: `mcpjam_agent:${facts.source}`,
+    level: facts.level ?? (pageClass === "routine" ? "warning" : "error"),
+    tags: {
+      surface: AGENT_SURFACE,
+      page_class: pageClass,
+      agent_failure_source: facts.source,
+      ...(facts.code ? { agent_failure_code: facts.code } : {}),
+    },
+    fingerprint: agentFingerprint(fingerprintFacts),
+    extra: {
+      // Redacted by the describer; see the Playground branch above.
+      rawMessage: normalized.rawMessage.slice(0, MAX_EXTRA_CHARS),
+      slug: normalized.slug,
+      ...(facts.code ? { code: facts.code } : {}),
+      ...(facts.reason ? { reason: facts.reason } : {}),
+      ...(facts.gatedBy ? { gatedBy: facts.gatedBy } : {}),
+      ...(facts.scope ? { scope: facts.scope } : {}),
       ...(meta
         ? {
             httpStatus: meta.status,
