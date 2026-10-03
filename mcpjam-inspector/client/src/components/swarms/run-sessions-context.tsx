@@ -171,6 +171,7 @@ export function RunSessionsProvider({
   );
 
   const observedLiveRuns = useRef(new Set<string>());
+  const swarmRunGroupId = run.swarmRunGroupId;
   useEffect(() => {
     if (runStatus === "running" || runStatus === "pending")
       observedLiveRuns.current.add(runId);
@@ -178,14 +179,15 @@ export function RunSessionsProvider({
     for (const attempt of run.attempts ?? []) {
       notifyMCPJamLimitError({
         runId,
+        ...(swarmRunGroupId ? { swarmRunGroupId } : {}),
         code: attempt.errorCode ?? undefined,
         message: attempt.errorMessage,
         surface: "swarm",
       });
     }
-  }, [runId, runStatus, run.attempts]);
+  }, [runId, swarmRunGroupId, runStatus, run.attempts]);
   const streamEnabled = runStatus === "running";
-  const stream = useJourneyRunStream(runId, streamEnabled);
+  const stream = useJourneyRunStream(runId, streamEnabled, swarmRunGroupId);
 
   const [matrixSelection, setMatrixSelection] =
     useState<SwarmMatrixSelection | null>(null);

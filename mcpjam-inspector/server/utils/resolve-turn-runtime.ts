@@ -110,6 +110,14 @@ export interface ResolveTurnRuntimeArgs {
    */
   modelSelection?: ModelSelection;
   /**
+   * Per-step output-token ceiling for an MCPJam-hosted step (`/stream`): the
+   * backend holds credits against it. Sent on that rail ONLY, and never to a
+   * harness host (its model broker clamps `max_tokens` without touching the
+   * thinking budget). Nothing in this repo shows `/stream/org` or the direct
+   * engine reading it, so a BYOK turn keeps its own limits.
+   */
+  maxOutputTokens?: number;
+  /**
    * The settings this turn runs with, already resolved once by
    * `resolveEffectiveModelSettings` (per-run override > saved selection >
    * host defaults). `temperature` is what the caller hands the engine; a
@@ -398,10 +406,19 @@ export async function resolveTurnRuntime(
         },
       ]);
     }
+    // Never for a harness host: its model broker clamps `max_tokens` to a
+    // ceiling without touching the model's thinking budget, so one below the
+    // broker's own default can make every thinking turn fail. Held here, where
+    // the body is built, rather than left to whatever `runHarnessTurn` happens
+    // to read out of `extraBodyFields` today.
+    const outputCeiling = args.harness ? undefined : args.maxOutputTokens;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection
+      args.extraBodyFields || hostedSelection || outputCeiling !== undefined
         ? {
             ...(args.extraBodyFields ?? {}),
+            ...(outputCeiling !== undefined
+              ? { maxOutputTokens: outputCeiling }
+              : {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
           }
         : undefined;
