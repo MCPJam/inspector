@@ -1508,9 +1508,23 @@ chatV2.post("/", async (c) => {
         ? browserRollout.actor.id
         : undefined;
     const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
+    // Spending a browser-consent capability on THIS machine takes a POSITIVELY
+    // verified member, or a guest the rollout explicitly admitted
+    // (`localBrowserGuestId`). `!requestIsGuest` is neither: an expired, forged
+    // or foreign bearer is "not a guest" too. Same boundary as local bash
+    // above; the actor is resolved once per turn and only when it is needed.
+    const browserActor =
+      localBrowserRequested &&
+      browserRollout.enabled &&
+      !isScenarioSession &&
+      !localBrowserGuestId
+        ? await requestActor()
+        : null;
+    const browserMemberVerified =
+      browserActor !== null && isVerifiedMember(browserActor);
     const browserConsentValid =
       browserRollout.enabled &&
-      (!requestIsGuest || Boolean(localBrowserGuestId)) &&
+      (browserMemberVerified || Boolean(localBrowserGuestId)) &&
       !isScenarioSession &&
       (await verifyLocalBrowserConsent(browserConsentToken));
     let browserEngine = resolveBrowserEngine({
