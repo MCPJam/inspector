@@ -172,16 +172,18 @@ export function takePermalinkSignInReturn(
  * The `signIn()` options that bring the current page back afterwards.
  *
  * Call sites pass this instead of calling `signIn()` bare:
- * `signIn(permalinkSignInOptions())`. It is a no-op object when there is
+ * `signIn(permalinkSignInOptions())`.
+ * Pass an explicit returnPath when the action starts a different flow.
+ * With no argument, the current page is preserved. It is empty when there is
  * nothing worth returning to (the app root) or storage is unavailable, so a
  * call site never has to branch.
  */
-export function permalinkSignInOptions(): {
+export function permalinkSignInOptions(returnPath?: string): {
   state?: Record<string, string>;
 } {
   if (typeof window === "undefined") return {};
   const nonce = rememberPermalinkSignInReturn(
-    captureCurrentReturnPath(),
+    returnPath ?? captureCurrentReturnPath(),
     window.location.origin,
   );
   return nonce ? { state: { [PERMALINK_SIGN_IN_STATE_KEY]: nonce } } : {};
