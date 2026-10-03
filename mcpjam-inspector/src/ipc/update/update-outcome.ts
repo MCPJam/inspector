@@ -26,10 +26,17 @@ const eventId = /^[0-9a-f]{32}$/;
 const version = (v: unknown) =>
   typeof v === "string" && (v === "unknown" || updateVersion(v) === v);
 function read(userData: string): Pending[] | undefined {
+  const file = filename(userData);
+  let contents: string;
   try {
-    const rows: unknown = JSON.parse(
-      fs.readFileSync(filename(userData), "utf8"),
-    );
+    contents = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    log.warn("Could not read update outcome journal");
+    return undefined;
+  }
+  try {
+    const rows: unknown = JSON.parse(contents);
     if (
       !Array.isArray(rows) ||
       rows.length > 32 ||
@@ -54,9 +61,13 @@ function read(userData: string): Pending[] | undefined {
     )
       throw new Error("invalid outcome journal");
     return rows as Pending[];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    log.warn("Could not read update outcome journal");
+  } catch {
+    log.warn("Invalid update outcome journal");
+    try {
+      fs.renameSync(file, `${file}.invalid`);
+    } catch {
+      log.warn("Could not quarantine invalid update outcome journal");
+    }
     return undefined;
   }
 }

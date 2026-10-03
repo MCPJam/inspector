@@ -100,15 +100,54 @@ it("bounds hung telemetry and retains the result", async () => {
   expect(read()).toHaveLength(1);
   expect(vi.getTimerCount()).toBe(0);
 });
-it("handles missing and invalid records without fabricating results", async () => {
+it("leaves a missing journal alone", async () => {
+  const rename = vi.spyOn(fs, "renameSync");
   await reportPendingInstallResults(directory, "3.12.8");
-  fs.writeFileSync(journal(), "{bad");
-  await reportPendingInstallResults(directory, "3.12.8");
-  expect(
-    rememberInstallFailure(directory, newAttempt("3.12.6")),
-  ).toBeUndefined();
+  expect(rename).not.toHaveBeenCalled();
+  expect(mocks.warn).not.toHaveBeenCalled();
   expect(mocks.capture).not.toHaveBeenCalled();
-  expect(mocks.warn).toHaveBeenCalled();
+});
+it.each(["{bad", "{}", '[{"id":"invalid"}]'])(
+  "quarantines invalid contents %s and permits a fresh journal",
+  async (contents) => {
+    fs.writeFileSync(journal(), contents);
+    await reportPendingInstallResults(directory, "3.12.8");
+    expect(fs.existsSync(journal())).toBe(false);
+    expect(fs.readFileSync(journal() + ".invalid", "utf8")).toBe(contents);
+    expect(mocks.capture).not.toHaveBeenCalled();
+    expect(
+      rememberInstallFailure(directory, newAttempt("3.12.6")),
+    ).toBeDefined();
+    expect(read()).toHaveLength(1);
+  },
+);
+it("does not quarantine a journal that could not be read", async () => {
+  remember();
+  const previous = fs.readFileSync(journal(), "utf8");
+  const rename = vi.spyOn(fs, "renameSync");
+  const readFile = vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+    throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+  });
+  await reportPendingInstallResults(directory, "3.12.8");
+  expect(rename).not.toHaveBeenCalled();
+  expect(mocks.capture).not.toHaveBeenCalled();
+  expect(mocks.warn).toHaveBeenCalledWith(
+    "Could not read update outcome journal",
+  );
+  readFile.mockRestore();
+  expect(fs.readFileSync(journal(), "utf8")).toBe(previous);
+});
+it("preserves corrupt contents when quarantine fails", async () => {
+  fs.writeFileSync(journal(), "{bad");
+  vi.spyOn(fs, "renameSync").mockImplementation(() => {
+    throw new Error("permission denied");
+  });
+  await reportPendingInstallResults(directory, "3.12.8");
+  expect(fs.readFileSync(journal(), "utf8")).toBe("{bad");
+  expect(mocks.capture).not.toHaveBeenCalled();
+  expect(mocks.warn).toHaveBeenCalledWith(
+    "Could not quarantine invalid update outcome journal",
+  );
 });
 it("reports unknown when the target is missing", async () => {
   rememberInstallFailure(directory, newAttempt("3.12.6"));
