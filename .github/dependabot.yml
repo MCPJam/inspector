@@ -257,17 +257,37 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # @modelcontextprotocol/ext-apps 2.x is built on the v2 MCP TypeScript
+      # SDK: its server helpers take a v2 `McpServer` from
+      # `@modelcontextprotocol/server`, and it needs the v2 `client`/`core`
+      # peers. Every MCP Apps example still runs on `@modelcontextprotocol/sdk`
+      # v1, so taking 2.x means moving each app's server, HTTP transport
+      # (server-utils.ts) and View to the v2 packages together, which is a
+      # migration per app, not a fix that rides along. It broke example-major
+      # #5767 (2026-10-03; 0.3/0.4/1.x -> 2.0.3: TS2353 on `mimeType`, and
+      # registerAppTool/registerAppResource reject a v1 server). This group's
+      # PR is where that migration lands. DELETE this carve-out once every
+      # example is on ext-apps 2 and the v2 SDK.
+      example-ext-apps:
+        applies-to: version-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
+      example-ext-apps-security:
+        applies-to: security-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
       example-dependencies:
         applies-to: version-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
         update-types: [minor, patch]
       example-major:
         applies-to: version-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
         update-types: [major]
       example-security:
         applies-to: security-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
 
   # --------------------------------------------------------- GitHub Actions
   - package-ecosystem: github-actions
