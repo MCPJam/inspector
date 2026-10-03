@@ -71,6 +71,20 @@ export const ErrorCode = {
   // method that does not exist on that wire (`tasks/result` on the extension),
   // or an undeclared capability. A caller/feature error (400), never a 500.
   TASKS_UNSUPPORTED: "TASKS_UNSUPPORTED",
+  // MCP Events (`routes/web/events.ts`, `EventsRouteErrorCode` in
+  // shared/events-api.ts). UNDECLARED: the server did not declare
+  // `capabilities.events` and nothing was sent (400). INVALID_PAYLOAD: the
+  // server answered with a malformed events result (502). RPC_ERROR: a
+  // JSON-RPC error the events profile defines, with its classified `kind` in
+  // details (400, or 502 when a retry could succeed). NOT_FOUND: a
+  // subscription/inbox the caller named does not exist in the project (404).
+  // UNAVAILABLE: the events plane is not configured on this deployment (503)
+  // or the operation is not offered here.
+  EVENTS_UNDECLARED: "EVENTS_UNDECLARED",
+  EVENTS_INVALID_PAYLOAD: "EVENTS_INVALID_PAYLOAD",
+  EVENTS_RPC_ERROR: "EVENTS_RPC_ERROR",
+  EVENTS_NOT_FOUND: "EVENTS_NOT_FOUND",
+  EVENTS_UNAVAILABLE: "EVENTS_UNAVAILABLE",
   // A scenario-scoped turn was refused by the backend when the route
   // re-resolved the authoritative runtime config (403). Deliberately
   // collapses "no such scenario" and "no grant for this caller" into one

@@ -117,6 +117,19 @@ const UNPROTECTED_PREFIXES = [
   // `/api/internal/chat-stage/derivation-requested`.
   "/api/internal/chat-stage/",
   "/api/internal/agent-turns/",
+  // MCP Events. The callers are the inbox Worker (`/enqueue`, authenticated
+  // by its own `x-events-inbox-token`, constant-time, fail-closed) and the
+  // backend (`/dispatch`, `internalServiceAuthMiddleware()`); neither has a
+  // browser session. Authorization is NOT waived — the router's own gates
+  // answer instead. Trailing slash for the same `startsWith` reason as above.
+  "/api/internal/events/",
+  // The LOCAL development webhook receiver (`routes/mcp/events.ts`): an MCP
+  // server POSTs events here and cannot present a session token. Every
+  // delivery is Standard-Webhooks signature-verified against the slot's
+  // secret before anything is journalled, and the route exists only in local
+  // mode (`/api/mcp/*` is not mounted hosted). Only the hooks sub-path is
+  // exempt — every other `/api/mcp/events/*` route keeps session auth.
+  "/api/mcp/events/hooks/",
 ];
 
 /**
@@ -139,6 +152,7 @@ export function scrubTokenFromUrl(url: string): string {
 // Routes that typically use query param auth (SSE endpoints)
 const SSE_ROUTES = [
   "/api/mcp/servers/rpc/stream",
+  "/api/mcp/events/stream",
   "/api/mcp/elicitation/stream",
   "/api/mcp/adapter-http/",
   "/api/mcp/manager-http/",

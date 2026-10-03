@@ -33,6 +33,7 @@ import type {
   ManagedMcpClientRequestMethod,
 } from "./managed-mcp-client.js";
 import { TasksExtNotificationMethod } from "./tasks-ext.js";
+import { EventsNotificationMethods } from "./events-ext.js";
 
 /**
  * Notification methods MCPJam registers that live outside both spec codecs.
@@ -40,12 +41,16 @@ import { TasksExtNotificationMethod } from "./tasks-ext.js";
  * Upstream 2.0.0 tightened the two-argument `setNotificationHandler(method,
  * handler)` overload to `isSpecNotificationMethod(method)` and throws a
  * `TypeError` otherwise, so an extension method must go through the
- * three-argument schema form. Only the tasks extension's `notifications/tasks`
- * (SEP-2663) qualifies today: the legacy `notifications/tasks/status` is
- * 2025-11-25 spec and stays on the two-argument path.
+ * three-argument schema form. The tasks extension's `notifications/tasks`
+ * (SEP-2663) and every `notifications/events/*` method qualify: the legacy
+ * `notifications/tasks/status` is 2025-11-25 spec and stays on the
+ * two-argument path.
  */
 const EXTENSION_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
   TasksExtNotificationMethod,
+  // MCP Events (draft@28ec35e): `notifications/events/*` is on neither
+  // era's codec, so push frames and `list_changed` need the same form.
+  ...EventsNotificationMethods,
 ]);
 
 function isExtensionNotificationMethod(method: string): boolean {

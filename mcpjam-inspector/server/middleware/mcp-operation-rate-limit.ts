@@ -109,7 +109,12 @@ const MAX_SERVER_ID_LENGTH = 256;
 /** The bucket a request that names no single server is charged to. */
 const SHARED_SERVER_KEY = "*";
 
-export type McpOperationFamily = "tools" | "resources" | "prompts" | "tasks";
+export type McpOperationFamily =
+  | "tools"
+  | "resources"
+  | "prompts"
+  | "tasks"
+  | "events";
 
 /** `burst` is the bucket's capacity: BURST, or CALL_BURST for tool calls. */
 type Bucket = { tokens: number; updatedAt: number; burst: number };

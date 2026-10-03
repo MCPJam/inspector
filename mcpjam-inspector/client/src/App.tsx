@@ -32,6 +32,8 @@ import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
+import { EventsTab } from "./components/EventsTab";
+import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
@@ -678,6 +680,10 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <PromptsRoute />;
     case "tasks":
       return <TasksRoute />;
+    case "events":
+      return <EventsRoute />;
+    case "triggers":
+      return <EventTriggersRoute />;
     case "skills":
       return <SkillsRoute />;
     case "learning":
@@ -2323,6 +2329,43 @@ export function TasksRoute() {
         connectionStatus={
           appState.servers[appState.selectedServer]?.connectionStatus
         }
+      />
+    </div>
+  );
+}
+
+export function EventsRoute() {
+  const { selectedMCPConfig, appState, convexProjectId } =
+    useAppRouteContext();
+  return (
+    <div className="h-full overflow-hidden">
+      <EventsTab
+        serverConfig={selectedMCPConfig}
+        serverName={appState.selectedServer}
+        isActive
+        connectionStatus={
+          appState.servers[appState.selectedServer]?.connectionStatus
+        }
+        projectId={convexProjectId ?? null}
+      />
+    </div>
+  );
+}
+
+/**
+ * Triggers run on MCPJam's hosted runner against a project's hosted
+ * subscriptions, so the tab needs a signed-in member and a cloud project. It
+ * renders its own explanatory empty state otherwise rather than redirecting,
+ * so a local user can see what the feature is.
+ */
+export function EventTriggersRoute() {
+  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+    useAppRouteContext();
+  return (
+    <div className="h-full overflow-hidden">
+      <EventTriggersTab
+        projectId={convexProjectId ?? null}
+        isSignedInMember={isAuthenticated === true && !isGuestProjectActor}
       />
     </div>
   );
@@ -4027,6 +4070,7 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
+      activeTab === "events" ||
       activeTab === "conformance" ||
       activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
@@ -5678,6 +5722,7 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
+    activeTab === "events" ||
     activeTab === "conformance" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||

@@ -23,6 +23,8 @@ import {
   Cable,
   MessagesSquare,
   Globe,
+  Radio,
+  Zap,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -240,6 +242,15 @@ export const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
+        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
+        // to Playground because it is the unattended version of the same
+        // thing: a model with the project's servers, reacting to an event
+        // instead of a message.
+        title: "Triggers",
+        url: "/triggers",
+        icon: Zap,
+      },
+      {
         title: "Environments",
         url: "/environments",
         icon: Layers,
@@ -361,6 +372,13 @@ export const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "/tasks",
         icon: ListTodo,
+      },
+      {
+        // MCP Events (draft extension). Marked Draft inside the tab rather
+        // than hidden behind a flag, per the events plan.
+        title: "Events",
+        url: "/events",
+        icon: Radio,
       },
       {
         // Tools a live web PAGE registers, rather than an MCP server — the

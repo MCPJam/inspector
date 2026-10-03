@@ -27,7 +27,11 @@ export function TracingTab() {
               ? "oauth"
               : item.kind === "http"
                 ? "http"
-                : "mcp-server",
+                : item.kind === "webmcp"
+                  ? "webmcp"
+                  : item.kind === "webhook"
+                    ? "webhook"
+                    : "mcp-server",
           method: item.method,
           direction: item.direction,
           serverId: item.serverId,

@@ -64,6 +64,9 @@ const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
 );
+// MCP Events (triggers): coordinator, identities, in-memory inbox, push
+// runtime. Same PREFIX-replacement reason as every subpath above.
+const sdkEventsEntry = path.resolve(rootDir, "../sdk/src/events/index.ts");
 
 export default defineConfig({
   define: {
@@ -112,6 +115,7 @@ export default defineConfig({
           "@mcpjam/sdk/host-compat",
           "@mcpjam/sdk/plugin-bundle",
           "@mcpjam/sdk/widget-runtime",
+          "@mcpjam/sdk/events",
         ],
       },
     },
@@ -156,6 +160,7 @@ export default defineConfig({
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,
       },
+      { find: "@mcpjam/sdk/events", replacement: sdkEventsEntry },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],

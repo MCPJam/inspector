@@ -461,6 +461,29 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
     });
   });
 
+  it("names the MCP Events trigger run on the body, so the backend charges its spend cap", async () => {
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: LOCAL_MODEL,
+        sourceType: "event",
+        attribution: { eventRunId: "event-run-1" },
+      }),
+    );
+
+    await rt.finalizeUsage(successResult());
+
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      { body: string },
+    ];
+    const body = JSON.parse(init.body);
+    expect(body).toMatchObject({
+      sourceType: "event",
+      eventRunId: "event-run-1",
+    });
+    expect(body).not.toHaveProperty("journeyRunId");
+  });
+
   it("does NOT fire on an aborted result", async () => {
     const rt = await resolveTurnRuntime(localArgs());
 

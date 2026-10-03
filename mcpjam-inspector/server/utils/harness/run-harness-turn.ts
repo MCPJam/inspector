@@ -1626,7 +1626,7 @@ export async function runHarnessTurn(
               harnessAdapter.id,
               harnessExecutionTarget.permissionProfile,
               harnessExecutionTarget.kind,
-              sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
+              sourceType === "eval" || sourceType === "swarm" || sourceType === "event" ? "unattended" : "attended",
             )
           : null;
       const permissionMode: HarnessV1PermissionMode =
@@ -1702,7 +1702,7 @@ export async function runHarnessTurn(
           ? "scenario-chat"
           : sourceType === "swarm"
           ? "swarm-chat"
-          : sourceType === "eval" || sourceType === "sandbox"
+          : sourceType === "eval" || sourceType === "sandbox" || sourceType === "event"
           ? undefined
           : "direct-chat";
       // FAIL CLOSED on incomplete swarm continuity identity. The `swarm-chat`
@@ -1890,7 +1890,7 @@ export async function runHarnessTurn(
         const localRunId = crypto.randomUUID();
         const preparation = await prepareLocalHarnessTurn({
           target: harnessExecutionTarget,
-          scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
+          scope: sourceType === "eval" || sourceType === "swarm" || sourceType === "event" ? "unattended" : "attended",
           harnessId: harnessAdapter.id,
           modelId,
           sessionId: localSessionId!,

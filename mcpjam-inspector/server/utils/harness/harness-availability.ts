@@ -104,6 +104,9 @@ export function harnessModelPurposeForSourceType(
 ): HarnessModelPurpose {
   if (sourceType === "direct") return "chat";
   if (sourceType === "swarm") return "swarm";
+  // An MCP Events trigger run is unattended and its results are reviewed
+  // later, so it takes the strict (eval) reading, like anything unlabelled.
+  if (sourceType === "event") return "eval";
   return "eval";
 }
 

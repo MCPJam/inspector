@@ -25,6 +25,9 @@ const sdkAssertionsEntry = path.resolve(
 const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
 // `shared/harness-model-support.ts` keys its pinned versions by the SDK's
 // harness ids. Same prefix-match reason as the contract entry above.
+// MCP Events: the shared event-turn prompt the chat parses (same prefix-match
+// reason as the contract entry above).
+const sdkEventsEntry = path.resolve(rootDir, "../sdk/src/events/index.ts");
 const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
@@ -75,6 +78,7 @@ export default defineConfig({
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
       { find: "@mcpjam/sdk/assertions", replacement: sdkAssertionsEntry },
       { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
+      { find: "@mcpjam/sdk/events", replacement: sdkEventsEntry },
       {
         find: "@mcpjam/sdk/host-config/internal",
         replacement: sdkHostConfigInternalEntry,

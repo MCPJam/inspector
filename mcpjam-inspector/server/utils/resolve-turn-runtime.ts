@@ -59,17 +59,20 @@ import type {
 
 /**
  * Per-run attribution stamped onto the resulting usage record. `journeyRunId`
- * ties spend to a swarm (journey-execution) run; absent for real chat.
- * (The scenario session-simulation arm — `synthesisRunId` — was removed with
- * the scenario synthetic surface.)
+ * ties spend to a swarm (journey-execution) run; `eventRunId` to an MCP Events
+ * trigger run, whose daily spend cap the backend charges from that record.
+ * Both absent for real chat. (The scenario session-simulation arm —
+ * `synthesisRunId` — was removed with the scenario synthetic surface.)
  */
-export type TurnRunAttribution = { journeyRunId: string } | undefined;
+export type TurnRunAttribution =
+  | { journeyRunId?: string; eventRunId?: string }
+  | undefined;
 
 /**
  * The narrowed source-of-traffic marker forwarded into chat-ingestion /
  * usage writeback. Mirrors `RunAssistantTurnOptions["sourceType"]`.
  */
-export type TurnSourceType = "direct" | "scenario" | "eval" | "swarm";
+export type TurnSourceType = "direct" | "scenario" | "eval" | "swarm" | "event";
 
 export interface ResolveTurnRuntimeArgs {
   modelDefinition: ModelDefinition;
@@ -318,6 +321,7 @@ export async function resolveTurnRuntime(
         selectedServers: args.serverIds,
         serverIds: args.serverIds,
         journeyRunId: args.attribution?.journeyRunId,
+        eventRunId: args.attribution?.eventRunId,
         ...(orgSelection && execution
           ? { modelSelection: orgSelection, execution }
           : {}),

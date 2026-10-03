@@ -15,6 +15,7 @@ import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
 import tasksWeb from "./tasks.js";
+import eventsWeb from "./events.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import mcpjamAgent from "./mcpjam-agent.js";
@@ -59,6 +60,10 @@ web.use("/servers/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tasks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// MCP Events (hosted): discovery/poll dial the caller's server; viewer-token,
+// simulate and slot-state re-check project membership with the caller's
+// bearer before touching the inbox with the admin token.
+web.use("/events/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/scenarios/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Swarm (journey-execution) launch route — member-gated. The runner-control
@@ -230,7 +235,13 @@ web.use("*", passthroughRateLimitMiddleware);
 // Registered after the per-family `bearerAuthMiddleware` lines, whose verified
 // identity it keys on, and after the passthrough limiter, so a request that
 // limiter refuses is turned away before this one reads the body.
-for (const family of ["tools", "resources", "prompts", "tasks"] as const) {
+for (const family of [
+  "tools",
+  "resources",
+  "prompts",
+  "tasks",
+  "events",
+] as const) {
   web.use(`/${family}/*`, mcpOperationRateLimit(family));
 }
 
@@ -238,6 +249,7 @@ web.route("/servers", servers);
 web.route("/tools", tools);
 web.route("/resources", resources);
 web.route("/tasks", tasksWeb);
+web.route("/events", eventsWeb);
 web.route("/prompts", prompts);
 web.route("/scenarios", scenarios);
 web.route("/swarm", swarmRuns);

@@ -57,6 +57,9 @@ describe("hosted-tab-policy", () => {
       "learning",
       "registry",
       "tasks",
+      // MCP Events: hosted reads the public inbox and the Convex registry.
+      "events",
+      "triggers",
       "computer",
       "skills",
       "playground",

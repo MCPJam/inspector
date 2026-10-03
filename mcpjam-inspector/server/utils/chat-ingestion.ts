@@ -311,7 +311,10 @@ export type ChatOrigin =
   | "swarm"
   // Agent Playground turn route. Validator ships with backend PR 4; this
   // mirror must exist before anything emits `"api"`.
-  | "api";
+  | "api"
+  // MCP Events trigger run (`services/events/executor.ts`): an unattended
+  // turn fired by an event. Mirrors the backend validator's `event`.
+  | "event";
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -329,7 +332,7 @@ interface PersistChatSessionOptions {
   modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
   projectId?: string;
-  sourceType?: "scenario" | "direct" | "eval" | "swarm";
+  sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
   origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
