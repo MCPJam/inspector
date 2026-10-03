@@ -413,12 +413,16 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
     const tSusp = performance.now();
     const cont = await sessionRef.s.suspendTurn();
     sessionRef.s = await agent.createSession({ sessionId: sessionRef.s.sessionId, continueFrom: cont });
+    // Since `@ai-sdk/harness` 1.0.117 a continuation is the bare approval
+    // response; the paused tool call is recovered from the session state. The
+    // old `{ approvalResponse, toolCall }` wrapper has no top-level
+    // `approvalId`, so the bridge never gets the answer and the turn waits
+    // until the session's wall-clock ceiling.
     res = await agent.continueStream({
       session: sessionRef.s,
-      toolApprovalContinuations: [{
-        approvalResponse: { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
-        toolCall: { type: "tool-call", toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.input },
-      }],
+      toolApprovalContinuations: [
+        { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
+      ],
     });
     console.log(`[conformance] ${label}: suspend+continue took ${Math.round(performance.now() - tSusp)}ms`);
     stream = res.fullStream;
