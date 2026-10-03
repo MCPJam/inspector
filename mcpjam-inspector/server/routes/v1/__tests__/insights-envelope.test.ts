@@ -686,6 +686,46 @@ describe("eval-run judge request", () => {
     );
   });
 
+  // CONVEX-33X: a per-run judge in the documented `mcpjam/` spelling is sent as
+  // the catalog id, and a blank one is refused rather than forwarded.
+  it.each([
+    ["mcpjam/openai/gpt-5.4-mini", "openai/gpt-5.4-mini"],
+    ["openai/gpt-5.4-mini ", "openai/gpt-5.4-mini"],
+  ])("forwards a per-run judge model %j as %j", async (sent, forwarded) => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: sent }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      { suiteRunId: RUN, runOverride: { judgeModel: forwarded } },
+    );
+  });
+
+  it("refuses a blank per-run judge model", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "   " }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
   it("sends NO override when the caller stated none", async () => {
     // The mutation clears a previously persisted override when the arg is
     // absent, so re-grading without restating one returns to suite-config

@@ -133,6 +133,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // behaviour, so it belongs to the server being inspected — not to the
   // user's provider settings, which is what `provider/quota` claims.
   "server/rate_limited": "user_server",
+  // The MCP server under test answered with an HTTP error status. Recognized
+  // only from an MCP transport error, so the answer is the server's own.
+  "server/http_error": "user_server",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -946,6 +949,21 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "server-rate-limited",
     "warning",
+  ),
+  "server/http_error": entry(
+    "server/http_error",
+    "MCP server returned an HTTP error",
+    "The MCP server answered the request with an HTTP error status.",
+    [
+      "404: the URL points at the wrong endpoint path (for example, a missing `/mcp`).",
+      "405: the endpoint does not accept MCP requests (POST).",
+      "5xx: the server hit an error of its own while handling the request.",
+    ],
+    [
+      "Check the server URL, including the MCP endpoint path.",
+      "Check the server's logs for the failed request.",
+    ],
+    "server-http-error",
   ),
 
   "provider/empty_response": entry(
