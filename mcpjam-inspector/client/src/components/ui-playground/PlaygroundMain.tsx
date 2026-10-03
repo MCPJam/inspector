@@ -1404,6 +1404,13 @@ export function PlaygroundMain({
     const ids = [...(cfg.serverIds ?? []), ...(cfg.optionalServerIds ?? [])];
     if (ids.length > 0 && serversById.size === 0) return;
 
+    // The first seed of this mount (a page reload, or coming back to a host
+    // after it was unavailable) re-applies the host to the single chat, as it
+    // always has, but leaves the compare panes alone: pane 1 is a model and
+    // effort the user saved, and a reload must not swap it for the host's.
+    // Only a host SWITCH (or an edit of the host's config) moves the host's
+    // model into pane 1.
+    const isFirstSeedThisMount = last === null;
     lastSeededHostRef.current = { hostId: previewedHostId, configId };
 
     setSystemPrompt(cfg.systemPrompt);
@@ -1461,7 +1468,7 @@ export function PlaygroundMain({
           match,
           hostedOrgModelConfig,
         );
-        if (cards && leadSelection) {
+        if (cards && leadSelection && !isFirstSeedThisMount) {
           const currentLead = cards[0];
           const leadEffort =
             hostEffort ??
