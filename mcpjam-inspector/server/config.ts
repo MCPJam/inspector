@@ -284,7 +284,14 @@ export const CORS_ORIGINS =
 export const CORS_OPTIONS = {
   origin: CORS_ORIGINS,
   credentials: true,
-  exposeHeaders: ["x-request-id", "x-mcpjam-error-origin", "X-MCPJam-Session"],
+  // `x-mcpjam-failure-captured`: Ask MCPJam's browser reporter reads it to
+  // skip what the server already sent to Sentry; hidden, it double-reports.
+  exposeHeaders: [
+    "x-request-id",
+    "x-mcpjam-error-origin",
+    "X-MCPJam-Session",
+    "x-mcpjam-failure-captured",
+  ],
 };
 
 // Hosted web route timeouts (ms). Defined in `shared/` so the client can read
@@ -295,6 +302,7 @@ export {
   WEB_CONNECT_TIMEOUT_MS,
   WEB_CALL_TIMEOUT_MS,
   WEB_STREAM_TIMEOUT_MS,
+  WEB_SERVER_CHECK_DEADLINE_MS,
 } from "../shared/hosted-web-timeouts.js";
 // Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
 // derived from the call timeout, and a re-export does not bind the name here.

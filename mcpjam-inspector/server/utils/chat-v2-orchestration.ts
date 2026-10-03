@@ -28,6 +28,7 @@ import {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
   MCPClientManager,
@@ -696,6 +697,17 @@ export interface PrepareChatV2Options {
    * before the model sees the catalog.
    */
   toolDescriptionOverrides?: Readonly<Record<string, string>>;
+  /**
+   * Upper bound, in ms, on connecting to the selected servers and listing
+   * their tools. On expiry the turn fails with a `MCP server "<name>" timed
+   * out` error, marked as the user's hop like any other dead server.
+   *
+   * Opt-in: absent means no deadline, which keeps local, eval and agent turns
+   * unchanged. The hosted web turn sets it because nothing else bounds this
+   * await before the first byte, and the edge gives up long before the
+   * manager's own per-request timeout and retries do.
+   */
+  toolListingTimeoutMs?: number;
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
@@ -1285,6 +1297,37 @@ export interface PrepareChatV2Result {
 }
 
 /**
+ * `"a", "b"` — the selected servers still not connected when the budget ran
+ * out, by their host label. Falls back to every listed server when all of
+ * them report connected (the listing itself is what hung).
+ *
+ * Only servers the listing actually reached count: a stale selected id the
+ * manager never registered reads as "disconnected" and would otherwise be
+ * blamed for a server that did hang.
+ */
+function describeUnconnectedServers(
+  mcpClientManager: InstanceType<typeof MCPClientManager>,
+  serverIds: readonly string[],
+  groups: ConnectionsByServerId | undefined,
+  serverLabels: Record<string, string> | undefined,
+): string {
+  const keysOf = (id: string) =>
+    (groups?.[id]?.map((c) => c.key) ?? [id]).filter((key) =>
+      mcpClientManager.hasServer(key),
+    );
+  const reached = serverIds.filter((id) => keysOf(id).length > 0);
+  const listed = reached.length ? reached : serverIds;
+  const unconnected = listed.filter((id) =>
+    keysOf(id).some(
+      (key) => mcpClientManager.getConnectionStatus(key) !== "connected",
+    ),
+  );
+  return (unconnected.length ? unconnected : listed)
+    .map((id) => `"${serverLabels?.[id] ?? id}"`)
+    .join(", ");
+}
+
+/**
  * Prepare tools, system prompt, temperature, and message scrubber for chat-v2.
  *
  * Throws if Anthropic tool name validation fails.
@@ -1314,6 +1357,7 @@ export async function prepareChatV2(
     serverLabels,
     toolCallCancellation,
     toolDescriptionOverrides,
+    toolListingTimeoutMs,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -1352,14 +1396,25 @@ export async function prepareChatV2(
   });
 
   // 1. Get MCP + skill tools
+  const listToolsWithinBudget = <T>(listing: Promise<T>): Promise<T> =>
+    withinToolListingBudget(listing, toolListingTimeoutMs, () =>
+      describeUnconnectedServers(
+        mcpClientManager,
+        selectedServers ?? mcpClientManager.listServers(),
+        selectedGroups,
+        serverLabels,
+      ),
+    );
   let mcpTools;
   try {
     mcpTools =
       selectedGroups && Object.keys(selectedGroups).length
         ? mergeConnectionToolsets(
-            await mcpClientManager.getToolsForAiSdkByServer(
-              knownSelectedServers,
-              toolOptions,
+            await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(
+                knownSelectedServers,
+                toolOptions,
+              ),
             ),
             selectedGroups,
             {
@@ -1369,9 +1424,11 @@ export async function prepareChatV2(
               },
             },
           )
-        : await mcpClientManager.getToolsForAiSdk(
-            knownSelectedServers,
-            toolOptions,
+        : await listToolsWithinBudget(
+            mcpClientManager.getToolsForAiSdk(
+              knownSelectedServers,
+              toolOptions,
+            ),
           );
   } catch (error) {
     // The ONE hop in this function that leaves MCPJam: listing tools reaches

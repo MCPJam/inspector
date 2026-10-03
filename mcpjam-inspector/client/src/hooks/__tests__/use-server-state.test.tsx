@@ -4539,6 +4539,114 @@ describe("syncServerToConvex name-collision recovery", () => {
     );
   });
 
+  describe("renames the saved row by id, keeping its stored client secret", () => {
+    // A rename used to delete this row and create a new one. The edit form
+    // never holds a stored secret, so the new row had none and the next OAuth
+    // token request went out without it.
+    const savedRow = {
+      _id: "srv_saved",
+      projectId: "project_default",
+      name: "demo-server",
+      enabled: true,
+      transportType: "http",
+      url: "https://example.com/mcp",
+    };
+    const renamedForm = {
+      name: "demo-server-renamed",
+      type: "http" as const,
+      url: "https://example.com/mcp",
+    };
+
+    function renderSignedIn(dispatch = vi.fn()) {
+      const appState = createAppState();
+      appState.projects.default.sharedProjectId = "project_default";
+      const rendered = renderUseServerState(dispatch, appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        activeProjectServersFlat: [savedRow],
+      });
+      return { dispatch, ...rendered };
+    }
+
+    function expectRenamedInPlace() {
+      expect(mockUpdateServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_saved",
+          name: "demo-server-renamed",
+        })
+      );
+      expect(mockDeleteServer).not.toHaveBeenCalled();
+      expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+      expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    }
+
+    it("from the Servers tab's Update server", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", renamedForm);
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("from the Servers tab's Update server without connecting", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", renamedForm, true);
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("from the OAuth debugger's server modal, which passes no target", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.saveServerConfigWithoutConnecting(renamedForm, {
+          originalServerName: "demo-server",
+        });
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("writes a newly typed secret to the same row", async () => {
+      const { result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", {
+          ...renamedForm,
+          useOAuth: true,
+          clientId: "client-1",
+          clientSecret: "new-secret",
+        });
+      });
+
+      expect(mockUpdateServerWithClientSecret).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_saved",
+          name: "demo-server-renamed",
+          clientSecret: "new-secret",
+        })
+      );
+      expect(mockDeleteServer).not.toHaveBeenCalled();
+      expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects a rename onto another server's name", async () => {
     const appState = createAppState();
     appState.projects.default.servers["taken-name"] = {
