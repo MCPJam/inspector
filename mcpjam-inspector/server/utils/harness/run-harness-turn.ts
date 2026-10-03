@@ -1,4 +1,7 @@
-import { localDiskResumeState } from "./local/resume-state.js";
+import {
+  localDiskResumeState,
+  sessionResumeStateFrom,
+} from "./local/resume-state.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -79,6 +82,7 @@ import {
   emitToolApprovalRequest,
   emitToolInput,
   emitToolOutput,
+  emitToolOutputDenied,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
@@ -2656,7 +2660,9 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            resumeFrom: localPrepared ? localDiskResumeState(resumable.resumeState) : resumable.resumeState,
+            resumeFrom: localPrepared
+              ? localDiskResumeState(sessionResumeStateFrom(resumable.resumeState))
+              : sessionResumeStateFrom(resumable.resumeState),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {
@@ -2801,6 +2807,22 @@ export async function runHarnessTurn(
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,
             } as unknown as Parameters<typeof agent.stream>[0]);
+
+        // A DENIED call never produces a tool result, so without this its UI
+        // part stays `approval-responded` after the turn continues. The chat's
+        // `sendAutomaticallyWhen` (`lastAssistantMessageIsCompleteWithApproval
+        // Responses`) then re-sends the same decision, which finds no paused
+        // turn ("The local session for this approval is no longer available")
+        // or trips the duplicate-decision guard. `streamText` closes denied
+        // calls the same way for the emulated engine.
+        if (resumeFromApproval) {
+          for (const continuation of approvalContinuations) {
+            const toolCallId = continuation.toolCall?.toolCallId;
+            if (continuation.approvalResponse?.approved === false && toolCallId) {
+              emitToolOutputDenied(writer, { toolCallId });
+            }
+          }
+        }
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
         // Reconstruct the transcript INCREMENTALLY so persisted history keeps
