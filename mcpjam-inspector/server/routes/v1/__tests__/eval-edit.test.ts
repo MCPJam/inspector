@@ -635,6 +635,110 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
+  // CONVEX-33X: the documented `mcpjam/<vendor>/<model>` spelling is stored as
+  // the catalog id; anything that is not exactly a catalog id is sent as typed
+  // (trimmed), so the backend's refusal names it.
+  it.each([
+    ["mcpjam/openai/gpt-5.4-mini", "openai/gpt-5.4-mini"],
+    ["openai/gpt-5.4-mini ", "openai/gpt-5.4-mini"],
+    ["mcpjam/anthropic/claude-sonnet-4-6", "mcpjam/anthropic/claude-sonnet-4-6"],
+  ])("PATCH judge.model %j is stored as %j", async (sent, stored) => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: sent } } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.judgeConfig.goalCompletion.judgeModel).toBe(stored);
+  });
+
+  it("PATCH refuses a blank judge.model instead of storing it", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: "   " } } },
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      ),
+    ).toBe(false);
+  });
+
+  it("PATCH judge.model drops a stored judgeSelection that names another model", async () => {
+    // A judge picked in the app stores a selection beside the model, and the
+    // backend refuses the pair when they disagree. The v1 body cannot carry a
+    // selection, so keeping the stale one made every model change a 400.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+                judgeSelection: {
+                  source: "hosted",
+                  modelId: "anthropic/claude-haiku-4.5",
+                },
+              },
+            },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: "mcpjam/openai/gpt-5.4-mini" } } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: { enabled: true, judgeModel: "openai/gpt-5.4-mini" },
+    });
+  });
+
+  it("PATCH judge.model keeps a stored judgeSelection that names the same model", async () => {
+    const selection = {
+      source: "hosted",
+      modelId: "anthropic/claude-haiku-4.5",
+    };
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+                judgeSelection: selection,
+              },
+            },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: "mcpjam/anthropic/claude-haiku-4.5" } } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.judgeConfig.goalCompletion).toEqual({
+      enabled: true,
+      judgeModel: "anthropic/claude-haiku-4.5",
+      judgeSelection: selection,
+    });
+  });
+
   it("GET leaves inherited automation unknown when an older backend supplies no policy", async () => {
     // A suite that never touched the judge reports what a run WOULD grade
     // with, not a half-resolved `enabled: true` beside `model: null` — a
