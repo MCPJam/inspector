@@ -219,6 +219,9 @@ export interface RunAssistantTurnOptions {
    */
   failureReporter?: MCPJamHandlerOptions["failureReporter"];
 
+  /** A surface's capture rule; see `MCPJamHandlerOptions.failureCapture`. */
+  failureCapture?: MCPJamHandlerOptions["failureCapture"];
+
   /**
    * Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing
    * pass-through. The eval runner uses this to hide `computer` /
@@ -586,6 +589,7 @@ function buildHandlerOptions(
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),
+    ...(opts.failureCapture ? { failureCapture: opts.failureCapture } : {}),
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     ...(opts.prepareAdvertisedTools
       ? { prepareAdvertisedTools: opts.prepareAdvertisedTools }
