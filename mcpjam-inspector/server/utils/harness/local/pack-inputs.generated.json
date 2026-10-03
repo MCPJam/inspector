@@ -2,9 +2,9 @@
   "schema": 2,
   "harnesses": {
     "claude-code": {
-      "fingerprint": "sha256:54f91ea7eab1f4dafaefe7da9881b3813ec403c753718aaeda75a4b9f2df1d5f",
+      "fingerprint": "sha256:607681c22ec54875675b2bdbb27434fc9198da56ca5e408ec576a54e5ec9b6c6",
       "inputs": {
-        "pack-dependency-closure": "sha256:f437afb6bd30fc87568321a2fa93d4d7327d18d28c996cad885fc6f1302a6965",
+        "pack-dependency-closure": "sha256:670323bf64d97c9a5803747efc6c51234a953568217a074ec32a320d1e4451a8",
         ".github/workflows/local-harness-pack.yml": "sha256:a7065616c9abd39c3e4e66d2acf8f634b908aaf42bdda30bccc4a970d4423163",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:8da98ac3550e62c6e60473159e2d3de88837e7fc4a03880cd54a3f9c1f9e3dfd",
         "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:ebf73ce26f3ac0580170328a4c60dadba985a45b6ba723747f3a5d70951d88a1",

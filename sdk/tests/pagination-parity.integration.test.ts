@@ -184,13 +184,16 @@ describe("pagination parity — real wire evidence", () => {
   //
   // VERIFIED BEHAVIOR (differs from the "guard throws" assumption this test
   // was originally commissioned to prove): the vendor client's
-  // `_listAllPages` walk (`@modelcontextprotocol/client` dist/index.mjs,
-  // `while (cursor !== void 0 && !seen.has(cursor))`) treats a REPEATED
-  // `nextCursor` as "stop, return what we have" — silently, with no thrown
-  // error and no signal in the returned object that the aggregate is
-  // partial. Only `listMaxPages` overflow (a cursor sequence that never
-  // repeats but also never ends) throws
-  // `SdkErrorCode.ListPaginationExceeded`.
+  // `_listAllPages` walk (`@modelcontextprotocol/client` 2.2.0
+  // dist/index.mjs) stops when a page answers with the SAME `nextCursor` it
+  // was requested with AND the same items as the page before it — silently,
+  // with no thrown error and no signal in the returned object that the
+  // aggregate is partial. That stall check needs one extra request to see
+  // the repeat, so a server that echoes `page-1` is asked for `page-1`
+  // twice. (2.0.0 kept a `seen` cursor set and stopped one request earlier,
+  // before re-sending a cursor it had already sent.) Only `listMaxPages`
+  // overflow throws `SdkErrorCode.ListPaginationExceeded` — which a server
+  // that repeats its cursor but changes its items will now reach.
   //
   // `operations.ts`'s own `drainPaginatedList` DOES contain a
   // repeated-cursor throw — but it never fires for `listAllTools` /
@@ -204,13 +207,14 @@ describe("pagination parity — real wire evidence", () => {
     const { manager } = await connect({ malformedCursor: true });
     const result = await manager.listTools("fixture");
     // Page 1 (4 items) + page 2 (4 items, whose nextCursor repeats "page-1")
-    // = 8, not the full 12. No error is thrown.
+    // = 8, not the full 12. The third request re-reads page 2, sees the same
+    // cursor and items, and stops without appending them. No error is thrown.
     expect(result.tools).toHaveLength(8);
     expect(result.nextCursor).toBeUndefined();
 
     const reqs = requestsFor("tools/list") as { params?: { cursor?: string } }[];
-    expect(reqs).toHaveLength(2);
-    expect(reqs.map((r) => r.params?.cursor)).toEqual([undefined, "page-1"]);
+    expect(reqs).toHaveLength(3);
+    expect(reqs.map((r) => r.params?.cursor)).toEqual([undefined, "page-1", "page-1"]);
   });
 
   it("operations.listAllTools(): the SAME repeated-cursor server also silently truncates (drainPaginatedList's guard never engages)", async () => {
@@ -218,16 +222,16 @@ describe("pagination parity — real wire evidence", () => {
     const { tools } = await listAllTools(manager, { serverId: "fixture" });
     expect(tools).toHaveLength(8);
 
-    // Both wire requests happened INSIDE the single `fetchPage(undefined)`
+    // All three wire requests happened INSIDE the single `fetchPage(undefined)`
     // call `drainPaginatedList` made — the client's own internal walk sent
-    // them (cursor: undefined, then cursor: "page-1") and stopped itself on
+    // them (cursor: undefined, then "page-1" twice) and stopped itself on
     // the repeat before returning. `drainPaginatedList` never sees a
     // `nextCursor` to walk, so its own repeated-cursor guard (and its
     // MAX_PAGINATION_PAGES cap) never engage — dead code for this call
     // shape, confirmed here rather than asserted from reading alone.
     const reqs = requestsFor("tools/list") as { params?: { cursor?: string } }[];
-    expect(reqs).toHaveLength(2);
-    expect(reqs.map((r) => r.params?.cursor)).toEqual([undefined, "page-1"]);
+    expect(reqs).toHaveLength(3);
+    expect(reqs.map((r) => r.params?.cursor)).toEqual([undefined, "page-1", "page-1"]);
   });
 
   // Symmetric confirmation on prompts/resources/resourceTemplates — same
