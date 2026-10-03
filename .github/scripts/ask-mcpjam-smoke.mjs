@@ -64,6 +64,38 @@ const PROMPT =
   "This is an automated health check. Reply with one short sentence and do not call any tools.";
 
 const env = process.env;
+
+/**
+ * What the run holds that nothing it starts may see. Every child — `npm
+ * install` (and so every install script in the tree) and the Inspector itself
+ * — gets `childProcessEnv()`, never `process.env`: the script needs the WorkOS
+ * key to mint the canary's session, and the code under test never does.
+ */
+const SECRET_ENV = [
+  "WORKOS_API_KEY",
+  "ASK_MCPJAM_CANARY_PASSWORD",
+  "SLACK_WEBHOOK_URL",
+  "GITHUB_TOKEN",
+  // The point of the test. Belt and braces: removed even if the runner never
+  // set it, so a future workflow change cannot quietly hand it over.
+  "INSPECTOR_SERVICE_TOKEN",
+];
+
+function childProcessEnv() {
+  const scrubbed = { ...env };
+  for (const name of SECRET_ENV) delete scrubbed[name];
+  return scrubbed;
+}
+
+/**
+ * npm mode installs exactly one thing: a published version of OUR package.
+ * Published versions are immutable, so this pins what runs next to the
+ * canary's session to code that went through a release — never a spec someone
+ * typed into a manual run (another package, a tag, a git URL, a tarball URL).
+ */
+const INSPECTOR_NPM_SPEC =
+  /^@mcpjam\/inspector@\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
+
 const tmpRoot = mkdtempSync(path.join(tmpdir(), "ask-mcpjam-smoke-"));
 let child;
 let serverOutput = "";
@@ -120,6 +152,11 @@ function install() {
   if (tarballs.length === 0 && !npmSpec) {
     throw new Error("Set INSPECTOR_TARBALLS or INSPECTOR_NPM_SPEC.");
   }
+  if (tarballs.length === 0 && !INSPECTOR_NPM_SPEC.test(npmSpec)) {
+    throw new Error(
+      `INSPECTOR_NPM_SPEC must be an exact @mcpjam/inspector version (e.g. @mcpjam/inspector@3.13.0), not ${JSON.stringify(npmSpec)}.`
+    );
+  }
   const installDir = path.join(tmpRoot, "install");
   mkdirSync(installDir, { recursive: true });
   run("npm", ["init", "-y"], { cwd: installDir, quiet: true });
@@ -175,17 +212,7 @@ function readPackagedEnv(packageDir) {
  * link's local token.
  */
 function start(command, args) {
-  const childEnv = { ...env };
-  // The point of the test. Belt and braces: delete it even if the runner
-  // never set it, so a future workflow change cannot quietly hand it over.
-  delete childEnv.INSPECTOR_SERVICE_TOKEN;
-  for (const secret of [
-    "WORKOS_API_KEY",
-    "ASK_MCPJAM_CANARY_PASSWORD",
-    "SLACK_WEBHOOK_URL",
-  ]) {
-    delete childEnv[secret];
-  }
+  const childEnv = childProcessEnv();
   Object.assign(childEnv, {
     NODE_ENV: "production",
     VITE_MCPJAM_HOSTED_MODE: "false",
@@ -423,7 +450,7 @@ function redact(text) {
 function run(command, args, { cwd = tmpRoot, quiet = false } = {}) {
   const result = spawnSync(command, args, {
     cwd,
-    env,
+    env: childProcessEnv(),
     stdio: quiet ? "ignore" : "inherit",
   });
   if (result.status !== 0) {

@@ -37,7 +37,7 @@ on:
         options: [staging, production]
         default: staging
       npm_spec:
-        description: "Install this from npm (e.g. @mcpjam/inspector@3.13.0) instead of building main"
+        description: "Install this exact published version from npm (e.g. @mcpjam/inspector@3.13.0) instead of building main"
         required: false
         type: string
   workflow_call:
@@ -78,6 +78,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+
+      # Before any secret enters the job: npm mode installs and runs only an
+      # exact, published (so immutable) version of our own package next to the
+      # canary's session. A manual run cannot point it at anything else.
+      - name: Only a published @mcpjam/inspector version
+        if: env.SOURCE == 'npm'
+        run: |
+          if ! [[ "$NPM_SPEC" =~ ^@mcpjam/inspector@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::npm_spec must be an exact @mcpjam/inspector version (e.g. @mcpjam/inspector@3.13.0)."
+            exit 1
+          fi
 
       - name: Is a canary configured?
         id: config
