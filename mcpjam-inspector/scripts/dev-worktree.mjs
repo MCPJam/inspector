@@ -191,6 +191,48 @@ export async function findPortConflicts(ports) {
 // ── supervision ───────────────────────────────────────────────────────────
 
 /**
+ * Every live descendant of `pid` on Windows, found through the process table:
+ * a child keeps its parent's pid as `ParentProcessId` after the parent exits,
+ * so the orphans of an exited npm wrapper (tsx, vite, workerd) are still
+ * reachable. Exported for tests. A reused pid could in theory land on a
+ * stranger whose parent happened to be `pid`; the window is the few seconds
+ * between the leader's exit and the launcher's stop, and only when the
+ * leader died on its own.
+ */
+export function win32Descendants(pid, { runPowerShell = spawnSync } = {}) {
+  const result = runPowerShell(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
+  );
+  if (result.status !== 0 || typeof result.stdout !== "string") return [];
+  const childrenOf = new Map();
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const match = /^(\d+)\s+(\d+)$/.exec(line.trim());
+    if (!match) continue;
+    const parent = Number(match[2]);
+    const list = childrenOf.get(parent) ?? [];
+    list.push(Number(match[1]));
+    childrenOf.set(parent, list);
+  }
+  const found = [];
+  const queue = [pid];
+  while (queue.length > 0) {
+    for (const child of childrenOf.get(queue.shift()) ?? []) {
+      if (found.includes(child)) continue;
+      found.push(child);
+      queue.push(child);
+    }
+  }
+  return found;
+}
+
+/**
  * Run children as one unit. Each gets its own process group, so stopping it
  * also stops whatever it started (npm → vite, npm → wrangler → workerd).
  */
@@ -208,12 +250,15 @@ export function createSupervisor({
   const exited = (child) =>
     child.exitCode !== null || child.signalCode !== null;
 
-  // On POSIX the group outlives its leader: an npm wrapper can exit while the
-  // vite/tsx/workerd it started still hold their ports.
+  // The group outlives its leader on every platform: an npm wrapper can exit
+  // while the vite/tsx/workerd it started still hold their ports. POSIX asks
+  // the process group; Windows has none, so the process table is walked.
   const gone = (child) => {
     if (child.pid === undefined) return true;
     if (!exited(child)) return false;
-    if (process.platform === "win32") return true;
+    if (process.platform === "win32") {
+      return win32Descendants(child.pid).length === 0;
+    }
     try {
       process.kill(-child.pid, 0);
       return false;
@@ -226,9 +271,17 @@ export function createSupervisor({
   const signalGroup = (child, signal) => {
     if (child.pid === undefined) return;
     if (process.platform === "win32") {
-      // taskkill /T walks the tree from a live leader only.
       if (!exited(child)) {
+        // taskkill /T walks the tree from a LIVE leader.
         spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+          stdio: "ignore",
+        });
+        return;
+      }
+      // The leader is gone; whatever it started is still in the process
+      // table with the leader's pid as its parent.
+      for (const pid of win32Descendants(child.pid)) {
+        spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
           stdio: "ignore",
         });
       }

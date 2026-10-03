@@ -344,3 +344,72 @@ test(
     assert.equal(alive(grandchildPid), false);
   },
 );
+
+// ── Windows ───────────────────────────────────────────────────────────────
+// Windows has no process groups: the supervisor walks the process table for
+// the orphans of a leader that already exited (`win32Descendants`).
+
+import { win32Descendants } from "../dev-worktree.mjs";
+
+test("win32Descendants walks the process table from the leader, transitively", () => {
+  const table = [
+    "4 0",
+    "100 4", // the leader (npm wrapper), already exited in the scenario
+    "200 100", // cmd.exe it started
+    "300 200", // tsx
+    "301 200", // vite
+    "400 300", // a worker tsx forked
+    "999 4", // unrelated process
+    "garbage line",
+  ].join("\r\n");
+  const calls = [];
+  const found = win32Descendants(100, {
+    runPowerShell: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: table };
+    },
+  });
+  assert.deepEqual(found.sort((a, b) => a - b), [200, 300, 301, 400]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "powershell.exe");
+  assert.ok(calls[0].args.includes("-NonInteractive"));
+  assert.equal(calls[0].options.windowsHide, true);
+});
+
+test("win32Descendants reports nothing when the process table cannot be read", () => {
+  assert.deepEqual(
+    win32Descendants(100, { runPowerShell: () => ({ status: 1, stdout: "" }) }),
+    [],
+  );
+  assert.deepEqual(
+    win32Descendants(100, { runPowerShell: () => ({ status: 0, stdout: null }) }),
+    [],
+  );
+});
+
+test(
+  "on Windows, a child whose leader already exited still has its orphans stopped",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const supervisor = createSupervisor({ log: () => {} });
+    // Like an npm wrapper that exits while the vite it started keeps running.
+    const leader = supervisor.start(
+      "client",
+      process.execPath,
+      [
+        "-e",
+        "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'inherit'});console.log('GRANDCHILD',c.pid);setTimeout(()=>process.exit(0),200)",
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const grandchildPid = await new Promise((resolve) => {
+      leader.stdout.on("data", (chunk) => {
+        const match = /GRANDCHILD (\d+)/.exec(String(chunk));
+        if (match) resolve(Number(match[1]));
+      });
+    });
+    assert.equal(await supervisor.done, 0);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(alive(grandchildPid), false);
+  },
+);
