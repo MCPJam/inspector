@@ -128,12 +128,6 @@ interface ModelSelectorProps {
   ) => string | undefined;
   /** A surface's own tag for a row ("Not eligible", "Not in catalog"). */
   rowTag?: (model: ModelDefinition) => string | undefined;
-  /**
-   * Opens the menu each time it changes to a new non-zero value, so a control
-   * elsewhere on the surface ("Review" on a model-source badge) can pop the
-   * picker without owning its state.
-   */
-  openNonce?: number;
 }
 
 export interface ModelSelectorExtraOption {
@@ -319,10 +313,8 @@ export function ModelSelector({
   extraOptions,
   rowDisabledReason,
   rowTag,
-  openNonce = 0,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const handledOpenNonceRef = useRef(openNonce);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
     "provided",
   );
@@ -418,14 +410,6 @@ export function ModelSelector({
       setHoveredLockedModelId(null);
     }
   };
-
-  useEffect(() => {
-    if (!openNonce || openNonce === handledOpenNonceRef.current) return;
-    handledOpenNonceRef.current = openNonce;
-    if (!disabled && !isLoading) setIsOpen(true);
-    // Only a new nonce opens the menu.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openNonce]);
 
   const handleManageOrgProviders = () => {
     track("chat_model_selector_manage_org_models_clicked", {
