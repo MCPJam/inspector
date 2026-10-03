@@ -1,12 +1,13 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const signInMock = vi.fn();
 const navigateMock = vi.fn();
-let authState: { user: unknown; isLoading: boolean } = {
-  user: null,
-  isLoading: false,
-};
+let authState: { user: unknown; isLoading: boolean; organizationId?: string } =
+  {
+    user: null,
+    isLoading: false,
+  };
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ ...authState, signIn: signInMock }),
@@ -14,15 +15,95 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("@/lib/app-navigation", () => ({
   useAppNavigate: () => navigateMock,
+  useCurrentSearchParam: (name: string) =>
+    new URLSearchParams(window.location.search).get(name),
 }));
 
 import { LoginInitiationRoute } from "../login-initiation-route";
 
 describe("LoginInitiationRoute", () => {
+  const organizationId = "org_01H00000000000000000000001";
+
   beforeEach(() => {
     signInMock.mockReset();
     navigateMock.mockReset();
     authState = { user: null, isLoading: false };
+    window.history.replaceState(null, "", "/login");
+  });
+
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("routes an organization link through AuthKit without forwarding other URL parameters", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      `/login?organization_id=${organizationId}&context=old-context&redirect_uri=https%3A%2F%2Fexample.com&state=untrusted`,
+    );
+    render(<LoginInitiationRoute />);
+    await waitFor(() =>
+      expect(signInMock).toHaveBeenCalledExactlyOnceWith({ organizationId }),
+    );
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "",
+    "org_bad",
+    "https://example.com",
+    `${organizationId}&redirect_uri=https://example.com`,
+  ])("ignores an invalid organization hint: %s", async (invalidId) => {
+    window.history.replaceState(
+      null,
+      "",
+      `/login?organization_id=${encodeURIComponent(invalidId)}`,
+    );
+    render(<LoginInitiationRoute />);
+    await waitFor(() => expect(signInMock).toHaveBeenCalledExactlyOnceWith());
+  });
+
+  it("starts the requested SSO flow even with a session in another organization", async () => {
+    authState = {
+      user: { id: "user_1" },
+      isLoading: false,
+      organizationId: "org_01H00000000000000000000002",
+    };
+    window.history.replaceState(
+      null,
+      "",
+      `/login?organization_id=${organizationId}`,
+    );
+    render(<LoginInitiationRoute />);
+    await waitFor(() =>
+      expect(signInMock).toHaveBeenCalledExactlyOnceWith({ organizationId }),
+    );
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("reuses a session already in the requested organization", async () => {
+    authState = { user: { id: "user_1" }, isLoading: false, organizationId };
+    window.history.replaceState(
+      null,
+      "",
+      `/login?organization_id=${organizationId}`,
+    );
+    render(<LoginInitiationRoute />);
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith("/", { replace: true }),
+    );
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the organization when retrying a failed sign-in", async () => {
+    signInMock.mockRejectedValueOnce(new Error("authorize failed"));
+    window.history.replaceState(
+      null,
+      "",
+      `/login?organization_id=${organizationId}`,
+    );
+    render(<LoginInitiationRoute />);
+    fireEvent.click(await screen.findByRole("button", { name: /Try again/i }));
+    await waitFor(() => expect(signInMock).toHaveBeenCalledTimes(2));
+    expect(signInMock).toHaveBeenNthCalledWith(2, { organizationId });
   });
 
   it("starts a fresh app-originated sign-in for a signed-out visitor", async () => {
@@ -43,7 +124,7 @@ describe("LoginInitiationRoute", () => {
     authState = { user: { id: "user_1" }, isLoading: false };
     rerender(<LoginInitiationRoute />);
     await waitFor(() =>
-      expect(navigateMock).toHaveBeenCalledWith("/", { replace: true })
+      expect(navigateMock).toHaveBeenCalledWith("/", { replace: true }),
     );
     expect(signInMock).not.toHaveBeenCalled();
   });
@@ -54,7 +135,7 @@ describe("LoginInitiationRoute", () => {
     authState = { user: { id: "user_1" }, isLoading: false };
     render(<LoginInitiationRoute />);
     await waitFor(() =>
-      expect(navigateMock).toHaveBeenCalledWith("/", { replace: true })
+      expect(navigateMock).toHaveBeenCalledWith("/", { replace: true }),
     );
     expect(signInMock).not.toHaveBeenCalled();
   });
@@ -82,13 +163,13 @@ describe("LoginInitiationRoute", () => {
     render(<LoginInitiationRoute />);
 
     await waitFor(() =>
-      expect(screen.getByTestId("login-initiation-error")).toBeInTheDocument()
+      expect(screen.getByTestId("login-initiation-error")).toBeInTheDocument(),
     );
     expect(screen.queryByTestId("login-initiation")).not.toBeInTheDocument();
     // Announced, not just rendered: the failure swaps in without a navigation,
     // so assistive tech has nothing else to notice it by.
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Couldn't start sign-in/
+      /Couldn't start sign-in/,
     );
 
     // Retry re-initiates rather than reloading: the guard against a duplicate
@@ -107,7 +188,7 @@ describe("LoginInitiationRoute", () => {
     render(<LoginInitiationRoute />);
 
     await waitFor(() =>
-      expect(screen.getByTestId("login-initiation-error")).toBeInTheDocument()
+      expect(screen.getByTestId("login-initiation-error")).toBeInTheDocument(),
     );
   });
 });

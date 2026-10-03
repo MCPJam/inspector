@@ -234,6 +234,7 @@ import {
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
+import { judgeModelIdSchema } from "./judge-model-id.js";
 import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
@@ -858,7 +859,10 @@ const evalSuiteFileProvenanceWireSchema = z
  */
 const syncFileOwnedSuiteSchema = z
   .object({
-    judge: suiteJudgeSettingsSchema.nullable().optional(),
+    judge: suiteJudgeSettingsSchema
+      .safeExtend({ model: judgeModelIdSchema.optional() })
+      .nullable()
+      .optional(),
     declaredSuiteId: opaqueIdSchema,
     name: z.string().trim().min(1).max(200),
     description: z.string().optional(),
@@ -3256,7 +3260,7 @@ const suiteSettingsShape = {
   judge: z
     .object({
       enabled: z.boolean().optional(),
-      model: z.string().min(1).optional(),
+      model: judgeModelIdSchema.optional(),
       // The flag the grader actually gates on. Without it a suite can be
       // `enabled` forever and never grade a run.
       autoRun: z.boolean().optional(),
@@ -3575,7 +3579,7 @@ const requestRunJudgeSchema = z
     force: z.boolean().optional(),
     enable: z.boolean().optional(),
     /** Judge model for THIS run only. */
-    model: z.string().min(1).optional(),
+    model: judgeModelIdSchema.optional(),
     /** Pass threshold for THIS run only, 0–1. */
     threshold: z.number().min(0).max(1).optional(),
   })
@@ -8535,8 +8539,24 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       };
       if (s.judge.enabled !== undefined)
         goalCompletion.enabled = s.judge.enabled;
-      if (s.judge.model !== undefined)
+      if (s.judge.model !== undefined) {
         goalCompletion.judgeModel = s.judge.model;
+        // A judge picked in the app is stored with a `judgeSelection` naming
+        // the same model, and the backend refuses a pair that disagrees. This
+        // body cannot carry a selection, so a stored one survives only while it
+        // still names the model: the backend's `selectionIfMatches` rule.
+        // Dropping it also drops the judge's saved reasoning effort
+        // (`judgeSelection.settings.reasoningEffort`). That is deliberate:
+        // effort is resolved per model, so it does not carry to a new one, and
+        // the new model starts with no saved effort. The caller still gets a
+        // 200, which is why the changeset says so.
+        const selection = goalCompletion.judgeSelection as
+          | { modelId?: unknown }
+          | undefined;
+        if (selection && selection.modelId !== s.judge.model) {
+          delete goalCompletion.judgeSelection;
+        }
+      }
       if (s.judge.autoRun !== undefined)
         goalCompletion.autoRun = s.judge.autoRun;
       if (s.judge.threshold !== undefined)
