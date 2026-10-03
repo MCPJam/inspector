@@ -297,6 +297,7 @@ export {
   WEB_CONNECT_TIMEOUT_MS,
   WEB_CALL_TIMEOUT_MS,
   WEB_STREAM_TIMEOUT_MS,
+  WEB_SERVER_CHECK_DEADLINE_MS,
 } from "../shared/hosted-web-timeouts.js";
 // Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
 // derived from the call timeout, and a re-export does not bind the name here.
