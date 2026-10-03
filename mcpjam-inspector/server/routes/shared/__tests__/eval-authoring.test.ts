@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   warn: vi.fn(),
   event: vi.fn(),
   selectEnvironment: vi.fn(),
+  createAuthorizedManager: vi.fn(async (..._args: unknown[]) => ({
+    manager: { disconnectAllServers: async () => {} },
+  })),
 }));
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   createConvexClient: () => ({ query: mocks.query }),
@@ -16,9 +19,7 @@ vi.mock("../../../services/evals/route-helpers.js", () => ({
 }));
 vi.mock("../../web/auth.js", () => ({
   callerContextFromHono: () => ({}),
-  createAuthorizedManager: async () => ({
-    manager: { disconnectAllServers: async () => {} },
-  }),
+  createAuthorizedManager: mocks.createAuthorizedManager,
 }));
 vi.mock("../../v1/evals.js", () => ({
   selectSuiteEnvironmentId: mocks.selectEnvironment,
@@ -98,6 +99,16 @@ describe("authoring adapter", () => {
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ jobId: "job" });
     expect(mocks.event).not.toHaveBeenCalled();
+  });
+  it("passes the XAA issuer so a Cross-App Access server can connect", async () => {
+    mocks.fetch.mockResolvedValue(
+      Response.json({ jobId: "job" }, { status: 202 }),
+    );
+    await post(JSON.stringify(start));
+    expect(mocks.createAuthorizedManager).toHaveBeenCalledTimes(1);
+    expect(mocks.createAuthorizedManager.mock.calls[0]?.[7]).toMatchObject({
+      xaaIssuer: expect.stringMatching(/^https?:\/\/.+/),
+    });
   });
   it("reports a hosted import missing its environment to Sentry", async () => {
     mocks.selectEnvironment.mockRejectedValue(

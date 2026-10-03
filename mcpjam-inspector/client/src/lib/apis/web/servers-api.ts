@@ -182,7 +182,9 @@ export async function validateHostedServer(
     );
   const execute = async (checkSignal: AbortSignal) => {
     // Browser waiting has no timeout. Once dispatched, allow the backend's
-    // 30-second queue window plus the existing 20-second connection budget.
+    // 30-second queue window plus a 20-second connection budget. The server
+    // answers within `WEB_SERVER_CHECK_DEADLINE_MS` (45 s) of the request's
+    // arrival, so its reason arrives before this gives up.
     const deadline = new AbortController();
     const timeout = setTimeout(
       () =>
