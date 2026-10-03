@@ -382,24 +382,29 @@ async function runTurn({ baseUrl, accessToken, projectId }) {
   }
 
   const chunks = [];
+  const readLine = (raw) => {
+    const line = raw.trim();
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    try {
+      chunks.push(JSON.parse(data));
+    } catch {
+      throw new Error(`malformed stream chunk: ${data.slice(0, 200)}`);
+    }
+  };
   const decoder = new TextDecoder();
   let buffer = "";
   for await (const piece of res.body) {
     buffer += decoder.decode(piece, { stream: true });
     let newline;
     while ((newline = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, newline).trim();
+      readLine(buffer.slice(0, newline));
       buffer = buffer.slice(newline + 1);
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      try {
-        chunks.push(JSON.parse(data));
-      } catch {
-        throw new Error(`malformed stream chunk: ${data.slice(0, 200)}`);
-      }
     }
   }
+  // A stream that closes without a trailing newline still ends on a line.
+  readLine(buffer + decoder.decode());
 
   const types = chunks.map((chunk) => chunk?.type);
   const errors = chunks.filter((chunk) => chunk?.type === "error");

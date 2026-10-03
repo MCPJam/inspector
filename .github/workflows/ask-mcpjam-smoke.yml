@@ -72,6 +72,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Nothing here pushes, and `npm ci` runs install scripts: leave no
+          # token in .git/config for them to read.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

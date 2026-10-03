@@ -229,16 +229,15 @@ function reportAgentChatFailure(
     return false;
   }
   const normalized = describeError(error);
-  const pageClass = agentPageClass({
+  // One status for both the class and the fingerprint: the caller's, else the
+  // failed response's.
+  const resolvedFacts = {
     ...facts,
     ...(meta && !meta.ok && facts.httpStatus === undefined
       ? { httpStatus: meta.status }
       : {}),
-  });
-  const fingerprintFacts = {
-    ...facts,
-    ...(meta && !meta.ok ? { httpStatus: meta.status } : {}),
   };
+  const pageClass = agentPageClass(resolvedFacts);
   const synthetic = new Error(syntheticMessage(meta));
   reportCaught(synthetic, {
     source: `mcpjam_agent:${facts.source}`,
@@ -249,7 +248,7 @@ function reportAgentChatFailure(
       agent_failure_source: facts.source,
       ...(facts.code ? { agent_failure_code: facts.code } : {}),
     },
-    fingerprint: agentFingerprint(fingerprintFacts),
+    fingerprint: agentFingerprint(resolvedFacts),
     extra: {
       // Redacted by the describer; see the Playground branch above.
       rawMessage: normalized.rawMessage.slice(0, MAX_EXTRA_CHARS),
