@@ -313,7 +313,7 @@ test("per-instance origins follow the ports; inherited loopback origins never su
   assert.equal(env.MCPJAM_PLATFORM_MCP_URL, "http://localhost:8789/mcp");
   assert.equal(
     env.WEB_ALLOWED_ORIGINS,
-    "http://localhost:5175,http://127.0.0.1:5175,https://partner.example",
+    "http://localhost:5175,http://127.0.0.1:5175,http://[::1]:5175,https://partner.example",
   );
   const worker = computeWorkerVars({
     ports,

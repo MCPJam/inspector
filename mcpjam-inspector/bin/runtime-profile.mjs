@@ -644,9 +644,12 @@ export function computeInstanceEnv({
     SERVER_PORT: String(ports.server),
     PORT: String(ports.server),
     BASE_URL: serverOrigin,
+    // Every loopback spelling the browser can show for this instance; the
+    // scoped session cookies and the backend's CORS accept `[::1]` as well.
     WEB_ALLOWED_ORIGINS: [
       `http://localhost:${browserPort}`,
       `http://127.0.0.1:${browserPort}`,
+      `http://[::1]:${browserPort}`,
       ...extraOrigins,
     ].join(","),
     CLI_AUTH_PUBLIC_ORIGIN: cliOrigin,
