@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EvalModelChoices } from "../eval-target-matrix";
 import type { ModelDefinition } from "@/shared/types";
-import { pickEffort } from "@/test/effort";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/hooks/use-project-environment-capability", () => ({
@@ -27,8 +26,22 @@ const selection = {
   fallback: { provider: "none" as const, model: "none" as const },
 };
 
+type Target = {
+  modelId: string;
+  selection?: { settings?: { reasoningEffort?: string } };
+};
+const efforts = (targets: Target[]) =>
+  targets.map((target) => target.selection?.settings?.reasoningEffort);
+
+/** Open a model menu by its trigger, then open GPT-5's efforts to the side. */
+async function openEfforts(trigger: HTMLElement) {
+  await userEvent.click(trigger);
+  await userEvent.click(await screen.findByRole("option", { name: /GPT-5/ }));
+  return within(await screen.findByTestId("model-effort-menu"));
+}
+
 describe("EvalModelChoices — reasoning effort", () => {
-  it("writes an effort onto the explicit model's saved selection", async () => {
+  it("sets an explicit model's effort from its model menu", async () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
@@ -42,16 +55,18 @@ describe("EvalModelChoices — reasoning effort", () => {
         availableModels={[GPT5]}
       />,
     );
-    await userEvent.click(screen.getByTestId("effort-control-trigger"));
-    await pickEffort("Low");
-    const next = onChange.mock.calls.at(-1)![0];
-    expect(next.explicitTargets).toHaveLength(1);
-    expect(next.explicitTargets[0].selection.settings.reasoningEffort).toBe(
-      "low",
+    const menu = await openEfforts(
+      screen.getByRole("button", { name: /GPT-5$/ }),
     );
+    expect(
+      menu.getByRole("menuitemradio", { name: "Default" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(menu.getByRole("menuitemradio", { name: "Low" }));
+    const next = onChange.mock.calls.at(-1)![0];
+    expect(efforts(next.explicitTargets)).toEqual(["low"]);
   });
 
-  it("adds another effort of a model as a second target at the next unused level", async () => {
+  it("adds the same model at another effort from Add model, greying out a level already picked", async () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
@@ -70,19 +85,13 @@ describe("EvalModelChoices — reasoning effort", () => {
         availableModels={[GPT5]}
       />,
     );
-    await userEvent.click(screen.getByTestId("choices-add-effort"));
+    const menu = await openEfforts(
+      screen.getByRole("button", { name: "Add model" }),
+    );
+    expect(menu.getByRole("menuitemradio", { name: "Low" })).toBeDisabled();
+    await userEvent.click(menu.getByRole("menuitemradio", { name: "High" }));
     const next = onChange.mock.calls.at(-1)![0];
-    expect(
-      next.explicitTargets.map(
-        (target: { modelId: string; selection?: typeof selection & { settings?: { reasoningEffort?: string } } }) => [
-          target.modelId,
-          target.selection?.settings?.reasoningEffort,
-        ],
-      ),
-    ).toEqual([
-      ["openai/gpt-5", "low"],
-      ["openai/gpt-5", "high"],
-    ]);
+    expect(efforts(next.explicitTargets)).toEqual(["low", "high"]);
   });
 
   it("changing one effort leaves its sibling target alone", async () => {
@@ -98,7 +107,10 @@ describe("EvalModelChoices — reasoning effort", () => {
             },
             {
               modelId: "openai/gpt-5",
-              selection: { ...selection, settings: { reasoningEffort: "high" } },
+              selection: {
+                ...selection,
+                settings: { reasoningEffort: "high" },
+              },
             },
           ],
         }}
@@ -108,32 +120,59 @@ describe("EvalModelChoices — reasoning effort", () => {
         availableModels={[GPT5]}
       />,
     );
-    // Both efforts are used: no further level to add.
-    expect(screen.queryByTestId("choices-add-effort")).toBeNull();
-    const chips = screen.getAllByTestId("effort-control-trigger");
-    expect(chips).toHaveLength(2);
-    await userEvent.click(chips[1]!);
-    await pickEffort("Default");
+    // The rows read "GPT-5 Low" and "GPT-5 High".
+    const menu = await openEfforts(screen.getByText("High").closest("button")!);
+    expect(menu.getByRole("menuitemradio", { name: "Low" })).toBeDisabled();
+    expect(menu.getByRole("menuitemradio", { name: "High" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await userEvent.click(menu.getByRole("menuitemradio", { name: "Default" }));
     const next = onChange.mock.calls.at(-1)![0];
-    expect(
-      next.explicitTargets.map(
-        (target: { selection?: { settings?: { reasoningEffort?: string } } }) =>
-          target.selection?.settings?.reasoningEffort,
-      ),
-    ).toEqual(["low", undefined]);
+    expect(efforts(next.explicitTargets)).toEqual(["low", undefined]);
   });
 
-  it("offers no chip on the inherited client default", () => {
+  it("offers efforts on the client's own model; picking one makes it an explicit pick", async () => {
+    const onChange = vi.fn();
     render(
       <EvalModelChoices
         value={{ includeClientDefaults: true, explicitTargets: [] }}
-        onChange={vi.fn()}
+        onChange={onChange}
         disabled={false}
         testId="choices"
         defaultModelId="openai/gpt-5"
         availableModels={[GPT5]}
       />,
     );
-    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    const menu = await openEfforts(
+      screen.getByRole("button", { name: /GPT-5$/ }),
+    );
+    // The client's saved effort isn't known here, so nothing is checked.
+    expect(menu.queryByRole("menuitemradio", { checked: true })).toBeNull();
+    await userEvent.click(menu.getByRole("menuitemradio", { name: "High" }));
+    const next = onChange.mock.calls.at(-1)![0];
+    expect(next.includeClientDefaults).toBe(false);
+    expect(efforts(next.explicitTargets)).toEqual(["high"]);
+  });
+
+  it("picks a model directly where efforts can't be saved", async () => {
+    const onChange = vi.fn();
+    render(
+      <EvalModelChoices
+        effortEditable={false}
+        value={{ includeClientDefaults: false, explicitTargets: [] }}
+        onChange={onChange}
+        disabled={false}
+        testId="choices"
+        availableModels={[GPT5]}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add model" }));
+    await userEvent.click(await screen.findByRole("option", { name: /GPT-5/ }));
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
+    const next = onChange.mock.calls.at(-1)![0];
+    expect(next.explicitTargets.map((t: Target) => t.modelId)).toEqual([
+      "openai/gpt-5",
+    ]);
   });
 });

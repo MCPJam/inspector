@@ -1,16 +1,19 @@
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
-import { ArrowUpRight, Check, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronRight, X } from "lucide-react";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { Switch } from "@mcpjam/design-system/switch";
 import { ProviderLogo } from "./model/provider-logo";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import {
   Command,
   CommandEmpty,
@@ -128,6 +131,27 @@ interface ModelSelectorProps {
   ) => string | undefined;
   /** A surface's own tag for a row ("Not eligible", "Not in catalog"). */
   rowTag?: (model: ModelDefinition) => string | undefined;
+  /**
+   * Single-select only: the reasoning efforts a row can be picked at. A row
+   * that returns some gets a chevron that opens its efforts to the side, and
+   * picking it means picking one of them ("Default" sends none) through
+   * `onModelEffortSelect`. Rows that return nothing pick as before.
+   */
+  rowEfforts?: (model: ModelDefinition) => ModelSelectorRowEfforts | undefined;
+  onModelEffortSelect?: (
+    model: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ) => void;
+}
+
+export interface ModelSelectorRowEfforts {
+  levels: readonly ModelReasoningEffort[];
+  /** The level this picker runs the row at now (`null` = Default). Omitted:
+   * the row is not the current pick, so nothing is checked. */
+  current?: ModelReasoningEffort | null;
+  /** A level already picked elsewhere (shown greyed out). `undefined` is
+   * Default. */
+  isTaken?: (effort: ModelReasoningEffort | undefined) => boolean;
 }
 
 export interface ModelSelectorExtraOption {
@@ -313,8 +337,19 @@ export function ModelSelector({
   extraOptions,
   rowDisabledReason,
   rowTag,
+  rowEfforts,
+  onModelEffortSelect,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  // The row whose efforts are open to the side. `focus` is set when it was
+  // opened by a pick (click or Enter), not by hover, so the keyboard moves in.
+  const [effortRow, setEffortRow] = useState<{
+    key: string;
+    model: ModelDefinition;
+    focus: boolean;
+  } | null>(null);
+  const effortRowScope = useId();
+  const menuContentRef = useRef<HTMLDivElement>(null);
   const [providerTab, setProviderTab] = useState<"provided" | "configured">(
     "provided",
   );
@@ -408,6 +443,7 @@ export function ModelSelector({
     setIsOpen(nextOpen);
     if (!nextOpen) {
       setHoveredLockedModelId(null);
+      setEffortRow(null);
     }
   };
 
@@ -711,6 +747,27 @@ export function ModelSelector({
     setIsOpen(false);
   };
 
+  const effortsFor = (model: ModelDefinition) =>
+    !multiModelEnabled && onModelEffortSelect
+      ? rowEfforts?.(model)
+      : undefined;
+  const effortRowAttr = (rowKey: string) => `${effortRowScope}:${rowKey}`;
+  const effortAnchor =
+    effortRow && typeof document !== "undefined"
+      ? document.querySelector<HTMLElement>(
+          `[data-effort-row="${effortRowAttr(effortRow.key).replace(/["\\]/g, "\\$&")}"]`,
+        )
+      : null;
+  const openEfforts = effortRow ? effortsFor(effortRow.model) : undefined;
+  const handleEffortSelect = (
+    model: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ) => {
+    onModelEffortSelect?.(model, effort);
+    setEffortRow(null);
+    setIsOpen(false);
+  };
+
   const renderGroupModelItems = (group: ModelGroup) =>
     group.models.map((model) => {
       const rowKey = modelRowKey(model);
@@ -731,6 +788,7 @@ export function ModelSelector({
         model.disabledReason ?? surfaceReason ?? limitReason;
       const isLockedRowHighlight =
         lockedRowHighlightId === rowKey && !!disabledReason;
+      const efforts = isDisabled ? undefined : effortsFor(model);
       const rowTags = [
         rowTag?.(model),
         model.unverifiedCapabilities?.length ? NOT_VERIFIED_TAG : undefined,
@@ -742,8 +800,21 @@ export function ModelSelector({
           key={rowKey}
           value={modelSearchValue(model, group.title)}
           aria-checked={multiModelEnabled ? isSelected : undefined}
+          aria-haspopup={efforts ? "menu" : undefined}
+          aria-expanded={efforts ? effortRow?.key === rowKey : undefined}
+          data-effort-row={effortRowAttr(rowKey)}
+          onMouseEnter={
+            onModelEffortSelect && !multiModelEnabled
+              ? () =>
+                  setEffortRow(
+                    efforts ? { key: rowKey, model, focus: false } : null,
+                  )
+              : undefined
+          }
           onSelect={() => {
-            if (multiModelEnabled) {
+            if (efforts) {
+              setEffortRow({ key: rowKey, model, focus: true });
+            } else if (multiModelEnabled) {
               handleMultiModelSelect(model);
             } else {
               requestSelectionChange({
@@ -783,6 +854,8 @@ export function ModelSelector({
           ))}
           {multiModelEnabled ? (
             <SelectionCheck checked={isSelected} />
+          ) : efforts ? (
+            <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
           ) : sameModelSelection(model, currentModel) ? (
             <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
           ) : null}
@@ -889,6 +962,7 @@ export function ModelSelector({
         </Tooltip>
 
         <PopoverContent
+          ref={menuContentRef}
           portalled={!inModal}
           align={align}
           className="w-[280px] p-0"
@@ -1139,6 +1213,67 @@ export function ModelSelector({
               );
             })()}
           </Command>
+          {effortRow && openEfforts && effortAnchor ? (
+            <Popover
+              open
+              onOpenChange={(open) => {
+                if (!open) setEffortRow(null);
+              }}
+            >
+              <PopoverAnchor virtualRef={{ current: effortAnchor }} />
+              <PopoverContent
+                portalled={!inModal}
+                side="right"
+                align="start"
+                sideOffset={10}
+                collisionPadding={8}
+                className="w-40 p-1"
+                data-testid="model-effort-menu"
+                onOpenAutoFocus={(event) => {
+                  if (!effortRow.focus) event.preventDefault();
+                }}
+                onCloseAutoFocus={(event) => event.preventDefault()}
+                // The model menu beside it is not "outside": its rows switch or
+                // pick themselves, and focus going back to its search box is
+                // not a dismissal. A click anywhere else, or Escape, is.
+                onFocusOutside={(event) => event.preventDefault()}
+                onPointerDownOutside={(event) => {
+                  if (
+                    menuContentRef.current?.contains(event.target as Node)
+                  ) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                <div role="menu" aria-label={`${compactModelLabel(effortRow.model.name)} effort`}>
+                  {[undefined, ...openEfforts.levels].map((level) => {
+                    const taken = openEfforts.isTaken?.(level) ?? false;
+                    const checked =
+                      openEfforts.current !== undefined &&
+                      (openEfforts.current ?? undefined) === level;
+                    return (
+                      <button
+                        key={level ?? "default"}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={checked}
+                        disabled={taken && !checked}
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:text-muted-foreground disabled:opacity-60"
+                        onClick={() =>
+                          handleEffortSelect(effortRow.model, level)
+                        }
+                      >
+                        <span className="flex-1">
+                          {level ? reasoningEffortLabel(level) : "Default"}
+                        </span>
+                        {checked ? <Check className="size-3.5 shrink-0" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
+          ) : null}
         </PopoverContent>
       </Popover>
     </>
