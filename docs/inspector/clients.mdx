@@ -65,7 +65,7 @@ The **Browser** tab in the Client focus panel separates saved browser configurat
 
 - **Browser location** — Shown when Cloud Browser is rolled out to your account. Choose between local and cloud for new Playground chats. Changing this affects new chats only; any chat already bound to a browser keeps its existing location. Environments always use Cloud regardless of this preference.
 - **Device permission** — Grant or revoke permission for the local browser on this machine. Appears only when local browser is available and selected.
-- **Saved profiles** — Manage your personal browser profiles.
+- **Saved profiles** — Manage your personal browser profiles. On local and desktop installs, saving and loading profile archives requires a server-side credential that those installs do not hold. When it is absent, the **Save profile for other chats…** menu item is disabled with the label "Not available on this server", and the saved-profiles panel shows "Profiles can't be saved or loaded on this server." Listing, choosing, and deleting profiles still work. If a saved profile cannot be loaded when a local browser starts, the browser opens with a blank profile and posts a short notice in the chat; the session continues normally.
 
 #### Browser canvas island
 
