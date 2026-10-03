@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
+import { tryGetGuestAuthority } from "./utils/guest-authority.js";
 import { logger as appLogger } from "./utils/logger.js";
 
 export type InspectorEnvMode = "development" | "production";
@@ -281,6 +282,58 @@ async function checkBootstrapRoute(convexHttpUrl: string): Promise<void> {
   }
 }
 
+/**
+ * A developer overlay (`.env.development.local`) that names a backend other
+ * than the standard profile's, while guest sessions still come from the
+ * HOSTED guest authority: every guest token is then signed by the hosted
+ * Inspector's keys and refused by the private backend (401 on each guest
+ * call). The launcher (`npm run dev:worktree`) refuses this before starting;
+ * `npm run dev` reads the files directly and only has this warning.
+ *
+ * Pure, for tests: the warning text, or null when the setup is coherent.
+ */
+export function describeGuestAuthorityMismatch(args: {
+  standardConvexHttpUrl: string | undefined;
+  overlayConvexHttpUrl: string | undefined;
+  guestAuthorityKind: "backend" | "hosted" | null;
+}): string | null {
+  const standard = normalizeUrlOrigin(args.standardConvexHttpUrl);
+  const overlay = normalizeUrlOrigin(args.overlayConvexHttpUrl);
+  if (!standard || !overlay || overlay === standard) return null;
+  if (args.guestAuthorityKind !== "hosted") return null;
+  return (
+    `[boot] .env.development.local points CONVEX_HTTP_URL at ${overlay}, but guest ` +
+    "sessions come from the hosted guest authority, whose tokens that backend will " +
+    "refuse (every guest call answers 401). Run `npm run dev:setup-guest-auth -- " +
+    "--deployment dev:<name>` once for your own deployment, or start with " +
+    "`npm run dev:worktree -- <N>`, which checks this before launching."
+  );
+}
+
+function readEnvFileValues(path: string): Record<string, string> | null {
+  if (!existsSync(path)) return null;
+  try {
+    return dotenv.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function warnOnGuestAuthorityMismatch(env: LoadedInspectorEnv): void {
+  // Under a launcher-resolved runtime the launcher already refused this.
+  if (isResolvedRuntime()) return;
+  const overlay = readEnvFileValues(join(env.envDir, ".env.development.local"));
+  if (!overlay?.CONVEX_HTTP_URL) return;
+  const standard = readEnvFileValues(join(env.envDir, ".env.local"));
+  const authority = tryGetGuestAuthority();
+  const warning = describeGuestAuthorityMismatch({
+    standardConvexHttpUrl: standard?.CONVEX_HTTP_URL,
+    overlayConvexHttpUrl: overlay.CONVEX_HTTP_URL,
+    guestAuthorityKind: authority.ok ? authority.authority.kind : null,
+  });
+  if (warning) appLogger.warn(warning);
+}
+
 export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
   if (
     env.mode === "production" ||
@@ -299,6 +352,8 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
       __MCPJAM_CONVEX_DIAGNOSTICS_STARTED__?: boolean;
     }
   ).__MCPJAM_CONVEX_DIAGNOSTICS_STARTED__ = true;
+
+  warnOnGuestAuthorityMismatch(env);
 
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   const viteConvexUrl = process.env.VITE_CONVEX_URL;
