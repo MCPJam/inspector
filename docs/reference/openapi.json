@@ -27848,6 +27848,11 @@
             },
             "minItems": 1,
             "description": "Fan out across THESE environments instead of the goal's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
+          },
+          "expectedSponsored": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` whose `details.code` is `swarm_funding_changed` (with `expectedSponsored`, `actualSponsored` and `totalConversations`) and nothing is created. Omit it to accept whatever split applies."
           }
         }
       },
@@ -27873,6 +27878,22 @@
           "deduped": {
             "type": "boolean",
             "description": "True when an `Idempotency-Key` replayed onto a run that ALREADY existed, so nothing new was started. The response is otherwise identical, which is how a retry of a dropped request tells \"I launched it\" from \"it was already going\" without a second read."
+          },
+          "funding": {
+            "type": "object",
+            "description": "How the run's conversations are funded. `sponsored` conversations are paid from MCPJam's per-user allowance; the `credits` remainder is paid from your organization's credits. Absent when the server does not report it.",
+            "required": ["sponsored", "credits", "total"],
+            "properties": {
+              "sponsored": {
+                "type": "integer"
+              },
+              "credits": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            }
           }
         }
       },

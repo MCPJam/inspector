@@ -58,6 +58,7 @@ vi.mock("../../../services/sessionSimulation/launch-journey-run.js", () => ({
 }));
 
 import goals from "../goals.js";
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 import { v1OnError } from "../envelope.js";
 
 const PROJECT = "projaxxxxxxxxxxxxxxxxxxxxxxxxxxx";
@@ -449,6 +450,63 @@ describe("POST .../goals/:goalId/runs", () => {
     expect(res.status).toBe(403);
     expect((await res.json()) as { message?: string }).toMatchObject({
       message: "Swarms is not currently available.",
+    });
+  });
+
+  it("forwards expectedSponsored (including 0) and reports the funding the launch returns", async () => {
+    launchMock.mockResolvedValue({
+      runId: "run_new",
+      funding: { sponsored: 0, credits: 3, total: 3 },
+    });
+    const res = await launch({
+      body: JSON.stringify({ expectedSponsored: 0 }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(202);
+    expect(launchMock.mock.calls[0]![1]).toMatchObject({ expectedSponsored: 0 });
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      funding: { sponsored: 0, credits: 3, total: 3 },
+    });
+  });
+
+  it("rejects a malformed expectedSponsored as a 400 without launching", async () => {
+    for (const expectedSponsored of [-1, 1.5, "3"]) {
+      const res = await launch({
+        body: JSON.stringify({ expectedSponsored }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a funding mismatch as a 409 CONFLICT carrying the typed details", async () => {
+    launchMock.mockRejectedValue(
+      new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        "Sponsored conversations changed",
+        {
+          code: "swarm_funding_changed",
+          expectedSponsored: 5,
+          actualSponsored: 3,
+          totalConversations: 15,
+        },
+      ),
+    );
+    const res = await launch({
+      body: JSON.stringify({ expectedSponsored: 5 }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()) as Record<string, any>).toMatchObject({
+      code: "CONFLICT",
+      details: {
+        code: "swarm_funding_changed",
+        expectedSponsored: 5,
+        actualSponsored: 3,
+        totalConversations: 15,
+      },
     });
   });
 

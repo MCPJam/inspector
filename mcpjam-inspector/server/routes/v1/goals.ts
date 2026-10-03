@@ -580,6 +580,13 @@ function launchSchemaFor(surface: Surface) {
       // authored".
       .min(1, "environmentIds must name at least one environment")
       .optional(),
+    /**
+     * How many of this run's conversations the caller expects to be sponsored
+     * (paid from MCPJam's allowance rather than the organization's credits). A
+     * mismatch is a 409 `swarm_funding_changed` before anything is created.
+     * Omit to accept whatever split applies.
+     */
+    expectedSponsored: z.number().int().min(0).optional(),
   });
   // STRICT on the canonical surface: a caller that moved to `/goals/:id/runs`
   // but still sends `waveId` would otherwise have it stripped and get an
@@ -1189,7 +1196,7 @@ both(
     }
     const swarmRunId = parsed.data.swarmRunId ?? parsed.data.waveId;
 
-    let result: { runId: string; deduped?: boolean };
+    let result: Awaited<ReturnType<typeof launchJourneyRun>>;
     try {
       result = await launchJourneyRun(
         {
@@ -1208,6 +1215,9 @@ both(
           ...(swarmRunId ? { waveId: swarmRunId } : {}),
           ...(parsed.data.environmentIds?.length
             ? { environmentIds: parsed.data.environmentIds }
+            : {}),
+          ...(parsed.data.expectedSponsored !== undefined
+            ? { expectedSponsored: parsed.data.expectedSponsored }
             : {}),
         },
       );
@@ -1237,6 +1247,12 @@ both(
          * without a second read.
          */
         deduped: result.deduped === true,
+        /**
+         * How the run's conversations were funded: `sponsored` come from
+         * MCPJam's allowance, `credits` from the organization's. Absent when
+         * the backend does not report it.
+         */
+        ...(result.funding ? { funding: result.funding } : {}),
       },
       202,
     );

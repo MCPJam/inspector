@@ -19,6 +19,7 @@ import {
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
+import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
   isPaidPlan,
   useOrganizationBillingStatus,
@@ -65,6 +66,7 @@ export function SidebarCredits({
     balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
+  const sponsoredAllowance = useSwarmSponsorshipAllowance();
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "See credits" whose card is a blank number over an empty bar, which reads
@@ -221,6 +223,26 @@ export function SidebarCredits({
                   }
                   isLoading={isEvalIterationQuotaLoading}
                   testId="sidebar-usage-eval-iterations"
+                />
+              ) : null}
+
+              {sponsoredAllowance ? (
+                <SidebarUsageRow
+                  label="Sponsored swarm conversations"
+                  percentText={`${sponsoredAllowance.remaining.toLocaleString()} / ${sponsoredAllowance.granted.toLocaleString()} remaining`}
+                  helperText={null}
+                  fillPercent={Math.min(
+                    100,
+                    Math.max(
+                      0,
+                      (sponsoredAllowance.remaining /
+                        sponsoredAllowance.granted) *
+                        100,
+                    ),
+                  )}
+                  isLoading={false}
+                  testId="sidebar-usage-swarm-sponsored"
+                  tooltip="Swarm conversations MCPJam pays for before your organization's credits are used. Which ones qualify depends on the model and environment, and sponsored capacity can run out."
                 />
               ) : null}
             </div>

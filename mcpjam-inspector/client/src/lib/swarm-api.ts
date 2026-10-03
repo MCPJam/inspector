@@ -24,6 +24,13 @@ import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
+import {
+  parseFundingChangedDetails,
+  parseFundingSummary,
+  SWARM_FUNDING_CHANGED_CODE,
+  type SwarmFundingChangedDetails,
+  type SwarmFundingSummary,
+} from "@/shared/swarm-sponsorship";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
 export const SWARM_QUERIES = {
@@ -945,10 +952,20 @@ export interface LaunchJourneyRunArgs {
    * configuration stays exactly as its author left it.
    */
   environmentIds?: string[];
+  /**
+   * How many of THIS run's conversations the user was shown as sponsored (paid
+   * from MCPJam's allowance rather than the organization's credits). The
+   * backend refuses the launch with a typed 409 when the real split differs, so
+   * a launch can never quietly use more org credits than the user saw. Omit to
+   * accept whatever split applies (agent and Run-again launches).
+   */
+  expectedSponsored?: number;
 }
 
 export interface LaunchJourneyRunResult {
   runId: string;
+  /** How the backend funded the run's conversations, when it reports it. */
+  funding?: SwarmFundingSummary;
 }
 
 /**
@@ -999,6 +1016,9 @@ export async function launchJourneyRun(
           : {}),
         ...(args.sessionsPerTarget !== undefined
           ? { sessionsPerTarget: args.sessionsPerTarget }
+          : {}),
+        ...(args.expectedSponsored !== undefined
+          ? { expectedSponsored: args.expectedSponsored }
           : {}),
       }),
     },
@@ -1061,7 +1081,105 @@ export async function launchJourneyRun(
       "Launch accepted but the backend returned no run id",
     );
   }
-  return { runId };
+  const funding = parseFundingSummary(
+    (body as { funding?: unknown } | undefined)?.funding,
+  );
+  return { runId, ...(funding ? { funding } : {}) };
+}
+
+/**
+ * The typed reading of a launch refused because the sponsored split moved
+ * between the preview the user saw and the launch (`swarm_funding_changed`,
+ * HTTP 409). Nothing was created. `undefined` for every other error.
+ */
+export function fundingChangeOf(
+  error: unknown,
+): SwarmFundingChangedDetails | undefined {
+  if (!(error instanceof LaunchJourneyRunError) || error.status !== 409) {
+    return undefined;
+  }
+  if (error.code !== SWARM_FUNDING_CHANGED_CODE) return undefined;
+  return parseFundingChangedDetails(error.details);
+}
+
+// ── REST funding preview ────────────────────────────────────────────────────
+
+export interface SwarmFundingPreviewRunInput {
+  journeyRefId: string;
+  /**
+   * What the launch will create the run as. The wizard launches swarms; asked
+   * without it the backend resolves the kind from the session count.
+   */
+  kind?: "swarm" | "user_testing";
+  environmentIds?: string[];
+  sessionsPerTarget?: number;
+}
+
+export interface SwarmFundingPreviewRun extends SwarmFundingSummary {
+  targets: Array<{ targetId: string; eligible: boolean; reason?: string }>;
+}
+
+export interface SwarmFundingPreview {
+  /** False when sponsorship cannot apply here; every conversation uses credits. */
+  supported: boolean;
+  /** Sponsored conversations left in the caller's allowance. */
+  remaining: number;
+  granted: number;
+  /** One entry per requested run, in order; counts are cumulative in that order. */
+  runs: SwarmFundingPreviewRun[];
+}
+
+/**
+ * How a wave's conversations would be funded, before anything is launched.
+ * Read-only. Throws on transport or server failure; callers treat that as "no
+ * preview" and launch exactly as they did before sponsorship existed.
+ */
+export async function fetchSwarmFundingPreview(
+  projectId: string,
+  runs: SwarmFundingPreviewRunInput[],
+  signal?: AbortSignal,
+): Promise<SwarmFundingPreview> {
+  const response = await authFetch("/api/web/swarm/funding-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, runs }),
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) {
+    throw new Error(`Funding preview failed (${response.status})`);
+  }
+  const body = (await response.json()) as Partial<SwarmFundingPreview> | null;
+  const count = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : 0;
+  return {
+    supported: body?.supported === true,
+    remaining: count(body?.remaining),
+    granted: count(body?.granted),
+    runs: Array.isArray(body?.runs)
+      ? body.runs.map((run) => ({
+          sponsored: count(run?.sponsored),
+          credits: count(run?.credits),
+          total: count(run?.total),
+          targets: Array.isArray(run?.targets)
+            ? run.targets.flatMap((target) =>
+                target && typeof target.targetId === "string"
+                  ? [
+                      {
+                        targetId: target.targetId,
+                        eligible: target.eligible === true,
+                        ...(typeof target.reason === "string"
+                          ? { reason: target.reason }
+                          : {}),
+                      },
+                    ]
+                  : [],
+              )
+            : [],
+        }))
+      : [],
+  };
 }
 
 // ── REST generation ─────────────────────────────────────────────────────────

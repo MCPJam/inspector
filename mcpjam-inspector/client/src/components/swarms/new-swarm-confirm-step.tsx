@@ -31,6 +31,13 @@ import {
   MIN_SWARM_ITERATIONS,
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
+import { useSwarmFundingPreview } from "@/hooks/use-swarm-funding-preview";
+import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
+import {
+  fundingPreviewRuns,
+  fundingSplitOf,
+  withChosenIterations,
+} from "@/components/swarms/swarm-funding-plan";
 import {
   describeReusedEnvironmentMove,
   type EnvironmentMoveRow,
@@ -92,6 +99,19 @@ export type LaunchTarget = {
    * not the intensity preset — is what the run will execute. Absent on created
    * targets, which are born with the preset's config. */
   sessionsPerTarget?: number | null;
+  /**
+   * Which iterations counter on Confirm sizes this target (`iterationsByPersona`
+   * is keyed by the proposed persona's local key, or a reused persona's id). A
+   * target a previous attempt persisted keeps this so a counter changed since
+   * can still reach the preview and the launch (see `withChosenIterations`).
+   */
+  iterationsKey?: string;
+  /**
+   * The iterations a just-created goal was born with, so a counter that has
+   * since moved is told apart from one that has not (a goal born with the
+   * counter's current value needs no per-run override). Created targets only.
+   */
+  bornIterations?: number;
 };
 
 export type ConfirmLaunchPayload = {
@@ -104,6 +124,14 @@ export type ConfirmLaunchPayload = {
   /** Per reused journey: its current rubric. Confirm does not author
    * swarm-level grading, so this is empty from this screen. */
   reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
+  /**
+   * What the person was shown about sponsored conversations when they pressed
+   * launch. `shownSponsored` is the sponsored total across the WHOLE launch as
+   * displayed, or `null` when the display did not cover every run (new goals
+   * that do not exist yet) or showed nothing. The launch compares it with the
+   * split it is about to get and stops for review when they differ.
+   */
+  funding: { shownSponsored: number | null };
 };
 
 type SelectedPersona =
@@ -208,6 +236,7 @@ function CompactPersonaCard({
   onRemove,
   removeLabel,
   editLabel,
+  viewOnly,
   avatarShape,
   avatarPalette,
   footer,
@@ -220,9 +249,12 @@ function CompactPersonaCard({
   /** Another card is expanded — this one recedes rather than competing. */
   muted?: boolean;
   onSelect: () => void;
-  onRemove: () => void;
+  /** Absent once the swarm's goals are set: there is nothing to remove. */
+  onRemove?: () => void;
   removeLabel: string;
   editLabel: string;
+  /** The card opens a read-only view, so its button says so. */
+  viewOnly?: boolean;
   avatarShape?: number;
   avatarPalette?: number;
   /** Strip under the row: this persona's iterations and what they cost. */
@@ -280,21 +312,23 @@ function CompactPersonaCard({
               onSelect();
             }}
           >
-            Edit
+            {viewOnly ? "View" : "Edit"}
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7.5 bg-background px-2.5 text-xs"
-            aria-label={removeLabel}
-            onClick={(event) => {
-              event.stopPropagation();
-              onRemove();
-            }}
-          >
-            Remove
-          </Button>
+          {onRemove ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7.5 bg-background px-2.5 text-xs"
+              aria-label={removeLabel}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove();
+              }}
+            >
+              Remove
+            </Button>
+          ) : null}
         </div>
         </div>
         {footer ? (
@@ -483,6 +517,7 @@ function PersonaDetailPanel({
   graded,
   loadingGoals,
   draftEditable,
+  readOnly,
   onClose,
   onRemoveGoal,
   onChangeName,
@@ -507,6 +542,11 @@ function PersonaDetailPanel({
   loadingGoals?: boolean;
   /** In-memory row: edits apply immediately, no Save. */
   draftEditable?: boolean;
+  /**
+   * The persona's goals already exist, so this is a view: nothing here reaches
+   * what launches, and a field that took typing would say otherwise.
+   */
+  readOnly?: boolean;
   /**
    * Leave the editor WITHOUT saving. Reached by Escape — the design shows no
    * close button. For a persisted persona the caller discards the draft, so
@@ -570,6 +610,8 @@ function PersonaDetailPanel({
                 <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                 Saving…
               </>
+            ) : readOnly ? (
+              "Done"
             ) : (
               "Save changes"
             )}
@@ -582,6 +624,7 @@ function PersonaDetailPanel({
           <SectionLabel>Name</SectionLabel>
           <Input
             value={name}
+            readOnly={readOnly}
             onChange={(event) => onChangeName?.(event.target.value)}
             placeholder="Name"
             aria-label="Persona name"
@@ -593,6 +636,7 @@ function PersonaDetailPanel({
           <SectionLabel>Role</SectionLabel>
           <Input
             value={role}
+            readOnly={readOnly}
             onChange={(event) => onChangeRole?.(event.target.value)}
             placeholder="Role"
             aria-label="Persona role"
@@ -604,6 +648,7 @@ function PersonaDetailPanel({
           <SectionLabel>Use cases &amp; context</SectionLabel>
           <textarea
             value={context}
+            readOnly={readOnly}
             onChange={(event) => onChangeContext?.(event.target.value)}
             placeholder="Who they are and how they show up…"
             aria-label="Use cases and context"
@@ -780,7 +825,8 @@ function ReusedPersonaCard({
   persona: ReusedPersona;
   muted?: boolean;
   onSelect: () => void;
-  onRemove: () => void;
+  /** Absent once the swarm's goals are set. */
+  onRemove?: () => void;
   resolved: ReusedResolved | undefined;
   iterations: number;
   disabled: boolean;
@@ -852,6 +898,10 @@ export function NewSwarmConfirmStep({
   onAddReused,
   onSaveReusedPersona,
   onSaveReusedGoal,
+  projectId,
+  createdTargets = null,
+  fundingRefreshKey = 0,
+  fundingNotice = null,
 }: {
   proposed: ProposedPersona[];
   onProposedChange: (next: ProposedPersona[]) => void;
@@ -893,6 +943,18 @@ export function NewSwarmConfirmStep({
   ) => Promise<void>;
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
+  /** The project the launch runs in; the sponsored split is read against it. */
+  projectId?: string | null;
+  /**
+   * Goals a previous launch attempt already created, in launch order. Once they
+   * exist every run has an id, so the sponsored split can be shown for the
+   * whole launch instead of just the existing goals.
+   */
+  createdTargets?: LaunchTarget[] | null;
+  /** Bump to re-read the sponsored split of an unchanged plan. */
+  fundingRefreshKey?: number;
+  /** Why the last launch stopped for review, when it did. */
+  fundingNotice?: string | null;
 }) {
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
@@ -1019,6 +1081,7 @@ export function NewSwarmConfirmStep({
     (reusedResolved[persona._id]?.targets ?? []).map((target) => ({
       ...target,
       sessionsPerTarget: reusedIterationsFor(persona._id),
+      iterationsKey: persona._id,
     }))
   );
   /**
@@ -1080,6 +1143,51 @@ export function NewSwarmConfirmStep({
   const personaTotal = proposed.length + reusedPersonas.length;
   const fanoutEnvironmentCount = Math.max(1, environmentCount);
   const canLaunch = journeyCount > 0 && !launching && !reusedPending;
+
+  // The sponsored split. Every run it can be asked about has a goal id: the
+  // reused goals always, and all of them once a previous attempt created the
+  // new ones. Goals that do not exist yet are the "pending" remainder the
+  // summary says so about.
+  //
+  // Once a launch attempt made the goals, who is in the swarm is settled: a
+  // retry, or the launch that follows a review stop, runs THOSE goals. A persona
+  // removed here would still launch (spending allowance, or credits once it ran
+  // out) while the list and the estimate said it was gone, and one added here
+  // would be counted and never created. So neither can be done. The counters
+  // stay live: they reach the preview and the launch as per-run overrides.
+  const structureLocked = createdTargets != null;
+  // The created goals are frozen once a launch attempt made them, but the
+  // iterations beside them are not: ask about the runs as they will now launch,
+  // or lowering a counter to fit the allowance would change the estimate and
+  // nothing else.
+  const previewTargets = createdTargets
+    ? withChosenIterations(createdTargets, iterationsByPersona)
+    : activeReusedTargets;
+  // Not memoized: `previewTargets` is a fresh array each render, and the hook
+  // keys on the serialized runs, so identity does not matter here.
+  const previewRuns =
+    previewTargets.length > 0
+      ? fundingPreviewRuns(
+          previewTargets,
+          environmentIds.length > 0 ? environmentIds : null,
+        )
+      : null;
+  const fundingState = useSwarmFundingPreview({
+    projectId,
+    runs: previewRuns,
+    refreshKey: fundingRefreshKey,
+  });
+  const pendingGoals = createdTargets ? 0 : newJourneyCount;
+  const shownSplit =
+    fundingState.status === "ready" && previewRuns
+      ? fundingSplitOf(fundingState.preview, previewRuns.length)
+      : null;
+  // After a launch attempt, a counter changed and the split is being re-read.
+  // `shownSplit` is null until it lands, so a click now would send nothing to
+  // compare against and the launch would stop again with its first-review
+  // wording. Before any goal exists the launch's own check covers this, and a
+  // preview that never settles must not be able to stop a first launch.
+  const previewSettling = structureLocked && fundingState.status === "loading";
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1239,9 +1347,21 @@ export function NewSwarmConfirmStep({
             Review your users and what they&rsquo;ll accomplish
           </h2>
           <p className="text-sm leading-relaxed text-foreground">
-            Select a user persona for details, or remove anything that
-            doesn&rsquo;t fit.
+            {structureLocked
+              ? "Select a user persona for details."
+              : "Select a user persona for details, or remove anything that doesn’t fit."}
           </p>
+          {structureLocked ? (
+            <p
+              className="text-sm leading-relaxed text-muted-foreground"
+              data-testid="new-swarm-confirm-locked"
+            >
+              This swarm&rsquo;s goals are already set, so personas and goals
+              can&rsquo;t be added or removed here. You can still change the
+              iterations. To start a different mix, leave this swarm; goals it
+              created stay in Goals.
+            </p>
+          ) : null}
           <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
             This launch will run {launchSessionEstimate}{" "}
             {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
@@ -1324,11 +1444,14 @@ export function NewSwarmConfirmStep({
                         label: journey.goal,
                       }))}
                       draftEditable
+                      readOnly={structureLocked}
                       avatarShape={persona.avatarShape}
                       avatarPalette={persona.avatarPalette}
                       onClose={() => setSelected(null)}
-                      onRemoveGoal={(goalKey) =>
-                        removeJourney(persona.key, goalKey)
+                      onRemoveGoal={
+                        structureLocked
+                          ? undefined
+                          : (goalKey) => removeJourney(persona.key, goalKey)
                       }
                       onChangeName={(nextName) =>
                         patchProposed(persona.key, (current) => ({
@@ -1348,17 +1471,24 @@ export function NewSwarmConfirmStep({
                           notes,
                         }))
                       }
-                      onChangeGoal={(goalKey, goal) =>
-                        patchProposed(persona.key, (current) => ({
-                          ...current,
-                          journeys: current.journeys.map((journey) =>
-                            journey.key === goalKey
-                              ? { ...journey, goal }
-                              : journey
-                          ),
-                        }))
+                      onChangeGoal={
+                        structureLocked
+                          ? undefined
+                          : (goalKey, goal) =>
+                              patchProposed(persona.key, (current) => ({
+                                ...current,
+                                journeys: current.journeys.map((journey) =>
+                                  journey.key === goalKey
+                                    ? { ...journey, goal }
+                                    : journey
+                                ),
+                              }))
                       }
-                      onAddGoal={() => addGoal(persona.key)}
+                      onAddGoal={
+                        structureLocked
+                          ? undefined
+                          : () => addGoal(persona.key)
+                      }
                       // In-memory edits already landed as they were typed, so
                       // this only collapses the editor.
                       onSave={() => setSelected(null)}
@@ -1384,8 +1514,15 @@ export function NewSwarmConfirmStep({
                   onSelect={() =>
                     setSelected({ kind: "proposed", key: persona.key })
                   }
-                  onRemove={() => removePersona(persona.key)}
-                  editLabel={`Edit persona ${persona.name}`}
+                  onRemove={
+                    structureLocked
+                      ? undefined
+                      : () => removePersona(persona.key)
+                  }
+                  viewOnly={structureLocked}
+                  editLabel={`${structureLocked ? "View" : "Edit"} persona ${
+                    persona.name
+                  }`}
                   removeLabel={`Remove persona ${persona.name}`}
                   avatarShape={persona.avatarShape}
                   avatarPalette={persona.avatarPalette}
@@ -1476,7 +1613,11 @@ export function NewSwarmConfirmStep({
                     onSelect={() =>
                       setSelected({ kind: "reused", id: persona._id })
                     }
-                    onRemove={() => removeReused(persona._id)}
+                    onRemove={
+                      structureLocked
+                        ? undefined
+                        : () => removeReused(persona._id)
+                    }
                     resolved={reusedResolved[persona._id]}
                     iterations={reusedIterationsFor(persona._id)}
                     disabled={launching}
@@ -1491,15 +1632,17 @@ export function NewSwarmConfirmStep({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={addPersona}
-            data-testid="new-swarm-add-persona"
-          >
-            Add new persona
-          </Button>
-          {personasAvailableToAdd.length > 0 ? (
+          {structureLocked ? null : (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={addPersona}
+              data-testid="new-swarm-add-persona"
+            >
+              Add new persona
+            </Button>
+          )}
+          {!structureLocked && personasAvailableToAdd.length > 0 ? (
             // Add-only: what is already attached is dropped from the list, and
             // detaching is the card's own Remove.
             <PersonaPickerPopover
@@ -1556,6 +1699,13 @@ export function NewSwarmConfirmStep({
           </p>
         </div>
 
+        <SwarmFundingSummary
+          state={fundingState}
+          requestedRuns={previewRuns?.length ?? 0}
+          pendingGoals={pendingGoals}
+          notice={fundingNotice}
+        />
+
         {errorMessage ? (
           <p role="alert" className="text-sm leading-relaxed text-destructive">
             {errorMessage}
@@ -1573,13 +1723,19 @@ export function NewSwarmConfirmStep({
           </Button>
           <Button
             type="button"
-            disabled={!canLaunch}
+            disabled={!canLaunch || previewSettling}
             data-testid="new-swarm-launch"
             onClick={() =>
               onLaunch({
                 rubric: [],
                 reusedTargets: activeReusedTargets,
                 reusedGrading: [],
+                funding: {
+                  shownSponsored:
+                    shownSplit && pendingGoals === 0
+                      ? shownSplit.sponsored
+                      : null,
+                },
               })
             }
           >

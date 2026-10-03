@@ -44,6 +44,11 @@ import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
 import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
+import {
+  parseFundingChangedDetails,
+  SWARM_FUNDING_CHANGED_CODE,
+  type SwarmFundingSummary,
+} from "../../../shared/swarm-sponsorship.js";
 
 const BROWSER_TOOL_ID = "browser";
 
@@ -114,11 +119,19 @@ export interface LaunchJourneyRunInput {
   environmentIds?: string[];
   /** Iterations for THIS run; leaves the journey's own config untouched. */
   sessionsPerTarget?: number;
+  /**
+   * How many of this run's conversations the caller was shown as sponsored.
+   * A mismatch is a typed 409 (`swarm_funding_changed`) before anything is
+   * created, never a silent shift onto the organization's credits.
+   */
+  expectedSponsored?: number;
 }
 
 export interface LaunchJourneyRunResult {
   runId: string;
   deduped?: boolean;
+  /** How the backend funded this run's conversations, when it says. */
+  funding?: SwarmFundingSummary;
 }
 
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
@@ -132,8 +145,10 @@ const MAX_PASSTHROUGH_REASON_LENGTH = 300;
  * Form feed is in the set because the toast renders with `white-space:
  * pre-wrap`, and CSS Text converts U+000C to a segment break exactly as it does
  * U+000D — so it breaks lines on screen even though it looks inert in a string.
+ * Vertical tab and next-line complete it: with CR, LF, FF and the two Unicode
+ * separators, these are every mandatory break in UAX #14.
  */
-const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
+const LINE_BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 
 /**
  * A human-readable reason from a backend launch rejection.
@@ -199,7 +214,7 @@ export function launchFailureMessage(err: SwarmAgentError): string {
  * unexamined" promise true of the less likely case and false of the more
  * likely one.
  */
-function showableReason(value: unknown): string | null {
+export function showableReason(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim();
   if (!text) return null;
@@ -321,6 +336,9 @@ export async function launchJourneyRun(
       ...(input.environmentIds?.length
         ? { environmentIds: input.environmentIds }
         : {}),
+      ...(input.expectedSponsored !== undefined
+        ? { expectedSponsored: input.expectedSponsored }
+        : {}),
     });
   } catch (err) {
     if (
@@ -354,6 +372,17 @@ export async function launchJourneyRun(
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
       const details = launchFailureDetails(err);
+      if (err.status === 409 && details?.code === SWARM_FUNDING_CHANGED_CODE) {
+        const changed = parseFundingChangedDetails(details);
+        throw new WebRouteError(
+          409,
+          ErrorCode.CONFLICT,
+          changed
+            ? `Sponsored conversations changed while you were reviewing this launch: ${changed.expectedSponsored} were expected and ${changed.actualSponsored} of ${changed.totalConversations} would be sponsored now. Nothing was launched.`
+            : "Sponsored conversations changed while you were reviewing this launch. Nothing was launched.",
+          { ...(changed ?? {}), code: SWARM_FUNDING_CHANGED_CODE },
+        );
+      }
       const modelError = environmentModelRequiredError({
         data: {
           code: details?.code,
@@ -396,7 +425,11 @@ export async function launchJourneyRun(
       runId,
       projectId,
     });
-    return { runId, deduped: true };
+    return {
+      runId,
+      deduped: true,
+      ...(created.funding ? { funding: created.funding } : {}),
+    };
   }
 
   if (!Array.isArray(snapshot.hosts) || snapshot.hosts.length === 0) {
@@ -435,6 +468,7 @@ export async function launchJourneyRun(
       personaSnapshot: snapshot.personaSnapshot,
       sessionsPerTarget: snapshot.sessionsPerTarget,
       maxTurns: snapshot.maxTurns,
+      ...(created.sessions?.length ? { sessionFunding: created.sessions } : {}),
       setupWrites: snapshot.setupWrites,
       goal: snapshot.goal,
       // Whether this run is rubric-graded at all. The runner only needs
@@ -581,5 +615,5 @@ export async function launchJourneyRun(
     });
   });
 
-  return { runId };
+  return { runId, ...(created.funding ? { funding: created.funding } : {}) };
 }
