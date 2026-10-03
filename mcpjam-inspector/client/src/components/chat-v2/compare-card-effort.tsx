@@ -1,19 +1,18 @@
-import { Plus } from "lucide-react";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
-import { Button } from "@mcpjam/design-system/button";
 import { EffortControl } from "@/components/effort/effort-control";
 import { reasoningEffortDefaultForRow } from "@/lib/reasoning-effort-options";
 import type { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 
-/** One compare card's effort: its chip and "Compare another effort". */
+/**
+ * One compare card's effort chip. Adding the same model at another effort
+ * happens in the model menu (each model opens its efforts to the side).
+ */
 export type CompareCardEffortProps = {
   /** Levels the card's row supports; empty (and no saved level) hides the chip. */
   levels: readonly ModelReasoningEffort[];
   value: ModelReasoningEffort | undefined;
   onChange: (effort: ModelReasoningEffort | undefined) => void;
-  /** Adds a card of the same model at another level; omitted ⇒ no action. */
-  onCompareAnotherEffort?: () => void;
   disabled?: boolean;
 };
 
@@ -22,7 +21,6 @@ export function CompareCardEffort({
   levels,
   value,
   onChange,
-  onCompareAnotherEffort,
   disabled = false,
   className,
 }: CompareCardEffortProps & { model: ModelDefinition; className?: string }) {
@@ -41,22 +39,6 @@ export function CompareCardEffort({
         disabled={disabled}
         disabledReason="Reasoning effort can't change while a reply is streaming"
       />
-      {onCompareAnotherEffort ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={disabled}
-          onClick={onCompareAnotherEffort}
-          data-testid="compare-another-effort"
-          aria-label={`Compare another effort of ${model.name}`}
-          title="Compare another effort"
-          className="h-7 gap-1 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-        >
-          <Plus className="size-3.5" aria-hidden="true" />
-          <span className="hidden sm:inline">Compare another effort</span>
-        </Button>
-      ) : null}
     </div>
   );
 }

@@ -266,6 +266,8 @@ const mockUseChatSession = {
   },
   setSelectedModel: vi.fn(),
   seedReasoningEffort: vi.fn(),
+  reasoningEffortLevelsFor: vi.fn(() => ["low", "medium", "high"]),
+  setReasoningEffortForModel: vi.fn(),
   // The steady state: the persisted lead id has matched `availableModels`.
   // Leaving this undefined would silently disable the selected-model sanitize
   // effect for every case below. See BACK2-628.
@@ -956,14 +958,20 @@ describe("PlaygroundMain", () => {
         ]);
       });
 
-      it("adds a card of the same model at another level, and changes one card's effort alone", () => {
+      it("adds a card of the same model at another level from the model menu, and changes one card's effort alone", () => {
         localStorage.setItem(V2_KEY, JSON.stringify([hosted(sonnet.id)]));
         render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
 
         let [lead] = renderedCardProps();
         expect(lead.reasoningEffort).toBeUndefined();
+        const menu = (mockChatInputProps.mock.calls.at(-1)?.[0] as any)
+          .modelEfforts;
+        // The menu shows Sonnet's Default as picked, High as not.
+        const sonnetEfforts = menu.rowEfforts(sonnet);
+        expect(sonnetEfforts.isPicked(undefined)).toBe(true);
+        expect(sonnetEfforts.isPicked("high")).toBe(false);
         act(() => {
-          lead.effort.onCompareAnotherEffort();
+          menu.onModelEffortSelect(sonnet, "high");
         });
         let cards = renderedCardProps();
         expect(cards.map((props) => props.reasoningEffort)).toEqual([
@@ -1014,14 +1022,13 @@ describe("PlaygroundMain", () => {
           "medium",
           "high",
         ]);
-        // At the cap no card offers "Compare another effort", and the picker
-        // cannot add a fourth card either.
-        expect(
-          cards.every(
-            (props) => props.effort?.onCompareAnotherEffort === undefined,
-          ),
-        ).toBe(true);
+        // At the cap neither the model menu's efforts nor its model rows
+        // can add a fourth card.
         const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+        act(() => {
+          composer.modelEfforts.onModelEffortSelect(gpt, "high");
+        });
+        expect(renderedCardProps()).toHaveLength(3);
         act(() => {
           composer.onSelectedModelsChange([sonnet, gpt]);
         });

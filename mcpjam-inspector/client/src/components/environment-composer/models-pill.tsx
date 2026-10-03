@@ -12,9 +12,8 @@
  * id listed by the hosted catalog and under an org connection are two rows:
  * the one checked is the one the id's targets were saved from, and picking
  * the other swaps them onto it. The value's targets are keyed by
- * `comparisonKey`, so two efforts of one model (seeded from two environments,
- * or added beside a matrix chip) are two targets: one checked row, one effort
- * chip each.
+ * `comparisonKey`, so two efforts of one model are two targets: one checked
+ * row, whose chevron opens its efforts to the side (each level a checkbox).
  *
  * Cap awareness (D6): when `budget` is provided, an option that would
  * push the product over `maxTargets` is disabled with the product
@@ -27,6 +26,7 @@ import { Button } from "@mcpjam/design-system/button";
 import {
   ModelSelector,
   type ModelSelectorExtraOption,
+  type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
 import type { ModelWorkload } from "@/components/chat-v2/shared/available-models";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
@@ -45,7 +45,13 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { modelTarget } from "@/lib/model-target";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
+import {
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
+import { setEffortForRow } from "@/lib/reasoning-effort-selection";
+import { modelTargetLabel } from "@/lib/environment-label";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   harnessModelLockReason,
   type HarnessModelTarget,
@@ -328,7 +334,10 @@ export function ModelsPill({
                     : "Client default",
                 ]
               : []),
-            ...targets.map((target) => nameForId(target.modelId)),
+            // "Sonnet · High" beside "Sonnet · Low": only what differs.
+            ...targets.map((target) =>
+              modelTargetLabel(target, targets, nameForId),
+            ),
           ].join(", ") || "Select models"}
         </span>
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -356,51 +365,86 @@ export function ModelsPill({
       </button>
     );
 
-  // One effort per picked model. The saved selection is keyed by the row's own
-  // id, so a bare-id BYOK row is disabled with a tooltip rather than re-keyed.
-  // A harness host offers only the levels its adapter applies (Claude Code
-  // none yet), so the chip matches the refusal a run would give. With several
-  // targets the first harness decides: a level it refuses fails there.
+  // Efforts live in the menu: each model opens its efforts to the side. In
+  // multiple mode a level toggles that model × effort target in or out, so
+  // Sonnet·Low and Sonnet·High are two targets; in single mode it picks the
+  // model at that effort. A bare-id BYOK row (no saveable selection) offers
+  // none. A harness host offers only the levels its adapter applies (Claude
+  // Code none yet); with several targets the first harness decides.
   const effortHarness = harnessTargets?.find(Boolean)?.harnessId as
     | Harness
     | undefined;
-  const effortChips = pickedRows.flatMap(({ key, target, row }) =>
-    row ? (
-      <SelectionEffortControl
-        key={key}
-        variant="suffix"
-        row={row}
-        selection={target.selection}
-        purpose="evalTarget"
-        selectionsSupported={modelSelectionsSupported}
-        harness={effortHarness}
-        disabled={disabled}
-        disabledReason="Editing is disabled."
-        hint={`Applies to ${compactModelLabel(row.name)}`}
-        onChange={(write) => {
-          // Only this target changes; a sibling effort of the model stays. A
-          // level a sibling already runs is not applied (no shared keys).
-          const next = modelTarget(write.modelId, write.selection);
-          const nextKey = modelTargetKey(next);
-          if (
-            nextKey !== key &&
-            targets.some((existing) => modelTargetKey(existing) === nextKey)
-          )
-            return;
-          emit({
-            ...value,
-            explicitTargets: targets.map((existing) =>
-              modelTargetKey(existing) === key ? next : existing,
-            ),
-          });
-        }}
-      />
-    ) : (
-      []
-    ),
-  );
+  const targetAt = (
+    row: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ): ModelTarget | null => {
+    const write = setEffortForRow({
+      row,
+      selection: undefined,
+      effort,
+      purpose: "evalTarget",
+    });
+    return write ? modelTarget(write.modelId, write.selection) : null;
+  };
+  const targetKeys = new Set(targets.map((target) => modelTargetKey(target)));
+  const rowEfforts = (
+    row: ModelDefinition,
+  ): ModelSelectorRowEfforts | undefined => {
+    // Unknown (still loading) counts as supported, as the effort chip did.
+    if (modelSelectionsSupported === false) return undefined;
+    const levels = reasoningEffortOptions(
+      row,
+      reasoningEffortRouteForRow(row),
+      effortHarness,
+    );
+    if (levels.length === 0 || !targetAt(row, levels[0])) return undefined;
+    const picked = (effort: ModelReasoningEffort | undefined) => {
+      const next = targetAt(row, effort);
+      return !!next && targetKeys.has(modelTargetKey(next));
+    };
+    if (mode === "single") {
+      const current = levels.find(picked) ?? (picked(undefined) ? null : undefined);
+      return { levels, ...(current !== undefined ? { current } : {}) };
+    }
+    return {
+      levels,
+      isPicked: picked,
+      // A new level adds a choice, like a new model does.
+      canAdd: !wouldAddChoice || replaceSoleChoice,
+    };
+  };
+  const pickModelEffort = (
+    row: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ) => {
+    const next = targetAt(row, effort);
+    if (!next) return;
+    if (mode === "single" || replaceSoleChoice) {
+      emit({ includeClientDefaults: false, explicitTargets: [next] }, row);
+      return;
+    }
+    const key = modelTargetKey(next);
+    if (targetKeys.has(key)) {
+      emit({
+        ...value,
+        explicitTargets: targets.filter(
+          (target) => modelTargetKey(target) !== key,
+        ),
+      });
+      return;
+    }
+    if (wouldAddChoice) return;
+    // Right after the model's other efforts, else at the end.
+    let last = -1;
+    targets.forEach((target, index) => {
+      if (target.modelId === next.modelId) last = index;
+    });
+    const explicitTargets = [...targets];
+    explicitTargets.splice(last >= 0 ? last + 1 : targets.length, 0, next);
+    emit({ ...value, explicitTargets }, row);
+  };
 
-  const selector = (
+  return (
     <ModelSelector
       trigger={trigger}
       inModal={inModal}
@@ -417,19 +461,9 @@ export function ModelsPill({
       allowEmptySelection
       extraOptions={extraOptions}
       rowDisabledReason={rowDisabledReason}
+      rowEfforts={rowEfforts}
+      onModelEffortSelect={pickModelEffort}
     />
-  );
-  if (effortChips.length === 0) return selector;
-  return variant === "table" ? (
-    <div className="flex w-full flex-wrap items-center gap-1">
-      {selector}
-      {effortChips}
-    </div>
-  ) : (
-    <>
-      {selector}
-      {effortChips}
-    </>
   );
 }
 

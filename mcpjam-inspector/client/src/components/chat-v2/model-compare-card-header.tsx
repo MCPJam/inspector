@@ -135,7 +135,7 @@ export function ModelCompareCardHeader({
   actionsSlot?: ReactNode;
   /**
    * Controls beside the title in the comparison chrome (a compare card's
-   * effort chip and "Compare another effort").
+   * effort chip).
    */
   titleAccessory?: ReactNode;
   className?: string;
