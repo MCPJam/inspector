@@ -170,7 +170,13 @@ clientFlags.get("/", async (c) => {
           flagPersonProperties(c),
         )
       : {};
-  if (!HOSTED_MODE) flags["local-harness-enabled"] = identity.kind === "id" && identity.member === true && isLocalHarnessVenue("claude-code") && await localHarnessAccountEnabled(c.req.header("authorization"));
+  if (!HOSTED_MODE) {
+    // Each local harness is its own rollout (and its own runtime), so each
+    // has its own flag, evaluated server-side from the verified member.
+    const member = identity.kind === "id" && identity.member === true;
+    flags["local-harness-enabled"] = member && isLocalHarnessVenue("claude-code") && await localHarnessAccountEnabled(c.req.header("authorization"));
+    flags["local-codex-enabled"] = member && isLocalHarnessVenue("codex") && await localHarnessAccountEnabled(c.req.header("authorization"), undefined, "codex");
+  }
   return c.json({ flags });
 });
 

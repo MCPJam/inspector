@@ -1,6 +1,9 @@
-vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: vi.fn(async (harness: string) => harness === "claude-code") }));
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  shouldUseLocalHarness: vi.fn(async (harness: string) => harness === "claude-code"),
+  localHarnessIdOf: (harness: unknown) => (harness === "claude-code" || harness === "codex" ? harness : undefined),
+}));
 
 const {
   prepareChatV2Mock,
@@ -41,6 +44,7 @@ const {
 // Runtime preparation is covered separately; this route must use its fresh
 // server-bound target, not the stale launch credential sent by the renderer.
 vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  LOCAL_HARNESS_DISPLAY_NAMES: { "claude-code": "Claude Code", codex: "Codex" },
   ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
     kind: "local-native", workspaceGrantId: "ws_fresh", runtimeId: "rt_fresh",
     machineId: "machine-fresh", permissionProfile: "workspace-edits",

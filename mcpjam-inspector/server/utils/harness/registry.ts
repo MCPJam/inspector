@@ -16,6 +16,7 @@ export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCodex } from "@ai-sdk/harness-codex";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { createCodexAppServer } from "./codex-appserver/index.js";
+import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
 import { codexAppServerTransportEnabled } from "./harness-flags.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type {
@@ -304,6 +305,23 @@ type HarnessRuntimeAdapterBase = {
    * fingerprint, so adding this field forks no existing session.
    */
   transport?: "exec" | "app-server";
+  /**
+   * Does a PENDING approval live in the runtime PROCESS rather than on disk?
+   *
+   * Claude Code's conversation is on disk, so a local turn paused on an
+   * approval can be torn down and re-driven. Codex app-server's pending
+   * approval is an open JSON-RPC request inside one live process (and, for a
+   * host tool, an open relay call), so a local pause must PARK that process
+   * (`local/approval-park.ts`) and the decision must be delivered to it —
+   * never replayed into a new one.
+   */
+  liveApprovalRuntime?: boolean;
+  /**
+   * The adapter applies `HarnessCreateArgs.sandboxPolicy` to its runtime. An
+   * adapter without this flag cannot contain an unattended local turn, so the
+   * turn runner refuses to start one rather than run it unrestricted.
+   */
+  acceptsSandboxPolicy?: boolean;
   /** Human-facing runtime name for preflight/availability messages + UI. */
   displayName: string;
   /**
@@ -459,6 +477,16 @@ export type HarnessCreateArgs = {
    * first), so a value arriving here is always one the adapter declared.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The command-sandbox policy an UNATTENDED local turn runs under (D2), set
+   * only by the local arm from the compatibility manifest
+   * (`localSandboxPolicyFor`). It is not a permission mode: the turn is
+   * `allow-all` because nobody is there to approve, and this policy is what
+   * contains its commands. Only an adapter with `acceptsSandboxPolicy` may
+   * receive it; the turn refuses to hand it to any other rather than let it be
+   * silently dropped.
+   */
+  sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
 };
 
 /** Brokered model access: MCPJam supplies the credential, so the adapter needs
@@ -985,25 +1013,32 @@ const codexExecAdapter: HarnessRuntimeAdapter = {
  *    typed items for shell, patches and web search, so the trace shows what
  *    actually happened.
  *
- * MCP delivery stays HOST-EXECUTED, and that is a deliberate limit rather than
- * an oversight: codex 0.149.1 has no approval request for an MCP `tools/call`
- * at all, so under native delivery a Strict-mode host could not gate one. Host
- * execution keeps MCPJam the authority. Native delivery is a follow-up gated on
- * an answer to that, not on this transport.
+ * MCP delivery stays HOST-EXECUTED, in both venues: every MCP call is relayed
+ * back to this process and runs on its own manager, under the tool policy and
+ * the framework's `toolApproval`, wherever the Codex process itself runs.
+ * Codex 0.149.1 does raise its own approval for an MCP `tools/call` (an
+ * `mcp_tool_call` elicitation, PROBES.md (d)), but the relay is rendered with
+ * `default_tools_approval_mode = "approve"` so MCPJam's gate is the single
+ * authority instead of a second prompt nobody answers. Native delivery stays a
+ * follow-up: it would move enforcement into a process MCPJam does not own.
  */
 const codexAppServerAdapter: HarnessRuntimeAdapter = {
   ...codexExecAdapter,
   transport: "app-server",
+  liveApprovalRuntime: true,
+  // `turn/start.sandboxPolicy`; the bridge refuses `allow-all` without it
+  // whenever it is supervised locally.
+  acceptsSandboxPolicy: true,
   // The pause is real on this transport. `HarnessAgent` also refuses to
   // construct with a non-allow-all mode unless the underlying harness declares
   // `supportsBuiltinToolApprovals`, which `createCodexAppServer` does.
   supportsNativeToolApproval: true,
   // "allow-reads" for the same reason as Claude Code and Cursor: it is the
-  // narrowest mode that still pauses on side-effecting work while leaving reads
-  // free — the faithful mapping to the emulated engine, which gates tool CALLS
-  // and never reads. The bridge maps it to Codex's `untrusted` policy, under
-  // which Codex auto-approves the commands it knows to be read-only and asks
-  // about everything else.
+  // narrowest framework mode that pauses on side-effecting work. The bridge
+  // maps it to Codex's `untrusted` policy, which on 0.149.1 asks about EVERY
+  // command — reads included — and every file change (PROBES.md (c)). So an
+  // approval-gated Codex host prompts more than a Claude Code one; nothing
+  // here may claim reads run without a prompt.
   approvalPermissionMode: "allow-reads",
   // MCPJam's tools run in MCPJam's process and the framework gates them there,
   // before `execute`, through `HarnessAgent`'s `toolApproval` map. This is the
@@ -1011,9 +1046,9 @@ const codexAppServerAdapter: HarnessRuntimeAdapter = {
   // MCP delivery is host-executed — so leaving it false would refuse every
   // approval host with a server attached even though the pause works.
   supportsHostExecutedToolApproval: true,
-  // Still false, and NOT because the mechanism is unproven: codex 0.149.1
-  // raises no approval request for an MCP tool call, so there is nothing to
-  // pause on. Only relevant if MCP delivery ever becomes native.
+  // False because MCP delivery is host-executed: MCPJam's own gate applies to
+  // relayed calls (above), and codex's MCP approval is configured off for the
+  // relay. Only relevant if MCP delivery ever becomes native.
   supportsMcpToolApproval: false,
   // The bridge emits patches as a real `tool-call`/`tool-result` pair (an
   // approval must attach to a tool call, and a `file-change` part has no
@@ -1021,11 +1056,12 @@ const codexAppServerAdapter: HarnessRuntimeAdapter = {
   // wanted here.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
-  createHarness({ modelId, auth }) {
+  createHarness({ modelId, auth, sandboxPolicy }) {
     const nativeModel = toCodexModel(modelId);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
       auth,
+      ...(sandboxPolicy ? { sandboxPolicy } : {}),
     }) as unknown as HarnessAgentAdapter;
   },
 };
@@ -1213,7 +1249,21 @@ export function isHarnessId(value: unknown): value is HarnessId {
   );
 }
 
-export function getHarnessAdapter(id: string): HarnessRuntimeAdapter {
+export function getHarnessAdapter(
+  id: string,
+  options: {
+    /**
+     * Is this lookup for a turn that runs on the user's own machine? Local
+     * Codex ALWAYS gets the app-server arm, whatever the hosted transport flag
+     * says: the exec arm cannot surface approvals, refuses every mode but
+     * `allow-all`, and is never a local runtime. Every call that decides
+     * something about a local turn — the preflight, the dispatch backstop, the
+     * turn's fingerprint, approval mode and tool catalog — must pass this, or
+     * the preflight and the turn can disagree about which adapter runs.
+     */
+    localExecution?: boolean;
+  } = {},
+): HarnessRuntimeAdapter {
   // Own-property guard: a prototype key (`__proto__`, `constructor`, …) would
   // otherwise resolve to an inherited value and slip past the `!adapter` check,
   // yielding a 500 downstream instead of a controlled unsupported-harness error.
@@ -1231,7 +1281,10 @@ export function getHarnessAdapter(id: string): HarnessRuntimeAdapter {
    * keeps a live session from crossing between them is the runtime
    * fingerprint's `transport` dimension, which forks the lane on a flip.
    */
-  if (id === "codex" && codexAppServerTransportEnabled()) {
+  if (
+    id === "codex" &&
+    (options.localExecution === true || codexAppServerTransportEnabled())
+  ) {
     return codexAppServerAdapter;
   }
   return HARNESS_ADAPTERS[id];

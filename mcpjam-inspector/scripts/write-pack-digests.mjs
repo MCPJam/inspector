@@ -12,8 +12,13 @@
  * Run BEFORE the Inspector artifacts are built, so the digests are compiled
  * into them:
  *
- *   node scripts/write-pack-digests.mjs --version 3.4.0 \
+ *   node scripts/write-pack-digests.mjs --harness claude-code --version 1.0.0 \
  *     --digests '{"darwin-arm64":"sha256:…","linux-x64":"sha256:…"}'
+ *
+ * `--harness` names the one harness whose entries (digests, records and
+ * expected pack version) are rewritten; every other harness's entries are
+ * carried over untouched, because each harness's pack is released on its own.
+ * It defaults to `claude-code` for the commands already in runbooks.
  *
  * `--check` instead of writing compares and exits non-zero on any difference,
  * which is how a workflow asserts the checked-in table matches the packs a
@@ -22,6 +27,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  PACK_TABLE_TARGETS,
+  rewriteHarnessPackTables,
+} from "./local-harness-pack-tables.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = join(scriptDir, "..");
@@ -31,13 +40,7 @@ const GENERATED = join(
 );
 
 /** The targets a pack is built for. Must match `LocalPackTarget`. */
-const TARGETS = [
-  "darwin-arm64",
-  "darwin-x64",
-  "linux-x64",
-  "linux-arm64",
-  "win32-x64",
-];
+const TARGETS = PACK_TABLE_TARGETS;
 
 function fail(message) {
   console.error(`write-pack-digests: ${message}`);
@@ -89,6 +92,11 @@ if (args.check !== undefined && args.check !== true) {
 }
 const checkOnly = args.check === true;
 
+const harnessId = stringArg("harness") ?? "claude-code";
+if (!/^[a-z][a-z0-9-]{0,63}$/.test(harnessId)) {
+  fail(`--harness ${JSON.stringify(harnessId)} is not a harness id`);
+}
+
 const version = stringArg("version") ?? "";
 if (version.length === 0) fail("--version is required");
 // The version reaches an asset URL and a directory name, so it is checked
@@ -120,55 +128,21 @@ for (const [target, digest] of Object.entries(digests)) {
 if (entries.length === 0) fail("--digests named no targets");
 entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
-const treeDigests = entries
-  .map(
-    ([target, digest]) =>
-      `    ${JSON.stringify(target)}: ${JSON.stringify(digest)},`,
-  )
-  .join("\n");
-const records = entries
-  .map(
-    ([target, digest]) =>
-      `    ${JSON.stringify(target)}: {\n` +
-      `      packVersion: ${JSON.stringify(version)},\n` +
-      `      treeDigest: ${JSON.stringify(digest)},\n` +
-      `    },`,
-  )
-  .join("\n");
-
-/**
- * Rewrite one `export const … = { … };` block.
- *
- * Fails rather than no-ops when the pattern does not match: a silent miss here
- * would leave a release's digest table empty while every step reported
- * success, which is the failure mode this whole script exists to remove.
- */
-function replaceBlock(text, pattern, replacement, what) {
-  if (!pattern.test(text)) {
-    fail(`could not find ${what} in the generated file; its shape moved`);
-  }
-  return text.replace(pattern, replacement);
-}
-
 const source = readFileSync(GENERATED, "utf8");
-let next = replaceBlock(
-  source,
-  /(export const PACK_TREE_DIGESTS[\s\S]*?= \{\n)([\s\S]*?)(^\};$)/m,
-  `$1  "claude-code": {\n${treeDigests}\n  },\n  codex: {},\n$3`,
-  "PACK_TREE_DIGESTS",
-);
-next = replaceBlock(
-  next,
-  /(export const PACK_RECORDS[\s\S]*?= \{\n)([\s\S]*?)(^\};$)/m,
-  `$1  "claude-code": {\n${records}\n  },\n  codex: {},\n$3`,
-  "PACK_RECORDS",
-);
-next = replaceBlock(
-  next,
-  /^export const EXPECTED_PACK_VERSION = .*$/m,
-  `export const EXPECTED_PACK_VERSION = ${JSON.stringify(version)};`,
-  "EXPECTED_PACK_VERSION",
-);
+let next;
+try {
+  next = rewriteHarnessPackTables(
+    source,
+    harnessId,
+    version,
+    Object.fromEntries(entries),
+  );
+} catch (error) {
+  // A silent miss here would leave a release's digest table empty while every
+  // step reported success, which is the failure mode this script exists to
+  // remove.
+  fail(error instanceof Error ? error.message : String(error));
+}
 
 if (checkOnly) {
   if (next !== source) {
@@ -176,7 +150,7 @@ if (checkOnly) {
       "write-pack-digests: the checked-in digest table does not match the " +
         "packs this build produced.\n" +
         "Regenerate it and commit the result:\n" +
-        `  node scripts/write-pack-digests.mjs --version ${version} \\\n` +
+        `  node scripts/write-pack-digests.mjs --harness ${harnessId} --version ${version} \\\n` +
         `    --digests '${JSON.stringify(Object.fromEntries(entries))}'`,
     );
     process.exit(1);
@@ -185,6 +159,6 @@ if (checkOnly) {
 } else {
   writeFileSync(GENERATED, next);
   console.log(
-    `write-pack-digests: wrote ${entries.length} target(s) at version ${version}`,
+    `write-pack-digests: wrote ${entries.length} ${harnessId} target(s) at version ${version}`,
   );
 }

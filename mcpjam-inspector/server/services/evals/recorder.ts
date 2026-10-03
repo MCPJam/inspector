@@ -18,7 +18,7 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
-import { runnerCapabilities } from "./runner-capabilities.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
@@ -594,6 +594,7 @@ export const startSuiteRunWithRecorder = async ({
   runGroupId,
   environmentId,
   runtimeVenue,
+  localHarnessIds,
   expectedEnvironmentRevision,
   expectedEnvironmentHostConfigId,
   expectedEnvironmentServerIds,
@@ -676,6 +677,13 @@ export const startSuiteRunWithRecorder = async ({
    */
   environmentId?: string;
   runtimeVenue?: "local" | "hosted";
+  /**
+   * The harnesses this runner will execute locally for this launch, checked
+   * by the caller (`eligibleUnattendedLocalHarnesses`). Declared to the
+   * backend as `local-harness:<id>` alongside `runtimeVenue: 'local'`, so the
+   * venue it stamps is the venue this runner uses.
+   */
+  localHarnessIds?: readonly string[];
   /**
    * The environment revision `prepareEvalRun` resolved (and captured the
    * tool snapshot against). The mutation compares it to the environment's
@@ -812,7 +820,10 @@ export const startSuiteRunWithRecorder = async ({
       // self-hosted ones this Inspector talks to.
       ...(launcher ? { launcher } : {}),
       ...(ciMetadata ? { ciMetadata } : {}),
-      runnerCapabilities: runnerCapabilities(),
+      runnerCapabilities: [
+        ...runnerCapabilities(),
+        ...(runtimeVenue === "local" ? localHarnessCapabilities(localHarnessIds) : []),
+      ],
     };
     response = await retrySuiteStartOnConflict(() =>
       convexClient.mutation(

@@ -25,6 +25,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "integrations-tab",
   "learn-more-enabled",
   "local-browser-enabled",
+  "local-codex-enabled",
   "local-computer-enabled",
   "local-harness-enabled",
   "mcp-tasks",
