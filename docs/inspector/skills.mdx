@@ -6,10 +6,10 @@ tag: "NEW"
 ---
 
 <Note>
-The Skills tab is always accessible. **Cloud (hosted) skills** — the project store, upload button, and skill tree — are available on accounts where the feature has been enabled. **Skills over MCP** (server-provided skills from connected servers) require no account feature and are always shown. Local skills, read from your filesystem, also need no account feature.
+The Skills tab is always accessible. **Library (hosted) skills** — the project library, upload button, and skill tree — are available on accounts where the feature has been enabled. **Skills over MCP** (server-provided skills from connected servers) require no account feature and are always shown. Local skills, read from your filesystem, also need no account feature.
 </Note>
 
-[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam lets you discover skills from your filesystem (local) or your project (hosted), upload new ones, and use them in the Playground — either automatically based on the user's prompt or deterministically with the `/` command.
+[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam lets you discover skills from your filesystem (local) or your project library (hosted), upload new ones, and use them in the Playground — either automatically based on the user's prompt or deterministically with the `/` command.
 
 ## Getting Started
 
@@ -49,7 +49,7 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
 
 ## Finding skill IDs
 
-Several CLI flags take a skill ID: `eval run --compose-skill`, `eval cases run --compose-skill`, and `environments ensure-adhoc --skill`. Use `mcpjam cloud skills list` to discover the IDs of the project-shared skills in your project:
+Several CLI flags take a skill ID: `eval run --compose-skill`, `eval cases run --compose-skill`, and `environments ensure-adhoc --skill`. Use `mcpjam cloud skills list` to discover the IDs of skills in your project library:
 
 ```bash
 mcpjam cloud skills list --project my-project
@@ -61,16 +61,23 @@ Each row includes a `pinnability` field that says whether the skill can be pinne
 mcpjam cloud skills get --skill <id> --project my-project
 ```
 
-Only `sharing: "project"` skills can be pinned. Personal drafts (`sharing: "user"`) are visible in the list but are not accepted by `--compose-skill` or `skillSelection`.
+Only `sharing: "project"` skills (library skills) can be pinned. Personal drafts (`sharing: "user"`) are visible in the list but are not accepted by `--compose-skill` or `skillSelection`.
+
+In the environment skill picker in the app, personal skills are shown as disabled rows with the reason stated on the row — so if you just uploaded a skill and don't see it as selectable, the row tells you why. To make a personal skill pinnable, a project admin must publish it to the library using the **"Publish to project library"** button on the skill's detail view.
 
 ## Uploading Skills
 
 You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
 
 - **Local:** Uploaded skills are stored in `~/.mcpjam/skills/`.
-- **Hosted (cloud):** Cloud skills carry supporting files. A folder may contain `SKILL.md` plus scripts, references, and assets; the model reaches them with `listSkillFiles` and `readSkillFile` after loading the skill.
+- **Hosted (library):** Library skills carry supporting files. A folder may contain `SKILL.md` plus scripts, references, and assets; the model reaches them with `listSkillFiles` and `readSkillFile` after loading the skill.
 
-Hosted skill folders are bounded by three limits, enforced when the files are attached:
+When uploading to the project library, the dialog shows **"Add to library"** and states where the skill will land:
+
+- **Project admins:** The skill goes directly to the project library and is visible to all members.
+- **Other members:** The skill is saved as a personal skill. A project admin can publish it to the library using the **"Publish to project library"** button (globe icon) on the skill's detail view.
+
+Library skill folders are bounded by three limits, enforced when the files are attached:
 
 | Limit | Value |
 |---|---|
@@ -103,14 +110,14 @@ than picking a single source:
 
 | Origin | Reference | Available on |
 |---|---|---|
-| Your project (Cloud Skills) | `code-review` | anywhere you're signed in with a project |
+| Your project library | `code-review` | anywhere you're signed in with a project |
 | A local file | `local/code-review` | the desktop and npm app |
 | A connected MCP server | `<server>/code-review` | anywhere that server is connected |
 | A plugin | `<plugin>/code-review` | wherever the plugin is installed |
 
-This is why the Skills tab's Local/Cloud switch only changes what you are
+This is why the Skills tab's Local/Library switch only changes what you are
 **browsing**. It no longer decides what the model can use: a desktop turn signed
-into a project offers your local files *and* your project skills, so a skill you
+into a project offers your local files *and* your project library skills, so a skill you
 author in the tab is usable in the very next message.
 
 Signed out, or with no project selected, a desktop turn simply has no project
@@ -199,7 +206,7 @@ Type `/` in the input to open the skills popover. Select a skill to inject it di
 
 When you select a skill via `/`, it appears as a card above the input. You can expand the card to browse the skill's file tree and optionally select additional files to include. Only files you explicitly select are pre-loaded — by default, only the `SKILL.md` is injected.
 
-The `/` picker works in both local and hosted modes. In the hosted app, it lists your project's cloud skills.
+The `/` picker works in both local and hosted modes. It shows both local files and project library skills in one merged list, each row badged with its store (**Local** or **Library**). Both halves load independently — a slow or unreachable library does not hide your local files, and vice versa. If the same skill name exists in both halves, both rows appear so you can choose between them.
 
 <iframe
   className="w-full aspect-video rounded-xl"
@@ -264,7 +271,7 @@ cannot be verified, and here is why" is the answer you asked for.
 
 <Note>
 `mcpjam skills` reads a **connected server's** skills. `mcpjam cloud skills`
-lists the Cloud Skills in your own MCPJam project. Same word, opposite
+lists the skills in your own MCPJam project library. Same word, opposite
 direction.
 </Note>
 
