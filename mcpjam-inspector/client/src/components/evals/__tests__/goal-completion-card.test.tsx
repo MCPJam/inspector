@@ -473,4 +473,46 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     expect(current).toHaveAttribute("aria-disabled", "true");
     expect(current).toHaveTextContent("Not eligible");
   });
+
+  it("shows the suite judge's effort read-only and never sends it in the run override", async () => {
+    const judge: ModelDefinition = {
+      id: "anthropic/claude-haiku-4.5",
+      name: "Claude Haiku 4.5",
+      provider: "anthropic",
+      hosted: true,
+      supportedReasoningEfforts: ["low", "high"],
+    };
+    const onRun = vi.fn();
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        availableModels={[judge]}
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+                judgeSelection: {
+                  modelId: "anthropic/claude-haiku-4.5",
+                  source: "hosted",
+                  fallback: { provider: "none", model: "none" },
+                  settings: { reasoningEffort: "high" },
+                },
+              },
+            },
+          },
+        })}
+        onRun={onRun}
+      />,
+    );
+    const chip = screen.getByTestId("effort-control-trigger");
+    expect(chip).toHaveTextContent("High");
+    expect(chip).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /Run judge/i }));
+    expect(onRun.mock.calls[0][0].runOverride).toBeUndefined();
+  });
 });
+

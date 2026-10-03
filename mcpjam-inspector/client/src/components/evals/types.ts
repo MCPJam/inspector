@@ -688,7 +688,6 @@ export type EvalIteration = {
 export type CompareModelOverride = {
   systemPrompt?: string;
   temperature?: string;
-  providerFlagsJson?: string;
 };
 
 export type EditorMode = "config" | "run";

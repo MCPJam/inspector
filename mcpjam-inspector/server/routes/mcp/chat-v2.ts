@@ -97,7 +97,13 @@ import {
   type PersistChatOutcome,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
+import {
+  directChatEffort,
+  hostSelectionForTurn,
+  parseChatReasoningEffort,
+  resolveChatReasoningEffort,
+} from "../../utils/chat-reasoning-effort.js";
 import {
   buildWidgetModelContextSystemPrompt,
   advertisedPageToolsOnly,
@@ -534,6 +540,12 @@ function streamDirectChatWithLiveTrace(options: {
   messageHistory: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Provider options that apply the turn's reasoning effort (the caller
+   * resolved and validated it with `directChatEffort`). Handed to the engine
+   * as-is; absent leaves the call byte-identical.
+   */
+  providerOptions?: ProviderOptions;
   tools: ToolSet;
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
@@ -1169,6 +1181,30 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "model is not supported" }, 400);
     }
 
+    // Reasoning effort: the body's top-level field, else the selected host's
+    // saved effort — the latter only when the host's selection is for THIS
+    // turn's model. A scenario turn takes the host's alone.
+    const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
+    if (!bodyEffort.ok) return c.json({ error: bodyEffort.error }, 400);
+    const reasoningEffort = resolveChatReasoningEffort({
+      bodyEffort: bodyEffort.effort,
+      hostSelection: hostSelectionForTurn(
+        resolvedExecution.modelSelection,
+        String(modelDefinition.id),
+      ),
+      hostWins: isScenarioSession,
+    });
+    // Only a temperature sent ALONGSIDE a body effort counts as explicit: a
+    // host default (or the slider value a client sends with a host's saved
+    // effort) yields to the effort; an explicit pair is refused on the direct
+    // rails.
+    const explicitTemperature =
+      !isScenarioSession &&
+      bodyEffort.effort !== undefined &&
+      bodyTemperature !== undefined
+        ? bodyTemperature
+        : undefined;
+
     const requestAuthHeader = c.req.header("authorization");
     // Matches streamWebChatTurn's dispatch: the whole definition, so a bare
     // hosted id (`gpt-5-nano` + `openai`) still canonicalizes to its prefixed
@@ -1357,6 +1393,8 @@ chatV2.post("/", async (c) => {
         // A local turn reserves and wakes nothing, so the computers-data-plane
         // check does not apply to it. Every other rule still does.
         ...(harnessExecutionTarget ? { localExecution: true } : {}),
+        // Refused before any spend when the adapter has not verified it.
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         requireToolApproval: resolvedExecution.requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
         // The RESOLVED definition — eligibility and the canonical id are both
@@ -1866,6 +1904,7 @@ chatV2.post("/", async (c) => {
         modelDefinition,
         systemPrompt: effectiveSystemPrompt,
         temperature,
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         requireToolApproval,
         respectToolVisibility,
         modelVisibleMcpToolResults,
@@ -2127,6 +2166,7 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
@@ -2244,6 +2284,7 @@ chatV2.post("/", async (c) => {
                           : { kind: "adhoc" },
                         systemPrompt,
                         temperature,
+                        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
                         requireToolApproval,
                         respectToolVisibility,
                         modelVisibleMcpToolResults,
@@ -2361,6 +2402,7 @@ chatV2.post("/", async (c) => {
                         : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
+                      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
                       requireToolApproval,
                       respectToolVisibility,
                       modelVisibleMcpToolResults,
@@ -2384,6 +2426,15 @@ chatV2.post("/", async (c) => {
         : undefined;
 
       if (runtime.runtimeLocation === "local") {
+        // The inspector calls the provider on this runtime, so the effort is
+        // applied here as provider options, or refused before any spend.
+        const localEffort = directChatEffort({
+          providerKey: runtime.provider.providerKey,
+          modelId,
+          effort: reasoningEffort,
+          explicitTemperature,
+        });
+        if (!localEffort.ok) return c.json({ error: localEffort.reason }, 400);
         return handleLocalOrgChatModel({
           provider: runtime.provider,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
@@ -2394,6 +2445,9 @@ chatV2.post("/", async (c) => {
           messages: modelMessages,
           systemPrompt: effectiveEnhancedSystemPrompt,
           temperature: resolvedTemperature,
+          ...(localEffort.providerOptions
+            ? { providerOptions: localEffort.providerOptions }
+            : {}),
           tools: allTools as ToolSet,
           progressivePlan,
           discoveryState,
@@ -2435,6 +2489,7 @@ chatV2.post("/", async (c) => {
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
@@ -2517,6 +2572,16 @@ chatV2.post("/", async (c) => {
       modelMessages as ModelMessage[],
     );
 
+    // The inspector calls the provider with the caller's own key here, so the
+    // effort is applied as provider options, or refused before any spend.
+    const directEffort = directChatEffort({
+      providerKey: String(modelDefinition.provider),
+      modelId: String(modelDefinition.id),
+      effort: reasoningEffort,
+      explicitTemperature,
+    });
+    if (!directEffort.ok) return c.json({ error: directEffort.reason }, 400);
+
     return streamDirectChatWithLiveTrace({
       llmModel,
       modelId: String(modelDefinition.id),
@@ -2528,6 +2593,9 @@ chatV2.post("/", async (c) => {
       messageHistory: [...scrubbedModelMessages],
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
+      ...(directEffort.providerOptions
+        ? { providerOptions: directEffort.providerOptions }
+        : {}),
       tools: allTools as ToolSet,
       progressivePlan,
       discoveryState,
@@ -2593,6 +2661,7 @@ chatV2.post("/", async (c) => {
                         : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
+                      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
                       requireToolApproval,
                       respectToolVisibility,
                       modelVisibleMcpToolResults,

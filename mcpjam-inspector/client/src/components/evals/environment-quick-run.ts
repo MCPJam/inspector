@@ -21,6 +21,7 @@
  */
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   chooseTemplate,
   lacksServerSource,
@@ -119,6 +120,28 @@ function runsModel(
   }
   // An environment that inherits its client's model runs that model.
   return clientModelId?.(environment.hostId) === target.modelId;
+}
+
+/**
+ * The reasoning effort a quick run of `modelId` on `hostId` will run at: the
+ * suite environment's own saved effort. The environment wins (a quick run
+ * reuses or copies it), so the run sheet shows this read-only and offers no
+ * effort control of its own. `undefined` when no environment pins one.
+ */
+export function quickRunEnvironmentEffort(
+  attached: readonly ProjectEnvironmentView[],
+  hostId: string,
+  modelId: string,
+  clientModelId?: (hostId: string) => string | undefined,
+): ModelReasoningEffort | undefined {
+  const target = { key: modelId, hostId, modelId };
+  const environment = attached.find(
+    (candidate) =>
+      candidate.hostId === hostId &&
+      candidate.modelSelection !== undefined &&
+      runsModel(candidate, target, clientModelId),
+  );
+  return environment?.modelSelection?.settings?.reasoningEffort;
 }
 
 /**

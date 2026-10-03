@@ -41,6 +41,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
+import type { ModelSelection } from "@mcpjam/sdk";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -48,6 +49,10 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
+import {
+  modelSelectionSchema,
+  selectionModelMismatch,
+} from "./model-selection-schema.js";
 
 const environments = new Hono();
 
@@ -101,6 +106,8 @@ type EnvironmentRow = {
   serverAttachmentId?: string;
   /** The stored model OVERRIDE. Absent ⇒ the environment inherits its host's. */
   modelId?: string;
+  /** The saved selection behind `modelId`. Absent ⇒ a legacy bare id. */
+  modelSelection?: Record<string, unknown>;
   skillSelection?: SkillSelection;
   secretSelection?: SecretSelection;
   pluginVersionIds?: string[];
@@ -160,6 +167,11 @@ function toEnvironmentDto(row: EnvironmentRow) {
     // unable to tell "pinned to X" from "inheriting X", which is exactly the
     // distinction an editor needs.
     ...(row.modelId !== undefined ? { modelId: row.modelId } : {}),
+    // The saved selection behind the override (source, connection, settings
+    // such as `reasoningEffort`). Absent for a legacy bare id.
+    ...(row.modelSelection !== undefined
+      ? { modelSelection: row.modelSelection }
+      : {}),
     ...(row.skillSelection !== undefined
       ? { skillSelection: row.skillSelection }
       : {}),
@@ -433,6 +445,35 @@ const secretSelectionSchema = z.strictObject({
   secretIds: z.array(z.string().trim().min(1)).min(1),
 });
 
+/**
+ * A saved selection is FOR one model. Sent beside `modelId` they must agree;
+ * sent alone it pins its own model (the backend requires the bare id and the
+ * selection to match, and a caller who sent a selection has said which model
+ * they mean).
+ */
+function refineSelectionMatchesModel(
+  value: { modelId?: string | null; modelSelection?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  const mismatch = selectionModelMismatch(
+    value.modelId ?? undefined,
+    value.modelSelection as ModelSelection | null | undefined,
+  );
+  if (mismatch) {
+    ctx.addIssue({ code: "custom", path: ["modelSelection"], message: mismatch });
+  }
+}
+
+function pinSelectionModel<
+  T extends { modelId?: string | null; modelSelection?: unknown },
+>(body: T): T {
+  const selection = body.modelSelection as { modelId?: string } | null | undefined;
+  if (body.modelId === undefined && selection && selection.modelId) {
+    return { ...body, modelId: selection.modelId };
+  }
+  return body;
+}
+
 const createEnvironmentSchema = z.strictObject({
   name: z.string().trim().min(1),
   description: z.string().optional(),
@@ -444,13 +485,19 @@ const createEnvironmentSchema = z.strictObject({
    * model" — on PATCH that is `null`, and on create it is simply omission.
    */
   modelId: z.string().trim().min(1).optional(),
+  /**
+   * Saved selection behind `modelId` (whose credentials run it, and its
+   * `settings.reasoningEffort`). Must be FOR `modelId`; sent alone it pins its
+   * own model. Needs the `modelSelections` capability.
+   */
+  modelSelection: modelSelectionSchema.optional(),
   skillSelection: skillSelectionSchema.optional(),
   secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
   /** Public name for the internal `computerEnvironmentId` pin; must be a
    *  project-shared image (backend rejects personal drafts). */
   sandboxImageId: z.string().trim().min(1).optional(),
-});
+}).superRefine(refineSelectionMatchesModel);
 
 /**
  * `.nullable().optional()` on every clearable field (`serverAttachmentId`,
@@ -471,6 +518,8 @@ const updateEnvironmentSchema = z
     hostId: z.string().trim().min(1).optional(),
     serverAttachmentId: z.string().trim().min(1).nullable().optional(),
     modelId: z.string().trim().min(1).nullable().optional(),
+    // `null` clears the saved selection (the bare `modelId` override stays).
+    modelSelection: modelSelectionSchema.nullable().optional(),
     skillSelection: skillSelectionSchema.nullable().optional(),
     secretSelection: secretSelectionSchema.nullable().optional(),
     pluginVersionIds: pluginVersionIdsSchema.nullable().optional(),
@@ -483,15 +532,17 @@ const updateEnvironmentSchema = z
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
       value.modelId !== undefined ||
+      value.modelSelection !== undefined ||
       value.skillSelection !== undefined ||
       value.secretSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `modelSelection`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     },
-  );
+  )
+  .superRefine(refineSelectionMatchesModel);
 
 /**
  * A COMPOSED stack: the same execution axes a named environment carries, minus
@@ -506,11 +557,13 @@ const ensureAdhocEnvironmentSchema = z.strictObject({
   hostId: z.string().trim().min(1),
   serverAttachmentId: z.string().trim().min(1).optional(),
   modelId: z.string().trim().min(1).optional(),
+  /** See the create schema: the saved selection behind `modelId`. */
+  modelSelection: modelSelectionSchema.optional(),
   skillSelection: skillSelectionSchema.optional(),
   secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
   sandboxImageId: z.string().trim().min(1).optional(),
-});
+}).superRefine(refineSelectionMatchesModel);
 
 /**
  * Promotion of an ad-hoc row to a named one. `expectedRevision` for the same
@@ -553,6 +606,7 @@ environments.get(
     let capabilities: {
       modelOverrides?: boolean;
       modelMatrix?: boolean;
+      modelSelections?: boolean;
       ephemeralEnvironmentLaunch?: boolean;
       skillVersionPins?: boolean;
       secretGrants?: boolean;
@@ -584,6 +638,10 @@ environments.get(
     return v1Resource(c, {
       modelOverrides: capabilities.modelOverrides === true,
       modelMatrix: capabilities.modelMatrix === true,
+      // Whether an environment may carry a saved model SELECTION (source,
+      // connection, `settings.reasoningEffort`). Older deployments reject the
+      // unknown arg with an unreadable validator error, so ask first.
+      modelSelections: capabilities.modelSelections === true,
       ephemeralEnvironmentLaunch:
         capabilities.ephemeralEnvironmentLaunch === true,
       skillVersionPins: capabilities.skillVersionPins === true,
@@ -698,9 +756,8 @@ environments.get(
 // POST /v1/projects/:projectId/environments — create. Requires project admin.
 environments.post("/projects/:projectId/environments", async (c) => {
   const projectId = c.req.param("projectId");
-  const body = parseWithSchema(
-    createEnvironmentSchema,
-    await readJsonObjectBody(c),
+  const body = pinSelectionModel(
+    parseWithSchema(createEnvironmentSchema, await readJsonObjectBody(c)),
   );
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
@@ -749,9 +806,8 @@ environments.post(
   "/projects/:projectId/environments/ensure-adhoc",
   async (c) => {
     const projectId = c.req.param("projectId");
-    const body = parseWithSchema(
-      ensureAdhocEnvironmentSchema,
-      await readJsonObjectBody(c),
+    const body = pinSelectionModel(
+      parseWithSchema(ensureAdhocEnvironmentSchema, await readJsonObjectBody(c)),
     );
     const convexClient = createConvexClient(await getConvexBearerForRequest(c));
 
@@ -861,9 +917,8 @@ environments.patch(
   async (c) => {
     const projectId = c.req.param("projectId");
     const environmentId = c.req.param("environmentId");
-    const body = parseWithSchema(
-      updateEnvironmentSchema,
-      await readJsonObjectBody(c),
+    const body = pinSelectionModel(
+      parseWithSchema(updateEnvironmentSchema, await readJsonObjectBody(c)),
     );
     const token = await getConvexBearerForRequest(c);
 
@@ -884,6 +939,9 @@ environments.patch(
     // Tri-state, like every other clearable: `null` CLEARS the override (fall
     // back to the host's model), a value replaces it, omission preserves it.
     if (body.modelId !== undefined) updateArgs.modelId = body.modelId;
+    // Same tri-state: `null` clears the saved selection, a value replaces it.
+    if (body.modelSelection !== undefined)
+      updateArgs.modelSelection = body.modelSelection;
     if (body.skillSelection !== undefined)
       updateArgs.skillSelection = body.skillSelection;
     // `null` REVOKES the environment's credential grant; a value replaces it;

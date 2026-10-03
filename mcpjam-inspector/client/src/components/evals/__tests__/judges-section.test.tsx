@@ -333,3 +333,84 @@ describe("JudgesSection judge model picker (purpose: judge)", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe("JudgesSection — reasoning effort", () => {
+  const judge: ModelDefinition = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    hosted: true,
+    supportedReasoningEfforts: ["low", "high"],
+  };
+  const selection = {
+    modelId: "anthropic/claude-haiku-4.5",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+  };
+
+  it("writes the effort beside judgeModel on the saved judge selection", async () => {
+    const onChange = vi.fn();
+    render(
+      <JudgesSection
+        chrome="bare"
+        saveModelSelections
+        value={{
+          goalCompletion: {
+            enabled: true,
+            autoRun: true,
+            judgeModel: judge.id as string,
+            judgeSelection: selection,
+          },
+        }}
+        availableModels={[judge]}
+        onChange={onChange}
+      />,
+    );
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    await userEvent.click(await screen.findByRole("radio", { name: "High" }));
+    const next = onChange.mock.calls.at(-1)![0] as EvalJudgeConfig;
+    expect(next.goalCompletion?.judgeModel).toBe("anthropic/claude-haiku-4.5");
+    expect(
+      next.goalCompletion?.judgeSelection?.settings?.reasoningEffort,
+    ).toBe("high");
+  });
+
+  it("resolves the judge row by its saved source, not hosted-first by id", () => {
+    const orgTwin = {
+      id: judge.id,
+      name: "Claude Haiku 4.5 (org)",
+      provider: "anthropic",
+      hosted: false,
+      orgProvider: { id: "prov_1", providerKey: "anthropic", enabled: true },
+    } as unknown as ModelDefinition;
+    render(
+      <JudgesSection
+        chrome="bare"
+        saveModelSelections
+        value={{
+          goalCompletion: {
+            enabled: true,
+            autoRun: true,
+            judgeModel: judge.id as string,
+            judgeSelection: {
+              modelId: judge.id as string,
+              source: "org",
+              connectionRef: { kind: "orgProvider", id: "prov_1" },
+              fallback: { provider: "none", model: "none" },
+            } as never,
+          },
+        }}
+        availableModels={[judge, orgTwin]}
+        onChange={vi.fn()}
+      />,
+    );
+    // The org row's runtime is unknown, so it offers no effort; the hosted
+    // twin's levels must not be offered for it.
+    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+  });
+
+  it("shows no chip for the managed default judge", () => {
+    renderBare({ goalCompletion: { enabled: true, autoRun: true } });
+    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+  });
+});

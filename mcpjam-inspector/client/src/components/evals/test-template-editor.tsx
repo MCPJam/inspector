@@ -114,6 +114,7 @@ import {
   ensureLocalEnvironmentServers,
   planQuickRunTargets,
   quickRunClientIds,
+  quickRunEnvironmentEffort,
   resolveQuickRunEnvironments,
 } from "./environment-quick-run";
 import { isHostedMode } from "@/lib/apis/mode-client";
@@ -4446,6 +4447,22 @@ export function TestTemplateEditor({
                       label: option.label,
                     }))}
                     onHostChange={setQuickRunHostSelection}
+                    {...(isEnvironmentSuite && attachedEnvironments
+                      ? {
+                          environmentEffort: (modelId: string) =>
+                            quickRunEnvironmentEffort(
+                              attachedEnvironments,
+                              quickRunHostSelection ??
+                                quickRunClientIds(attachedEnvironments)[0] ??
+                                "",
+                              modelId,
+                              (hostId) =>
+                                projectHosts
+                                  .find((host) => host.hostId === hostId)
+                                  ?.modelId?.trim() || undefined,
+                            ),
+                        }
+                      : {})}
                     {...(isEnvironmentSuite && projectId
                       ? {
                           serverGroup: {

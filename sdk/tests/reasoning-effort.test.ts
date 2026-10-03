@@ -10,6 +10,7 @@ import {
   selectionIfMatches,
   selectionKey,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
   type ModelSelection,
 } from "../src/host-config/index.js";
 import * as browser from "../src/browser.js";
@@ -176,29 +177,67 @@ describe("supportedReasoningEfforts", () => {
     expect(efforts("ollama", "llama3")).toEqual([]);
   });
 
-  it("org-cloud has none until the backend applies an effort there", () => {
+  it("org-cloud offers the provider tables (the backend maps them per provider)", () => {
     expect(
       supportedReasoningEfforts({
         route: "orgCloud",
         providerKey: "anthropic",
-        modelId: "claude-sonnet-4-5",
+        modelId: "claude-sonnet-4-6",
+      })
+    ).toEqual(["low", "medium", "high", "max"]);
+    expect(
+      supportedReasoningEfforts({
+        route: "orgCloud",
+        providerKey: "xai",
+        modelId: "grok-4",
       })
     ).toEqual([]);
   });
 
-  it("a harness uses its adapter table, which is empty until verified", () => {
+  it("a harness uses its adapter table, verified rows only", () => {
+    // Claude Code stays empty: mapping code exists but the live check that
+    // would verify it has not run, so an effort there is still refused.
+    expect(HARNESS_REASONING_EFFORTS["claude-code"]).toEqual([]);
+    expect(HARNESS_REASONING_EFFORTS.cursor).toEqual([]);
+    expect(HARNESS_REASONING_EFFORTS.codex).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
     for (const harness of ["claude-code", "codex", "cursor"] as const) {
-      expect(HARNESS_REASONING_EFFORTS[harness]).toEqual([]);
+      expect(harnessReasoningEfforts(harness)).toEqual([
+        ...HARNESS_REASONING_EFFORTS[harness],
+      ]);
+      // A model that lists every level: the adapter's table decides.
       expect(
         supportedReasoningEfforts({
           route: "hosted",
           providerKey: "openai",
           modelId: "openai/gpt-5",
-          catalogEfforts: ["high"],
+          catalogEfforts: [...MODEL_REASONING_EFFORTS],
           harness,
         })
-      ).toEqual([]);
+      ).toEqual([...HARNESS_REASONING_EFFORTS[harness]]);
     }
+  });
+
+  it("a harness offers only levels its model also lists (fail closed when unknown)", () => {
+    const codex = (catalogEfforts?: string[]) =>
+      supportedReasoningEfforts({
+        route: "hosted",
+        providerKey: "openai",
+        modelId: "openai/gpt-5-nano",
+        catalogEfforts,
+        harness: "codex",
+      });
+    expect(codex(["minimal", "low", "medium", "high"])).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(codex([])).toEqual([]);
+    expect(codex(undefined)).toEqual([]);
   });
 
   it("every table level is a known effort", () => {

@@ -7,7 +7,10 @@ import {
 } from "./host-config/canonicalize.js";
 import { canonicalToPublic } from "./host-config/host.js";
 import type { HostConfigInputV2 } from "./host-config/types.js";
-import type { ModelSelectionSource } from "./host-config/model-selection.js";
+import type {
+  ModelSelection,
+  ModelSelectionSource,
+} from "./host-config/model-selection.js";
 import type { SelectedEvalClient } from "./eval-reporting-types.js";
 
 export interface EvalSuiteClientOptions {
@@ -126,11 +129,16 @@ export async function createSavedClientRunner(
   // than the one about to run is an error, not silently ignored. This runner
   // only has the hosted MCPJam rail, so any other source is refused — never
   // downgraded to the bare id (which would run on MCPJam's key). A hosted
-  // selection runs exactly as a bare id did. Only after those checks is the
-  // selection dropped: the id below is rewritten to its `mcpjam/` form, which
-  // the canonicalizer would (correctly) refuse to agree with.
+  // selection runs exactly as a bare id did, PLUS its settings: they are
+  // applied (below) rather than deleted with the selection, because running a
+  // saved `reasoningEffort: "high"` client at the model's default and reporting
+  // it as that client is the silent drop this runner must not do. Only after
+  // those checks is the selection itself dropped: the id below is rewritten to
+  // its `mcpjam/` form, which the canonicalizer would (correctly) refuse to
+  // agree with.
   const savedSelection = (config as { modelSelection?: unknown })
     .modelSelection;
+  let savedSettings: ModelSelection["settings"];
   if (savedSelection !== undefined) {
     const selection = canonicalizeModelSelection(
       config.modelId as string,
@@ -142,6 +150,7 @@ export async function createSavedClientRunner(
         selection.modelId
       );
     }
+    savedSettings = selection.settings;
   }
   delete (config as { modelSelection?: unknown }).modelSelection;
   let model = String(config.modelId ?? "").replace(/^mcpjam\//, "");
@@ -195,7 +204,13 @@ export async function createSavedClientRunner(
     executor: new HostRunner({
       host,
       systemPrompt: host.systemPrompt,
-      temperature: host.temperature,
+      // The selection's settings beat the host default (the same order every
+      // other route resolves them in). An effort replaces the temperature —
+      // a selection carrying both must not hand both on — and a model with no
+      // effort control refuses here, before any spend.
+      ...(savedSettings?.reasoningEffort !== undefined
+        ? { reasoningEffort: savedSettings.reasoningEffort }
+        : { temperature: savedSettings?.temperature ?? host.temperature }),
       tools,
       apiKey: input.apiKey,
       mcpClientManager: input.manager,

@@ -70,6 +70,11 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 import { drainAssistantTurn } from "../runner.js";
+import {
+  harnessReasoningEffortRefusalReason,
+  turnReasoningEffortOf,
+} from "../../../utils/harness/harness-availability.js";
+import { getHarnessAdapter } from "../../../utils/harness/registry.js";
 
 const TURN_TRACE = {
   turnId: "test-turn",
@@ -203,6 +208,32 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.extraBodyFields?.providerKey).toBeUndefined();
     // Hosted engines never post the local-usage writeback.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("carries a swarm turn's effort to the harness checks on a harness host (refused, not dropped)", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        harness: "claude-code",
+        reasoningEffort: "high",
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.harness).toBe("claude-code");
+    // The effort rides the hosted body, not a typed field: the check that runs
+    // inside `runAssistantTurn` must read it from there.
+    expect(opts.extraBodyFields?.reasoningEffort).toBe("high");
+    expect(turnReasoningEffortOf(opts)).toBe("high");
+    expect(
+      harnessReasoningEffortRefusalReason({
+        adapter: getHarnessAdapter("claude-code"),
+        reasoningEffort: turnReasoningEffortOf(opts),
+      }),
+    ).toMatch(/reasoning effort/);
   });
 
   it("routes cloud-runtime BYOK models through /stream/org with providerKey + serverIds", async () => {

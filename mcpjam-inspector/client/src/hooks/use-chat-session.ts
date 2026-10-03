@@ -61,6 +61,20 @@ import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
+import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
+import {
+  MODEL_REASONING_EFFORTS,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk/browser";
+import {
+  reasoningEffortMemoryKey,
+  reasoningEffortOptions,
+  reasoningEffortRouteForRow,
+} from "@/lib/reasoning-effort-options";
+import {
+  loadRememberedReasoningEffort,
+  saveRememberedReasoningEffort,
+} from "@/lib/reasoning-effort-storage";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -415,6 +429,18 @@ export interface UseChatSessionOptions {
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
   /**
+   * The previewed host's real harness. A harness turn offers only the efforts
+   * its adapter has verified (none today), so the chip hides rather than
+   * offering a level the turn would refuse.
+   */
+  reasoningEffortHarness?: HostConfigHarnessV2;
+  /**
+   * Opt in to sending a per-chat reasoning effort. Off (default) for surfaces
+   * without the chip (scenario / share-link pages, compare cards), so a level
+   * remembered elsewhere never rides a turn the user cannot see or clear.
+   */
+  reasoningEffortEnabled?: boolean;
+  /**
    * Phase 3: real host style for direct chat traces. Forwarded into
    * the request body so the backend persists the v2 hostConfig with
    * the user's actual host style rather than defaulting to `'claude'`.
@@ -627,6 +653,24 @@ export interface UseChatSessionReturn {
   setSystemPrompt: (prompt: string) => void;
   temperature: number;
   setTemperature: (temp: number) => void;
+  /**
+   * The effort this chat's selected model runs at, or undefined. Always one
+   * of `reasoningEffortLevels` (an effort the model does not support is never
+   * reported, so it is never sent). Remembered per model.
+   */
+  reasoningEffort: ModelReasoningEffort | undefined;
+  /** Levels the selected model supports here; empty hides the control. */
+  reasoningEffortLevels: ModelReasoningEffort[];
+  /** User pick: applies to the selected model and is remembered for it. */
+  setReasoningEffort: (effort: ModelReasoningEffort | undefined) => void;
+  /**
+   * Default the effort for `model` (a host's saved effort, a reopened chat's
+   * pin). Not remembered: only an explicit pick is.
+   */
+  seedReasoningEffort: (
+    model: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ) => void;
 
   // Tools metadata
   toolsMetadata: Record<string, Record<string, unknown>>;
@@ -729,6 +773,11 @@ export interface UseChatSessionReturn {
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
       shouldApply?: () => boolean;
+      /**
+       * The model the caller is about to select for this session. The pinned
+       * reasoning effort is seeded for it (not for the pre-restore selection).
+       */
+      restoredModel?: ModelDefinition;
     },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
@@ -1746,6 +1795,8 @@ export function useChatSession(
     personalBrowserEngine,
     localHarnessExecution,
     onReset,
+    reasoningEffortHarness,
+    reasoningEffortEnabled = false,
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
@@ -2709,6 +2760,57 @@ export function useChatSession(
     selectedModelId,
   ]);
 
+  // Reasoning effort, per model. The state holds only what this hook session
+  // set or was seeded with; anything else reads the remembered pick. Derived
+  // (not an effect) so a model change never shows the previous model's level.
+  const [effortByModel, setEffortByModel] = useState<
+    Record<string, ModelReasoningEffort | undefined>
+  >({});
+  const effortKey = useMemo(
+    () => reasoningEffortMemoryKey(selectedModel),
+    [selectedModel],
+  );
+  const reasoningEffortLevels = useMemo(
+    () =>
+      !reasoningEffortEnabled
+        ? []
+        : reasoningEffortOptions(
+        selectedModel,
+        reasoningEffortRouteForRow(selectedModel),
+        reasoningEffortHarness,
+      ),
+    [selectedModel, reasoningEffortHarness, reasoningEffortEnabled],
+  );
+  const rememberedEffort = useMemo(
+    () => loadRememberedReasoningEffort(effortKey),
+    [effortKey],
+  );
+  const storedEffort =
+    effortKey in effortByModel ? effortByModel[effortKey] : rememberedEffort;
+  // Never report (so never send) a level the model does not offer here.
+  const reasoningEffort =
+    reasoningEffortEnabled &&
+    storedEffort &&
+    reasoningEffortLevels.includes(storedEffort)
+      ? storedEffort
+      : undefined;
+  const setReasoningEffort = useCallback(
+    (effort: ModelReasoningEffort | undefined) => {
+      setEffortByModel((prev) => ({ ...prev, [effortKey]: effort }));
+      saveRememberedReasoningEffort(effortKey, effort);
+    },
+    [effortKey],
+  );
+  // Keys whose effort came from a restored chat, so a new chat forgets them.
+  const restoredEffortKeysRef = useRef<Set<string>>(new Set());
+  const seedReasoningEffort = useCallback(
+    (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
+      const key = reasoningEffortMemoryKey(model);
+      setEffortByModel((prev) => ({ ...prev, [key]: effort }));
+    },
+    [],
+  );
+
   // Whether the persisted lead selection actually resolved against
   // `availableModels`. It does NOT while an org-managed provider config is in
   // flight: that's a Convex query, so for the first render(s) after a load
@@ -3191,7 +3293,9 @@ export function useChatSession(
           // intended config — and ingestion's hostConfig dedupes on it. If we
           // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
           // helper's 0.7 fallback regardless of the slider.
-          temperature,
+          // An effort and a temperature are mutually exclusive: the routes
+          // refuse (or drop) a temperature under an effort, so send only one.
+          ...(reasoningEffort ? { reasoningEffort } : { temperature }),
           systemPrompt,
           ...(shouldUseOrgAwareChatApi
             ? buildHostedBody()
@@ -3389,6 +3493,7 @@ export function useChatSession(
     hostedRequiresWebChatApi,
     shouldUseOrgAwareChatApi,
     temperature,
+    reasoningEffort,
     systemPrompt,
     selectedServers,
     directVisibility,
@@ -4404,6 +4509,19 @@ export function useChatSession(
     useHostedMrtrStore.getState().clear();
     syncResumedVersion(null);
     syncRestoredToolRenderOverrides({});
+    // A restored chat's effort belongs to that chat: a new one falls back to
+    // the remembered pick instead of carrying it until reload.
+    if (restoredEffortKeysRef.current.size > 0) {
+      const restoredKeys = restoredEffortKeysRef.current;
+      restoredEffortKeysRef.current = new Set();
+      setEffortByModel((prev) => {
+        const next = { ...prev };
+        for (const key of restoredKeys) {
+          next[key] = loadRememberedReasoningEffort(key);
+        }
+        return next;
+      });
+    }
     onResetRef.current?.("reset");
   }, [
     clearPendingSessionHydration,
@@ -4779,6 +4897,7 @@ export function useChatSession(
         resumeConfig?: {
           systemPrompt?: string;
           temperature?: number;
+          reasoningEffort?: string;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
           modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -4802,6 +4921,7 @@ export function useChatSession(
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
+        restoredModel?: ModelDefinition;
       },
     ) => {
       // The resume pointer is only a destination hint. Read the existing
@@ -4884,6 +5004,23 @@ export function useChatSession(
         if (session.resumeConfig?.temperature !== undefined) {
           setTemperature(session.resumeConfig.temperature);
         }
+        {
+          // The chat pinned its effort: a reopened chat keeps it (for the
+          // model the session restores; a level it does not offer is not sent).
+          // One that pinned none runs at the model's default, not at whatever
+          // effort was last remembered for that model. Tracked so a new chat
+          // does not inherit it (see `resetChat`).
+          const pinned = session.resumeConfig?.reasoningEffort;
+          const restoredEffort =
+            typeof pinned === "string" &&
+            (MODEL_REASONING_EFFORTS as readonly string[]).includes(pinned)
+              ? (pinned as ModelReasoningEffort)
+              : undefined;
+          const restoredRow = options?.restoredModel ?? selectedModel;
+          const restoredKey = reasoningEffortMemoryKey(restoredRow);
+          restoredEffortKeysRef.current.add(restoredKey);
+          seedReasoningEffort(restoredRow, restoredEffort);
+        }
         if (session.resumeConfig?.requireToolApproval !== undefined) {
           setRequireToolApproval(session.resumeConfig.requireToolApproval);
         }
@@ -4915,6 +5052,8 @@ export function useChatSession(
     [
       queueSessionHydration,
       setSystemPrompt,
+      seedReasoningEffort,
+      selectedModel,
       hostedContext?.projectId,
       personalBrowserEngine,
     ],
@@ -5430,6 +5569,10 @@ export function useChatSession(
     setSystemPrompt,
     temperature,
     setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    setReasoningEffort,
+    seedReasoningEffort,
 
     // Tools metadata
     toolsMetadata,

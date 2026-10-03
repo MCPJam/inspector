@@ -7,12 +7,16 @@ import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-log
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
+import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
 import {
   applyHarnessModelLocks,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
+import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -410,7 +414,13 @@ export function EvalModelChoices({
   defaultModelId,
   availableModels: catalogModels,
   harness,
+  effortEditable = true,
 }: {
+  /**
+   * Show a reasoning-effort chip per explicit model. Off where the surface
+   * cannot persist a selection (the case run sheet writes model strings).
+   */
+  effortEditable?: boolean;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -430,6 +440,7 @@ export function EvalModelChoices({
     () => applyHarnessModelLocks(catalogModels, [harness], "eval"),
     [catalogModels, harness],
   );
+  const selectionsSupported = useModelSelectionsSupported();
   const resolveModel = (id: string): ModelDefinition =>
     availableModels.find((model) => String(model.id) === id) ?? {
       id,
@@ -506,6 +517,46 @@ export function EvalModelChoices({
               </Button>
             }
           />
+          {!inherited && effortEditable ? (
+            <SelectionEffortControl
+              variant="chip"
+              row={
+                findModelForStoredChoice(
+                  { modelId: key, selection: value.explicitModelSelections?.[key] },
+                  availableModels,
+                  undefined,
+                ) ?? undefined
+              }
+              selection={value.explicitModelSelections?.[key]}
+              purpose="evalTarget"
+              selectionsSupported={selectionsSupported}
+              harness={harness?.harnessId as Harness | undefined}
+              disabled={disabled}
+              disabledReason="Editing is disabled."
+              hint={`Applies to ${compactModelLabel(model.name)}`}
+              onChange={(write) => {
+                const { [key]: _replaced, ...otherSelections } =
+                  value.explicitModelSelections ?? {};
+                onChange(
+                  syncExplicitModelSelections(
+                    {
+                      ...value,
+                      explicitModelIds: value.explicitModelIds.map((id) =>
+                        id === key ? write.modelId : id,
+                      ),
+                      explicitModelSelections: {
+                        ...otherSelections,
+                        ...(write.selection
+                          ? { [write.modelId]: write.selection }
+                          : {}),
+                      },
+                    },
+                    { models: availableModels, previous: value },
+                  ),
+                );
+              }}
+            />
+          ) : null}
           {choices.length > 1 ? (
             <Button
               type="button"

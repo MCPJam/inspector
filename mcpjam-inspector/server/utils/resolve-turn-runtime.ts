@@ -114,8 +114,9 @@ export interface ResolveTurnRuntimeArgs {
    * `resolveEffectiveModelSettings` (per-run override > saved selection >
    * host defaults). `temperature` is what the caller hands the engine; a
    * `reasoningEffort` is applied HERE, where the rail is known: provider
-   * options on the direct engine, the forwarded selection on `/stream`, and
-   * refused on `/stream/org` (which does not apply one). Both are recorded
+   * options on the direct engine, the forwarded selection on `/stream`, and the
+   * selection (or a top-level field) on `/stream/org`, which maps it per org
+   * provider. Both are recorded
    * on the local-runtime execution record.
    */
   settings?: EffectiveModelSettings;
@@ -386,23 +387,21 @@ export async function resolveTurnRuntime(
 
   // --- MCPJam-provided → hosted `/stream` ---
   if (resolution.source === "mcpjam") {
-    // `/stream` applies a reasoning effort from the forwarded selection; an
-    // effort that selection does not carry could not reach the provider.
+    // `/stream` applies a reasoning effort from the forwarded selection, or the
+    // top-level `reasoningEffort` field, which it prefers. A per-run effort the
+    // selection does not carry (a chat turn's own, an override) rides as that
+    // field instead of being refused.
     const effort = args.settings?.reasoningEffort;
-    if (effort && hostedSelection?.settings?.reasoningEffort !== effort) {
-      throw new ModelResolutionRefusalError([
-        {
-          code: "capability_missing",
-          reason: `reasoning effort "${effort}" cannot be applied to ${modelId} on this route`,
-          evidence: { setting: "reasoningEffort", route: "hosted" },
-        },
-      ]);
-    }
+    const topLevelEffort =
+      effort && hostedSelection?.settings?.reasoningEffort !== effort
+        ? { reasoningEffort: effort }
+        : undefined;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection
+      args.extraBodyFields || hostedSelection || topLevelEffort
         ? {
             ...(args.extraBodyFields ?? {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+            ...(topLevelEffort ?? {}),
           }
         : undefined;
     return {
@@ -430,17 +429,6 @@ export async function resolveTurnRuntime(
     resolution.orgRuntime?.runtimeLocation === "cloud"
       ? resolution.orgRuntime.providerKey
       : undefined;
-  if (args.settings?.reasoningEffort) {
-    // `/stream/org` applies a saved selection's temperature, not an effort:
-    // refuse rather than run the connection without it.
-    throw new ModelResolutionRefusalError([
-      {
-        code: "capability_missing",
-        reason: `reasoning effort "${args.settings.reasoningEffort}" cannot be applied on an organization cloud connection; remove it from the saved model or run the connection on the local runtime`,
-        evidence: { setting: "reasoningEffort", route: "orgCloud" },
-      },
-    ]);
-  }
   if (providerKey === undefined) {
     // Defensive: an unexpected runtime shape (neither local nor cloud) — the
     // old dispatcher fell through to the engine branch, which would then fail
@@ -461,6 +449,13 @@ export async function resolveTurnRuntime(
         providerKey,
         ...(args.serverIds?.length ? { serverIds: args.serverIds } : {}),
         ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        // `/stream/org` maps the effort per org provider (and refuses one it
+        // cannot map), reading the selection's; a per-run effort the selection
+        // does not carry rides as the top-level field, which wins over it.
+        ...(args.settings?.reasoningEffort &&
+        orgSelection?.settings?.reasoningEffort !== args.settings.reasoningEffort
+          ? { reasoningEffort: args.settings.reasoningEffort }
+          : {}),
       },
       ...(args.harness ? { harness: args.harness } : {}),
     },

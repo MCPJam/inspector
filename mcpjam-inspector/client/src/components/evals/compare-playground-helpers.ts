@@ -567,30 +567,6 @@ export function mergeAdvancedConfigWithOverride(params: {
     }
   }
 
-  if (override?.providerFlagsJson !== undefined) {
-    const trimmedFlags = override.providerFlagsJson.trim();
-    if (!trimmedFlags) {
-      return Object.keys(next).length > 0 ? next : undefined;
-    }
-
-    let parsedFlags: unknown;
-    try {
-      parsedFlags = JSON.parse(trimmedFlags);
-    } catch {
-      throw new Error("Provider flags override must be valid JSON");
-    }
-
-    if (
-      !parsedFlags ||
-      typeof parsedFlags !== "object" ||
-      Array.isArray(parsedFlags)
-    ) {
-      throw new Error("Provider flags override must be a JSON object");
-    }
-
-    Object.assign(next, parsedFlags);
-  }
-
   return Object.keys(next).length > 0 ? next : undefined;
 }
 

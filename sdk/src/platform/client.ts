@@ -17,6 +17,7 @@ import type {
   PlatformSessionBrowserOpened,
   PlatformBrowserToolPolicy,
 } from "./types.js";
+import type { ModelReasoningEffort } from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
@@ -1280,6 +1281,8 @@ export class PlatformApiClient {
       serverIds?: string[];
       systemPrompt?: string;
       temperature?: number;
+      /** First turn only; pinned to the session. Excludes `temperature`. */
+      reasoningEffort?: ModelReasoningEffort;
       maxSteps?: number;
       toolMode?: PlatformToolMode;
       allowedServerIds?: string[];
@@ -1320,6 +1323,9 @@ export class PlatformApiClient {
             : {}),
           ...(params.temperature !== undefined
             ? { temperature: params.temperature }
+            : {}),
+          ...(params.reasoningEffort !== undefined
+            ? { reasoningEffort: params.reasoningEffort }
             : {}),
           ...(params.maxSteps !== undefined
             ? { maxSteps: params.maxSteps }

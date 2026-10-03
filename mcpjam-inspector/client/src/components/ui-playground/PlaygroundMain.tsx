@@ -1,6 +1,7 @@
 import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
+import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
@@ -1142,6 +1143,10 @@ export function PlaygroundMain({
     setSystemPrompt,
     temperature,
     setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    setReasoningEffort,
+    seedReasoningEffort,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -1179,6 +1184,9 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
+    reasoningEffortEnabled: true,
+    // A harness turn offers only what its adapter verified (none today).
+    reasoningEffortHarness: previewedHost?.config?.harness,
     // Opt-in from the Tools panel's Page tools section. Off unless the user
     // ticked it for the page they currently have open in the WebMCP tab.
     usePageTools: webmcpPageToolsEnabled,
@@ -1315,6 +1323,9 @@ export function PlaygroundMain({
   const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
     null,
   );
+  // Whether the last host switch seeded an effort (so a switch to a host
+  // with none knows to clear it).
+  const hostSeededEffortRef = useRef(false);
   // Declared early so the previewed-host reseed effect can early-return
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
@@ -1398,11 +1409,25 @@ export function PlaygroundMain({
     // event round-trip.
     const desiredModelId = cfg.modelId?.trim();
     if (desiredModelId) {
-      const match = availableModels.find(
-        (m) => String(m.id) === desiredModelId,
+      // Selection-aware, as the host Agent tab resolves it: a saved canonical
+      // id (`openai/gpt-5`) for a bare BYOK row must land on THAT row, not on
+      // the hosted row of the same id (which would bill MCPJam's key).
+      const match = findModelForStoredChoice(
+        { modelId: desiredModelId, selection: cfg.modelSelection },
+        availableModels,
+        undefined,
       );
       if (match) {
         setSelectedModel(match);
+        // A selected host's saved effort is the default for its own model
+        // (a later pick on the chip wins and is remembered per model).
+        // A host with none clears what the previous host seeded (High must
+        // not stick across a switch to a host that saved nothing).
+        const hostEffort = cfg.modelSelection?.settings?.reasoningEffort;
+        if (hostEffort || hostSeededEffortRef.current) {
+          seedReasoningEffort(match, hostEffort);
+        }
+        hostSeededEffortRef.current = hostEffort !== undefined;
       }
     }
     // availableModels intentionally omitted: re-seeding when the model
@@ -1419,6 +1444,7 @@ export function PlaygroundMain({
     setTemperature,
     setRequireToolApproval,
     setSelectedModel,
+    seedReasoningEffort,
   ]);
 
   // Currently selected protocol — derived from the selected tool's metadata
@@ -2766,6 +2792,18 @@ export function PlaygroundMain({
         );
         if (!apply) return false;
       }
+      // Resolved BEFORE the load so the pinned effort seeds for the model the
+      // session restores, not the one the picker is on now.
+      const restoredModel =
+        ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
+          ? // By `modelSource` as well as id: an OpenRouter id can also be a
+            // hosted row, and this thread must reopen on the one it ran on (#5472).
+            resolveRestoredModel(
+              availableModels,
+              detail.modelId,
+              detail.modelSource,
+            )
+          : null) ?? undefined;
       await loadChatSession(
         {
           chatSessionId: detail.chatSessionId,
@@ -2778,6 +2816,7 @@ export function PlaygroundMain({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
+          restoredModel,
         },
       );
       if (options?.shouldApply && !options.shouldApply()) {
@@ -2785,19 +2824,8 @@ export function PlaygroundMain({
       }
       useActiveChatSessionStore.getState().setRestoredSession({ sessionId: detail.chatSessionId, origin: detail.origin, browser: detail.browser });
       if (detail.browser && detail.projectId) useActiveChatSessionStore.getState().setBrowserLocation({ projectId: detail.projectId, sessionId: detail.chatSessionId, engine: "cloud" });
-      const shouldRestoreComposerState =
-        options?.shouldRestoreComposerState?.() ?? true;
-      if (shouldRestoreComposerState && detail.modelId) {
-        // By `modelSource` as well as id: an OpenRouter id can also be a
-        // hosted row, and this thread must reopen on the one it ran on (#5472).
-        const matchingModel = resolveRestoredModel(
-          availableModels,
-          detail.modelId,
-          detail.modelSource,
-        );
-        if (matchingModel) {
-          setSelectedModel(matchingModel);
-        }
+      if (restoredModel) {
+        setSelectedModel(restoredModel);
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -4966,6 +4994,9 @@ export function PlaygroundMain({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    onReasoningEffortChange: setReasoningEffort,
     onResetChat: handleResetAllChats,
     submitDisabled:
       disableChatInput ||

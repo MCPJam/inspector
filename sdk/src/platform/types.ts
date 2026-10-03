@@ -24,6 +24,10 @@ import type {
 } from "./browser-agent-contract.js";
 import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 import type { ExecutionRecord } from "../host-config/execution-record.js";
+import type {
+  ModelReasoningEffort,
+  ModelSelection,
+} from "../host-config/model-selection.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -345,6 +349,12 @@ export interface PlatformModel {
   id: string;
   name?: string;
   provider?: string;
+  /**
+   * The reasoning-effort levels this model accepts. Empty or absent means no
+   * effort is offered for it (it takes none, or the catalog does not know) —
+   * never guess a level for it.
+   */
+  supportedReasoningEfforts?: ModelReasoningEffort[];
   [field: string]: unknown;
 }
 
@@ -2059,6 +2069,8 @@ export interface PlatformEvalSuiteDetailBase {
     model: string;
     systemPrompt: string;
     temperature: number;
+    /** The saved model choice behind `model`, including its effort. */
+    modelSelection?: ModelSelection;
   } | null;
   /** Host attachments (multi-host). */
   hosts: PlatformEvalSuiteHost[];
@@ -2150,6 +2162,21 @@ export interface PlatformFileOwnedEvalSuiteSynced {
 export interface PlatformEvalCaseModel {
   model: string;
   provider?: string;
+  /**
+   * The saved model choice behind `model` (source, connection,
+   * `settings.reasoningEffort`). Absent when the case stores only a bare id.
+   * On a `models` PATCH an entry that omits it keeps the existing selection
+   * for that model; `null` (see {@link PlatformEvalCaseModelInput}) drops it.
+   */
+  selection?: ModelSelection;
+}
+
+/** A `models[]` entry on a case write. */
+export interface PlatformEvalCaseModelInput {
+  model: string;
+  provider?: string;
+  /** Must be FOR `model`. `null` drops the saved selection (PATCH only). */
+  selection?: ModelSelection | null;
 }
 
 /**
@@ -2859,6 +2886,12 @@ export interface PlatformEnvironment {
    * environment and read `effectiveModelId`.
    */
   modelId?: string;
+  /**
+   * The saved selection behind `modelId` (whose credentials run it, and
+   * `settings.reasoningEffort`). Absent for a bare id or an inheriting
+   * environment.
+   */
+  modelSelection?: ModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   /**
@@ -2904,6 +2937,8 @@ export interface PlatformAdhocEnvironment {
   serverAttachmentId?: string;
   /** See `PlatformEnvironment.modelId` — absent means "inherit the host's". */
   modelId?: string;
+  /** See `PlatformEnvironment.modelSelection`. */
+  modelSelection?: ModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2938,6 +2973,8 @@ export interface PlatformAdhocEnvironmentBody {
   hostId: string;
   serverAttachmentId?: string;
   modelId?: string;
+  /** Saved selection behind `modelId`; needs `modelSelections` capability. */
+  modelSelection?: ModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2972,6 +3009,12 @@ export interface PlatformEnvironmentCreateBody {
   serverAttachmentId?: string;
   /** Model to run instead of the host's; omit to inherit the host's. */
   modelId?: string;
+  /**
+   * Saved selection behind `modelId` (source, connection, effort). Must be FOR
+   * `modelId`; sent alone it pins its own model. Needs the `modelSelections`
+   * capability.
+   */
+  modelSelection?: ModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2998,6 +3041,8 @@ export interface PlatformEnvironmentUpdateBody {
    * way to clear.
    */
   modelId?: string | null;
+  /** New saved selection, or `null` to clear it (the bare `modelId` stays). */
+  modelSelection?: ModelSelection | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
   /**
    * New credential grant, or `null` to REVOKE it entirely. Omit to leave
@@ -3024,6 +3069,13 @@ export interface PlatformEnvironmentCapabilities {
   modelOverrides: boolean;
   /** Environment cells may vary by model on one host (the compare grid). */
   modelMatrix: boolean;
+  /**
+   * `modelSelection` is accepted on create / update / ad-hoc, so an
+   * environment can carry a saved selection (source, connection, effort).
+   * Absent/false on older backends, which reject the unknown field — probe
+   * this before sending one.
+   */
+  modelSelections?: boolean;
   /**
    * `startTestSuiteRun` accepts `ephemeralEnvironment` — a project-scoped
    * env may launch without suite membership. Absent/false on older backends.
