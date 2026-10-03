@@ -492,6 +492,8 @@ describe("credential binding scope — what it must NOT refuse", () => {
     await expect(connect()).rejects.toMatchObject({
       status: 500,
       message: expect.stringContaining("Missing XAA issuer"),
+      // A caller forgot the issuer: MCPJam's bug, declared so it alerts.
+      origin: "mcpjam",
     });
     expect(revealBodies).toEqual([]);
   });
