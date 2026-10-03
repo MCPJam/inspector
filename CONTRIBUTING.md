@@ -167,16 +167,19 @@ One command, from a fresh clone:
 npm run electron:dev -w @mcpjam/inspector
 ```
 
-**Stop `npm run dev` first.** The Electron renderer proxies `/api` to a
-hardcoded `localhost:6274`, so if a separate dev server already holds that port
-the window will quietly talk to it instead of to Electron's own embedded server.
-The command warns you if the port is taken.
+It runs next to `npm run dev`. The launcher (`scripts/electron-dev.mjs`) picks
+a free server port once (6274, or the next free one when another Inspector
+holds it) and hands it to both the renderer's `/api` proxy and the main
+process, so the window always talks to its own embedded server and keeps its
+own sign-in: the desktop app and the web app on the same machine never share a
+WorkOS or guest cookie. `--server-port N` pins the port
+(`npm run electron:dev -w @mcpjam/inspector -- --server-port 7000`).
 
 Its `pre` step builds the SDK if `../sdk/dist` is stale and regenerates the
 gitignored bundles (`PluginShim.bundled.ts` and friends), so there is nothing to
 run first. Then it starts:
 
-- the Electron main process, with the embedded Hono server on `:6274`
+- the Electron main process, with the embedded Hono server on the chosen port
 - Vite's dev server for the renderer, which is what the window loads
 - file watchers for the main and preload bundles
 

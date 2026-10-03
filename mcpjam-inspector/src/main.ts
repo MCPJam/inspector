@@ -62,7 +62,11 @@ import fs from "fs";
 // have to set `process.env.SERVER_PORT` (after probing for a free port)
 // BEFORE the server module graph is first evaluated. The dynamic import
 // in `startHonoServer()` enforces that ordering.
-import { probeFreePort } from "./server-port-fallback.js";
+import {
+  probeFreePort,
+  resolveServerStartPort,
+} from "./server-port-fallback.js";
+import { computeInstanceEnv } from "../bin/runtime-profile.mjs";
 import log from "electron-log";
 import { registerListeners } from "./ipc/listeners-register.js";
 import { createSafeStorageKeyStore } from "./ipc/local-harness/local-harness-listeners.js";
@@ -486,9 +490,12 @@ async function startHonoServer(): Promise<number> {
       // origin-validation allowlist. If we bound the server before setting
       // this, the renderer (loading from the fallback port) would 403 on its
       // own API calls and ngrok would target the wrong local address.
+      // Start from SERVER_PORT when the launcher set it: `electron:dev` picks
+      // the free port the renderer's proxy already points at, so main and
+      // renderer agree on which server this window talks to.
       port = await probeFreePort(
         hostname,
-        DEFAULT_SERVER_PORT,
+        resolveServerStartPort(process.env, DEFAULT_SERVER_PORT),
         SERVER_PORT_FALLBACK_ATTEMPTS,
         {
           onAttemptFailed: (failedPort, err) => {
@@ -502,6 +509,32 @@ async function startHonoServer(): Promise<number> {
       );
       process.env.SERVER_PORT = String(port);
       cachedProbedPort = port;
+    }
+
+    // This instance's own addresses, the same way `bin/start.js` and
+    // `dev:worktree` set them. The browser port names the session namespace
+    // (`server/utils/local-session-namespace.ts`), so two desktop apps, or a
+    // desktop app next to `npm run dev`, never share a WorkOS or guest cookie;
+    // the public callback origins (CLI login, Slack/Discord linking) follow it.
+    // In development the window loads from forge's renderer dev server, so
+    // that is the browser port; packaged, the embedded server serves the app.
+    const browserPort =
+      (rendererDevServerUrl
+        ? Number(new URL(rendererDevServerUrl).port)
+        : undefined) || port;
+    const instanceEnv = computeInstanceEnv({
+      ports: { server: port },
+      browserPort,
+      host: hostname,
+      profile: process.env,
+    });
+    for (const key of [
+      "MCPJAM_BROWSER_PORT",
+      "CLI_AUTH_PUBLIC_ORIGIN",
+      "SLACK_LINK_PUBLIC_ORIGIN",
+      "DISCORD_LINK_PUBLIC_ORIGIN",
+    ] as const) {
+      process.env[key] = instanceEnv[key];
     }
 
     // Where the local-harness runtime pack installs. A packaged app keeps its
