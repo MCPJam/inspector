@@ -15,6 +15,12 @@
  * refusal on a connect result and turns it into something a person can act on.
  */
 
+import {
+  describeError,
+  isNormalizedError,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
+
 export type CredentialRefusal =
   | {
       kind: "origin_mismatch";
@@ -106,9 +112,39 @@ export function onCredentialReentryRequest(listener: Listener): () => void {
 }
 
 /**
+ * The error card's copy for a refusal. The server classifies the refusal by
+ * its status alone, so the block it attaches is the generic 403 ("You
+ * authenticated successfully but lack permission") — the opposite of what
+ * happened, since the credential was never sent. The card says what the
+ * toast says instead. Slug, origin and raw message are kept from the server's
+ * block, so telemetry and "Show details" are unchanged.
+ */
+function credentialRefusalNormalized(
+  refusal: CredentialRefusal,
+  message: string,
+  serverBlock: unknown,
+): NormalizedError {
+  const base = isNormalizedError(serverBlock)
+    ? serverBlock
+    : describeError(new Error(message));
+  return {
+    ...base,
+    title:
+      refusal.kind === "export_denied"
+        ? "Blocked by organization policy"
+        : "Saved credentials not sent",
+    oneLine: message,
+    likelyCauses: [],
+    nextSteps: [],
+    docsAnchor: "/troubleshooting/error-codes",
+  };
+}
+
+/**
  * Apply a refusal to a connect/reconnect result: the actionable message
- * replaces the raw one, and — for a moved server, which the person can fix —
- * its configuration is asked to open. Any other result passes through.
+ * replaces the raw one in both the toast and the error card, and — for a
+ * moved server, which the person can fix — its configuration is asked to
+ * open. Any other result passes through.
  */
 export function withCredentialRefusal<T>(result: T, serverName?: string): T {
   const record = asRecord(result);
@@ -118,9 +154,15 @@ export function withCredentialRefusal<T>(result: T, serverName?: string): T {
   if (serverName && refusal.kind === "origin_mismatch") {
     requestCredentialReentry(serverName, refusal);
   }
+  const message = credentialRefusalMessage(refusal, serverName);
   return {
     ...record,
-    error: credentialRefusalMessage(refusal, serverName),
+    error: message,
+    normalized: credentialRefusalNormalized(
+      refusal,
+      message,
+      record.normalized,
+    ),
     credentialRefusal: refusal,
   } as T;
 }
