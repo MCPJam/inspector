@@ -590,7 +590,10 @@ function createCodexAppServerSession(input: {
   }): Promise<{ restartThread: boolean }> => {
     await writeHarnessSkills({
       sandbox: input.sandbox,
-      rootDir: `${input.sandboxHomeDir}/${CODEX_SKILLS_SUBDIR}`,
+      // Same split as `@ai-sdk/harness-codex`'s own call, so both land on
+      // `$HOME/.agents/skills`.
+      homePath: input.sandboxHomeDir,
+      skillsDir: CODEX_SKILLS_SUBDIR,
       skills: turnInput.skills,
       abortSignal: turnInput.abortSignal,
     });

@@ -529,7 +529,6 @@ async function main() {
         mcpJson: { mcpServers: { delivery_probe: { type: "http", url: deliveryMcp.url } } },
       })
     : createClaudeCodeHarness({
-    model: "haiku",
     auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: gatewayUrl },
     thinking: { type: "disabled" },
     env: {
@@ -540,6 +539,9 @@ async function main() {
   });
   const agent: any = new HarnessAgent({
     harness: await withLocalPackBootstrap(harness, plan.runtime.rootPath) as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "You are running a conformance check.",
+    // The model rides on the agent: the adapter no longer reads one at
+    // construction. Both branches above are the haiku family.
+    model: "haiku",
     // Work-dir layout: "project" is the symlink to the granted workspace inside
     // session state, so Claude Code's cwd resolves to the user's checkout.
     sandboxConfig: { workDir: "project" },
