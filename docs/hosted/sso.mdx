@@ -111,6 +111,13 @@ Use this instead of the SAML setup when your organization chooses OIDC.
 The OIDC client secret belongs in the SSO setup portal. It is separate from the
 SCIM bearer token used for provisioning.
 
+If email-domain discovery selects a different organization, use an organization
+sign-in link supplied by your MCPJam contact:
+`https://app.mcpjam.com/login?organization_id=YOUR_WORKOS_ORGANIZATION_ID`.
+This link selects that organization's configured SSO connection, including when
+you already have a session in another organization. Users must still authenticate
+with the identity provider and meet the organization's access requirements.
+
 ## MCPJam integration fields
 
 If you are installing a supplied MCPJam integration that asks for these fields,
