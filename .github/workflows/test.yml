@@ -72,7 +72,7 @@ jobs:
     # the `playwright install --with-deps` step entirely — that apt-driven step
     # was costing up to ~7 min of variable, sometimes-stalling wall-clock time.
     # When bumping @playwright/test, bump this tag in lockstep.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
 
     steps:
       # Git in the Playwright container can fail to discover its CA bundle.
@@ -137,7 +137,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -169,7 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Packaging
     # Same pinned Playwright image as the other jobs — see the note above.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
 
     steps:
       # Git in the Playwright container can fail to discover its CA bundle.
@@ -202,7 +202,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -230,7 +230,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
     strategy:
       # Report every shard's result. Cancelling siblings on the first failure
       # would hide unrelated breakage in the other five sixths of the suite.
@@ -277,7 +277,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -300,7 +300,7 @@ jobs:
     runs-on: ubuntu-latest
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
-    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    container: mcr.microsoft.com/playwright:v1.63.0-noble
     # This job builds the PR's code and runs it against prod Convex. Keep its
     # errors out of prod Sentry, which pages us: the build flag turns off the
     # browser SDK, DO_NOT_TRACK turns off the server's.
@@ -339,7 +339,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
