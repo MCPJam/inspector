@@ -60,7 +60,7 @@
     "@changesets/changelog-github": "^1.0.1"
   },
   "dependencies": {
-    "react-force-graph-2d": "^1.29.1"
+    "react-force-graph-2d": "^1.29.2"
   },
   "overrides": {
     "shell-quote": "^1.8.4",
