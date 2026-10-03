@@ -322,7 +322,6 @@ export function useOnboarding({
       track("onboarding_connect_excalidraw_error", {
         location: "onboarding",
         ...trackingProps,
-        error: excalidrawServer.lastError,
       });
     }
   }, [excalidrawServer, phase]);
