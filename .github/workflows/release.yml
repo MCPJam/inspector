@@ -23,7 +23,7 @@ on:
         default: false
         type: boolean
       skip_verify:
-        description: "Skip the green-CI (Tests + Build and Test) preflight gates"
+        description: "Skip the verification gates: green CI (Tests + Build and Test), and a configured Ask MCPJam canary"
         required: false
         default: false
         type: boolean
@@ -561,6 +561,9 @@ jobs:
     with:
       target: staging
       source: artifact
+      # A release cannot pass this gate without running a real turn; the same
+      # switch that skips the other verification gates skips this one.
+      require_canary: ${{ !fromJSON(inputs.skip_verify) }}
     secrets: inherit
 
   publish-packages:

@@ -61,6 +61,12 @@ on:
         type: string
         required: false
         default: ""
+      # The release's gate sets this: a gate that passes because nothing ran
+      # is not a gate. Nightly and manual runs keep skipping with a warning.
+      require_canary:
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -106,6 +112,7 @@ jobs:
       - name: Is a canary configured?
         id: config
         env:
+          REQUIRE_CANARY: ${{ inputs.require_canary }}
           CANARY_EMAIL: ${{ vars.ASK_MCPJAM_CANARY_EMAIL }}
           STAGING_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
           PRODUCTION_KEY: ${{ secrets.PRODUCTION_WORKOS_API_KEY }}
@@ -114,6 +121,12 @@ jobs:
           [ "$TARGET" = "production" ] && key="$PRODUCTION_KEY"
           if [ -z "$CANARY_EMAIL" ] || [ -z "$key" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
+            if [ "$REQUIRE_CANARY" = "true" ]; then
+              msg="Ask MCPJam smoke cannot gate this release: no canary is configured for $TARGET. Set vars.ASK_MCPJAM_CANARY_EMAIL and the $TARGET WorkOS API key secret, or rerun the release with skip_verify."
+              echo "::error::$msg"
+              echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             msg="Ask MCPJam smoke SKIPPED for $TARGET: set vars.ASK_MCPJAM_CANARY_EMAIL and the $TARGET WorkOS API key secret. This is not a pass."
             echo "::warning::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
