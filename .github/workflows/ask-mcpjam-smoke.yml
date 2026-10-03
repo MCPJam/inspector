@@ -23,6 +23,13 @@ name: Ask MCPJam smoke
 #                                        else the run mints a Magic Auth code
 #   secrets.STAGING_WORKOS_API_KEY       already used by pr-preview.yml
 #   secrets.PRODUCTION_WORKOS_API_KEY    production runs only
+#
+# The job runs in the GitHub environment `ask-mcpjam-smoke-<target>`. Keep
+# PRODUCTION_WORKOS_API_KEY and ASK_MCPJAM_CANARY_PASSWORD as secrets of
+# `ask-mcpjam-smoke-production`, whose deployment-branch policy allows `main`
+# only, never as repository secrets. That policy is what keeps them from a run
+# on any other branch: a dispatch runs the workflow file from the ref it was
+# given, so no check in this file could.
 # Like the prod canary's v1 probe, a run with no canary configured is skipped
 # and says so rather than failing — it is not a pass.
 
@@ -69,6 +76,8 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Where the production secrets live; see the header.
+    environment: ask-mcpjam-smoke-${{ inputs.target || 'staging' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
