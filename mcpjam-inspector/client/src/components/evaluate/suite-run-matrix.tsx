@@ -190,15 +190,19 @@ export function planRunMatrix(
  * (or the one a new cell copies) and each cell's client and model.
  */
 export function plannedPreflight(plan: readonly PlannedCombination[]) {
+  const launched = new Set(
+    plan.flatMap((item) => (item.environmentId ? [item.environmentId] : [])),
+  );
+  const copied = new Set(
+    plan.flatMap((item) =>
+      !item.environmentId && item.templateEnvironmentId
+        ? [item.templateEnvironmentId]
+        : [],
+    ),
+  );
   return {
-    environmentIds: [
-      ...new Set(
-        plan.flatMap((item) => {
-          const id = item.environmentId ?? item.templateEnvironmentId;
-          return id ? [id] : [];
-        }),
-      ),
-    ],
+    environmentIds: [...new Set([...launched, ...copied])],
+    templateOnlyIds: [...copied].filter((id) => !launched.has(id)),
     targets: plan.map(({ stack }) => ({
       hostId: stack.hostId,
       ...(stack.modelId ? { modelId: stack.modelId } : {}),

@@ -170,13 +170,18 @@ it("preflights the cells a run launches, and the setup a new cell copies", () =>
   });
   expect(plannedPreflight(plan)).toEqual({
     environmentIds: ["env"],
+    // "env" also launches as itself, so nothing about it is template-only.
+    templateOnlyIds: [],
     targets: [{ hostId: "claude" }, { hostId: "claude", modelId: "sonnet" }],
   });
   // A new cell alone still brings the setup it copies.
   const newOnly = planRunMatrix(suite, environments, {
     claude: { includeClientDefaults: false, explicitModelIds: ["opus"] },
   });
-  expect(plannedPreflight(newOnly).environmentIds).toEqual(["env"]);
+  expect(plannedPreflight(newOnly)).toMatchObject({
+    environmentIds: ["env"],
+    templateOnlyIds: ["env"],
+  });
 });
 
 it("stops preflighting a saved pairing once it is deselected", () => {

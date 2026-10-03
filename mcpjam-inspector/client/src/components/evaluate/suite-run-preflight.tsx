@@ -157,22 +157,36 @@ const VENUE_DEPENDENT_REFUSALS = new Set([
 ]);
 
 /**
+ * About an environment's own client and model. A new cell that only copies an
+ * environment's setup brings its own, so these don't apply to it.
+ */
+const CLIENT_AND_MODEL_REFUSALS = new Set([
+  "ENV_HOST_MISSING",
+  "ENV_MODEL_REQUIRED",
+]);
+
+/**
  * Each environment's launch resolution: the servers its run would connect,
  * and the `ENV_*` refusals the launch itself would answer with. Any other
  * failure is left to the run route to report.
  */
 export function readEnvironmentResolutions(
   results: Readonly<Record<string, unknown>>,
+  /** Environments the run only copies a setup from, never launches. */
+  templateOnly: ReadonlySet<string> = new Set(),
 ): { serverRefs: string[]; refusals: string[] } {
   const serverRefs: string[] = [];
   const refusals = new Set<string>();
-  for (const resolved of Object.values(results)) {
+  for (const [environmentId, resolved] of Object.entries(results)) {
     if (resolved instanceof Error) {
       const code = (resolved as { data?: { code?: unknown } }).data?.code;
       if (
         typeof code === "string" &&
         code.startsWith("ENV_") &&
-        !VENUE_DEPENDENT_REFUSALS.has(code)
+        !VENUE_DEPENDENT_REFUSALS.has(code) &&
+        !(
+          templateOnly.has(environmentId) && CLIENT_AND_MODEL_REFUSALS.has(code)
+        )
       )
         refusals.add(convexErrMessage(resolved, resolved.message));
       continue;
@@ -192,6 +206,7 @@ export function useEnvironmentResolutions(
   projectId: string,
   environmentIds: readonly string[],
   enabled = true,
+  templateOnly: readonly string[] = [],
 ) {
   // Convex resubscribes whenever this object changes identity, and every
   // resubscribe re-renders, so it is rebuilt only when its inputs change.
@@ -218,7 +233,7 @@ export function useEnvironmentResolutions(
       ),
     [projectId, key, enabled],
   );
-  return readEnvironmentResolutions(useQueries(queries));
+  return readEnvironmentResolutions(useQueries(queries), new Set(templateOnly));
 }
 
 export function useSuiteRunPreflight({
@@ -235,6 +250,7 @@ export function useSuiteRunPreflight({
   /** What the sheet will launch, when it plans cells of its own. */
   planned?: {
     environmentIds: readonly string[];
+    templateOnlyIds: readonly string[];
     targets: readonly PreflightTarget[];
   };
 }): RunPreflightState {
@@ -259,6 +275,7 @@ export function useSuiteRunPreflight({
     // The gate `useProjectServers` reads with: a signed-out browser or a
     // placeholder project id would only collect validator errors.
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
+    planned?.templateOnlyIds,
   );
   const preflight = runPreflight({
     ...preflightTargets({

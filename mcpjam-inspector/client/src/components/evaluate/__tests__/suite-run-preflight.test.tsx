@@ -222,6 +222,23 @@ describe("readEnvironmentResolutions", () => {
     ).toEqual([]);
   });
 
+  // A new cell brings its own client and model; it copies only the setup.
+  it("ignores a template's client and model refusals, not its setup's", () => {
+    const refusal = (code: string) =>
+      new ConvexError({ code, message: `${code} message` });
+    expect(
+      readEnvironmentResolutions(
+        {
+          template: refusal("ENV_MODEL_REQUIRED"),
+          "template-host": refusal("ENV_HOST_MISSING"),
+          "template-servers": refusal("ENV_SERVERS_UNRESOLVED"),
+          launched: refusal("ENV_MODEL_REQUIRED"),
+        },
+        new Set(["template", "template-host", "template-servers"]),
+      ).refusals,
+    ).toEqual(["ENV_SERVERS_UNRESOLVED message", "ENV_MODEL_REQUIRED message"]);
+  });
+
   it("leaves a failure that is not a launch refusal to the run route", () => {
     expect(
       readEnvironmentResolutions({
