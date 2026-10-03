@@ -14,8 +14,8 @@
   "dependencies": {
     "@slack/bolt": "^5.1.0",
     "@mcpjam/surface-core": "*",
-    "dotenv": "~17.4.2",
-    "undici": "^7.24.8"
+    "dotenv": "~18.0.5",
+    "undici": "^8.11.2"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
