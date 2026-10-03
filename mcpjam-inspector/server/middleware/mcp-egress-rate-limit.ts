@@ -94,6 +94,10 @@ function refused(c: Context, reason: string, status: 409 | 429 | 503) {
 export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
   return async (c: Context, next: Next): Promise<Response | void> => {
     if (!HOSTED_MODE || c.req.method !== "POST") return next();
+    // Before the body is read: the hosted Connect route counts its deadline
+    // (`WEB_SERVER_CHECK_DEADLINE_MS`) from the request's arrival, so the body
+    // read and the queue wait below both count against it.
+    const arrivedAt = Date.now();
     let metadata:
       | { requestId: string; intent: "manual" | "automatic"; resumed?: boolean }
       | undefined;
@@ -193,6 +197,7 @@ export function createServerCheckMiddleware(makeCoordinator = coordinatorFor) {
         intent: metadata?.intent ?? "manual",
         resumed: metadata?.resumed ?? false,
       });
+      c.set("serverCheckStartedAt", arrivedAt);
       await serverCheckScope.run(signal, next);
       if (preempted) return refused(c, "SERVER_CHECK_PREEMPTED", 409);
       if (leaseFailed) return refused(c, "SERVER_CHECK_QUEUE_UNAVAILABLE", 503);

@@ -8,7 +8,12 @@ vi.mock("@sentry/node", () => ({
 import * as Sentry from "@sentry/node";
 const captureException = vi.mocked(Sentry.captureException);
 import { MCPAuthError, originOf } from "@mcpjam/sdk";
-import { InsufficientScopeError } from "@modelcontextprotocol/client";
+import {
+  InsufficientScopeError,
+  SdkErrorCode,
+  SdkHttpError,
+  SseError,
+} from "@modelcontextprotocol/client";
 
 import {
   ErrorCode,
@@ -378,6 +383,19 @@ const TARGET_CONNECT_FAILURE =
   'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: fetch failed. SSE error: fetch failed.';
 
 describe("mapTargetServerError", () => {
+  it("maps the hosted chat tool-listing deadline to 424 TIMEOUT", () => {
+    // `prepareChatV2`'s budget for connecting + listing tools on a hosted
+    // turn. It fires before any byte is streamed, so a 5xx here would be
+    // swapped for the edge's own error page just like a connect failure.
+    const mapped = mapTargetServerError(
+      new Error(
+        'MCP server "DHL Tracking" timed out: connecting and listing tools took longer than 30s.',
+      ),
+    );
+    expect(mapped.status).toBe(424);
+    expect(mapped.code).toBe(ErrorCode.TIMEOUT);
+  });
+
   it("downgrades the connection class out of the 5xx range", () => {
     // The range is the load-bearing part, not the digits: Cloudflare replaces
     // an origin 5xx with its own error page, discarding the JSON envelope and
@@ -491,6 +509,149 @@ describe("mapTargetServerError", () => {
       "Convex is unreachable",
     );
     expect(mapTargetServerError(explicit).status).toBe(502);
+  });
+
+  describe("an HTTP error status the MCP server answered with", () => {
+    // The Streamable HTTP transport's error class sets no `name`; it is known
+    // by class, like the real one.
+    class StreamableHTTPError extends Error {
+      constructor(
+        readonly code: number,
+        message: string,
+      ) {
+        super(`Streamable HTTP error: ${message}`);
+      }
+    }
+
+    /**
+     * The connect failure the SDK throws when both transports got a 404. Its
+     * message no longer names the server, so neither the shared mapper nor the
+     * 502/504 downgrade recognizes it.
+     */
+    function connectFailure404(): Error {
+      const error = new Error(
+        "Server returned HTTP 404 at https://example.com/. Check the MCP endpoint and server logs.",
+        { cause: new SseError(404, "Non-200 status code (404)", {} as ErrorEvent) },
+      );
+      Object.defineProperty(error, "streamableCause", {
+        value: Object.assign(new StreamableHTTPError(404, "Not Found"), {
+          status: 404,
+          statusText: "Not Found",
+        }),
+        enumerable: false,
+      });
+      return error;
+    }
+
+    it("serves an all-404 connect failure as a 424", () => {
+      const mapped = mapTargetServerError(connectFailure404());
+      expect(mapped.status).toBe(424);
+      expect(mapped.code).toBe(ErrorCode.UPSTREAM_HTTP_ERROR);
+    });
+
+    it("serves a raw SdkHttpError after a successful connect as a 424", () => {
+      const mapped = mapTargetServerError(
+        new SdkHttpError(
+          SdkErrorCode.ClientHttpNotImplemented,
+          "Error POSTing to endpoint (HTTP 500 Internal Server Error): boom",
+          { status: 500, statusText: "Internal Server Error", text: "boom" },
+        ),
+      );
+      expect(mapped.status).toBe(424);
+      expect(mapped.code).toBe(ErrorCode.UPSTREAM_HTTP_ERROR);
+    });
+
+    it.each([
+      ["a 504 page that says it timed out", 504, "Gateway Timeout: upstream timed out"],
+      ["a 502 page that quotes fetch failed", 502, "Bad Gateway: fetch failed"],
+    ])(
+      "serves %s as a 424 even when the body matches a transport phrase",
+      (_name, status, body) => {
+        const mapped = mapTargetServerError(
+          new SdkHttpError(
+            SdkErrorCode.ClientHttpNotImplemented,
+            `Error POSTing to endpoint (HTTP ${status}): ${body}`,
+            { status, statusText: "", text: body },
+          ),
+        );
+        expect(mapped.status).toBe(424);
+        expect(mapped.code).toBe(ErrorCode.UPSTREAM_HTTP_ERROR);
+        expect(mapped.message).not.toMatch(/Couldn't reach/);
+      },
+    );
+
+    it.each([
+      [502, "Bad Gateway: fetch failed"],
+      [504, "Gateway Timeout: upstream timed out"],
+    ])(
+      "serves a named-server wrapper around a transport %s as UPSTREAM_HTTP_ERROR",
+      (status, body) => {
+        const mapped = mapTargetServerError(
+          new Error(
+            `Failed to connect to MCP server "srv-1" using Streamable HTTP. Streamable HTTP error: ${body}`,
+            {
+              cause: new SdkHttpError(
+                SdkErrorCode.ClientHttpNotImplemented,
+                `Error POSTing to endpoint (HTTP ${status}): ${body}`,
+                { status, statusText: "", text: body },
+              ),
+            },
+          ),
+        );
+        expect(mapped.status).toBe(424);
+        expect(mapped.code).toBe(ErrorCode.UPSTREAM_HTTP_ERROR);
+      },
+    );
+
+    it("keeps a Streamable timeout a TIMEOUT when only the SSE fallback answered", () => {
+      // The Streamable connect gives up after 3 s; a modern-only server then
+      // answers the SSE fallback GET with 405. The slow POST is the failure.
+      const error = new Error(
+        'Failed to connect to MCP server "srv-1" using HTTP transports. Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (405).',
+        { cause: new SseError(405, "Non-200 status code (405)", {} as ErrorEvent) },
+      );
+      Object.defineProperty(error, "streamableCause", {
+        value: new Error("Request timed out"),
+        enumerable: false,
+      });
+      const mapped = mapTargetServerError(error);
+      expect(mapped.status).toBe(424);
+      expect(mapped.code).toBe(ErrorCode.TIMEOUT);
+    });
+
+    it("keeps an unclassified throw a 500, server named or not", () => {
+      const mapped = mapTargetServerError(
+        new Error('MCP server "srv-1" broke us: kaboom'),
+      );
+      expect(mapped.status).toBe(500);
+      expect(mapped.code).toBe(ErrorCode.INTERNAL_ERROR);
+    });
+
+    it("does not count a status on anything but an MCP transport error", () => {
+      // A Convex or backend response carries a `status` too; only the
+      // transport's own errors say what the MCP server answered.
+      const mapped = mapTargetServerError(
+        Object.assign(new Error("Project not found"), { status: 404 }),
+      );
+      expect(mapped.status).toBe(500);
+      expect(mapped.code).toBe(ErrorCode.INTERNAL_ERROR);
+    });
+
+    it("leaves the shared mapper's 500 alone", () => {
+      expect(mapRuntimeError(connectFailure404()).status).toBe(500);
+    });
+
+    it("keeps the upstream auth branches ahead of it", () => {
+      const forbidden = mapTargetServerError(
+        new SdkHttpError(
+          SdkErrorCode.ClientHttpNotImplemented,
+          "Error POSTing to endpoint (HTTP 403 Forbidden): nope",
+          { status: 403, statusText: "Forbidden", text: "nope" },
+        ),
+      );
+      expect(forbidden.status).toBe(403);
+      expect(forbidden.code).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+    });
   });
 });
 
