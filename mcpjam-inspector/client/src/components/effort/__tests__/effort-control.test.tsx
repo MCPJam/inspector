@@ -142,6 +142,116 @@ describe("EffortControl", () => {
     expect(await effortSlider()).toBeInTheDocument();
   });
 
+  it("inline variant reads the full level beside the icon", () => {
+    renderControl({ variant: "inline", value: "high" });
+    const trigger = screen.getByTestId("effort-control-trigger");
+    expect(trigger).toHaveTextContent(/^High$/);
+    expect(trigger.querySelector("svg")).not.toBeNull();
+  });
+
+  it("inline variant reads Default when nothing is saved", () => {
+    renderControl({ variant: "inline" });
+    expect(screen.getByTestId("effort-control-trigger")).toHaveTextContent(
+      /^Default$/,
+    );
+  });
+
+  it("inline variant opens a row of level buttons, marks the saved one, and closes on a pick", async () => {
+    const onChange = renderControl({
+      variant: "inline",
+      options: ["low", "medium", "high"],
+      value: "medium",
+    });
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    const radios = screen.getAllByRole("radio");
+    expect(radios.map((radio) => radio.textContent)).toEqual([
+      "Default",
+      "Low",
+      "Medium",
+      "High",
+    ]);
+    expect(screen.getByRole("radio", { name: "Medium" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.queryByRole("slider")).toBeNull();
+    await pickEffort("High");
+    expect(onChange).toHaveBeenLastCalledWith("high");
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+  });
+
+  it("inline variant sends undefined for Default, and nothing for the level already picked", async () => {
+    const onChange = renderControl({ variant: "inline", value: "high" });
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    await userEvent.click(screen.getByRole("radio", { name: "High" }));
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    await userEvent.click(screen.getByRole("radio", { name: "Default" }));
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("inline variant badges a stale value with no button picked", async () => {
+    renderControl({ variant: "inline", options: ["low"], value: "max" });
+    const trigger = screen.getByTestId("effort-control-trigger");
+    expect(trigger).toHaveTextContent("Max · no longer supported");
+    await userEvent.click(trigger);
+    expect(
+      screen
+        .getAllByRole("radio")
+        .some((radio) => radio.getAttribute("aria-checked") === "true"),
+    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+  });
+
+  it("inline variant opens its row upward", async () => {
+    renderControl({ variant: "inline", value: "high" });
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    expect(
+      (await screen.findByTestId("effort-control-popover")).getAttribute(
+        "data-side",
+      ),
+    ).toBe("top");
+  });
+
+  it("buttons variant shows the row on the page with no trigger", async () => {
+    const onChange = renderControl({ variant: "buttons", value: "low" });
+    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    expect(screen.getByRole("radio", { name: "Low" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await pickEffort("High");
+    expect(onChange).toHaveBeenLastCalledWith("high");
+    // Still on the page after a pick: nothing to close.
+    expect(screen.getByRole("radiogroup")).toBeInTheDocument();
+  });
+
+  it("buttons variant badges a stale value at the end of the row, and Default clears it", async () => {
+    const onChange = renderControl({
+      variant: "buttons",
+      options: ["low"],
+      value: "max",
+    });
+    expect(screen.getByTestId("effort-control-stale")).toHaveTextContent(
+      "Max · no longer supported",
+    );
+    await userEvent.click(screen.getByRole("radio", { name: "Default" }));
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("buttons variant is inert with a reason when disabled", () => {
+    const onChange = renderControl({
+      variant: "buttons",
+      disabled: true,
+      disabledReason: "Read-only.",
+    });
+    expect(screen.getByTestId("effort-control-disabled")).toBeInTheDocument();
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio).toBeDisabled();
+    }
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("badges a saved effort the catalog no longer lists and lets it be cleared", async () => {
     const onChange = renderControl({ options: ["low", "high"], value: "max" });
     const trigger = screen.getByTestId("effort-control-trigger");

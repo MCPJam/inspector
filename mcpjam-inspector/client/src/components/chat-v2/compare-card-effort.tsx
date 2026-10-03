@@ -33,7 +33,7 @@ export function CompareCardEffort({
       className={cn("flex shrink-0 items-center gap-0.5", className)}
     >
       <EffortControl
-        variant="chip"
+        variant="inline"
         options={levels}
         value={value}
         defaultLevel={reasoningEffortDefaultForRow(model)}

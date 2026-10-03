@@ -9,6 +9,10 @@
  * `Default` caption under the level the provider applies when nothing is
  * sent. Choosing Default sends `undefined`, never that level's value. The
  * trigger shows a terse level (`Med`); the specifics live in the tooltip. The
+ * `inline` variant (the Playground, beside the model name) reads the full
+ * level (`High`) and opens a row of level buttons, upward, instead of the
+ * slider. The `buttons` variant (the client tab) is that row on the page
+ * itself, with no popover. The
  * caller passes the ALREADY-DERIVED list of levels the row supports
  * (`reasoningEffortOptions`):
  *
@@ -92,9 +96,11 @@ const effortTriggerVariants = cva(
       variant: {
         /** Compact pill beside the model picker. */
         chip: "h-7 px-2 border-transparent bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
-        /** Full-width row in a settings form. */
-        field:
-          "h-9 w-full justify-between rounded-md px-3 border-input bg-transparent text-foreground hover:bg-accent",
+        /** The row of level buttons on the page, for a settings form; no trigger. */
+        buttons: "",
+        /** Full level beside the model picker; opens a row of level buttons. */
+        inline:
+          "h-7 px-2 border-transparent bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
         /** Trailing `· High` after a model name; no chrome of its own. */
         suffix:
           "h-7 gap-0.5 px-1 border-transparent bg-transparent text-muted-foreground hover:text-foreground",
@@ -170,14 +176,14 @@ export function EffortControl({
   const valueLabel = value ? reasoningEffortLabel(value) : "Default";
   const shortLabel = value ? reasoningEffortShortLabel(value) : "Default";
   const triggerText =
-    variant === "suffix"
-      ? value
-        ? `· ${shortLabel}${isStale ? " · no longer supported" : ""}`
-        : null
-      : isStale
-        ? `${variant === "field" ? valueLabel : shortLabel} · no longer supported`
-        : variant === "field"
-          ? valueLabel
+    variant === "inline"
+      ? `${valueLabel}${isStale ? " · no longer supported" : ""}`
+      : variant === "suffix"
+        ? value
+          ? `· ${shortLabel}${isStale ? " · no longer supported" : ""}`
+          : null
+        : isStale
+          ? `${shortLabel} · no longer supported`
           : value
             ? shortLabel
             : "Effort";
@@ -208,6 +214,82 @@ export function EffortControl({
     "data-testid": "effort-control-slider",
   };
 
+  // A stale value matches no button, so none reads as picked; Default then
+  // clears it.
+  const pickedIndex = isStale ? -1 : savedIndex;
+  const levelButtons = (compact: boolean, afterPick?: () => void) => (
+    <div
+      role="radiogroup"
+      aria-label="Reasoning effort"
+      data-testid="effort-control-buttons"
+      className="flex overflow-x-auto rounded-md border border-border"
+    >
+      {stops.map((stop, index) => {
+        const picked = index === pickedIndex;
+        return (
+          <button
+            key={stop ?? "__default"}
+            type="button"
+            role="radio"
+            aria-checked={picked}
+            disabled={disabled}
+            data-testid={`effort-option-${stop ?? "default"}`}
+            title={
+              stop
+                ? reasoningEffortDetail(stop)
+                : defaultLevel && options.includes(defaultLevel)
+                  ? `The model's default (${reasoningEffortLabel(defaultLevel)})`
+                  : "The model's default"
+            }
+            onClick={() => {
+              if (!picked) onChange(stop);
+              afterPick?.();
+            }}
+            className={cn(
+              "whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+              compact ? "h-7 px-2.5 text-xs" : "px-3 py-1.5 text-sm",
+              index > 0 && "border-l border-border",
+              picked
+                ? "bg-muted font-semibold text-foreground"
+                : "text-muted-foreground enabled:hover:bg-muted/50 enabled:hover:text-foreground",
+            )}
+          >
+            {stop ? reasoningEffortLabel(stop) : "Default"}
+          </button>
+        );
+      })}
+      {/* On the page there is no popover for the stale note, so it rides at
+          the end of the row; picking any level (or Default) replaces it. */}
+      {compact && isStale ? (
+        <span
+          data-testid="effort-control-stale"
+          title={tooltip}
+          className="flex h-7 items-center whitespace-nowrap border-l border-border px-2.5 text-xs font-semibold text-destructive"
+        >
+          {valueLabel} · no longer supported
+        </span>
+      ) : null}
+    </div>
+  );
+
+  if (variant === "buttons") {
+    if (!disabled) return <div className={className}>{levelButtons(true)}</div>;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            className={className}
+            data-testid="effort-control-disabled"
+            tabIndex={0}
+          >
+            {levelButtons(true)}
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
   const trigger = (
     <Button
       type="button"
@@ -237,7 +319,7 @@ export function EffortControl({
       <Tooltip>
         <TooltipTrigger asChild>
           <span
-            className={cn(variant === "field" ? "block w-full" : "inline-flex")}
+            className="inline-flex"
             data-testid="effort-control-disabled"
             tabIndex={0}
           >
@@ -249,14 +331,58 @@ export function EffortControl({
     );
   }
 
+  const staleRow = isStale ? (
+    <div className="mt-2 flex items-center justify-between gap-2">
+      <p className="text-[11px] text-destructive">
+        {valueLabel} is no longer supported by this model.
+      </p>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-[11px]"
+        onClick={() => {
+          onChange(undefined);
+          setOpen(false);
+        }}
+      >
+        Clear
+      </Button>
+    </div>
+  ) : null;
+
+  const popoverTrigger = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+
+  if (variant === "inline") {
+    return (
+      <Popover open={open} onOpenChange={setOpen}>
+        {popoverTrigger}
+        <PopoverContent
+          side="top"
+          align="start"
+          className="w-auto max-w-[calc(100vw-2rem)] p-3"
+          data-testid="effort-control-popover"
+        >
+          <p className="mb-2 text-xs font-medium text-muted-foreground">
+            Reasoning effort
+          </p>
+          {levelButtons(false, () => setOpen(false))}
+          {staleRow}
+        </PopoverContent>
+      </Popover>
+    );
+  }
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent>{tooltip}</TooltipContent>
-      </Tooltip>
+      {popoverTrigger}
       <PopoverContent
         align="start"
         className="w-[260px] p-3"
@@ -348,25 +474,7 @@ export function EffortControl({
           </div>
         ) : null}
 
-        {isStale ? (
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <p className="text-[11px] text-destructive">
-              {valueLabel} is no longer supported by this model.
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => {
-                onChange(undefined);
-                setOpen(false);
-              }}
-            >
-              Clear
-            </Button>
-          </div>
-        ) : null}
+        {staleRow}
       </PopoverContent>
     </Popover>
   );

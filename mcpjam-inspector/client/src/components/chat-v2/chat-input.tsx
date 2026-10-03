@@ -2029,7 +2029,7 @@ export function ChatInput({
                   card also has its own chip and sends its own level. */}
               {!minimalMode && onReasoningEffortChange ? (
                 <EffortControl
-                  variant="chip"
+                  variant="inline"
                   options={reasoningEffortLevels ?? []}
                   value={reasoningEffort}
                   defaultLevel={reasoningEffortDefaultForRow(currentModel)}
