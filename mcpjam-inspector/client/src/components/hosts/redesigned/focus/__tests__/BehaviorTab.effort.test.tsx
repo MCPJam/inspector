@@ -45,14 +45,11 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
   ModelSelector: ({
     onModelChange,
     availableModels,
-    openNonce,
   }: {
     onModelChange: (model: ModelDefinition) => void;
     availableModels: ModelDefinition[];
-    openNonce?: number;
   }) => (
     <div>
-      <span data-testid="picker-open-nonce">{openNonce ?? 0}</span>
       {availableModels.map((model) => (
         <button
           key={String(model.id)}
@@ -72,10 +69,7 @@ const GPT5_SELECTION = {
   fallback: { provider: "none" as const, model: "none" as const },
 };
 
-function setup(
-  partial: Partial<HostConfigInputV2>,
-  props: { modelSelectionOrigin?: "backfill" } = {},
-) {
+function setup(partial: Partial<HostConfigInputV2>) {
   const draft = {
     ...emptyHostConfigInputV2(),
     ...partial,
@@ -83,12 +77,7 @@ function setup(
   const onDraftChange = vi.fn();
   render(
     <TooltipProvider>
-      <BehaviorTab
-        draft={draft}
-        onDraftChange={onDraftChange}
-        attention={[]}
-        {...props}
-      />
+      <BehaviorTab draft={draft} onDraftChange={onDraftChange} attention={[]} />
     </TooltipProvider>,
   );
   const applied = () => {
@@ -203,55 +192,5 @@ describe("BehaviorTab reasoning effort", () => {
     for (const radio of within(effort).getAllByRole("radio")) {
       expect(radio).toBeDisabled();
     }
-  });
-});
-
-describe("BehaviorTab model source badge", () => {
-  it("labels a hosted selection as MCPJam credits", () => {
-    models.supported = true;
-    setup({ modelId: "openai/gpt-5", modelSelection: GPT5_SELECTION as never });
-    expect(screen.getByTestId("model-source-badge")).toHaveTextContent(
-      "MCPJam credits",
-    );
-    expect(screen.queryByTestId("model-source-backfill-hint")).toBeNull();
-  });
-
-  it("labels a local selection with its provider", () => {
-    models.supported = true;
-    setup({
-      modelId: "openai/gpt-5",
-      modelSelection: {
-        modelId: "openai/gpt-5",
-        source: "local",
-        connectionRef: { kind: "localProvider", providerKey: "openai" },
-        fallback: { provider: "none", model: "none" },
-      } as never,
-    });
-    expect(screen.getByTestId("model-source-badge")).toHaveTextContent(
-      "Your key · OpenAI",
-    );
-  });
-
-  it("shows no badge for a row saved without a selection", () => {
-    models.supported = true;
-    setup({ modelId: "openai/gpt-5" });
-    expect(screen.queryByTestId("model-source-badge")).toBeNull();
-  });
-
-  it("asks to confirm a backfilled selection and opens the picker", async () => {
-    models.supported = true;
-    setup(
-      { modelId: "openai/gpt-5", modelSelection: GPT5_SELECTION as never },
-      { modelSelectionOrigin: "backfill" },
-    );
-    expect(screen.getByTestId("model-source-backfill-hint")).toHaveTextContent(
-      "Set automatically",
-    );
-    expect(screen.getByTestId("picker-open-nonce")).toHaveTextContent("0");
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
-    expect(screen.getByTestId("picker-open-nonce")).toHaveTextContent("1");
-    // A pick confirms it.
-    await userEvent.click(screen.getByRole("button", { name: "pick GPT-5" }));
-    expect(screen.queryByTestId("model-source-backfill-hint")).toBeNull();
   });
 });

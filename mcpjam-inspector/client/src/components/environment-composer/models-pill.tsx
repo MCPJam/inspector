@@ -21,7 +21,7 @@
  * explanation. A static `max=10` inside this pill is not sufficient.
  */
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ChevronDown, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -46,11 +46,6 @@ import {
 import { modelTarget } from "@/lib/model-target";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
-import {
-  ModelSourceBadge,
-  modelSourceLabel,
-  type ModelSelectionOrigin,
-} from "@/components/effort/model-source-badge";
 import {
   harnessModelLockReason,
   type HarnessModelTarget,
@@ -81,7 +76,6 @@ export function ModelsPill({
   workload = "evalTarget",
   harnessTargets,
   purpose = "eval",
-  selectionOrigin,
 }: {
   variant?: "pill" | "table";
   projectId: string;
@@ -111,20 +105,10 @@ export function ModelsPill({
    * targets; a surface picking a persona's model passes `persona`.
    */
   workload?: ModelWorkload;
-  /**
-   * `"backfill"` when the saved selections were set automatically (the
-   * backend stores `modelSelectionOrigin` beside an environment override);
-   * the source badge then asks the user to confirm or switch.
-   */
-  selectionOrigin?: ModelSelectionOrigin;
 }) {
   const { availableModels, modelSelectionsSupported } = useAvailableModels({
     projectId,
   });
-  // "Review" on a source badge opens the picker; an edit here confirms the
-  // picks, so the "set automatically" hint goes away.
-  const [pickerOpenNonce, setPickerOpenNonce] = useState(0);
-  const [selectionReviewed, setSelectionReviewed] = useState(false);
   const harnessLockReasons = useMemo(() => {
     const byId = new Map<string, string>();
     if (!harnessTargets || harnessTargets.length === 0) return byId;
@@ -187,15 +171,13 @@ export function ModelsPill({
 
   // Every edit fills in the saved selection of a target that has none; the
   // row just picked decides the selection of its new target.
-  const emit = (next: ModelSelection, picked?: ModelDefinition) => {
-    setSelectionReviewed(true);
+  const emit = (next: ModelSelection, picked?: ModelDefinition) =>
     onChange(
       syncExplicitTargets(next, {
         models: availableModels,
         ...(picked ? { picked } : {}),
       }),
     );
-  };
 
   const toggleDefaults = (checked: boolean) => {
     if (mode === "single") {
@@ -418,33 +400,8 @@ export function ModelsPill({
     ),
   );
 
-  // Who pays for the picked models, from their saved selections: one badge
-  // per distinct label ("MCPJam credits", "Your key · OpenAI"). Picks with no
-  // saved selection claim nothing.
-  const sourceBadges = (() => {
-    const seen = new Set<string>();
-    return targets.flatMap(({ selection }) => {
-      const label = modelSourceLabel(selection, { models: availableModels });
-      if (!label || seen.has(label.text)) return [];
-      seen.add(label.text);
-      return [
-        <ModelSourceBadge
-          key={`source:${label.text}`}
-          selection={selection}
-          models={availableModels}
-          selectionOrigin={selectionReviewed ? undefined : selectionOrigin}
-          onReview={
-            disabled ? undefined : () => setPickerOpenNonce((n) => n + 1)
-          }
-        />,
-      ];
-    });
-  })();
-  const trailing = [...effortChips, ...sourceBadges];
-
   const selector = (
     <ModelSelector
-      openNonce={pickerOpenNonce}
       trigger={trigger}
       inModal={inModal}
       disabled={disabled}
@@ -462,16 +419,16 @@ export function ModelsPill({
       rowDisabledReason={rowDisabledReason}
     />
   );
-  if (trailing.length === 0) return selector;
+  if (effortChips.length === 0) return selector;
   return variant === "table" ? (
     <div className="flex w-full flex-wrap items-center gap-1">
       {selector}
-      {trailing}
+      {effortChips}
     </div>
   ) : (
     <>
       {selector}
-      {trailing}
+      {effortChips}
     </>
   );
 }
