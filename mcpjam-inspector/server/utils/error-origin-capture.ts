@@ -105,6 +105,34 @@ const PROMOTING_BOUNDARIES: ReadonlySet<OriginCaptureBoundary> = new Set([
   "mcpjam_request_construction",
 ]);
 
+/**
+ * A SURFACE's own capture rule, layered over the origin policy above.
+ *
+ * The origin policy answers "whose fault is this" so that a user's dead MCP
+ * server never pages us. Some surfaces need a different question answered:
+ * Ask MCPJam is ours end to end — our prompt, our model rail, our servers —
+ * and a week of every self-hosted turn failing reached nobody because each
+ * failure was classified as somebody else's (`user_server_hop`, a
+ * `user_config` slug). A surface that declares `always` is captured whatever
+ * the catalog says, tagged so its alert rules can tell an incident from
+ * routine noise.
+ *
+ * It changes what reaches SENTRY only. The origin, the hop, the Axiom row and
+ * `x-mcpjam-error-origin` are computed and reported exactly as before, so every
+ * monitor that keys on them is untouched.
+ *
+ * Still deduped by the stamp: an error a capture point already ruled on is
+ * never captured twice, whichever policy ruled.
+ */
+export type CapturePolicy = {
+  /** Capture regardless of origin. */
+  always: boolean;
+  /** Merged over the origin tags (`surface`, `page_class`, …). */
+  tags?: Record<string, string>;
+  fingerprint?: string[];
+  level?: "error" | "warning";
+};
+
 export type OriginCaptureDecision = {
   origin: ErrorOrigin;
   /** Catalog slug, for the Axiom-side origin measurement. */
@@ -130,6 +158,8 @@ export function maybeCaptureOriginError(
     source: OriginCaptureSource;
     boundary?: OriginCaptureBoundary;
     extra?: Record<string, unknown>;
+    /** A surface's own rule. See {@link CapturePolicy}. */
+    capture?: CapturePolicy;
   }
 ): OriginCaptureDecision {
   const declared = originOf(normalized);
@@ -152,7 +182,8 @@ export function maybeCaptureOriginError(
   markOriginCaptureHandled(raw);
   markOriginCaptureHandled(normalized);
 
-  if (origin !== "mcpjam") {
+  const forced = options.capture?.always === true;
+  if (origin !== "mcpjam" && !forced) {
     return { origin, slug, captured: false };
   }
 
@@ -168,7 +199,14 @@ export function maybeCaptureOriginError(
         ...(slug ? { error_slug: slug } : {}),
         capture_source: options.source,
         ...(options.boundary ? { error_boundary: options.boundary } : {}),
+        // Which rule sent it: a surface's `always`, or the origin policy.
+        ...(forced && origin !== "mcpjam" ? { capture_policy: "always" } : {}),
+        ...(options.capture?.tags ?? {}),
       },
+      ...(options.capture?.level ? { level: options.capture.level } : {}),
+      ...(options.capture?.fingerprint
+        ? { fingerprint: options.capture.fingerprint }
+        : {}),
       extra: {
         source: options.source,
         // Kept distinct from the effective origin so a triager can see when a
