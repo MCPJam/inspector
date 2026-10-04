@@ -127,6 +127,10 @@ export function captureOriginErrorToSentry(
   options: {
     tags: Record<string, string>;
     extra: Record<string, unknown>;
+    /** Set by a surface's capture policy; Sentry's default is `error`. */
+    level?: "error" | "warning";
+    /** Set by a surface's capture policy; Sentry groups by stack otherwise. */
+    fingerprint?: string[];
   },
 ): void {
   Sentry.captureException(error, options);
