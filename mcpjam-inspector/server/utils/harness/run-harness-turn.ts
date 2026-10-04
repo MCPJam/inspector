@@ -2,6 +2,7 @@ import { localDiskResumeState } from "./local/resume-state.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
+import { invalidateParkedLocalSession } from "./local/approval-park.js";
 import { getManagerConnections } from "../mcp-connections.js";
 import { toModelMessageToolOutput } from "../normalize-model-messages-for-convex.js";
 import {
@@ -813,6 +814,31 @@ export async function runHarnessTurn(
   // Set once a local runtime has been parked on those approvals: the parked
   // record now owns its teardown, so this turn must not run it.
   let localParked = false;
+  // Set while a turn that parked is still finalizing its response; see
+  // `honourStopAfterPark`.
+  let releaseStopAfterPark: (() => void) | null = null;
+  // A Stop can reach the server after the turn has already paused and parked
+  // its runtime, while the response is still open (finalizing and saving the
+  // paused turn). Ignored, it left the parked process, and anything it had
+  // started (a long `sleep` in the E2E), running until the idle TTL. Until the
+  // response closes, a Stop ends the parked session the way a Stop ends a
+  // running one; afterwards the listener is gone, so a later socket close can
+  // never end a session that is legitimately waiting for a decision.
+  const honourStopAfterPark = (parkedSessionId: string) => {
+    if (!abortSignal) return;
+    const stop = () => {
+      void invalidateParkedLocalSession(parkedSessionId, "stopped");
+    };
+    if (abortSignal.aborted) {
+      stop();
+      return;
+    }
+    abortSignal.addEventListener("abort", stop, { once: true });
+    releaseStopAfterPark = () => {
+      abortSignal.removeEventListener("abort", stop);
+      releaseStopAfterPark = null;
+    };
+  };
   let localUnpark: (() => void) | null = null;
   let pausedForScopeStepUp = false;
   // Internal liveness abort: the heartbeat fires this when the lease is
@@ -3807,7 +3833,10 @@ export async function runHarnessTurn(
                   generation,
                   pendingApprovalIds,
                 });
-                if (localParked) localTeardown = null;
+                if (localParked) {
+                  localTeardown = null;
+                  honourStopAfterPark(session.sessionId);
+                }
               }
             }
           } else if (runSucceeded && !aborted && continuity) {
@@ -4079,6 +4108,7 @@ export async function runHarnessTurn(
           await executeEngine({ writer });
         } finally {
           await onFinishEngine(context.writer);
+          releaseStopAfterPark?.();
         }
       },
     });
@@ -4094,6 +4124,7 @@ export async function runHarnessTurn(
   } finally {
     // onFinishEngine runs the broker teardown for this path too (see above).
     await onFinishEngine();
+    releaseStopAfterPark?.();
   }
   return {
     messageHistory,

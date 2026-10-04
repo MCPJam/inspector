@@ -1,4 +1,9 @@
 vi.mock("../local/pack-bootstrap.js", () => ({ withLocalPackBootstrap: async (adapter: unknown) => adapter }));
+const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
+vi.mock("../local/approval-park.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../local/approval-park.js")>()),
+  invalidateParkedLocalSession: parkRegistry.invalidate,
+}));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
@@ -516,6 +521,34 @@ describe("runHarnessTurn local continuity", () => {
       expect(harnessState.teardown).not.toHaveBeenCalled();
       expect(harnessState.discardState).not.toHaveBeenCalled();
       expect(harnessState.unpark).not.toHaveBeenCalled();
+    });
+
+    it("ends the parked session when a Stop lands while the paused response is still open", async () => {
+      // The pause won the race: the runtime parked, then the Stop arrived
+      // before the response closed. Ignored, the parked process (and its
+      // still-running command) lived on until the idle TTL.
+      parkRegistry.invalidate.mockClear();
+      const stop = new AbortController();
+      harnessState.park.mockImplementation(() => {
+        stop.abort();
+        return true;
+      });
+      harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
+      await runHarnessTurn(baseOptions({ harness: "codex", abortSignal: stop.signal }) as any, "none");
+      expect(harnessState.park).toHaveBeenCalled();
+      expect(parkRegistry.invalidate).toHaveBeenCalledWith(expect.any(String), "stopped");
+    });
+
+    it("leaves a parked session alone once its response has closed", async () => {
+      parkRegistry.invalidate.mockClear();
+      const socket = new AbortController();
+      harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
+      await runHarnessTurn(baseOptions({ harness: "codex", abortSignal: socket.signal }) as any, "none");
+      expect(harnessState.park).toHaveBeenCalled();
+      // A later disconnect is not a Stop of this turn: the session is waiting
+      // for a decision and must stay parked.
+      socket.abort();
+      expect(parkRegistry.invalidate).not.toHaveBeenCalled();
     });
 
     it("tears down as usual when the session was ended before it could park", async () => {
