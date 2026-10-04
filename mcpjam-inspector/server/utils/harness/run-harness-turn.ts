@@ -1,4 +1,7 @@
-import { localDiskResumeState } from "./local/resume-state.js";
+import {
+  localDiskResumeState,
+  sessionResumeStateFrom,
+} from "./local/resume-state.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -80,6 +83,7 @@ import {
   emitToolApprovalRequest,
   emitToolInput,
   emitToolOutput,
+  emitToolOutputDenied,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
@@ -2776,7 +2780,9 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            resumeFrom: localPrepared ? localDiskResumeState(resumable.resumeState) : resumable.resumeState,
+            resumeFrom: localPrepared
+              ? localDiskResumeState(sessionResumeStateFrom(resumable.resumeState))
+              : sessionResumeStateFrom(resumable.resumeState),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {
@@ -2921,6 +2927,22 @@ export async function runHarnessTurn(
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,
             } as unknown as Parameters<typeof agent.stream>[0]);
+
+        // A DENIED call never produces a tool result, so without this its UI
+        // part stays `approval-responded` after the turn continues. The chat's
+        // `sendAutomaticallyWhen` (`lastAssistantMessageIsCompleteWithApproval
+        // Responses`) then re-sends the same decision, which finds no paused
+        // turn ("The local session for this approval is no longer available")
+        // or trips the duplicate-decision guard. `streamText` closes denied
+        // calls the same way for the emulated engine.
+        if (resumeFromApproval) {
+          for (const continuation of approvalContinuations) {
+            const toolCallId = continuation.toolCall?.toolCallId;
+            if (continuation.approvalResponse?.approved === false && toolCallId) {
+              emitToolOutputDenied(writer, { toolCallId });
+            }
+          }
+        }
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
         // Reconstruct the transcript INCREMENTALLY so persisted history keeps
@@ -3526,9 +3548,20 @@ export async function runHarnessTurn(
               (part as { approvalId?: unknown }).approvalId ??
                 crypto.randomUUID(),
             );
+            // HarnessAgent's fullStream nests the call under `toolCall`
+            // (`{ approvalId, toolCall: { toolCallId, … } }`); a flat
+            // `toolCallId` is the adapter-level shape. Without the nested read
+            // the UI got an empty id and could not render the approval.
+            const approvalPart = part as {
+              toolCall?: { toolCallId?: unknown };
+              toolCallId?: unknown;
+            };
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
+              approvalPart.toolCall?.toolCallId ?? approvalPart.toolCallId ?? "",
             );
+            if (!toolCallId) {
+              throw new Error("Tool approval request is missing its tool call id.");
+            }
             closeReasoning();
             if (textId !== undefined) {
               emitTextEnd(writer, textId);
@@ -3575,8 +3608,11 @@ export async function runHarnessTurn(
         // hasn't finished (it's suspended), so awaiting it would hang. Close
         // open blocks, emit a finish (tool-calls = "ended awaiting tool
         // resolution"), and let the finally suspend + commit the continuation.
-        // runSucceeded stays false so onFinishEngine skips transcript persist
-        // (the partial turn isn't a completed conversation).
+        // runSucceeded stays false (the turn is not complete), but
+        // onFinishEngine still saves the transcript so far, as the emulated
+        // engine saves a turn paused on approval: without it a new chat that
+        // paused did not exist in history (a reload found nothing) and the
+        // client reported the reply unsaved.
         if (pausedForApproval) {
           closeReasoning();
           flushSegment();
@@ -3585,9 +3621,10 @@ export async function runHarnessTurn(
             finishReason: "tool-calls" as FinishReason,
             messageMetadata: usage,
           });
-          // turn_finish WITHOUT driver.finishTurn — that would set succeeded
-          // and gate-open persistence for a mid-flight (suspended) turn.
+          // turn_finish WITHOUT driver.finishTurn — that would mark a
+          // suspended turn succeeded, and hand its commit to the ingest.
           activeDriver.usage = usage;
+          activeDriver.finishReason = "tool-calls" as FinishReason;
           activeDriver.emitErrorTurnFinish(writer);
           return;
         }
@@ -3798,8 +3835,11 @@ export async function runHarnessTurn(
             // standalone-commit the continuation with awaitingApproval. The
             // commit releases the MCPJam lease (don't hold it across the human
             // decision — it would TTL-expire); the next request re-claims the
-            // lane and resumes via continueFrom. No transcript here — the turn
-            // is mid-flight (committed via the standalone endpoint, not ingest).
+            // lane and resumes via continueFrom. The continuation goes through
+            // the standalone endpoint, never the ingest: onFinishEngine saves
+            // this paused turn's transcript WITHOUT a sidecar commit, because
+            // this commit has already advanced the state version and released
+            // the lease, so an ingest carrying it would be refused.
             const continueState = await session.suspendTurn();
             const ok = await commitHarnessSessionState({
               owner: continuity.owner,
@@ -4011,7 +4051,14 @@ export async function runHarnessTurn(
       reservationHeld = false;
       await releaseBoxReservation();
     }
-    if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {
+    // A turn paused on approval is saved like a completed one (the emulated
+    // engine does the same), but without a sidecar commit: its continuation
+    // was committed through the standalone endpoint in the stream's finally.
+    if (
+      (runSucceeded || pausedForScopeStepUp || pausedForApproval) &&
+      !aborted &&
+      driver
+    ) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
       const trace: PersistedTurnTrace = driver.buildPersistedTrace();

@@ -49,6 +49,7 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   selectedModelId: "anthropic/claude-haiku-4.5",
+  persistedModelInitialized: undefined as boolean | undefined,
 }));
 vi.mock("@/state/app-state-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/state/app-state-context")>()),
@@ -152,6 +153,7 @@ vi.mock("@/hooks/use-persisted-model", () => ({
     setSelectedModelIds: vi.fn(),
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),
+    isInitialized: mockState.persistedModelInitialized,
   }),
 }));
 
@@ -705,6 +707,46 @@ describe("useChatSession hosted mode", () => {
       expect(selected.provider).toBe("anthropic");
       expect(selected).toMatchObject({ hosted: true });
     });
+  });
+
+  it("offers a Codex client only Codex models and never falls back to a Claude one", async () => {
+    // The user's saved lead is a Claude model, which Codex cannot run.
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { projectId: "project-1", selectedServerIds: ["server-id-1"] },
+        harnessModelTarget: { harnessId: "codex" },
+        // This catalog's only Codex model; the preference order itself is
+        // covered by `harnessDefaultModel`'s tests.
+        preferredModelId: "openai/gpt-5.4-pro",
+      }),
+    );
+    await waitFor(() => {
+      expect(result.current.availableModels.length).toBeGreaterThan(0);
+    });
+    const offered = result.current.availableModels.map((model) => String(model.id));
+    expect(offered.every((id) => id.startsWith("openai/gpt-5"))).toBe(true);
+    expect(offered).not.toContain("anthropic/claude-haiku-4.5");
+    expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    // Unresolved: the shown fallback is never mirrored over the saved lead.
+    expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+  });
+
+  it("does not report a selection resolved before the saved one is read", () => {
+    mockState.persistedModelInitialized = false;
+    mockState.selectedModelId = null as unknown as string;
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { projectId: "project-1", selectedServerIds: ["server-id-1"] },
+      }),
+    );
+    expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+    mockState.persistedModelInitialized = undefined;
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
   });
 
   it("uses organization provider config to expose BYOK hosted models", async () => {

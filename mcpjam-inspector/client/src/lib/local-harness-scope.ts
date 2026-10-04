@@ -63,3 +63,23 @@ export function isLocalHarnessScope(args: LocalHarnessScopeInput): boolean {
   if (args.scenarioId) return false;
   return true;
 }
+
+/**
+ * Whether a reopened chat is somebody else's turn, for `sharedRun`.
+ *
+ * The Playground marks EVERY restored thread as a history view (picked from
+ * the rail, or reopened from the URL on reload), the user's own included, and
+ * continuing your own chat is the attended session a local grant is bound to.
+ * Treating every history view as replay dropped "This machine" from a
+ * restored chat and moved its next turn off this computer. An unknown owner
+ * or user stays replay.
+ */
+export function isAnotherUsersReopenedThread(args: {
+  viewingHistory: boolean;
+  ownerUserId: string | null | undefined;
+  currentUserId: string | null | undefined;
+}): boolean {
+  if (!args.viewingHistory) return false;
+  if (!args.ownerUserId || !args.currentUserId) return true;
+  return args.ownerUserId !== args.currentUserId;
+}

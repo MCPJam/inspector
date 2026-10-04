@@ -136,6 +136,24 @@ export interface LocalModelGateway {
   };
 }
 
+/**
+ * The path a proof of possession is signed over: the one the broker verifies.
+ *
+ * The broker routes `/web/harness/model-proxy/<protocol>/<rest>` and checks the
+ * signature against `<rest>` alone (the backend's `parseProxyPath` `subPath`),
+ * so `/web/harness/model-proxy/anthropic/v1/messages` must be signed as
+ * `/v1/messages`, and the OpenAI base's `/openai/v1/responses` as
+ * `/v1/responses`. Signing the full upstream path failed every real request
+ * with "Invalid proof of possession". A path without the broker prefix (the
+ * conformance upstreams) is signed as it is.
+ */
+export function proofOfPossessionPath(upstreamPathname: string): string {
+  const match = upstreamPathname.match(
+    /\/web\/harness\/model-proxy\/[^/]+(\/.*)?$/,
+  );
+  return match === null ? upstreamPathname : match[1] || "/";
+}
+
 export async function startLocalModelGateway(
   options: LocalModelGatewayOptions,
 ): Promise<LocalModelGateway> {
@@ -288,11 +306,9 @@ export async function startLocalModelGateway(
       refuse(res, 404, "endpoint not allowed");
       return;
     }
-    // The proof of possession is over the path the UPSTREAM sees, because that
-    // is the path the backend verifies against.
     const pop = await signProxiedRequest({
       method,
-      path: stripQuery(target.pathname),
+      path: proofOfPossessionPath(stripQuery(target.pathname)),
       jti,
       nonce: randomBytes(16).toString("base64url"),
     });

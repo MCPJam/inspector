@@ -162,7 +162,10 @@ import {
   LocalHarnessReadyNotice,
 } from "@/components/harness/LocalHarnessComposerNotice";
 import type { ExecutionTargetChipData } from "@/components/chat-v2/chat-input/execution-target-chip";
-import { isLocalHarnessScope } from "@/lib/local-harness-scope";
+import {
+  isAnotherUsersReopenedThread,
+  isLocalHarnessScope,
+} from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -1044,6 +1047,13 @@ export function PlaygroundMain({
   // kind of send local execution applies to. `previewedHarnessId` is what the
   // composer is PREVIEWING; the transport re-derives from the host that
   // actually sends.
+  // Only another member's reopened chat is somebody else's turn; see
+  // `isAnotherUsersReopenedThread`.
+  const replayingAnotherUsersThread = isAnotherUsersReopenedThread({
+    viewingHistory: viewingHistoryReplay,
+    ownerUserId: loadedThreadOwnerUserId,
+    currentUserId: currentUserForSender?._id,
+  });
   const localHarnessInScope = isLocalHarnessScope({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
@@ -1051,10 +1061,10 @@ export function PlaygroundMain({
       ? playgroundEnvironment.environmentId ?? null
       : null,
     requiresWebChatApi: isEnvironmentMode,
-    // A shared transcript and a replayed one are both somebody else's turn, or
-    // an old one being re-read. Neither is the attended member session a
+    // A shared transcript and another member's reopened one are both
+    // somebody else's turn. Neither is the attended member session a
     // filesystem grant is bound to, so neither may offer local execution.
-    sharedRun: isSharedSession || viewingHistoryReplay,
+    sharedRun: isSharedSession || replayingAnotherUsersThread,
   });
   // Identifies WHAT an approval was captured against, so switching host or
   // surface invalidates it rather than carrying a click across.
@@ -1290,6 +1300,12 @@ export function PlaygroundMain({
     personalComputerEngine: personalComputerEngineOption,
     personalBrowserEngine: personalBrowserEngineOption,
     localHarnessExecution: localHarnessExecutionOption,
+    // A harness client's picker offers only models that harness can run, and
+    // falls back to the client's own model rather than the emulated default.
+    harnessModelTarget: previewedHarnessId
+      ? { harnessId: previewedHarnessId }
+      : null,
+    preferredModelId: previewedHost?.config?.modelId ?? null,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -2329,7 +2345,7 @@ export function PlaygroundMain({
             ? playgroundEnvironment.environmentId ?? null
             : null,
           requiresWebChatApi: isEnvironmentMode,
-          sharedRun: isSharedSession || viewingHistoryReplay,
+          sharedRun: isSharedSession || replayingAnotherUsersThread,
         }) &&
         // The page has ONE controller, for the previewed host's harness, and
         // its authorization is that harness's alone. A column running another
@@ -2348,7 +2364,7 @@ export function PlaygroundMain({
     isEnvironmentMode,
     playgroundEnvironment.environmentId,
     isSharedSession,
-    viewingHistoryReplay,
+    replayingAnotherUsersThread,
     localHarness.requestedTarget,
     localHarnessResolveSendTarget,
     previewedHarnessId,
@@ -2636,6 +2652,11 @@ export function PlaygroundMain({
     if (!isSelectedModelResolved) {
       return;
     }
+    // A host whose config has not arrived may be a harness client whose model
+    // list is narrower; the fallback shown meanwhile is not a choice to save.
+    if (previewedHostConfigUnresolved) {
+      return;
+    }
 
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
@@ -2668,6 +2689,7 @@ export function PlaygroundMain({
     canEnableMultiModel,
     isSelectedModelResolved,
     multiModelEnabled,
+    previewedHostConfigUnresolved,
     resolvedSelectedModels,
     selectedModel,
     selectedModelIds,

@@ -1,3 +1,4 @@
+import { createPublicKey, verify } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,10 +7,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   isAllowedPath,
   isLoopbackHost,
+  proofOfPossessionPath,
   startLocalModelGateway,
   type LocalModelGateway,
 } from "../model-gateway.js";
-import { resetInstanceKeyCacheForTests } from "../instance-key.js";
+import {
+  loadLocalInstanceKey,
+  resetInstanceKeyCacheForTests,
+} from "../instance-key.js";
 
 // A lease whose payload carries a jti. Not signed by anything — the gateway
 // only reads the claim to bind its proof of possession to, and the backend is
@@ -112,6 +117,67 @@ describe("the gateway's front door", () => {
     expect(captured.headers.get("x-mcpjam-pop")).toMatch(
       /^\d+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
     );
+  });
+
+  // The broker verifies the signature over the path AFTER
+  // `/web/harness/model-proxy/<protocol>` (its `parseProxyPath` subPath).
+  // Signing the full upstream path refused every real request with "Invalid
+  // proof of possession"; the conformance upstreams have no prefix, so they
+  // never saw it.
+  it.each([
+    ["anthropic", "/v1/messages", "/v1/messages"],
+    ["openai/v1", "/responses", "/v1/responses"],
+  ])(
+    "signs the subpath the broker verifies, for the %s base",
+    async (base, requestPath, verifiedPath) => {
+      let proof = "";
+      const g = await gateway({
+        upstreamBaseUrl: `https://api.example.test/web/harness/model-proxy/${base}`,
+        fetchImpl: async (_input, init) => {
+          proof =
+            new Headers(init?.headers as HeadersInit).get("x-mcpjam-pop") ?? "";
+          return new Response("{}", { status: 200 });
+        },
+      });
+      await fetch(`${g.baseUrl}${requestPath}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${g.sessionCapability}` },
+        body: "{}",
+      });
+      const [timestamp, nonce, signature] = proof.split(".");
+      const key = await loadLocalInstanceKey();
+      // The backend's `popSigningString`, field for field.
+      const signingString = [
+        "mcpjam-pop-v1",
+        "POST",
+        verifiedPath,
+        timestamp,
+        nonce,
+        "jti_test",
+      ].join("\n");
+      expect(
+        verify(
+          null,
+          Buffer.from(signingString),
+          createPublicKey(key.privateKeyPem),
+          Buffer.from(signature!, "base64url"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("derives the signed path exactly as the broker parses it", () => {
+    expect(
+      proofOfPossessionPath("/web/harness/model-proxy/anthropic/v1/messages"),
+    ).toBe("/v1/messages");
+    expect(
+      proofOfPossessionPath("/web/harness/model-proxy/openai/v1/responses"),
+    ).toBe("/v1/responses");
+    expect(proofOfPossessionPath("/web/harness/model-proxy/anthropic")).toBe(
+      "/",
+    );
+    // No broker prefix: a direct upstream verifies the path it received.
+    expect(proofOfPossessionPath("/v1/messages")).toBe("/v1/messages");
   });
 
   it("signs each request with a fresh nonce, so one signature is not reusable", async () => {
