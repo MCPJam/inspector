@@ -62,6 +62,7 @@
             "pages": [
               "inspector/home",
               "inspector/clients",
+              "inspector/local-harness",
               "inspector/connecting-servers",
               "inspector/projects",
               "inspector/plugins",
