@@ -376,6 +376,8 @@ export type {
   ServerDoctorError,
   ServerDoctorResult,
 } from "./server-doctor.js";
+export { lintToolCatalog } from "./tool-lints.js";
+export type { ToolLintFinding, ToolLintRule } from "./tool-lints.js";
 
 export type {
   CompatibleProtocol,
