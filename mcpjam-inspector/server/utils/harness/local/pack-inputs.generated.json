@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "fingerprint": "sha256:f307689dc8153b6602d5c40f5cd6a668257ba3f0f9f4753ccec9dd5d509ef7e5",
+  "fingerprint": "sha256:ab69875f7e1a0c68d0dfa2e12c6c15ab014c3b9aba0ab49026c0f8c3fe7cb5cf",
   "inputs": {
-    "pack-dependency-closure": "sha256:f437afb6bd30fc87568321a2fa93d4d7327d18d28c996cad885fc6f1302a6965",
+    "pack-dependency-closure": "sha256:670323bf64d97c9a5803747efc6c51234a953568217a074ec32a320d1e4451a8",
     ".github/workflows/local-harness-pack.yml": "sha256:2d3846a18597430e12a11282ae2fd733848f484145f42bca9ee111fe70f3f2dc",
     "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:68b7605cb7d329a745c36f72c4285283150994396b64a8eb245f7cec21fbc4d1",
     "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:639c368195588b96d55d59581ad8fa3aa9a875f8d1c1e7e6b56a7e23f333b588",
