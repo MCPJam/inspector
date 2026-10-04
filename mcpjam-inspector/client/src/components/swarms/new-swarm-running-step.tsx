@@ -46,6 +46,7 @@ import {
   buildSwarmRunTargets,
   findAttemptForSelection,
   findTargetCellForChatSessionId,
+  snapshotTargetModelLabels,
   summaryTargetKey,
   type SwarmTargetColumn,
 } from "@/components/swarms/swarm-targets";
@@ -83,6 +84,8 @@ export type SwarmRunningColumn = {
   key: string;
   hostId?: string;
   label: string;
+  /** The model the column runs, with its effort ("gpt-5.4-nano · High"). */
+  detail?: string;
 };
 
 type AttributedSession = JourneySessionRow & { columnKey: string };
@@ -212,7 +215,9 @@ function columnsFromRun(
   // hostSummaries, which can lag or key oddly while attempts are in flight.
   const snapshotHosts = run.snapshot?.hosts ?? [];
   if (snapshotHosts.length > 0) {
+    const modelLabels = snapshotTargetModelLabels(snapshotHosts);
     return snapshotHosts.map((host) => {
+      const detail = modelLabels.get(host);
       const key = summaryTargetKey({
         hostId: host.hostId,
         targetId: host.targetId,
@@ -225,6 +230,7 @@ function columnsFromRun(
           host.environmentRef?.name ??
           host.hostName ??
           key.slice(0, 8),
+        ...(detail ? { detail } : {}),
       };
     });
   }
@@ -236,6 +242,7 @@ function columnsFromRun(
     key: target.key,
     hostId: target.hostId,
     label: target.label,
+    ...(target.model ? { detail: target.model } : {}),
   }));
 }
 
@@ -1403,7 +1410,17 @@ export function NewSwarmRunningStep({
                               : undefined) ?? column.label
                           }
                         />
-                        <span className="truncate">{column.label}</span>
+                        <span className="flex min-w-0 flex-col items-start leading-tight">
+                          <span className="truncate">{column.label}</span>
+                          {column.detail ? (
+                            <span
+                              className="truncate text-[11px] font-normal text-muted-foreground/80"
+                              data-testid="new-swarm-running-column-model"
+                            >
+                              {column.detail}
+                            </span>
+                          ) : null}
+                        </span>
                       </span>
                     </th>
                   ))}

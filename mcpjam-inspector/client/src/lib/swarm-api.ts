@@ -10,6 +10,7 @@
  * `convex/journeyExecution/*` + `convex/{personas,journeys,journeyRuns}` by
  * hand (two-repo layout).
  */
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type {
   SwarmSessionVerdict,
   JourneyRunVerdictSummary,
@@ -177,6 +178,10 @@ export interface JourneySnapshotTarget {
    * key on this — never on `targetId`. */
   environmentRef?: { environmentId: string; name: string; revision: number };
   serverAttachmentId?: string;
+  /** The model this target ran, frozen at launch. */
+  modelId?: string;
+  /** The selection behind `modelId` (carries its effort); absent ⇒ legacy. */
+  resolvedSelection?: RequestedModelSelection | null;
 }
 
 /**

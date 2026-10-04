@@ -442,14 +442,18 @@ describe("selectionDistinguishers", () => {
   const high = { ...HOSTED, settings: { reasoningEffort: "high" as const } };
   const low = { ...HOSTED, settings: { reasoningEffort: "low" as const } };
 
-  it("shows nothing for a lone model or other model ids", () => {
-    expect(selectionDistinguishers(high, [high])).toEqual([]);
+  it("always names a set effort, even for a lone model", () => {
+    expect(selectionDistinguishers(high, [high])).toEqual(["High"]);
     expect(
       selectionDistinguishers(high, [
         high,
         { ...HOSTED, modelId: "openai/gpt-5-mini" },
       ])
-    ).toEqual([]);
+    ).toEqual(["High"]);
+  });
+
+  it("shows nothing for a lone model with no effort", () => {
+    expect(selectionDistinguishers(HOSTED, [HOSTED])).toEqual([]);
   });
 
   it("shows only the effort when only the effort differs", () => {

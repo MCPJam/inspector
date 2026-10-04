@@ -531,10 +531,12 @@ function settingsOf(selection: RequestedModelSelection) {
 
 /**
  * What tells `selection` apart from its siblings, as short labels in a fixed
- * order (source/connection, native id, effort, temperature), and ONLY the
- * dimensions that actually differ among the siblings that share its
- * `modelId`. Two Sonnet columns at Low and High read "Low" / "High"; a lone
- * Sonnet reads nothing. Labels show only what differs.
+ * order (source/connection, native id, effort, temperature). A set effort is
+ * ALWAYS labelled, so a run at High reads "High" even alone; the other
+ * dimensions (and "Default", an unset effort) appear only where they differ
+ * among the siblings that share its `modelId`. Two Sonnet columns at Low and
+ * High read "Low" / "High"; a lone Sonnet at High reads "High"; a lone
+ * Sonnet with no effort reads nothing.
  *
  * `siblings` may include `selection` itself; selections for other model ids
  * are ignored (the model name already tells those apart).
@@ -548,7 +550,14 @@ export function selectionDistinguishers(
       sibling.modelId === selection.modelId &&
       comparisonKey(sibling) !== comparisonKey(selection)
   );
-  if (peers.length === 0) return [];
+  const effortOf = (s: RequestedModelSelection) =>
+    settingsOf(s)?.reasoningEffort;
+  const ownEffort = effortOf(selection);
+  if (peers.length === 0) {
+    return ownEffort === undefined
+      ? []
+      : [DISTINGUISHER_EFFORT_LABELS[ownEffort]];
+  }
   const labels: string[] = [];
 
   const own = connectionLabel(selection);
@@ -571,12 +580,14 @@ export function selectionDistinguishers(
     if (native !== undefined) labels.push(native);
   }
 
-  const effortOf = (s: RequestedModelSelection) =>
-    settingsOf(s)?.reasoningEffort;
-  if (peers.some((peer) => effortOf(peer) !== effortOf(selection))) {
-    const effort = effortOf(selection);
+  if (
+    ownEffort !== undefined ||
+    peers.some((peer) => effortOf(peer) !== ownEffort)
+  ) {
     labels.push(
-      effort === undefined ? "Default" : DISTINGUISHER_EFFORT_LABELS[effort]
+      ownEffort === undefined
+        ? "Default"
+        : DISTINGUISHER_EFFORT_LABELS[ownEffort]
     );
   }
 

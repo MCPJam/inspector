@@ -1083,7 +1083,7 @@ describe("useCrossHostData", () => {
       ).toBe(1);
     });
 
-    it("a lone effort target is labelled by its model alone", () => {
+    it("a lone effort target is labelled by its model and effort", () => {
       const suite = makeSuite([], { environmentIds: ["env-high"] });
       const { result } = renderHook(() =>
         useCrossHostData(
@@ -1104,7 +1104,7 @@ describe("useCrossHostData", () => {
         ),
       );
       expect(result.current.hostColumns.map((c) => c.modelLabel)).toEqual([
-        "claude-sonnet-5.5",
+        "claude-sonnet-5.5 · High",
       ]);
     });
 

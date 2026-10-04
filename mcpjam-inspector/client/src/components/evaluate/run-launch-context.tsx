@@ -18,7 +18,11 @@ import {
 } from "../evals/helpers";
 import { EnvironmentChip } from "../evals/run-context-chip";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
-import { iterationTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
+import {
+  iterationTargetKey,
+  runTargetKey,
+  targetKeySuffix,
+} from "@/lib/eval-target-key";
 
 function Fact({
   label,
@@ -44,7 +48,11 @@ export function modelsFromRun(
   iterations: readonly EvalIteration[] = [],
 ): string[] {
   if (run.effectiveModelId) {
-    return [compactModelIdTail(run.effectiveModelId)];
+    // The run's target carries its effort: a run at High reads "model · High".
+    const key = runTargetKey(run) ?? run.effectiveModelId;
+    return [
+      `${compactModelIdTail(run.effectiveModelId)}${targetKeySuffix(key, [key])}`,
+    ];
   }
   // One entry per TARGET: two efforts of one model read "model · Low" and
   // "model · High"; a default target reads as its model alone.

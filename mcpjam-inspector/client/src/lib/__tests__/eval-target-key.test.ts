@@ -127,11 +127,11 @@ describe("labels show only what differs", () => {
     expect(labels.get(HIGH)).toBe("claude-sonnet-5.5 · High");
   });
 
-  it("a lone target reads as its model", () => {
+  it("a lone effort target still names its effort", () => {
     expect(targetKeyLabel(HIGH, [HIGH, "openai/gpt-5"])).toBe(
-      "claude-sonnet-5.5",
+      "claude-sonnet-5.5 · High",
     );
-    expect(targetKeySuffix(HIGH, [HIGH])).toBe("");
+    expect(targetKeySuffix(HIGH, [HIGH])).toBe(" · High");
   });
 
   it("a default run beside an effort run reads Default", () => {

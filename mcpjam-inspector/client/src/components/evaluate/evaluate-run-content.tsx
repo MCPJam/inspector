@@ -20,7 +20,10 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
 import { compactModelIdTail } from "@/lib/environment-label";
-import { runTargetKey } from "@/lib/eval-target-key";
+import {
+  runTargetKey,
+  targetKeySuffix,
+} from "@/lib/eval-target-key";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
@@ -152,7 +155,9 @@ export function SingleRunContent({
           client: runClientIdentity(run, names).name,
           modelId,
           ...(targetKey ? { targetKey } : {}),
-          model: compactModelIdTail(modelLabel),
+          model: `${compactModelIdTail(modelLabel)}${
+            targetKey ? targetKeySuffix(targetKey, [targetKey]) : ""
+          }`,
           iterations,
         },
       ],

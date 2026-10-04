@@ -239,12 +239,12 @@ describe("model target labels (two efforts of one model)", () => {
     expect(modelTargetLabel(high, [low, high], name)).toBe("Sonnet 4.5 · High");
   });
 
-  it("a lone model, or siblings of other models, add no suffix", () => {
+  it("a set effort is always named; a lone default model adds no suffix", () => {
     const high = { modelId: SONNET, selection: hosted("high") };
-    expect(modelTargetLabel(high, [high], name)).toBe("Sonnet 4.5");
+    expect(modelTargetLabel(high, [high], name)).toBe("Sonnet 4.5 · High");
     expect(
       modelTargetLabel(high, [high, { modelId: "openai/gpt-5" }], name),
-    ).toBe("Sonnet 4.5");
+    ).toBe("Sonnet 4.5 · High");
     expect(modelTargetLabel({ modelId: SONNET }, [])).toBe("claude-sonnet-4.5");
   });
 
