@@ -237,3 +237,74 @@ describe("reportChatFailure", () => {
     ).toBe(true);
   });
 });
+
+describe("reportChatFailure — Ask MCPJam mode", () => {
+  const agent = (extra: Record<string, unknown> = {}) => ({
+    agent: { source: "stream_error", ...extra },
+  });
+
+  it("reports from every install: no surface gate, no origin gate", () => {
+    // The gates that kept a week of self-hosted agent failures out of Sentry.
+    isErrorCaptureSurface.mockReturnValue(false);
+    const sent = reportChatFailure(
+      new Error("connect ECONNREFUSED"),
+      { ok: true, status: 200 },
+      agent(),
+    );
+
+    expect(sent).toBe(true);
+    const [, options] = reportCaught.mock.calls[0]!;
+    expect(options.tags).toMatchObject({
+      surface: "mcpjam_agent",
+      page_class: "incident",
+    });
+    expect(options.level).toBe("error");
+    expect(options.fingerprint).toEqual(
+      expect.arrayContaining(["mcpjam_agent", "stream_error"]),
+    );
+  });
+
+  it("keeps the synthetic message, which the ignore-list cannot swallow", () => {
+    reportChatFailure(new Error("Failed to fetch"), null, agent({
+      source: "fetch_rejected",
+      pageClass: "routine",
+    }));
+
+    const [error, options] = reportCaught.mock.calls[0]!;
+    expect((error as Error).message).not.toContain("Failed to fetch");
+    expect(options.tags.page_class).toBe("routine");
+    expect(options.level).toBe("warning");
+  });
+
+  it("still drops the user pressing Stop", () => {
+    const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
+    expect(reportChatFailure(abort, null, agent())).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("skips a browser that knows it is offline", () => {
+    const spy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      expect(
+        reportChatFailure(new Error("Failed to fetch"), null, agent()),
+      ).toBe(false);
+      expect(reportCaught).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("classifies a refused request by the code the server sent", () => {
+    reportChatFailure(
+      new Error('{"code":"agent_turn_limit"}'),
+      { ok: false, status: 429 },
+      agent({ source: "request_failed", code: "agent_turn_limit" }),
+    );
+    const [, options] = reportCaught.mock.calls[0]!;
+    expect(options.tags.page_class).toBe("routine");
+    expect(options.extra).toMatchObject({
+      httpStatus: 429,
+      code: "agent_turn_limit",
+    });
+  });
+});
