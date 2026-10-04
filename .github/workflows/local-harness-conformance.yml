@@ -79,12 +79,12 @@ jobs:
     name: foundation unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read pack toolchain pins
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
       # From the REPO ROOT: this is an npm workspace, so dependencies install
@@ -132,19 +132,19 @@ jobs:
             platform_key: darwin-arm64
             node_dist: darwin-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read pack toolchain pins
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
@@ -290,7 +290,7 @@ jobs:
 
       - name: Preserve verified published-pack identity
         if: inputs.published_pack_version != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: published-pack-${{ matrix.platform_key }}
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
@@ -314,19 +314,19 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read pack toolchain pins
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
       # "packages field missing or empty".
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
@@ -342,7 +342,7 @@ jobs:
       # conformance run without it is not testing Windows support — it is
       # testing that Windows is refused, which the unit suite already covers.
       - name: Set up the pinned Go toolchain
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ steps.toolchain.outputs.go }}
           cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
@@ -472,7 +472,7 @@ jobs:
 
       - name: Preserve verified published-pack identity
         if: inputs.published_pack_version != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: published-pack-windows-x64
           path: ${{ runner.temp }}/conformance/published-conformance-input.json

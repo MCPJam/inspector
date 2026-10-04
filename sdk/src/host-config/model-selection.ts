@@ -103,11 +103,17 @@ export type ModelSelection = {
 };
 
 /**
- * What a bare stored model id becomes when read. Exists only in memory and in
- * an execution record's `requested` — it is never written back as a saved
- * selection.
+ * A model id with no saved source. Read from an unlabelled row, or STORED
+ * verbatim when a save (or the backfill) found the id outside the hosted
+ * catalog: a stored legacy selection means "own key only" — it never runs on
+ * MCPJam credits. `provider` is the case entry's provider hint, kept so the
+ * stored `{ model, provider }` execution variant survives the round trip.
  */
-export type LegacyModelSelection = { source: "legacy"; modelId: string };
+export type LegacyModelSelection = {
+  source: "legacy";
+  modelId: string;
+  provider?: string;
+};
 
 /** What every consumer of a saved choice accepts. */
 export type RequestedModelSelection = ModelSelection | LegacyModelSelection;

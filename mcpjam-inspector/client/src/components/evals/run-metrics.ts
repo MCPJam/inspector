@@ -46,6 +46,29 @@ function durationMs(iteration: EvalIteration): number | null {
   return end - start;
 }
 
+/**
+ * The effort an iteration ran at, read loosely off its execution record
+ * (`execution.effectiveSettings.reasoningEffort`) exactly as the backend fold
+ * does. Undefined when there is no record or it ran without an effort.
+ */
+export function iterationReasoningEffort(
+  iteration: Pick<EvalIteration, "execution">,
+): string | undefined {
+  const execution = iteration.execution as
+    | { effectiveSettings?: { reasoningEffort?: unknown } | null }
+    | null
+    | undefined;
+  const effort = execution?.effectiveSettings?.reasoningEffort;
+  if (typeof effort !== "string") return undefined;
+  const trimmed = effort.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Same key as the backend's `modelEffortGroupKey`; no effort keys as `default`. */
+function modelEffortKey(model: string, effort: string | undefined): string {
+  return `${model}::${effort ?? "default"}`;
+}
+
 /** A client-side fold also keeps its raw durations, for exact pooling. */
 export type RunMetrics = EvalRunMetrics & { durationsMs?: number[] };
 
@@ -107,18 +130,32 @@ export function runMetricsFromIterations(
     }
     const model = iteration.testCaseSnapshot?.model?.trim();
     if (model) {
-      const row = models.get(model) ?? {
+      const reasoningEffort = iterationReasoningEffort(iteration);
+      const key = modelEffortKey(model, reasoningEffort);
+      const row = models.get(key) ?? {
         model,
         total: 0,
         passed: 0,
         failed: 0,
         timedOut: 0,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       };
       row.total += 1;
       if (result === "passed") row.passed += 1;
       else if (result === "failed") row.failed += 1;
       else if (result === "timed_out") row.timedOut += 1;
-      models.set(model, row);
+      if (typeof cost === "number") {
+        row.costUsd = (row.costUsd ?? 0) + cost;
+        row.costedIterations = (row.costedIterations ?? 0) + 1;
+      }
+      const reasoningTokens = iteration.usage?.reasoningTokens;
+      if (
+        typeof reasoningTokens === "number" &&
+        Number.isFinite(reasoningTokens)
+      ) {
+        row.reasoningTokens = (row.reasoningTokens ?? 0) + reasoningTokens;
+      }
+      models.set(key, row);
     }
   }
 

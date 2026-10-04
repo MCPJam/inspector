@@ -321,16 +321,16 @@ describe("CreateSuitePage", () => {
         ],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: [],
+          explicitTargets: [],
         },
         modelSelectionsByHost: {
           claude: {
             includeClientDefaults: true,
-            explicitModelIds: ["gpt-5.1"],
+            explicitTargets: [{ modelId: "gpt-5.1" }],
           },
           cursor: {
             includeClientDefaults: false,
-            explicitModelIds: ["claude-sonnet"],
+            explicitTargets: [{ modelId: "claude-sonnet" }],
           },
         },
         availableModels: [
@@ -352,6 +352,36 @@ describe("CreateSuitePage", () => {
         modelLabels: ["Claude Sonnet"],
       },
     ]);
+  });
+
+  it("labels two efforts of one model by what differs", () => {
+    const sonnet = (effort: "low" | "high") => ({
+      modelId: "claude-sonnet",
+      source: "hosted" as const,
+      fallback: { provider: "none" as const, model: "none" as const },
+      settings: { reasoningEffort: effort },
+    });
+    expect(
+      buildEvalTargetMatrixRows({
+        hostIds: ["claude"],
+        hosts: [{ hostId: "claude", name: "Claude", modelId: "" }],
+        modelSelection: undefined,
+        modelSelectionsByHost: {
+          claude: {
+            includeClientDefaults: false,
+            explicitTargets: [
+              { modelId: "claude-sonnet", selection: sonnet("high") },
+              { modelId: "claude-sonnet", selection: sonnet("low") },
+              { modelId: "gpt-5.1" },
+            ],
+          },
+        },
+        availableModels: [
+          { id: "gpt-5.1", name: "GPT-5.1" },
+          { id: "claude-sonnet", name: "Claude Sonnet" },
+        ],
+      })[0]?.modelLabels,
+    ).toEqual(["Claude Sonnet · High", "Claude Sonnet · Low", "GPT-5.1"]);
   });
 
   it("labels the models pill with the seeded client's default model", async () => {

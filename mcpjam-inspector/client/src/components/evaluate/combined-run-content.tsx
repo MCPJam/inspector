@@ -28,6 +28,7 @@ import {
 import { useProjectRunHistory } from "../evals/use-project-run-history";
 import type { EvalSuiteRun, EvalIteration } from "../evals/types";
 import { buildRunResultsMatrix, cellResult } from "./run-results-matrix-model";
+import { targetKeyLabel } from "@/lib/eval-target-key";
 import { RunResultsMatrix } from "./run-results-matrix";
 import {
   buildRunVerdictHero,
@@ -105,7 +106,7 @@ export function CombinedRunContent({
   const targets = matrix.targets.filter(
     (target) =>
       (client === ALL_EVAL_FILTER_VALUES || target.client === client) &&
-      (model === ALL_EVAL_FILTER_VALUES || target.modelId === model),
+      (model === ALL_EVAL_FILTER_VALUES || target.targetKey === model),
   );
   const selectedRunIds = new Set(targets.map((target) => target.run._id));
   const selectedRuns = hydratedRuns.filter((run) =>
@@ -222,14 +223,20 @@ export function CombinedRunContent({
     },
     model: {
       selected: selectedFilter(model),
-      values: (target) => [target.modelId],
+      values: (target) => [target.targetKey],
     },
   });
+  // Model options are TARGETS; a default target reads as its model id exactly
+  // as before, two efforts of one model read "model · Low" / "model · High".
+  const allTargetKeys = matrix.targets.map((target) => target.targetKey);
+  const formatModelOption = (key: string) =>
+    targetKeyLabel(key, allTargetKeys, (modelId) => modelId);
   const pairingFilterProps = {
     client,
     model,
     clientOptions: options.client,
     modelOptions: options.model,
+    formatModelOption,
     isFiltered,
     onClientChange: setClient,
     onModelChange: setModel,
@@ -394,6 +401,7 @@ function PairingFilters({
   model,
   clientOptions,
   modelOptions,
+  formatModelOption,
   isFiltered,
   onClientChange,
   onModelChange,
@@ -404,6 +412,7 @@ function PairingFilters({
   model: string;
   clientOptions: string[];
   modelOptions: string[];
+  formatModelOption?: (option: string) => string;
   isFiltered: boolean;
   onClientChange: (value: string) => void;
   onModelChange: (value: string) => void;
@@ -424,6 +433,7 @@ function PairingFilters({
         className="w-40"
         value={model}
         options={modelOptions}
+        formatOption={formatModelOption}
         onChange={onModelChange}
       />
       {showClear && isFiltered ? (

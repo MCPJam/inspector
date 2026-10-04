@@ -20,6 +20,10 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
 import { compactModelIdTail } from "@/lib/environment-label";
+import {
+  runTargetKey,
+  targetKeySuffix,
+} from "@/lib/eval-target-key";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
@@ -139,6 +143,9 @@ export function SingleRunContent({
     // Identity and label stay separate: the twin lookup keys on the run's
     // own effective model, so a fallback label must not leak into the key.
     const modelId = run.effectiveModelId ?? "";
+    // The run's target (`targetKey`, the bare model id when default) is the
+    // twin key, so the previous Sonnet·Low run is not Sonnet·High's baseline.
+    const targetKey = run.effectiveModelId ? runTargetKey(run) : undefined;
     const modelLabel = run.effectiveModelId ?? "Client default";
     return buildHeroPairings({
       targets: [
@@ -147,7 +154,10 @@ export function SingleRunContent({
           run,
           client: runClientIdentity(run, names).name,
           modelId,
-          model: compactModelIdTail(modelLabel),
+          ...(targetKey ? { targetKey } : {}),
+          model: `${compactModelIdTail(modelLabel)}${
+            targetKey ? targetKeySuffix(targetKey, [targetKey]) : ""
+          }`,
           iterations,
         },
       ],
