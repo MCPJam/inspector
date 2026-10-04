@@ -126,6 +126,12 @@ export type LiveChatTraceEvent =
       promptIndex: number;
       stepIndex?: number;
       errorText: string;
+      /**
+       * Whether the server already reported this failure to Sentry. Sent only
+       * by surfaces with a capture policy (Ask MCPJam), so the client reports
+       * exactly the failures the server did not.
+       */
+      captured?: boolean;
     }
   | {
       // Transient idle-heartbeat. Emitted only while the stream has been

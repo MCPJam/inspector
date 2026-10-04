@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { NormalizedError } from "@mcpjam/sdk";
 import {
   reportRouteFailure,
+  type CapturePolicy,
   type RouteFailureHop,
   type RouteFailureReport,
 } from "./route-error-report.js";
@@ -41,11 +42,24 @@ export type StreamFailureEvent = {
   rpcMethod?: string;
   /** Extra structured context for the free-form row and Sentry. */
   context?: Record<string, unknown>;
+  /**
+   * The surface's capture rule for THIS failure (Ask MCPJam's `always`, with
+   * its page class). Forwarded by `classify`, so a later failure that
+   * `oncePerTurn` routes straight to `classify` is covered too.
+   */
+  capture?: CapturePolicy;
 };
 
-export type StreamFailureReporter = (
+export type StreamFailureReporter = ((
   event: StreamFailureEvent,
-) => RouteFailureReport;
+) => RouteFailureReport) & {
+  /**
+   * Called by `oncePerTurn` when a failure it classified directly (without
+   * this reporter) was captured, so a request-scoped reporter still records
+   * the outcome on its request.
+   */
+  onCaptured?: () => void;
+};
 
 function classify(e: StreamFailureEvent): RouteFailureReport {
   return reportRouteFailure(e.message, e.error, {
@@ -53,6 +67,7 @@ function classify(e: StreamFailureEvent): RouteFailureReport {
     hop: e.hop,
     ...(e.normalized ? { normalized: e.normalized } : {}),
     ...(e.context ? { context: e.context } : {}),
+    ...(e.capture ? { capture: e.capture } : {}),
   });
 }
 
@@ -84,11 +99,27 @@ export function createRequestStreamFailureReporter(
   component: string,
 ): StreamFailureReporter {
   const log = getRequestLogger(c, component);
-  return (e) => {
+  const reporter = (e: StreamFailureEvent) => {
     const report = classify(e);
+    // The request's explicit capture outcome. A stream answers 200 before it
+    // fails, so the request-log backstop cannot see these failures — and must
+    // not re-capture one this reporter already sent.
+    if (report.captured) markRequestFailureCaptured(c);
     log.event("route.operation.failed", toPayload(e, report));
     return report;
   };
+  return Object.assign(reporter, {
+    onCaptured: () => markRequestFailureCaptured(c),
+  });
+}
+
+/** Record on the request that a failure on it reached Sentry. */
+export function markRequestFailureCaptured(c: Context): void {
+  try {
+    c.set("failureCaptured", true);
+  } catch {
+    // A context that refuses vars cannot be backstopped either.
+  }
 }
 
 export function createSystemStreamFailureReporter(
@@ -114,7 +145,13 @@ export function oncePerTurn(
 ): StreamFailureReporter {
   let emitted = false;
   return (e) => {
-    if (emitted) return classify(e);
+    if (emitted) {
+      // Still a capture decision, so a request-scoped reporter's record of
+      // the outcome must not be skipped along with the typed event.
+      const report = classify(e);
+      if (report.captured) reporter.onCaptured?.();
+      return report;
+    }
     emitted = true;
     return reporter(e);
   };

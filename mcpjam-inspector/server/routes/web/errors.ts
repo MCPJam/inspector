@@ -11,6 +11,7 @@ import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-seriali
 import {
   markOriginCaptureHandled,
   maybeCaptureOriginError,
+  type CapturePolicy,
   type OriginCaptureBoundary,
 } from "../../utils/error-origin-capture.js";
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
@@ -149,6 +150,13 @@ export class WebRouteError extends Error {
   origin?: ErrorOrigin;
 
   /**
+   * Whether `mapRuntimeError`'s capture decision sent this to Sentry. Rides
+   * into `webErrorMeta` so the request-log backstop knows the outcome rather
+   * than guessing it from the stamp, which a decline sets too.
+   */
+  captured?: boolean;
+
+  /**
    * Response headers this error must carry to the wire.
    *
    * The body is not always enough. `Retry-After` is the case that forced this:
@@ -213,10 +221,20 @@ export function webError(
   // `extras` is permissive (rpc-log collectors, etc.). If it carries a
   // `normalized` key, hoist it to the top-level response body — clients
   // pluck the rich block off the JSON envelope without re-classifying.
-  const { normalized, effectiveOrigin, hop, responseHeaders, ...restExtras } =
+  const {
+    normalized,
+    effectiveOrigin,
+    hop,
+    responseHeaders,
+    captured,
+    ...restExtras
+  } =
     (extras ?? {}) as Record<string, unknown> & {
       normalized?: NormalizedError;
       effectiveOrigin?: ErrorOrigin;
+      // Telemetry, like `hop`: whether the route's capture decision sent this
+      // failure to Sentry. Rides on `webErrorMeta` only.
+      captured?: boolean;
       // Destructured OUT for the same reason as `responseHeaders`: this is
       // telemetry, not part of the client contract. It rides on
       // `webErrorMeta` only.
@@ -256,6 +274,7 @@ export function webError(
       // positively-MCPJam verdict, which is the one direction of this change
       // that must stay impossible.
       ...(hop ? { hop } : {}),
+      ...(typeof captured === "boolean" ? { captured } : {}),
     });
   }
   // A hosted 500 INTERNAL_ERROR answers with a generic sentence and the
@@ -329,6 +348,9 @@ export function webErrorFromRoute(
       // the way to the serializer and is then thrown away at the last step.
       ...(routeError.origin ? { effectiveOrigin: routeError.origin } : {}),
       ...(routeError.headers ? { responseHeaders: routeError.headers } : {}),
+      ...(typeof routeError.captured === "boolean"
+        ? { captured: routeError.captured }
+        : {}),
     }
   );
 }
@@ -400,6 +422,15 @@ export interface MapRuntimeErrorOptions {
    * makes the decision.
    */
   boundary?: OriginCaptureBoundary;
+  /**
+   * A surface's own capture rule, computed from the MAPPED error (its status
+   * and code), for the same reason `boundary` travels with the mapping: the
+   * first capture decision stamps the error, so a policy applied afterwards
+   * would decide nothing. See `CapturePolicy`.
+   */
+  capture?: (mapped: { status: number; code: string }) =>
+    | CapturePolicy
+    | undefined;
 }
 
 /**
@@ -480,11 +511,17 @@ export function mapRuntimeError(
     // Keep the EFFECTIVE origin the capture decision produced. Discarding it
     // here is what forced serialization to fall back to the declared catalog
     // value, so a promoted `mcpjam` failure logged as `ambiguous`.
+    const capture = options?.capture?.({
+      status: error.status,
+      code: error.code,
+    });
     const decision = maybeCaptureOriginError(error, error.normalized, {
       source: "web.mapRuntimeError",
       boundary: effectiveBoundary(error, options),
       extra: { status: error.status, code: error.code },
+      ...(capture ? { capture } : {}),
     });
+    error.captured = error.captured === true || decision.captured;
     // Never downgrade an origin that is already set. A boundary-less call can
     // only ever reproduce the DECLARED catalog value — remapping an error whose
     // origin was already promoted at an `mcpjam_internal` hop would otherwise
@@ -496,12 +533,18 @@ export function mapRuntimeError(
 
   const routeError = classifyRuntimeError(error);
   attachCause(routeError, error);
+  const capture = options?.capture?.({
+    status: routeError.status,
+    code: routeError.code,
+  });
   const decision = maybeCaptureOriginError(routeError, routeError.normalized, {
     source: "web.mapRuntimeError",
     boundary: effectiveBoundary(routeError, options),
     extra: { status: routeError.status, code: routeError.code },
+    ...(capture ? { capture } : {}),
   });
   routeError.origin = decision.origin;
+  routeError.captured = decision.captured;
   // Stamp the ORIGINAL as well. The cause link above makes the original
   // reachable from `routeError`, but the walk only goes that direction: a
   // handler that keeps its own reference and later calls `logger.error(error)`
