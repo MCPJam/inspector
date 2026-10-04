@@ -334,12 +334,92 @@ describe("runHarnessTurn local continuity", () => {
     expect(harnessState.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session", continueFrom: expect.any(Object) }));
   });
 
+  it("maps HarnessAgent's nested approval toolCall onto the UI approval", async () => {
+    // HarnessAgent's fullStream shape; the flat `toolCallId` is adapter-level.
+    harnessState.streamParts = [{
+      type: "tool-approval-request", approvalId: "approval-1",
+      toolCall: { toolCallId: "call-1", toolName: "bash", input: { command: "ls" } },
+    }];
+    const result = await runHarnessTurn(baseOptions() as any, "ui");
+    const stream = await result.response!.text();
+    expect(stream).toContain('"type":"tool-approval-request","approvalId":"approval-1","toolCallId":"call-1"');
+  });
+
+  it("closes a denied call in the UI so the decision is not re-sent", async () => {
+    resume(true);
+    harnessState.continuations = [{
+      approvalResponse: { type: "tool-approval-response", approvalId: "approval-1", approved: false },
+      toolCall: { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "rm x" } },
+    }];
+    const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
+    expect(stream).toContain('"type":"tool-output-denied","toolCallId":"call-1"');
+  });
+
+  it("leaves an approved call for its tool result to close", async () => {
+    resume(true);
+    harnessState.continuations = [{
+      approvalResponse: { type: "tool-approval-response", approvalId: "approval-1", approved: true },
+      toolCall: { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "ls" } },
+    }];
+    const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
+    expect(stream).not.toContain("tool-output-denied");
+  });
+
+  it("resumes the session when the last commit is an unfinished approval turn", async () => {
+    // Stop while an approved command ran: the paused turn's continuation is
+    // still the committed state, and a new message is not a decision.
+    vi.mocked(claimHarnessSessionState).mockResolvedValue({
+      ok: true, leaseId: "lease-1", stateVersion: 1, fingerprintChanged: false,
+      state: {
+        harnessSessionId: "local-session", computerId: "machine-1:runtime-1",
+        resumeState: {
+          type: "continue-turn", harnessId: "claude-code", specificationVersion: "harness-v1",
+          data: { thread: "t-1", bridge: { sandboxId: "local-session" } },
+          pendingToolApprovals: [{ approvalId: "approval-1" }],
+        },
+        awaitingApproval: true,
+      },
+    } as any);
+    harnessState.continuations = [];
+    await runHarnessTurn(baseOptions() as any, "none");
+    expect(harnessState.create).toHaveBeenLastCalledWith({
+      sessionId: "local-session",
+      resumeFrom: {
+        type: "resume-session", harnessId: "claude-code", specificationVersion: "harness-v1",
+        data: { thread: "t-1" },
+      },
+    });
+  });
+
   it("retains state after committing a paused approval", async () => {
     harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
     expect(harnessState.teardown).toHaveBeenCalledOnce();
     expect(harnessState.discardState).not.toHaveBeenCalled();
+  });
+
+  it("saves a turn paused on approval, without the continuation's commit", async () => {
+    // As the emulated engine does: otherwise a new chat that paused does not
+    // exist in history, and the client reports the reply unsaved.
+    harnessState.streamParts = [
+      { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "rm x" } },
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+    ];
+    const onConversationComplete = vi.fn(async (..._args: unknown[]) => ({ outcome: "saved", version: 2 }));
+    const stream = await (
+      await runHarnessTurn(baseOptions({ onConversationComplete }) as any, "ui")
+    ).response!.text();
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    const [history, , commit] = onConversationComplete.mock.calls[0]!;
+    // The continuation went through the standalone endpoint, which already
+    // advanced the state version; an ingest carrying it would be refused.
+    expect(commit).toBeUndefined();
+    expect(JSON.stringify(history)).toContain("call-1");
+    expect(vi.mocked(commitHarnessSessionState).mock.invocationCallOrder[0]).toBeLessThan(
+      onConversationComplete.mock.invocationCallOrder[0]!,
+    );
+    expect(stream).toContain('"type":"data-persist-receipt"');
   });
 
   it("discards state when the completed turn could not be persisted", async () => {

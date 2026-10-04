@@ -162,7 +162,10 @@ import {
   LocalHarnessReadyNotice,
 } from "@/components/harness/LocalHarnessComposerNotice";
 import type { ExecutionTargetChipData } from "@/components/chat-v2/chat-input/execution-target-chip";
-import { isLocalHarnessScope } from "@/lib/local-harness-scope";
+import {
+  isAnotherUsersReopenedThread,
+  isLocalHarnessScope,
+} from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -1044,6 +1047,13 @@ export function PlaygroundMain({
   // kind of send local execution applies to. `previewedHarnessId` is what the
   // composer is PREVIEWING; the transport re-derives from the host that
   // actually sends.
+  // Only another member's reopened chat is somebody else's turn; see
+  // `isAnotherUsersReopenedThread`.
+  const replayingAnotherUsersThread = isAnotherUsersReopenedThread({
+    viewingHistory: viewingHistoryReplay,
+    ownerUserId: loadedThreadOwnerUserId,
+    currentUserId: currentUserForSender?._id,
+  });
   const localHarnessInScope = isLocalHarnessScope({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
@@ -1051,10 +1061,10 @@ export function PlaygroundMain({
       ? playgroundEnvironment.environmentId ?? null
       : null,
     requiresWebChatApi: isEnvironmentMode,
-    // A shared transcript and a replayed one are both somebody else's turn, or
-    // an old one being re-read. Neither is the attended member session a
+    // A shared transcript and another member's reopened one are both
+    // somebody else's turn. Neither is the attended member session a
     // filesystem grant is bound to, so neither may offer local execution.
-    sharedRun: isSharedSession || viewingHistoryReplay,
+    sharedRun: isSharedSession || replayingAnotherUsersThread,
   });
   // Identifies WHAT an approval was captured against, so switching host or
   // surface invalidates it rather than carrying a click across.
@@ -2324,7 +2334,7 @@ export function PlaygroundMain({
           ? playgroundEnvironment.environmentId ?? null
           : null,
         requiresWebChatApi: isEnvironmentMode,
-        sharedRun: isSharedSession || viewingHistoryReplay,
+        sharedRun: isSharedSession || replayingAnotherUsersThread,
       });
       byColumn.set(column.compareId, {
         requested:
@@ -2338,7 +2348,7 @@ export function PlaygroundMain({
     isEnvironmentMode,
     playgroundEnvironment.environmentId,
     isSharedSession,
-    viewingHistoryReplay,
+    replayingAnotherUsersThread,
     localHarness.requestedTarget,
     localHarnessResolveSendTarget,
   ]);
