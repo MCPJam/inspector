@@ -820,3 +820,77 @@ describe("protocol version pin status", () => {
     expect(originOf(mapped.normalized)).toBe("user_config");
   });
 });
+
+describe("mapRuntimeError — a surface's capture policy", () => {
+  // Ask MCPJam decides its capture INSIDE the mapping, because the mapping is
+  // where the error is first stamped; a policy applied afterwards would find
+  // the decision already made.
+  const agentPolicy = vi.fn((mapped: { status: number; code: string }) => ({
+    always: true,
+    tags: {
+      surface: "mcpjam_agent",
+      page_class: mapped.status < 500 ? "routine" : "incident",
+    },
+  }));
+
+  beforeEach(() => {
+    captureException.mockClear();
+    agentPolicy.mockClear();
+  });
+
+  it("captures a deliberate 4xx and records that it did", () => {
+    const routeError = mapRuntimeError(
+      new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "bad body"),
+      { capture: agentPolicy },
+    );
+
+    expect(agentPolicy).toHaveBeenCalledWith({
+      status: 400,
+      code: ErrorCode.VALIDATION_ERROR,
+    });
+    expect(routeError.captured).toBe(true);
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(
+      (captureException.mock.calls[0]![1] as { tags: Record<string, string> })
+        .tags,
+    ).toMatchObject({ surface: "mcpjam_agent", page_class: "routine" });
+  });
+
+  it("captures a classified throw with the MAPPED status and code", () => {
+    const routeError = mapRuntimeError(
+      new Error("connect ECONNREFUSED 127.0.0.1:3000"),
+      { capture: agentPolicy },
+    );
+
+    expect(agentPolicy).toHaveBeenCalledWith({
+      status: routeError.status,
+      code: routeError.code,
+    });
+    expect(routeError.captured).toBe(true);
+  });
+
+  it("records a decline as captured: false without a policy", () => {
+    const routeError = mapRuntimeError(
+      new WebRouteError(404, ErrorCode.NOT_FOUND, "nope"),
+    );
+    expect(routeError.captured).toBe(false);
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("carries the outcome onto webErrorMeta for the request-log backstop", () => {
+    const set = vi.fn();
+    const json = vi.fn();
+    const routeError = mapRuntimeError(
+      new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "bad body"),
+      { capture: agentPolicy },
+    );
+    webErrorFromRoute({ set, json } as never, routeError);
+
+    expect(set).toHaveBeenCalledWith(
+      "webErrorMeta",
+      expect.objectContaining({ status: 400, captured: true }),
+    );
+    // Telemetry only — never a field of the JSON body.
+    expect(json.mock.calls[0]![0]).not.toHaveProperty("captured");
+  });
+});
