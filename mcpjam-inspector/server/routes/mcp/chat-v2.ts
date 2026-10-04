@@ -1,5 +1,5 @@
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
-import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES } from "../../utils/harness/local/readiness.js";
+import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES, LocalAutoApproveConsentRequiredError } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
@@ -1036,7 +1036,7 @@ chatV2.post("/", async (c) => {
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
         logger.warn(
-          "[mcp/chat-v2] client requireToolApproval differs from host; using host value",
+          "[mcp/chat-v2] client requireToolApproval differs from host; using resolved override value",
           {
             scenarioId: bodyScenarioId,
             body: entry.overrideValue,
@@ -1445,11 +1445,11 @@ chatV2.post("/", async (c) => {
     if (localSelected && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
       if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: `Sign in and choose a project to run ${localHarnessName} locally` }, 403);
       try {
-        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended", harnessId: localHarnessId })).target;
+        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended", harnessId: localHarnessId, requireToolApproval: resolvedExecution.requireToolApproval })).target;
       } catch (error) {
         // A local target that cannot be made ready is an actionable local
         // error (setup / Retry), never a silent switch to the cloud.
-        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready` }, 409);
+        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
       }
     }
 
@@ -1756,8 +1756,7 @@ chatV2.post("/", async (c) => {
               : {}),
             // Host approval policy — previously not threaded on this route,
             // so playground bash silently ran with needsApproval:false
-            // whatever the host said. Cloud bash now honors it; local bash
-            // requires approval regardless (see bash.ts).
+            // whatever the host said. Both cloud and local bash honor the setting.
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             browserEngine,

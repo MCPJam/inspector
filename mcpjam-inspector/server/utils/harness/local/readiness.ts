@@ -49,6 +49,10 @@ export async function verifyLocalHarnessMember(bearer: string, projectId: string
 }
 
 export class LocalRuntimePreparingError extends Error {}
+export class LocalAutoApproveConsentRequiredError extends Error {
+  readonly status = "auto-approve-consent-required";
+  constructor() { super("Allow commands without asking before turning Tool Approval off on this computer."); }
+}
 
 export async function setupLocalHarness(args: { bearer: string; projectId: string; workspacePath?: string; waitForInstall?: boolean; harnessId?: SupportedLocalHarnessId }) {
   const harnessId = args.harnessId ?? "claude-code";
@@ -71,6 +75,7 @@ export async function ensureLocalHarnessTarget(args: {
   /** Registered session-owned scratch grant; supplied only by trusted schedulers. */
   workspaceGrantId?: string;
   waitForInstall?: boolean;
+  requireToolApproval?: boolean;
   /** Verified once at the signed-in launch; only trusted schedulers pass this. */
   trustedActor?: LocalHarnessActor;
   /** Which local harness. Each has its own runtime, rollout flag and durable
@@ -83,6 +88,9 @@ export async function ensureLocalHarnessTarget(args: {
   const machineId = await getLocalMachineId();
   const authorization = await readLocalHarnessAuthorization(actor.userId, machineId, args.projectId, harnessId);
   if (!authorization) throw new Error(`Set up ${name} from Add client to allow it to run on this computer`);
+  if (args.scope === "attended" && args.requireToolApproval === false && !authorization.autoApproveAcknowledgedAt) {
+    throw new LocalAutoApproveConsentRequiredError();
+  }
   let status = await readRuntimeInstallStatus({ harnessId });
   if (status.state !== "ready") {
     if (args.waitForInstall === false) {

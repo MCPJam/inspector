@@ -28,7 +28,7 @@ describe("harnessRuntimeFingerprint", () => {
   it("changes when the consented permission profile changes", () => {
     const local = {
       ...base,
-      permissionMode: "allow-edits",
+      permissionMode: "allow-reads",
       localTarget: {
         runtimeId: "rt_1",
         workspaceGrantId: "ws_1",
@@ -38,9 +38,8 @@ describe("harnessRuntimeFingerprint", () => {
     };
     const narrowed = {
       ...local,
-      // Both move together in production — the mode is DERIVED from the
-      // profile — but they are asserted separately so neither alone is load
-      // bearing.
+      // Attended modes stay at allow-reads across the toggle and profile.
+      // The consented profile itself still invalidates the lane.
       permissionMode: "allow-reads",
       localTarget: { ...local.localTarget, permissionProfile: "read-only" },
     };

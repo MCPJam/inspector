@@ -1,3 +1,4 @@
+import { readLocalHarnessAuthorization } from "./authorization.js";
 /**
  * Everything a turn needs to run on the user's own machine, behind ONE call.
  *
@@ -205,7 +206,7 @@ export interface PrepareLocalHarnessTurnArgs {
   installedAdapterVersion?: string;
   /** The user's bearer, for the lease start. Never persisted here. */
   bearer: string;
-  /** Set when the host asks for tool approval, which narrows the mode. */
+  /** Attended Off requires durable consent; unattended modes keep their mapping. */
   requireToolApproval?: boolean;
   /**
    * Set when this turn delivers decisions to an approval a LIVE runtime is
@@ -297,6 +298,12 @@ export async function prepareLocalHarnessTurn(
   // conversation continues from disk in a fresh process.
   if (hasParkedLocalSession(args.sessionId)) {
     await invalidateParkedLocalSession(args.sessionId, "superseded");
+  }
+  if (args.scope !== "unattended" && args.requireToolApproval === false) {
+    const authorization = await readLocalHarnessAuthorization(args.target.actingUserId, args.target.machineId, args.projectId, harnessId);
+    if (!authorization?.autoApproveAcknowledgedAt) {
+      return { ok: false, status: "auto-approve-consent-required", message: "Allow commands without asking before turning Tool Approval off on this computer." };
+    }
   }
   const verifyStartedAt = Date.now();
 
@@ -466,9 +473,9 @@ async function prepareWithReservedRuntime(outer: {
   const plan = availability.plan;
   const localRuntimeVerifyMs = Date.now() - verifyStartedAt;
 
-  // A host that asks for tool approval narrows the mode: `allow-reads` is the
-  // only mode under which MCP tools pause, which is what approval means.
-  const permissionMode = args.requireToolApproval
+  // Attended turns keep ask mode across toggle changes. Off is implemented
+  // by answering native requests in MCPJam, rather than widening permissions.
+  const permissionMode = args.scope !== "unattended" || args.requireToolApproval
     ? ("allow-reads" as const)
     : plan.permissionMode;
 
@@ -845,7 +852,7 @@ async function adoptParkedLocalTurn(
         "the pending action will not run.",
     );
   }
-  const permissionMode = args.requireToolApproval
+  const permissionMode = args.scope !== "unattended" || args.requireToolApproval
     ? ("allow-reads" as const)
     : plan.permissionMode;
   if (permissionMode !== live.prepared.permissionMode) {
