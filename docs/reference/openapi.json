@@ -7949,7 +7949,7 @@
         "operationId": "listModels",
         "tags": ["Catalog"],
         "summary": "The MCPJam-provided model catalog",
-        "description": "PUBLIC: this route carries no user or project data and requires no bearer token, matching the upstream catalog it proxies. Mounted before authentication for that reason.",
+        "description": "PUBLIC: this route carries no user or project data and requires no bearer token, matching the upstream catalog it proxies. Mounted before authentication for that reason.\n\nEach model row (see `CatalogModel`) carries `supportedReasoningEfforts`: the reasoning-effort levels the model accepts (`settings.reasoningEffort` on a `ModelSelection`, or a chat turn's `reasoningEffort`). An empty or absent list means the model takes no effort, or the catalog does not know — never guess a level for it.",
         "security": [],
         "responses": {
           "200": {
@@ -15666,6 +15666,14 @@
                 },
                 "provider": {
                   "type": "string"
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id."
                 }
               }
             }
@@ -15814,6 +15822,14 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -16012,6 +16028,17 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelSelection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -16258,6 +16285,14 @@
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ModelSelection"
+                  }
+                ],
+                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id."
               }
             }
           },
@@ -16362,6 +16397,17 @@
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ModelSelection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The saved model choice (source, connection, `settings.reasoningEffort`). Must be FOR `model` when both are sent; sent alone it pins its own model. `null` clears it. A bare `model` change drops a selection saved for a different model rather than failing."
               }
             }
           },
@@ -16654,6 +16700,14 @@
                 },
                 "provider": {
                   "type": "string"
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the case stores only a bare model id."
                 }
               }
             }
@@ -16968,6 +17022,14 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelSelection"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -17578,6 +17640,17 @@
                 "provider": {
                   "type": "string",
                   "description": "Derived from a `provider/model` id when omitted."
+                },
+                "selection": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelSelection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On a `models` PATCH an entry that omits `selection` KEEPS the case's existing selection for that model; `null` drops it."
                 }
               }
             }
@@ -18230,7 +18303,7 @@
           },
           "advancedConfig": {
             "type": "object",
-            "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
+            "description": "Optional `system`, `temperature`, `toolChoice` overrides. `reasoningEffort` is NOT accepted (`400`): nothing ever applied it. Save an effort as `models[].selection.settings.reasoningEffort` instead.",
             "additionalProperties": true
           },
           "scenario": {
@@ -18492,7 +18565,7 @@
                 },
                 "advancedConfig": {
                   "type": "object",
-                  "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
+                  "description": "Optional `system`, `temperature`, `toolChoice` overrides. `reasoningEffort` is NOT accepted (`400`): nothing ever applied it. Save an effort as `models[].selection.settings.reasoningEffort` instead.",
                   "additionalProperties": true
                 },
                 "intent": {
@@ -19391,6 +19464,14 @@
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ModelSelection"
+                  }
+                ],
+                "description": "The saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Absent when the suite pins only a bare model id."
               }
             }
           },
@@ -23513,6 +23594,17 @@
               },
               "temperature": {
                 "type": "number"
+              },
+              "modelSelection": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ModelSelection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The saved model choice (source, connection, `settings.reasoningEffort`). Must be FOR `model` when both are sent; sent alone it pins its own model. `null` clears it. A bare `model` change drops a selection saved for a different model rather than failing."
               }
             }
           },
@@ -24507,6 +24599,102 @@
         ],
         "additionalProperties": false
       },
+      "CatalogModel": {
+        "type": "object",
+        "description": "One row of the MCPJam-provided model catalog (`GET /v1/models`). Rows carry more fields than are listed here; only the ones callers branch on are pinned.",
+        "required": ["id"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`."
+          },
+          "supportedReasoningEfforts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+            },
+            "description": "The reasoning-effort levels this model accepts. Empty or absent: no effort is offered for it (it takes none, or the catalog does not know). Pass one as `settings.reasoningEffort` on a `ModelSelection` or as a chat turn's `reasoningEffort`."
+          }
+        }
+      },
+      "ModelSelection": {
+        "type": "object",
+        "description": "A saved model choice. Never carries a secret: an unknown key is refused. `settings.reasoningEffort` is where a reasoning effort is saved — there is no other saved carrier (`advancedConfig.reasoningEffort` is refused). Which efforts a model accepts is `supportedReasoningEfforts` on `GET /v1/models`; a saved effort the route the run takes cannot apply is refused (`capability_missing`), never dropped.",
+        "required": ["modelId", "source", "fallback"],
+        "additionalProperties": false,
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "description": "Canonical `provider/model` id."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["hosted", "org", "local"],
+            "description": "Whose credentials pay for and serve the call."
+          },
+          "connectionRef": {
+            "type": "object",
+            "description": "Required for `org` (`kind: orgProvider`) and `local` (`kind: localProvider`), absent for `hosted`.",
+            "required": ["kind"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["orgProvider", "localProvider"]
+              },
+              "id": {
+                "type": "string",
+                "description": "The organization model provider row (`orgProvider`)."
+              },
+              "providerKey": {
+                "type": "string",
+                "description": "The provider configured on the user's own machine (`localProvider`)."
+              },
+              "customProviderName": {
+                "type": "string"
+              }
+            }
+          },
+          "nativeModelId": {
+            "type": "string",
+            "description": "Deployment or native id where it is not derivable from `modelId` (Azure deployment name, Bedrock inference profile, custom provider)."
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "reasoningEffort": {
+                "type": "string",
+                "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+                "description": "Reasoning effort. An effort replaces the sampling temperature: a `temperature` beside it is dropped or refused, depending on the route."
+              },
+              "temperature": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              }
+            }
+          },
+          "fallback": {
+            "type": "object",
+            "required": ["provider", "model"],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["none", "openrouter"]
+              },
+              "model": {
+                "type": "string",
+                "enum": ["none"],
+                "description": "Always `none`: no surface substitutes a different model."
+              }
+            }
+          }
+        }
+      },
       "ClientFieldSet": {
         "type": "object",
         "description": "Named fields to change, applied over the client's current config INSIDE the write transaction. Absent always means keep. `null` means \"make it go away\", and what that means depends on the field: a required field resets to its documented default, an optional one clears to absent. Object-valued fields are whole-object replacements, not merges — to change a deep knob, read the client, overlay the sub-object, and send it back whole. `hostStyle`, `clientCapabilities`, `hostContext` and server membership are deliberately not settable here (use a whole-`config` replacement, or the servers operation).",
@@ -24518,6 +24706,17 @@
             "minLength": 1,
             "pattern": ".*\\S.*",
             "description": "Model id the client pins. Value only — there is no `null`, and a blank string is refused: a client that pins a model cannot be edited into one that does not."
+          },
+          "modelSelection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The saved model choice: source, connection, and `settings.reasoningEffort`. A full selection only. Must be FOR `modelId` when both are sent; sent alone it pins its own model. `null` clears the saved selection and keeps the bare `modelId`."
           },
           "systemPrompt": {
             "type": ["string", "null"],
@@ -24966,6 +25165,14 @@
             "type": "string",
             "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
           },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -25347,6 +25554,14 @@
             "type": "string",
             "description": "The stack's model override. Absent means it inherits the host's."
           },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId` (whose credentials run it, and `settings.reasoningEffort`). Absent when the override is a bare id or the environment inherits its host's model."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -25411,6 +25626,14 @@
             "type": "string",
             "description": "Model to run instead of the host's pinned one. Stored verbatim."
           },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -25474,6 +25697,14 @@
             "pattern": ".*\\S.*",
             "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim — no alias canonicalization — so pass exactly the id the provider request should carry."
           },
+          "modelSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              }
+            ],
+            "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability."
+          },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
@@ -25529,6 +25760,17 @@
             "pattern": ".*\\S.*",
             "nullable": true,
             "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
+          },
+          "modelSelection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The saved selection behind `modelId`: source, connection, and `settings.reasoningEffort`. Must be FOR `modelId`; sent alone it pins its own model. Requires the `modelSelections` capability. `null` clears the saved selection and keeps the bare `modelId`."
           },
           "skillSelection": {
             "allOf": [
@@ -26437,6 +26679,10 @@
           "modelMatrix": {
             "type": "boolean",
             "description": "Environment cells may vary by model on one host (the compare grid)."
+          },
+          "modelSelections": {
+            "type": "boolean",
+            "description": "`modelSelection` is accepted on environment create, update and ensure-adhoc, so an environment can carry a saved model selection (source, connection, reasoning effort). Absent or false on older backends, which reject the unknown field with a validator error naming nothing — probe this before sending one."
           },
           "ephemeralEnvironmentLaunch": {
             "type": "boolean",
@@ -30563,6 +30809,11 @@
             "minimum": 0,
             "maximum": 2,
             "description": "First turn only — pinned to the session and reused on every continuation."
+          },
+          "reasoningEffort": {
+            "type": "string",
+            "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+            "description": "First turn only \u2014 pinned to the session and reused on every continuation. Reasoning effort for the turn; wins over the effort a `hostId`'s saved selection carries, and is applied or refused by the rail the model runs on, never dropped. Which levels a model accepts is `supportedReasoningEfforts` on `GET /v1/models`. Mutually exclusive with `temperature`: an effort replaces the sampling temperature."
           },
           "maxSteps": {
             "type": "integer",

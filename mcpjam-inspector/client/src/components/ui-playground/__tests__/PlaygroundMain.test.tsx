@@ -265,6 +265,7 @@ const mockUseChatSession = {
     supportsStreaming: true,
   },
   setSelectedModel: vi.fn(),
+  seedReasoningEffort: vi.fn(),
   // The steady state: the persisted lead id has matched `availableModels`.
   // Leaving this undefined would silently disable the selected-model sanitize
   // effect for every case below. See BACK2-628.
@@ -861,6 +862,95 @@ describe("PlaygroundMain", () => {
       };
       rerender(<PlaygroundMain {...props} />);
       expect(capturedChatSessionOptions.builtInToolIds).toEqual([]);
+    });
+
+    describe("host model and effort seeding", () => {
+      const hostId = "hlk3m9x2q7v5b8n1t4r6s0dc";
+      const hostedGpt5 = {
+        id: "openai/gpt-5",
+        name: "GPT-5",
+        provider: "openai",
+        hosted: true,
+      };
+      const byokGpt5 = { id: "gpt-5", name: "GPT-5", provider: "openai" };
+      const selection = (effort?: string) => ({
+        modelId: "openai/gpt-5",
+        source: "local",
+        connectionRef: { kind: "localProvider", providerKey: "openai" },
+        nativeModelId: "gpt-5",
+        fallback: { provider: "none", model: "none" },
+        ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+      });
+      const previewHost = (modelSelection: unknown) => {
+        mockConvexAuthState.isAuthenticated = true;
+        localStorage.setItem(
+          "mcp-previewed-host-id",
+          JSON.stringify({ "project-1": hostId })
+        );
+        mockHostQueryState.result = {
+          hostId,
+          name: "Host",
+          config: {
+            id: "cfg",
+            modelId: "openai/gpt-5",
+            modelSelection,
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          },
+        };
+      };
+
+      it("keeps a BYOK host on its own row, never the hosted row of the same id", async () => {
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        const picked = mockUseChatSession.setSelectedModel.mock.calls.at(-1)![0];
+        expect(picked.hosted).not.toBe(true);
+        expect(mockUseChatSession.seedReasoningEffort).toHaveBeenCalledWith(
+          picked,
+          "high"
+        );
+        mockUseChatSession.availableModels = [];
+      });
+
+      it("clears a previous host's effort when the next host saved none", async () => {
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        previewHost(selection("high"));
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.seedReasoningEffort).toHaveBeenCalledTimes(1);
+        });
+        mockHostQueryState.result = {
+          hostId,
+          name: "Host B",
+          config: {
+            id: "cfg-b",
+            modelId: "openai/gpt-5",
+            modelSelection: selection(),
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          },
+        };
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.seedReasoningEffort).toHaveBeenLastCalledWith(
+            expect.anything(),
+            undefined
+          );
+        });
+        mockUseChatSession.availableModels = [];
+      });
     });
 
     it("renders the component", () => {

@@ -41,7 +41,12 @@ import {
   type McpToolResultImageRenderingPolicy,
   type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
-import { readTasksPolicy, type TasksPolicy } from "@mcpjam/sdk";
+import {
+  readTasksPolicy,
+  type ModelSelection,
+  type TasksPolicy,
+} from "@mcpjam/sdk";
+import { readStoredModelSelection } from "./model-resolution-local.js";
 
 /**
  * How the resolver picks a winner when both the hostConfig and the
@@ -117,6 +122,17 @@ export interface ResolvedExecutionContext {
   modelId: string | undefined;
   /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
   harness: Harness | undefined;
+  /**
+   * The host's saved model selection (`hostConfig.modelSelection`), carrying
+   * its saved `settings` (reasoning effort).
+   *
+   * HOST-ONLY, like `harness`: it is not in `ExecutionOverrides`, so a body
+   * cannot supply or replace it. It belongs to ONE model, so a caller must
+   * only use it when the turn runs that same model — see
+   * `selectionIfMatches` from the SDK — and never carry it onto a different
+   * model the body chose.
+   */
+  modelSelection: ModelSelection | undefined;
   /**
    * MCPJam's Tasks product policy, read HOST-ONLY — exactly like `harness`,
    * and for a stronger reason.
@@ -283,6 +299,17 @@ function readHarness(hostConfig: Record<string, unknown>): Harness | undefined {
   return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
 }
 
+/**
+ * Read the host's saved model selection with the SDK validator: a malformed or
+ * absent one reads as "no saved selection" (never guessed at, never partially
+ * trusted).
+ */
+function readModelSelection(
+  hostConfig: Record<string, unknown>,
+): ModelSelection | undefined {
+  return readStoredModelSelection(hostConfig.modelSelection);
+}
+
 export function resolveExecutionContext(args: {
   hostConfig: Record<string, unknown> | null;
   overrides?: ExecutionOverrides;
@@ -324,6 +351,7 @@ export function resolveExecutionContext(args: {
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
       harness: undefined,
+      modelSelection: undefined,
       // No host config means nothing said anything about tasks. `unset`, not
       // `off`: the two differ on the Tools tab, which keeps its own per-call
       // controls under `unset` and loses them under `off`.
@@ -471,6 +499,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     harness: readHarness(hostConfig),
+    modelSelection: readModelSelection(hostConfig),
     tasksPolicy: readTasksPolicy(
       hostConfig as Parameters<typeof readTasksPolicy>[0],
     ),

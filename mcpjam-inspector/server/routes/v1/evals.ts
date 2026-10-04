@@ -60,6 +60,12 @@ import {
 } from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
+import { selectionIfMatches, type ModelSelection } from "@mcpjam/sdk";
+import {
+  ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE,
+  modelSelectionSchema,
+  selectionModelMismatch,
+} from "./model-selection-schema.js";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import { upstreamRetryAfter } from "../../services/swarm-agent.js";
@@ -600,6 +606,11 @@ const publicInlineTestSchema = z
         system: z.string().optional(),
         temperature: z.number().optional(),
         toolChoice: z.any().optional(),
+        // Retired claim: nothing ever applied it (the runner reads only
+        // `temperature`), so accepting it stored a promise. Refused loudly.
+        reasoningEffort: z
+          .never({ error: ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE })
+          .optional(),
       })
       .passthrough()
       .optional(),
@@ -818,6 +829,9 @@ const createEvalSuiteSchema = z.strictObject({
               system: z.string().optional(),
               temperature: z.number().optional(),
               toolChoice: z.any().optional(),
+              reasoningEffort: z
+                .never({ error: ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE })
+                .optional(),
             })
             .passthrough()
             .optional(),
@@ -2411,6 +2425,8 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
       ? testCase.models.map((m: any) => ({
           model: String(m.model),
           ...(m.provider ? { provider: String(m.provider) } : {}),
+          // The saved selection the UI (or the API) stored for this model.
+          ...(m.selection ? { selection: m.selection } : {}),
         }))
       : [],
     ...(testCase.matchOptions
@@ -2535,6 +2551,9 @@ function toSuiteDetailDto(
           model: execConfig.modelId,
           systemPrompt: execConfig.systemPrompt,
           temperature: execConfig.temperature,
+          ...(execConfig.modelSelection
+            ? { modelSelection: execConfig.modelSelection }
+            : {}),
         }
       : null,
     hosts: Array.isArray(suite.hostAttachments)
@@ -2745,6 +2764,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     ...opt("respectToolVisibility"),
     ...opt("modelVisibleMcpToolResults"),
     ...opt("mcpToolResultImageRendering"),
+    ...opt("modelSelection"),
     ...opt("harness"),
     ...opt("computer"),
     ...opt("serverIds"),
@@ -2824,14 +2844,62 @@ function providerForModelId(modelId: string): string {
  * matches nothing. Same normalization as `withTrimmedModelId` on the host write
  * boundary and the backend's `normalizeModelId`; only ever a trim.
  */
-function toPersistedModelEntry(entry: { model: string; provider?: string }): {
+function toPersistedModelEntry(entry: {
+  model: string;
+  provider?: string;
+  selection?: ModelSelection | null;
+}): {
   model: string;
   provider: string;
+  selection?: ModelSelection;
 } {
+  const model = requireNonBlankModelId(entry.model);
+  // A saved selection is FOR one model. Refuse a mismatch here rather than
+  // persist a case whose chip and stored selection name different models.
+  const mismatch = selectionModelMismatch(model, entry.selection);
+  if (mismatch) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `models[].${mismatch}`,
+    );
+  }
   return {
-    model: requireNonBlankModelId(entry.model),
+    model,
     provider: deriveProvider(entry.model, entry.provider),
+    // `null` (PATCH: drop the saved selection) and absent both persist no
+    // selection here; PATCH keeps existing ones for absent, see
+    // `keepExistingModelSelections`.
+    ...(entry.selection ? { selection: entry.selection } : {}),
   };
+}
+
+/**
+ * A `models` PATCH REPLACES the array, and an entry without `selection` used to
+ * erase the one the UI saved for that model (an authored `{ model, provider }`
+ * has no way to say "leave the selection alone"). So an entry that OMITS
+ * `selection` keeps the existing selection for the same model, and only
+ * `selection: null` drops it. `selectionIfMatches` guards the carry-over: a
+ * selection is never attached to a model it was not saved for.
+ */
+function keepExistingModelSelections(
+  authored: Array<{ model: string; selection?: ModelSelection | null }>,
+  persisted: Array<{ model: string; provider: string; selection?: ModelSelection }>,
+  existing: unknown,
+): Array<{ model: string; provider: string; selection?: ModelSelection }> {
+  const existingByModel = new Map<string, ModelSelection>();
+  if (Array.isArray(existing)) {
+    for (const entry of existing) {
+      if (entry && typeof entry.model === "string" && entry.selection) {
+        existingByModel.set(entry.model.trim(), entry.selection as ModelSelection);
+      }
+    }
+  }
+  return persisted.map((entry, index) => {
+    if (authored[index]?.selection !== undefined) return entry;
+    const kept = selectionIfMatches(existingByModel.get(entry.model), entry.model);
+    return kept ? { ...entry, selection: kept } : entry;
+  });
 }
 
 /**
@@ -2974,6 +3042,12 @@ const publicCaseBodyShape = {
       z.object({
         model: z.string().min(1),
         provider: z.string().min(1).optional(),
+        /**
+         * The saved model choice behind `model` (source, connection,
+         * `settings.reasoningEffort`). On PATCH an entry that omits it KEEPS
+         * the case's existing selection for that model; `null` drops it.
+         */
+        selection: modelSelectionSchema.nullable().optional(),
       }),
     )
     .optional(),
@@ -3448,6 +3522,24 @@ const updateSuiteShape = {
       model: z.string().min(1).optional(),
       systemPrompt: z.string().optional(),
       temperature: z.number().optional(),
+      /**
+       * The saved model choice (source, connection,
+       * `settings.reasoningEffort`). Must be FOR `model` when both are sent;
+       * sent alone it pins its own model. `null` clears it. A bare `model`
+       * change on a suite that has a selection for a DIFFERENT model drops
+       * that selection (it was never validated for the new model).
+       */
+      modelSelection: modelSelectionSchema.nullable().optional(),
+    })
+    .superRefine((value, ctx) => {
+      const mismatch = selectionModelMismatch(value.model, value.modelSelection);
+      if (mismatch) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["modelSelection"],
+          message: mismatch,
+        });
+      }
     })
     .optional(),
   hosts: z
@@ -3730,6 +3822,8 @@ function buildCaseMutationArgs(
     existingSteps?: unknown;
     /** The persisted case's match options, to merge a partial PATCH onto. */
     existingMatchOptions?: unknown;
+    /** The persisted case's `models`, so a PATCH keeps their selections. */
+    existingModels?: unknown;
     /** The persisted case's probeConfig, to merge a partial renderCheck PATCH onto. */
     existingProbeConfig?: any;
     /**
@@ -3812,7 +3906,10 @@ function buildCaseMutationArgs(
   }
 
   if (body.models !== undefined) {
-    args.models = body.models.map(toPersistedModelEntry);
+    const persisted = body.models.map(toPersistedModelEntry);
+    args.models = opts.forCreate
+      ? persisted
+      : keepExistingModelSelections(body.models, persisted, opts.existingModels);
   } else if (opts.forCreate) {
     args.models = isModelFreeStepsCase ? [] : (opts.defaultModels ?? []);
   }
@@ -8735,6 +8832,22 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     const input = hostConfigDtoToInput(current);
     if (body.executionConfig.model !== undefined)
       input.modelId = body.executionConfig.model;
+    // The stored selection belongs to ONE model. Carrying it across a bare
+    // model change made the backend reject the write (bare id and selection
+    // disagree) — a 500 for a valid request on any suite that has a
+    // selection. Keep it only while it still matches; an explicit selection
+    // (or `null`) below overrides.
+    input.modelSelection = selectionIfMatches(
+      input.modelSelection as ModelSelection | undefined,
+      input.modelId as string | undefined,
+    );
+    if (body.executionConfig.modelSelection !== undefined) {
+      input.modelSelection = body.executionConfig.modelSelection ?? undefined;
+      if (body.executionConfig.modelSelection && body.executionConfig.model === undefined) {
+        input.modelId = body.executionConfig.modelSelection.modelId;
+      }
+    }
+    if (input.modelSelection === undefined) delete input.modelSelection;
     if (body.executionConfig.systemPrompt !== undefined)
       input.systemPrompt = body.executionConfig.systemPrompt;
     if (body.executionConfig.temperature !== undefined)
@@ -9321,6 +9434,7 @@ evals.patch(
         typeof existing.caseType === "string" ? existing.caseType : undefined,
       existingSteps: existing.steps,
       existingMatchOptions: existing.matchOptions,
+      existingModels: existing.models,
       existingProbeConfig: existing.probeConfig,
       vocabulary: vocabularyOf(c),
     });

@@ -51,6 +51,8 @@ import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
 import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { directChatEffort } from "./chat-reasoning-effort.js";
 import type {
   Harness,
   MCPClientManager,
@@ -371,6 +373,19 @@ export interface WebChatTurnPrepareInputs {
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn runs at (the request's top-level field, else
+   * the host's saved one for this same model). Under an effort the resolved
+   * temperature is omitted. Applied per rail: a top-level body field on the
+   * hosted `/stream` and `/stream/org` rails, provider options on the direct
+   * (local-runtime org) rail, the typed field on a harness turn.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  /**
+   * A temperature the CALLER sent (not a host default). The direct rail
+   * refuses it together with an effort; the hosted rails drop it.
+   */
+  explicitTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   /**
@@ -820,6 +835,9 @@ export async function streamWebChatTurn(
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,
       temperature: prepare.temperature,
+      ...(prepare.reasoningEffort !== undefined
+        ? { reasoningEffort: prepare.reasoningEffort }
+        : {}),
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
       ...(prepare.excludeMcpToolNames
@@ -1325,6 +1343,11 @@ export async function streamWebChatTurn(
                   : {}),
                 systemPrompt: persist.systemPrompt,
                 temperature: persist.temperature,
+                // The effort this conversation ran at, so a reopened chat keeps
+                // it. Absent when the turn had none.
+                ...(prepare.reasoningEffort !== undefined
+                  ? { reasoningEffort: prepare.reasoningEffort }
+                  : {}),
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
@@ -1455,6 +1478,21 @@ export async function streamWebChatTurn(
           { toolNames: localTools.removed },
         );
       }
+      // The inspector calls the provider on this runtime, so the effort is
+      // applied here as provider options, or refused before any spend.
+      const localEffort = directChatEffort({
+        providerKey: orgRuntime.provider.providerKey,
+        modelId,
+        effort: prepare.reasoningEffort,
+        explicitTemperature: prepare.explicitTemperature,
+      });
+      if (!localEffort.ok) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          localEffort.reason,
+        );
+      }
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
         ...(historyPresentation ? { historyPresentation } : {}),
@@ -1466,6 +1504,9 @@ export async function streamWebChatTurn(
         messages: scrubbedMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
+        ...(localEffort.providerOptions
+          ? { providerOptions: localEffort.providerOptions }
+          : {}),
         tools: localTools.tools,
         progressivePlan,
         discoveryState,
@@ -1511,6 +1552,9 @@ export async function streamWebChatTurn(
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
+      ...(prepare.reasoningEffort !== undefined
+        ? { reasoningEffort: prepare.reasoningEffort }
+        : {}),
       tools: refreshingEngineTools(),
       progressivePlan,
       discoveryState,
@@ -1608,6 +1652,11 @@ export async function streamWebChatTurn(
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
+    // Hosted `/stream`: the top-level body field. Harness: the typed field its
+    // adapter's declared efforts gate (refused, never dropped).
+    ...(prepare.reasoningEffort !== undefined
+      ? { reasoningEffort: prepare.reasoningEffort }
+      : {}),
     tools: refreshingEngineTools(),
     progressivePlan,
     discoveryState,

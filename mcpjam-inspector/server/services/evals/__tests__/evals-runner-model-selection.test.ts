@@ -233,6 +233,7 @@ describe("eval runner reads saved model selections", () => {
       provider: string;
       selection?: ModelSelection;
       advancedConfig?: Record<string, unknown>;
+      promptTurns?: unknown[];
     },
     options: Record<string, unknown> = {},
   ) {
@@ -247,7 +248,7 @@ describe("eval runner reads saved model selections", () => {
             runs: 1,
             ...test,
             expectedToolCalls: [],
-            promptTurns: [
+            promptTurns: test.promptTurns ?? [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
             ],
             testCaseId: "case-1",
@@ -802,6 +803,53 @@ describe("eval runner reads saved model selections", () => {
       expect(streamTextMock).not.toHaveBeenCalled();
     });
 
+    it("a stored advancedConfig.reasoningEffort is refused, never run as if applied", async () => {
+      await expectRefused(
+        run(
+          {
+            model: "openai/gpt-5",
+            provider: "openai",
+            selection: LOCAL_GPT5_EFFORT,
+            advancedConfig: { reasoningEffort: "low" },
+          },
+          localOptions,
+        ),
+        "capability_missing",
+      );
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
+    it("a legacy advancedConfig.reasoningEffort on a pinned-only case is not refused (no model runs)", async () => {
+      mcpClientManager.executeTool.mockResolvedValue({ content: [] });
+      const errorSpy = vi.spyOn(logger, "error");
+      await run(
+        {
+          model: "openai/gpt-5",
+          provider: "openai",
+          advancedConfig: { reasoningEffort: "low" },
+          promptTurns: [
+            {
+              id: "turn-1",
+              prompt: "",
+              expectedToolCalls: [],
+              pinnedToolCall: {
+                serverName: "srv-1",
+                toolName: "show_map",
+                arguments: { city: "SF" },
+              },
+            },
+          ],
+        },
+        localOptions,
+      );
+      const refusal = errorSpy.mock.calls.find(
+        ([message]) => message === "[evals] Test case failed:",
+      )?.[1] as { name?: string } | undefined;
+      errorSpy.mockRestore();
+      expect(refusal?.name).not.toBe("ModelResolutionRefusalError");
+      expect(streamTextMock).not.toHaveBeenCalled();
+    });
+
     it("hosted: the top-level temperature is the saved one, not the host default", async () => {
       const hostedWithTemperature: ModelSelection = {
         ...HOSTED,
@@ -838,22 +886,23 @@ describe("eval runner reads saved model selections", () => {
       expect(body.modelSelection).toEqual(orgWithTemperature);
     });
 
-    it("org cloud: a saved reasoning effort is refused (the route cannot apply it)", async () => {
-      await expectRefused(
-        run(
-          {
-            model: SAME_ID,
-            provider: "openrouter",
-            selection: {
-              ...ORG_OPENROUTER,
-              settings: { reasoningEffort: "low" },
-            },
-          },
-          { orgModelConfigTarget: { projectId: "project-1" } },
-        ),
-        "capability_missing",
+    it("org cloud: a saved reasoning effort is forwarded on the selection for the backend to apply", async () => {
+      const orgWithEffort: ModelSelection = {
+        ...ORG_OPENROUTER,
+        settings: { reasoningEffort: "low" },
+      };
+      await run(
+        {
+          model: SAME_ID,
+          provider: "openrouter",
+          selection: orgWithEffort,
+        },
+        { orgModelConfigTarget: { projectId: "project-1" } },
       );
-      expect(requestTo("/stream/org")).toBeNull();
+      const body = requestTo("/stream/org");
+      expect(body).not.toBeNull();
+      expect(body.modelSelection).toEqual(orgWithEffort);
+      expect(body).not.toHaveProperty("temperature");
     });
   });
 

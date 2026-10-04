@@ -15,6 +15,7 @@ import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
 import { harnessPinnedVersion } from "@/shared/harness-model-support";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 
 /**
  * The harness runtime CLI version the lease is for — the adapter's pinned
@@ -149,6 +150,12 @@ export async function startHarnessModelBroker(args: {
   modelId: string;
   runId?: string;
   maxOutputTokens?: number;
+  /**
+   * The reasoning effort the turn will run at. The backend validates it
+   * against the catalog and the proxy checks the wire against it. Optional and
+   * omitted when the turn has none, so an older backend sees the same body.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -183,6 +190,9 @@ export async function startHarnessModelBroker(args: {
         ...(args.runId ? { runId: args.runId } : {}),
         ...(args.maxOutputTokens !== undefined
           ? { maxOutputTokens: args.maxOutputTokens }
+          : {}),
+        ...(args.reasoningEffort
+          ? { reasoningEffort: args.reasoningEffort }
           : {}),
       }),
       signal: args.signal,
@@ -331,6 +341,8 @@ export async function startLoopbackModelBroker(args: {
   sessionIdx?: number;
   hostId?: string;
   maxOutputTokens?: number;
+  /** See `startHarnessModelBroker`. */
+  reasoningEffort?: ModelReasoningEffort;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessLoopbackStartResult> {
@@ -374,6 +386,9 @@ export async function startLoopbackModelBroker(args: {
         ...(args.runId ? { runId: args.runId } : {}),
         ...(args.maxOutputTokens !== undefined
           ? { maxOutputTokens: args.maxOutputTokens }
+          : {}),
+        ...(args.reasoningEffort
+          ? { reasoningEffort: args.reasoningEffort }
           : {}),
       }),
       ...(args.signal ? { signal: args.signal } : {}),

@@ -83,6 +83,10 @@ import type { Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import {
+  MODEL_REASONING_EFFORTS,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk";
 import type { ModelMessage, ToolSet } from "ai";
 import {
   MODEL_ID_PREFIX_TO_PROVIDER,
@@ -94,6 +98,7 @@ import { createManualHostedConnection } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
+import { backendModelSelection } from "../../utils/model-resolution-local.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
@@ -125,6 +130,7 @@ import {
   assertHarnessDispatchable,
   assertHostPointerAgreement,
   engineLabel,
+  hostSelectionForModel,
   resolveChatSessionEngine,
   type ChatSessionEngine,
   type ChatSessionHostTarget,
@@ -208,6 +214,10 @@ const CONFIG_FIELDS = [
   // boundary's `resumeConfig` projection, so a continuation reloads the
   // session's own value instead of silently reverting to the model default.
   "temperature",
+  // Pinned like `temperature`: the first turn's effort is recorded in the
+  // session's `resumeConfig` (which the ingest boundary carries), so a
+  // continuation reloads it and a restated one is refused.
+  "reasoningEffort",
   "toolMode",
 ] as const;
 
@@ -281,6 +291,15 @@ const turnSchema = z
     serverIds: z.array(z.string().min(1)).min(1).max(20).optional(),
     systemPrompt: z.string().max(8_000).optional(),
     temperature: z.number().min(0).max(2).optional(),
+    /**
+     * Reasoning effort for the session, pinned on the FIRST turn like
+     * `temperature` (a continuation reloads it; restating one is refused). It
+     * wins over the effort a `hostId`'s saved selection carries, and is
+     * applied or refused by the rail the model runs on, never dropped.
+     * Sending one also drops the temperature the model would otherwise run
+     * at, so an explicit `temperature` beside it is refused.
+     */
+    reasoningEffort: z.enum(MODEL_REASONING_EFFORTS).optional(),
     maxSteps: z.number().int().min(1).max(MAX_STEPS_CEILING).optional(),
     toolMode: z.enum(["read_only", "auto"]).optional(),
     allowedServerIds: z.array(z.string().min(1)).max(20).optional(),
@@ -290,7 +309,15 @@ const turnSchema = z
   .refine((value) => !(value.environmentId && value.serverIds), {
     message:
       "Pass at most one of environmentId or serverIds — an environment already resolves its own servers.",
-  });
+  })
+  .refine(
+    (value) =>
+      !(value.reasoningEffort !== undefined && value.temperature !== undefined),
+    {
+      message:
+        "Pass at most one of reasoningEffort or temperature — a reasoning effort replaces the sampling temperature.",
+    },
+  );
 
 type TurnBody = z.infer<typeof turnSchema>;
 
@@ -1035,6 +1062,11 @@ async function handleTurn(c: Context): Promise<Response> {
     environmentId?: string;
     serverIds?: string[];
   };
+  // The session's pinned effort: the first turn's top-level field, reloaded
+  // from `resumeConfig` on a continuation. Kept out of `pins`, which is sent
+  // to the lease/ingest calls whose agent-pin projection does not carry it;
+  // the full `resumeConfig` persisted at the end does.
+  let pinnedReasoningEffort: ModelReasoningEffort | undefined;
 
   if (body.sessionId) {
     existing = await resolveScopedSession(
@@ -1101,6 +1133,9 @@ async function handleTurn(c: Context): Promise<Response> {
     }
     runtimeChatSessionId = runtimeId;
     expectedVersion = existing.version;
+    pinnedReasoningEffort = configuring
+      ? body.reasoningEffort
+      : (existing.resumeConfig?.reasoningEffort ?? undefined);
     pins = {
       modelId: resume.modelId,
       toolMode: resume.toolMode ?? "read_only",
@@ -1161,6 +1196,7 @@ async function handleTurn(c: Context): Promise<Response> {
     assertUnambiguousModelId(body.modelId);
     projectId = body.projectId;
     runtimeChatSessionId = randomUUID();
+    pinnedReasoningEffort = body.reasoningEffort;
     pins = {
       modelId: body.modelId,
       toolMode: body.toolMode ?? "read_only",
@@ -1385,6 +1421,37 @@ async function handleTurn(c: Context): Promise<Response> {
       auth: { authHeader },
     });
 
+    // The host's saved selection, only for the model this turn runs: a saved
+    // selection (and its effort) belongs to one model and must never be carried
+    // onto a different one the body named. Read once so the prepare step, the
+    // runtime resolution and the resume record cannot disagree about the effort.
+    const hostSelection = hostSelectionForModel(
+      target.host?.runtimeConfig,
+      String(modelDefinition.id),
+    );
+    // The session's pinned effort (first turn's request, reloaded from
+    // `resumeConfig` on a continuation) wins over the host's saved one, the
+    // same order `/stream` applies a top-level effort over a selection. A
+    // session keeps the effort it ran at: what the first turn recorded is what
+    // continuations reload, including one that came from the host.
+    const turnReasoningEffort =
+      pinnedReasoningEffort ?? hostSelection?.settings?.reasoningEffort;
+    // An effort replaces the sampling temperature (`prepareChatV2` drops it).
+    // One with a host-sourced effort must be dropped from what is recorded too,
+    // or the resume config would claim a temperature the turn never ran at. An
+    // effort sent in the body is already refused beside a temperature.
+    const turnTemperature =
+      turnReasoningEffort !== undefined ? undefined : pins.temperature;
+    const { temperature: _unusedTemperature, ...pinsWithoutTemperature } = pins;
+    // The effort the turn runs at is recorded with it (begin_model and failure
+    // persistence included), so a failed turn still leaves its pin.
+    const turnPins = {
+      ...(turnTemperature === undefined ? pinsWithoutTemperature : pins),
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
+        : {}),
+    };
+
     // --- Engine pre-flight ------------------------------------------------
     //
     // BEFORE the connection and before any model call, so a harness host whose
@@ -1399,12 +1466,21 @@ async function handleTurn(c: Context): Promise<Response> {
         ...(modelDefinition.provider
           ? { provider: modelDefinition.provider }
           : {}),
+        ...(modelDefinition.supportedReasoningEfforts
+          ? {
+              supportedReasoningEfforts:
+                modelDefinition.supportedReasoningEfforts,
+            }
+          : {}),
       },
       hasSelectedMcpServers: selectedServerIds.length > 0,
       // What a LATER turn will be able to resolve on its own. A session that
       // pins `serverIds` can be continued with no pointer at all, so a host
       // reached by pointer cannot survive on it — see the unpinnable-host rule.
       sessionPinsOwnServerIds: pins.serverIds !== undefined,
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
+        : {}),
       toolPolicy: {
         toolMode: pins.toolMode,
         ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),
@@ -1682,8 +1758,12 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
-      ...(pins.temperature !== undefined
-        ? { temperature: pins.temperature }
+      ...(turnTemperature !== undefined
+        ? { temperature: turnTemperature }
+        : {}),
+      // Under an effort the resolved temperature is omitted (see prepareChatV2).
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
         : {}),
       ...(excluded.length > 0 ? { excludeMcpToolNames: excluded } : {}),
       // No progressive discovery: the caller chose this target deliberately
@@ -1721,6 +1801,16 @@ async function handleTurn(c: Context): Promise<Response> {
       chatSessionId: runtimeChatSessionId,
       serverIds: selectedServerIds,
       tools,
+      // The host's saved selection and its effort: the rail applies it (provider
+      // options on the direct engine, the forwarded selection / top-level field
+      // on the hosted rails) or refuses it, instead of dropping it. Only a
+      // backend-resolvable selection is sent (never `local`).
+      ...(hostSelection && backendModelSelection(hostSelection)
+        ? { modelSelection: backendModelSelection(hostSelection) }
+        : {}),
+      ...(turnReasoningEffort !== undefined
+        ? { settings: { reasoningEffort: turnReasoningEffort } }
+        : {}),
       // The harness selector rides the RUNTIME, which is where
       // `runUnifiedAssistantTurn` reads it from. Absent ⇒ the emulated engine,
       // byte-identical to every turn this surface ran before host targeting.
@@ -1748,7 +1838,7 @@ async function handleTurn(c: Context): Promise<Response> {
         bearer: authHeader,
         projectId,
         signal: abortController.signal,
-        body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: pins },
+        body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: turnPins },
       });
     modelCallStarted = true;
     const result = await runUnifiedAssistantTurn({
@@ -1849,7 +1939,7 @@ async function handleTurn(c: Context): Promise<Response> {
           sessionMessages: result.messages,
           startedAt: existing?.startedAt ?? startedAt,
           lastActivityAt: Date.now(),
-          resumeConfig: pins,
+          resumeConfig: turnPins,
           turnLeaseOwnerToken: executionOwnerToken,
           turnTrace: {
             ...(result.turnTrace ?? {
@@ -1930,8 +2020,13 @@ async function handleTurn(c: Context): Promise<Response> {
     // --- Persist ----------------------------------------------------------
     const resumeConfig: ResumeConfig = {
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
-      ...(pins.temperature !== undefined
-        ? { temperature: pins.temperature }
+      ...(turnTemperature !== undefined
+        ? { temperature: turnTemperature }
+        : {}),
+      // What the conversation ran at (from the host's saved selection), so a
+      // reopened chat shows it. Absent when the turn had none.
+      ...(turnReasoningEffort !== undefined
+        ? { reasoningEffort: turnReasoningEffort }
         : {}),
       selectedServers: selectedServerIds,
       // The four agent pins. First-write-wins is enforced at the ingest

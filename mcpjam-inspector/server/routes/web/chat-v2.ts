@@ -67,6 +67,11 @@ import {
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
+import {
+  hostSelectionForTurn,
+  parseChatReasoningEffort,
+  resolveChatReasoningEffort,
+} from "../../utils/chat-reasoning-effort.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
@@ -968,6 +973,21 @@ chatV2.post("/", async (c) => {
     }
     const systemPrompt = resolvedExecution.systemPrompt;
     const temperature = resolvedExecution.temperature;
+    // Reasoning effort: the body's top-level field, else the selected host's
+    // saved effort — the latter only when the host's selection is for THIS
+    // turn's model. A scenario turn (share link) takes the host's alone.
+    const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
+    if (!bodyEffort.ok) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, bodyEffort.error);
+    }
+    const reasoningEffort = resolveChatReasoningEffort({
+      bodyEffort: bodyEffort.effort,
+      hostSelection: hostSelectionForTurn(
+        resolvedExecution.modelSelection,
+        String(modelDefinition.id),
+      ),
+      hostWins: isScenarioSession,
+    });
     const requireToolApproval = resolvedExecution.requireToolApproval;
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
@@ -1014,6 +1034,8 @@ chatV2.post("/", async (c) => {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
         localExecution: Boolean(harnessExecutionTarget),
+        // Refused before any spend when the adapter has not verified it.
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         requireToolApproval,
         // Use the SERVER-resolved host server list, not the request body — a
         // stale/tampered request mustn't send an empty array to bypass the
@@ -2067,6 +2089,16 @@ chatV2.post("/", async (c) => {
           modelDefinition,
           systemPrompt: effectiveSystemPrompt,
           temperature,
+          ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+          // Only a temperature sent ALONGSIDE a body effort counts as
+          // explicit: a host default (or the slider value a client sends with
+          // a host's saved effort) yields to the effort, an explicit pair is
+          // refused on the direct rail.
+          ...(!isScenarioSession &&
+          bodyEffort.effort !== undefined &&
+          bodyTemperature !== undefined
+            ? { explicitTemperature: bodyTemperature }
+            : {}),
           requireToolApproval,
           respectToolVisibility,
           modelVisibleMcpToolResults,

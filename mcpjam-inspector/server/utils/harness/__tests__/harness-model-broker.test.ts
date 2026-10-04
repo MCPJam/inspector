@@ -111,6 +111,31 @@ describe("startHarnessModelBroker", () => {
     }
   });
 
+  it("carries the reasoning effort when the turn has one, and omits it otherwise", async () => {
+    const bodies: any[] = [];
+    mockFetch((_url, init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({
+        ok: true,
+        runId: "run_x",
+        expiresAt: 1,
+        protocol: "openai",
+        proxyBaseUrl: "https://proxy/openai",
+        delivery: "e2b-network-transform",
+      });
+    });
+    const base = {
+      box: { kind: "computer" as const, computerId: "c1", projectId: "p1" },
+      harnessId: "codex" as const,
+      modelId: "openai/gpt-5",
+      bearer: "t",
+    };
+    await startHarnessModelBroker({ ...base, reasoningEffort: "high" });
+    await startHarnessModelBroker(base);
+    expect(bodies[0].reasoningEffort).toBe("high");
+    expect("reasoningEffort" in bodies[1]).toBe(false);
+  });
+
   it("includes the executionScope in the body when present (guest/swarm path)", async () => {
     let seenBody: any = {};
     mockFetch((_url, init) => {
@@ -254,6 +279,24 @@ describe("startLoopbackModelBroker", () => {
     expect(seenBody.harnessRuntimeVersion).toBe(
       HARNESS_PINNED_VERSIONS["claude-code"]
     );
+  });
+
+  it("carries the reasoning effort on a loopback start", async () => {
+    let seenBody: any = {};
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({ ok: false }, { status: 503 });
+    });
+    await startLoopbackModelBroker({
+      projectId: "p1",
+      harnessId: "codex",
+      modelId: "openai/gpt-5",
+      machineId: "m1",
+      keyId: "k1",
+      reasoningEffort: "medium",
+      bearer: "t",
+    });
+    expect(seenBody.reasoningEffort).toBe("medium");
   });
 });
 

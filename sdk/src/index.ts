@@ -1703,6 +1703,7 @@ export {
   selectionConfigKey,
   selectionIfMatches,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
 } from "./host-config/index.js";
 export type {
   ReasoningEffortProviderOptions,

@@ -434,6 +434,9 @@ export function ChatTabV2({
     setSystemPrompt,
     temperature,
     setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    setReasoningEffort,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -469,6 +472,9 @@ export function ChatTabV2({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
+    // A scenario / share-link turn runs the host's own config; the visitor's
+    // chip would be ignored there, so it is not offered.
+    reasoningEffortEnabled: !hostedContext?.scenarioId,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     hostedContext: {
@@ -778,6 +784,18 @@ export function ChatTabV2({
         turnTraces?: ChatHistoryTurnTrace[];
       }
     ) => {
+      // Resolved BEFORE the load so the pinned effort seeds for the model the
+      // session restores, not the one the picker is on now.
+      const restoredModel =
+        ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
+          ? // By `modelSource` as well as id: an OpenRouter id can also be a
+            // hosted row, and this thread must reopen on the one it ran on (#5472).
+            resolveRestoredModel(
+              availableModels,
+              detail.modelId,
+              detail.modelSource
+            )
+          : null) ?? undefined;
       await loadChatSession(
         {
           chatSessionId: detail.chatSessionId,
@@ -790,24 +808,14 @@ export function ChatTabV2({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
+          restoredModel,
         }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
-      const shouldRestoreComposerState =
-        options?.shouldRestoreComposerState?.() ?? true;
-      if (shouldRestoreComposerState && detail.modelId) {
-        // By `modelSource` as well as id: an OpenRouter id can also be a
-        // hosted row, and this thread must reopen on the one it ran on (#5472).
-        const matchingModel = resolveRestoredModel(
-          availableModels,
-          detail.modelId,
-          detail.modelSource
-        );
-        if (matchingModel) {
-          setSelectedModel(matchingModel);
-        }
+      if (restoredModel) {
+        setSelectedModel(restoredModel);
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -2211,6 +2219,11 @@ export function ChatTabV2({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    onReasoningEffortChange: hostedContext?.scenarioId
+      ? undefined
+      : setReasoningEffort,
     onResetChat: handleResetAllChats,
     submitDisabled: submitBlocked || scenarioComposerBlocked,
     tokenUsage,

@@ -99,14 +99,12 @@ describe("compare-playground-helpers", () => {
       override: {
         systemPrompt: "Focused override",
         temperature: "0.7",
-        providerFlagsJson: '{"reasoningEffort":"high"}',
       },
     });
 
     expect(merged).toEqual({
       system: "Focused override",
       temperature: 0.7,
-      reasoningEffort: "high",
     });
   });
 

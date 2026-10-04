@@ -3,6 +3,7 @@ import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import type {
   Harness,
   McpToolResultImageRenderingPolicy,
@@ -105,6 +106,12 @@ export interface ResumeConfig {
   executionTarget?: ResumeExecutionTarget;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort the conversation ran at, so a reopened chat restores
+   * it. Mirrors `chatResumeConfigValidator.reasoningEffort` in the backend;
+   * absent when the turn had none.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
