@@ -123,6 +123,8 @@ import { logger } from "../../utils/logger.js";
 import { createProposedAction } from "../../services/slack-backend.js";
 import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { MCPJAM_AGENT_FAILURE_CAPTURE } from "../../utils/agent-failure-capture.js";
+import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Tool surface
@@ -1588,9 +1590,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       runtime: {
         ...rt.runtime,
         // MCPJam pays for agent turns on every surface, not just the in-app
-        // panel. This rail already requires the Inspector service token at its
-        // boundary and only accepts signed-in delegated org JWTs, which is
-        // exactly what the backend re-checks before honouring the claim.
+        // panel. The backend honours the claim on the caller's own sign-in,
+        // and only for the credentials it accepts for this — the org-scoped
+        // delegated token this route mints for `sk_` keys, Slack and Discord,
+        // or a first-party session — so a bearer minted for another audience
+        // is refused rather than billed.
         extraBodyFields: {
           ...(rt.runtime.extraBodyFields ?? {}),
           billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
@@ -1611,6 +1615,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
       origin: "mcpjam_agent",
+      // Every failure of an agent turn reaches Sentry, classified — and is
+      // recorded on THIS request, so the request-log backstop does not
+      // capture the `v1Error` this route then answers with a second time.
+      failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
+      failureReporter: createRequestStreamFailureReporter(c, "v1-agent"),
       // The SHARED ceiling, not a local 16. Now that this route sends the
       // billing claim, the backend refuses any step at or past
       // `AGENT_MAX_STEPS` — so a local copy that drifted upward would not buy
