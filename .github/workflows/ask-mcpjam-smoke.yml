@@ -83,14 +83,14 @@ jobs:
     environment: ask-mcpjam-smoke-staging
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Nothing here pushes, and `npm ci` runs install scripts: leave no
           # token in .git/config for them to read.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -146,7 +146,7 @@ jobs:
       # The exact dist build-packages smoked and is about to publish.
       - name: Download the release's package dists
         if: steps.config.outputs.ok == 'true' && env.SOURCE == 'artifact'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-dists
           path: .
