@@ -9,6 +9,22 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-04
+
+#### Fixed
+
+- **Local Claude Code and Codex model calls now complete** — every real model request from a local harness was refused with "Invalid proof of possession". The local model gateway now signs the request path the MCPJam broker actually verifies, so local Claude Code and Codex runs reach the model instead of failing at the first turn.
+
+- **Approve / Deny row now renders for harness tool approvals** — approval requests from local and cloud harness runs were arriving with an empty tool call id, so the chat showed "No tool invocation found for tool call ID" instead of the Approve / Deny pill. The correct id is now read from the approval event.
+
+- **Denying a harness tool approval no longer re-sends the decision** — after denying a call, the chat was re-sending the same decision on the next turn, which failed with "The local session for this approval is no longer available". Denied calls are now closed in the chat immediately, matching the behavior of the emulated engine.
+
+- **Sending a message after stopping an approved command now works** — if you stopped a turn while an approved command was running, the next message failed with "Lifecycle state has unexpected type 'continue-turn'". The conversation now resumes correctly from that point.
+
+- **Harness chats paused on approval are now saved to history** — a new chat whose first turn paused for a tool approval was not saved, so a reload showed a 404 and the chat reported "This reply couldn't be saved". Paused turns are now saved to chat history, matching what the emulated engine already did.
+
+- **Reopening your own harness chat keeps "This machine"** — restoring your own chat from the Sessions rail or by reloading its link now keeps local execution available. Previously, every history view was treated as somebody else's turn, which moved the next message off your machine.
+
 ### 2026-09-30
 
 #### Added
