@@ -1,26 +1,40 @@
 import * as Sentry from "@sentry/electron/main";
 import log from "electron-log";
+import { updateShutdownSnapshot } from "./update-shutdown.js";
 import type { UpdateAttempt } from "./update-attempt.js";
 import type { UpdateFailureReason } from "../../../shared/desktop-update.js";
 
 export function reportUpdateFailure(
   attempt: UpdateAttempt,
   reason: UpdateFailureReason | "download_recovered" | "install_verified",
+  eventId?: string,
 ): void {
   const key = `${attempt.retries}:${attempt.phase}:${reason}`;
   if (attempt.reported.includes(key)) return;
   attempt.reported.push(key);
   const recovered =
     reason === "download_recovered" || reason === "install_verified";
-  const message = recovered
-    ? "Desktop update recovered"
-    : "Desktop update failed";
+  const shutdown =
+    attempt.phase === "installing" &&
+    (reason === "shutdown_stuck" || reason === "install_timeout");
+  const message = shutdown
+    ? "MCPJam couldn’t close to finish updating. Download completed. Install status: waiting for next launch."
+    : recovered
+      ? "Desktop update recovered"
+      : "Desktop update failed";
   (recovered ? log.info : log.error)(message, {
     reason,
     phase: attempt.phase,
     attemptId: attempt.id,
     retries: attempt.retries,
   });
+  const tags = {
+    component: "desktop-updater",
+    update_stage: attempt.phase,
+    update_reason: reason,
+    update_attempt_id: attempt.id,
+    update_notification: recovered ? "outcome" : "failure",
+  };
   try {
     // Deliberately construct the event rather than forwarding a native error:
     // those can contain signed feed URLs and paths inside the user's home.
@@ -33,17 +47,20 @@ export function reportUpdateFailure(
         user: undefined,
         request: undefined,
         extra: undefined,
+        tags,
+        contexts: {
+          update: event.contexts?.update,
+          update_shutdown: event.contexts?.update_shutdown,
+        },
       }));
       Sentry.captureEvent({
+        event_id: eventId,
         message,
         level: recovered ? "info" : "error",
         fingerprint: ["desktop-update", attempt.phase, reason],
-        tags: {
-          component: "desktop-updater",
-          update_stage: attempt.phase,
-          update_reason: reason,
-        },
+        tags,
         contexts: {
+          ...(shutdown ? { update_shutdown: updateShutdownSnapshot() } : {}),
           update: {
             attempt_id: attempt.id,
             from_version: attempt.fromVersion,
