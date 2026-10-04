@@ -7,6 +7,7 @@ import { useRunInsights } from "./use-run-insights";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { TestCaseIterationsTable } from "./test-case-iterations-table";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
+import { iterationTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 
 interface TestCaseDetailViewProps {
   testCase: EvalCase;
@@ -54,6 +55,7 @@ export function TestCaseDetailView({
       {
         provider: string;
         model: string;
+        targetKey: string;
         passed: number;
         failed: number;
         total: number;
@@ -74,12 +76,16 @@ export function TestCaseDetailView({
         return;
       }
 
-      const key = `${snapshot.provider}/${snapshot.model}`;
+      // Keyed by TARGET (`targetKey`; the bare model id when default), so two
+      // efforts of one model are two rows.
+      const targetKey = iterationTargetKey(iteration) ?? snapshot.model;
+      const key = `${snapshot.provider}/${targetKey}`;
 
       if (!modelMap.has(key)) {
         modelMap.set(key, {
           provider: snapshot.provider,
           model: snapshot.model,
+          targetKey,
           passed: 0,
           failed: 0,
           total: 0,
@@ -96,9 +102,14 @@ export function TestCaseDetailView({
       }
     });
 
-    return Array.from(modelMap.values())
-      .map((stats) => ({
-        model: `${stats.provider}/${stats.model}`,
+    const targetKeys = [...modelMap.values()].map((stats) => stats.targetKey);
+    return Array.from(modelMap.entries())
+      .map(([key, stats]) => ({
+        key,
+        model: `${stats.provider}/${stats.model}${targetKeySuffix(
+          stats.targetKey,
+          targetKeys,
+        )}`,
         passRate:
           stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
         passed: stats.passed,
@@ -253,7 +264,7 @@ export function TestCaseDetailView({
                 By Model:
               </span>
               {modelBreakdown.map((model) => (
-                <div key={model.model} className="flex items-center gap-1.5">
+                <div key={model.key} className="flex items-center gap-1.5">
                   <div
                     className="h-1.5 w-1.5 rounded-full"
                     style={{

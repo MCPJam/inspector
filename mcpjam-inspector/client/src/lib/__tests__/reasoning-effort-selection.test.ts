@@ -181,16 +181,75 @@ describe("environmentsForModelCell", () => {
     modelSelection,
   });
 
-  it("keeps effort-only siblings of the picked selection", () => {
+  it("matches by comparisonKey: each effort of a model is its own cell", () => {
     const high = env("h1", hostedSel({ reasoningEffort: "high" }));
+    const low = env("h1", hostedSel({ reasoningEffort: "low" }));
     const plain = env("h1", hostedSel());
-    const out = environmentsForModelCell([high, plain], {
-      hostId: "h1",
-      modelId: "openai/gpt-5",
-      picked: hostedSel({ reasoningEffort: "high" }),
-      efforts: true,
-    });
-    expect(out).toEqual([high, plain]);
+    const cell = (picked?: ModelSelection) =>
+      environmentsForModelCell([high, low, plain], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked,
+        efforts: true,
+      });
+    expect(cell(hostedSel({ reasoningEffort: "high" }))).toEqual([high]);
+    expect(cell(hostedSel({ reasoningEffort: "low" }))).toEqual([low]);
+    expect(cell(hostedSel())).toEqual([plain]);
+    // An unlabelled pick keys as the bare id, like a plain hosted selection.
+    expect(cell(undefined)).toEqual([plain]);
+  });
+
+  it("an unlabelled environment matches a plain pick of its id, as before", () => {
+    const bare = env("h1");
+    expect(
+      environmentsForModelCell([bare], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked: hostedSel(),
+        efforts: true,
+      }),
+    ).toEqual([bare]);
+  });
+
+  it("an unlabelled environment matches the catalog's org pick, but not an effort", () => {
+    // The only catalog row for the id is an org connection, so the composer
+    // fills the target with an org selection the environment never chose.
+    const bare = env("h1");
+    const cell = (picked: ModelSelection) =>
+      environmentsForModelCell([bare], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked,
+        efforts: true,
+      });
+    expect(cell(org())).toEqual([bare]);
+    expect(cell(org({ reasoningEffort: "high" }))).toEqual([]);
+  });
+
+  it("prefers an environment that runs the exact pick over an unlabelled one", () => {
+    const bare = env("h1");
+    const byok = env("h1", org());
+    expect(
+      environmentsForModelCell([bare, byok], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked: org(),
+        efforts: true,
+      }),
+    ).toEqual([byok]);
+  });
+
+  it("matches on id alone where the deployment stores no selections", () => {
+    const high = env("h1", hostedSel({ reasoningEffort: "high" }));
+    const low = env("h1", hostedSel({ reasoningEffort: "low" }));
+    expect(
+      environmentsForModelCell([high, low], {
+        hostId: "h1",
+        modelId: "openai/gpt-5",
+        picked: undefined,
+        efforts: false,
+      }),
+    ).toEqual([high, low]);
   });
 
   it("does not count an environment on a different connection as a sibling", () => {

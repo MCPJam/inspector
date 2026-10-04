@@ -26,6 +26,7 @@ import {
   mergeToolCalls,
 } from "../../shared/eval-tool-call-projection";
 import {
+  copyUsageTotals,
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -124,8 +125,12 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import { isHostedModelDefinition } from "./hosted-model-catalog.js";
-import type { ModelSelection } from "@mcpjam/sdk";
+import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import {
+  decideTurnRail,
+  routingSelectionForModel,
+  withSelectionRouting,
+} from "../utils/selection-rail.js";
 import {
   backendModelSelection,
   ModelResolutionRefusalError,
@@ -390,6 +395,15 @@ export type EvalTestCase = {
    * here (`readStoredModelSelection`).
    */
   selection?: ModelSelection;
+  /**
+   * A STORED legacy selection behind `model` (`{ source: "legacy" }`, written
+   * by a save of a bare id outside the hosted catalog, or by the backfill):
+   * "own key only". Read only when `selection` is absent. The case runs on the
+   * own-key path (org BYOK, else the request's keys) and NEVER on MCPJam
+   * credits, however the id looks. Absent with `selection` absent ⇒ an
+   * unlabelled row: today's hosted-first read, unchanged.
+   */
+  legacySelection?: LegacyModelSelection;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -3416,17 +3430,33 @@ const executeTestCase = async (params: {
     forwardedSelection?.source === "hosted" ? forwardedSelection : undefined;
   const orgSelection =
     forwardedSelection?.source === "org" ? forwardedSelection : undefined;
-  const modelDefinition = selectionRoute?.modelDefinition ?? promotedModel;
+  // A stored legacy selection (own key only) for the model that runs. Same
+  // gate as `selectionRoute`: a promoted host model is not the case's.
+  const legacySelection =
+    !selectionRoute && promotedModel === caseModel
+      ? routingSelectionForModel(test.legacySelection, caseModel)
+      : undefined;
+  // `hosted: false` on a legacy one, so every check downstream (harness
+  // admission included) agrees it is not MCPJam-paid.
+  const modelDefinition =
+    selectionRoute?.modelDefinition ??
+    withSelectionRouting(promotedModel, legacySelection);
   const resolvedModelId = selectionRoute
     ? selectionRoute.wireModelId
     : getCanonicalModelId(String(modelDefinition.id), modelDefinition.provider);
+  // Who pays: the saved selection's rail; a legacy one is never `hosted`;
+  // without either, today's hosted-list check on the canonical id
+  // (`decideTurnRail` with no selection IS that check).
   const isJamModel = selectionRoute
     ? selectionRoute.rail === "hosted"
-    : isHostedModelDefinition({
-        id: resolvedModelId,
-        provider: modelDefinition.provider,
-        hosted: modelDefinition.hosted,
-      });
+    : decideTurnRail({
+        selection: legacySelection,
+        model: {
+          id: resolvedModelId,
+          provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
+        },
+      }) === "hosted";
   const orgByokRuntime =
     isJamModel || selectionRoute?.rail === "local"
       ? undefined
@@ -5555,11 +5585,7 @@ const runLocalIteration = async ({
       evaluation,
       turnCheckResults,
     );
-    const usageFinal: UsageTotals = {
-      inputTokens: acc.accumulatedUsage.inputTokens,
-      outputTokens: acc.accumulatedUsage.outputTokens,
-      totalTokens: acc.accumulatedUsage.totalTokens,
-    };
+    const usageFinal: UsageTotals = copyUsageTotals(acc.accumulatedUsage);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
@@ -5830,11 +5856,7 @@ const runLocalIteration = async ({
           actualToolCalls: extractToolCallsFromConversation({
             messages: failMessages,
           }),
-          usage: {
-            inputTokens: acc.accumulatedUsage.inputTokens,
-            outputTokens: acc.accumulatedUsage.outputTokens,
-            totalTokens: acc.accumulatedUsage.totalTokens,
-          },
+          usage: copyUsageTotals(acc.accumulatedUsage),
           prompts: promptTraceSummaries,
         }),
       );
@@ -5862,11 +5884,7 @@ const runLocalIteration = async ({
       ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
-      usage: {
-        inputTokens: acc.accumulatedUsage.inputTokens,
-        outputTokens: acc.accumulatedUsage.outputTokens,
-        totalTokens: acc.accumulatedUsage.totalTokens,
-      },
+      usage: copyUsageTotals(acc.accumulatedUsage),
       messages: failMessages,
       // Gated exactly as on the success path: a model-free case carries a
       // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be

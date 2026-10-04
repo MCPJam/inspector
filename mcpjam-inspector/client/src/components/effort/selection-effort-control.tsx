@@ -10,6 +10,8 @@
  *  - options come from the row's route (`reasoningEffortOptions`); a row the
  *    catalog does not list, or an unresolved one, offers none ⇒ hidden (a
  *    saved effort is still shown, badged "no longer supported").
+ *  - the `Default` caption sits under the provider default level for the
+ *    row (`defaultReasoningEffort`), unless the caller passes `defaultLevel`.
  *  - the effort lives on the selection. A bare-id BYOK row gets one built
  *    from its provenance (`storedModelChoice`'s shape); a row that cannot be
  *    expressed as a selection, or a deployment that stores none, shows the
@@ -23,6 +25,7 @@ import type {
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
 import {
+  reasoningEffortDefaultForRow,
   reasoningEffortOptions,
   reasoningEffortRouteForRow,
 } from "@/lib/reasoning-effort-options";
@@ -40,7 +43,7 @@ export type SelectionEffortWrite = {
 
 export type SelectionEffortControlProps = Pick<
   EffortControlProps,
-  "variant" | "className" | "hint"
+  "variant" | "className" | "hint" | "defaultLevel"
 > & {
   /** The picker row the config's model resolves to; undefined = unresolved. */
   row: ModelDefinition | undefined;
@@ -72,6 +75,7 @@ export function SelectionEffortControl({
   disabled = false,
   disabledReason,
   onChange,
+  defaultLevel,
   ...display
 }: SelectionEffortControlProps) {
   const options = useMemo(
@@ -82,6 +86,9 @@ export function SelectionEffortControl({
     [row, harness],
   );
   const value = selectionReasoningEffort(selection);
+  // The provider default for the row, unless the caller knows better.
+  const captionLevel =
+    defaultLevel ?? (row ? reasoningEffortDefaultForRow(row) : undefined);
   const canSave = useMemo(
     () =>
       !row ||
@@ -107,6 +114,7 @@ export function SelectionEffortControl({
       {...display}
       options={options}
       value={value}
+      defaultLevel={captionLevel}
       disabled={inert}
       disabledReason={inertReason}
       onChange={(effort) => {

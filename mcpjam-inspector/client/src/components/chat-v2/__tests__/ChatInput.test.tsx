@@ -1347,7 +1347,20 @@ describe("ChatInput", () => {
       expect(screen.getByTestId("effort-control-trigger")).toBeInTheDocument();
     });
 
-    it("is hidden whenever compare mode is on, even with one model picked", () => {
+    it("stays visible in compare mode, showing the lead card's level", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          {...effortProps}
+          multiModelEnabled
+          selectedModels={[defaultModel, { ...defaultModel, id: "gpt-5" }]}
+        />
+      );
+      const trigger = screen.getByTestId("effort-control-trigger");
+      expect(trigger).toHaveAccessibleName("Reasoning effort: High");
+    });
+
+    it("stays visible in compare mode with one model picked", () => {
       render(
         <ChatInput
           {...defaultProps}
@@ -1356,7 +1369,7 @@ describe("ChatInput", () => {
           selectedModels={[defaultModel]}
         />
       );
-      expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+      expect(screen.getByTestId("effort-control-trigger")).toBeInTheDocument();
     });
   });
 

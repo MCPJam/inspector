@@ -41,9 +41,14 @@ import {
   readXaaEnterprisePolicy,
   type ModelReasoningEffort,
   type ModelSelection,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk";
 import { selectionIfMatches } from "@mcpjam/sdk/browser";
-import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
+import {
+  readRoutingSelection,
+  readStoredModelSelection,
+} from "../../utils/model-resolution-local.js";
+import { routingSelectionForModel } from "../../utils/selection-rail.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   checkHarnessRuntimeAvailable,
@@ -174,6 +179,22 @@ export function hostSelectionForModel(
 }
 
 /**
+ * The selection that DECIDES THE RAIL for this turn's model: the host's saved
+ * selection, or a STORED legacy one ("own key only"), only when it is for
+ * `model`. `undefined` for an unlabelled host (today's hosted-list routing) or
+ * a turn on a different model.
+ */
+export function hostRoutingSelectionForModel(
+  runtimeConfig: Record<string, unknown> | undefined,
+  model: { id: string | { toString(): string }; provider?: string },
+): RequestedModelSelection | undefined {
+  return routingSelectionForModel(
+    readRoutingSelection(runtimeConfig?.modelSelection),
+    model,
+  );
+}
+
+/**
  * Decide the engine, or refuse with a named reason. Never falls back.
  *
  * The harness half delegates to `checkHarnessRuntimeAvailable` — the SAME gate
@@ -234,6 +255,12 @@ export function resolveChatSessionEngine(args: {
   model: {
     id: string;
     provider?: string;
+    /**
+     * `false` when the host's saved selection routes the turn OFF MCPJam
+     * credits (`withSelectionRouting`): the harness gate must see it, or a
+     * harness would run an own-key model on MCPJam's lease.
+     */
+    hosted?: boolean;
     supportedReasoningEfforts?: readonly string[];
   };
   /** The server set this turn will actually connect. */

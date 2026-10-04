@@ -143,6 +143,7 @@ import {
   assertHostPointerAgreement,
   engineLabel,
   harnessOfRuntimeConfig,
+  hostRoutingSelectionForModel,
   resolveChatSessionEngine,
 } from "../chat-session-host-target.js";
 import {
@@ -527,6 +528,26 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
     // a 200 that carried the refusal as commentary while skipping the engine —
     // a silent 200 is the exact shape this file exists to prevent, so the
     // failure mode must not be able to hide in the field nobody checked.
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("model-not-hosted");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a hosted-catalog model the host saved to run on the user's own key", async () => {
+    // The id is in MCPJam's catalog, but the host's stored legacy selection
+    // means own key only. A harness authenticates with MCPJam's credential,
+    // so running it would bill MCPJam for a turn the user chose to pay for.
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({
+        harness: "claude-code",
+        modelSelection: { source: "legacy", modelId: MODEL },
+      }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
     expect(response.status).toBe(422);
     expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
     expect(body.details.kind).toBe("model-not-hosted");
@@ -1294,5 +1315,33 @@ describe("browser turn integration", () => {
     expect(response.status).toBe(409);
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
     expect(mutationMock).toHaveBeenCalledWith("chatSessions:releaseTurnLease", { turnId: "turn_1", executionOwnerToken: "owner" });
+  });
+});
+
+describe("hostRoutingSelectionForModel — what decides a v1 session turn's rail", () => {
+  const none = { provider: "none", model: "none" } as const;
+
+  it("reads a full selection or a STORED legacy one, only for the turn's model", () => {
+    const hosted = { modelId: "openai/gpt-5", source: "hosted", fallback: none };
+    expect(
+      hostRoutingSelectionForModel({ modelSelection: hosted }, { id: "openai/gpt-5" }),
+    ).toEqual(hosted);
+    expect(
+      hostRoutingSelectionForModel(
+        { modelSelection: { source: "legacy", modelId: "openai/gpt-5" } },
+        { id: "openai/gpt-5" },
+      ),
+    ).toEqual({ source: "legacy", modelId: "openai/gpt-5" });
+    expect(
+      hostRoutingSelectionForModel(
+        { modelSelection: { source: "legacy", modelId: "openai/gpt-5" } },
+        { id: "anthropic/claude-haiku-4.5" },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("an unlabelled host has none: today's path", () => {
+    expect(hostRoutingSelectionForModel({}, { id: "openai/gpt-5" })).toBeUndefined();
+    expect(hostRoutingSelectionForModel(undefined, { id: "openai/gpt-5" })).toBeUndefined();
   });
 });

@@ -590,8 +590,13 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       composeBodies.push(body);
       const modelId =
         typeof body.modelId === "string" ? body.modelId : undefined;
+      // Content-addressed like the backend: a selection's effort is part of
+      // the row, so two efforts of one model are two environments.
+      const effort = body.modelSelection?.settings?.reasoningEffort;
       const id = modelId
-        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}`
+        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}${
+            typeof effort === "string" ? `-${effort}` : ""
+          }`
         : "env-adhoc";
       res.end(
         JSON.stringify({
@@ -7417,6 +7422,61 @@ test("eval run --compose-model-selection mints a cell carrying the selection", a
       modelId: "openai/gpt-5",
       modelSelection: EFFORT_SELECTION,
     });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model-selection repeated for one model mints one cell per effort", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  const low = {
+    ...EFFORT_SELECTION,
+    settings: { reasoningEffort: "low" },
+  };
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-server-group",
+            "group-pinned",
+            "--compose-model-selection",
+            JSON.stringify(low),
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION),
+            // The same selection again is the same cell, not a third one.
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION)
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0, run.stderr);
+    assert.deepEqual(
+      fixture.composeBodies.map(
+        (body) => (body as { modelSelection?: unknown }).modelSelection
+      ),
+      [low, EFFORT_SELECTION]
+    );
+    assert.deepEqual(
+      (fixture.groupBodies.at(-1) as { targets?: unknown } | undefined)
+        ?.targets,
+      [
+      { environmentId: "env-adhoc-openai-gpt-5-low" },
+      { environmentId: "env-adhoc-openai-gpt-5-high" },
+      ]
+    );
   } finally {
     await fixture.close();
   }

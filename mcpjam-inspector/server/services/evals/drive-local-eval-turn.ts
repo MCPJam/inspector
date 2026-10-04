@@ -1,6 +1,9 @@
 import { cloneTraceValue } from "../../utils/live-chat-trace-stream";
 import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
-import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import {
+  liveChatTraceUsageFromAiSdk,
+  type LiveChatTraceRequestPayloadEntry,
+} from "@/shared/live-chat-trace";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 import type { ModelMessage, Tool as AiTool, ToolChoice, ToolSet } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
@@ -34,7 +37,7 @@ import {
 import type { ToolPolicyGate } from "./tool-policy-gate.js";
 import { consumeFullStreamAsEvalEvents } from "./stream-adapter.js";
 import type { BrowserSessionContext } from "../browser-session-context.js";
-import type { UsageTotals } from "./types.js";
+import { addUsageTotals, type UsageTotals } from "./types.js";
 
 export type LocalEvalTurnAcc = {
   conversationMessages: ModelMessage[];
@@ -143,8 +146,8 @@ export type LocalModelCallSettled = {
   outcome: "ok" | "error" | "aborted";
   /** Machine code of an `error` (`turn_timeout`, `empty_response`, …). */
   code?: string;
-  /** This turn's token usage. */
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  /** This turn's token usage, with the reasoning / cached-input breakdown. */
+  usage?: UsageTotals;
   finishReason?: string;
   /** The model id the provider reported serving, when it reported one. */
   upstreamModel?: string;
@@ -490,19 +493,14 @@ export async function driveLocalEvalTurn(
   const turnTimedOut = turnDeadline.firedClock() === "turn";
   const turnElapsedMs = turnDeadline.elapsedMs();
   // How the model call ended, reported once (see `onModelCallSettled`).
+  const turnUsage = headless.totalUsage
+    ? (liveChatTraceUsageFromAiSdk(headless.totalUsage) ?? {})
+    : undefined;
   const settle = (outcome: "ok" | "error" | "aborted", code?: string) =>
     onModelCallSettled?.({
       outcome,
       ...(code ? { code } : {}),
-      ...(headless.totalUsage
-        ? {
-            usage: {
-              inputTokens: headless.totalUsage.inputTokens,
-              outputTokens: headless.totalUsage.outputTokens,
-              totalTokens: headless.totalUsage.totalTokens,
-            },
-          }
-        : {}),
+      ...(turnUsage ? { usage: turnUsage } : {}),
       ...(typeof headless.finishReason === "string"
         ? { finishReason: headless.finishReason }
         : {}),
@@ -591,15 +589,7 @@ export async function driveLocalEvalTurn(
     );
   }
 
-  acc.accumulatedUsage.inputTokens =
-    (acc.accumulatedUsage.inputTokens ?? 0) +
-    (headless.totalUsage?.inputTokens ?? 0);
-  acc.accumulatedUsage.outputTokens =
-    (acc.accumulatedUsage.outputTokens ?? 0) +
-    (headless.totalUsage?.outputTokens ?? 0);
-  acc.accumulatedUsage.totalTokens =
-    (acc.accumulatedUsage.totalTokens ?? 0) +
-    (headless.totalUsage?.totalTokens ?? 0);
+  addUsageTotals(acc.accumulatedUsage, turnUsage);
 
   if (promptResponseMessages.length === 0) {
     acc.iterationError =

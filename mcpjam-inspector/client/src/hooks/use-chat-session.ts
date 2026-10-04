@@ -442,6 +442,19 @@ export interface UseChatSessionOptions {
    */
   reasoningEffortEnabled?: boolean;
   /**
+   * A compare card's own effort. When set (`null` = Default, send nothing)
+   * it replaces the per-model remembered pick, so two cards of one model
+   * send their own levels. Still sent only when the row offers it and
+   * `reasoningEffortEnabled` is on.
+   */
+  fixedReasoningEffort?: ModelReasoningEffort | null;
+  /**
+   * The provider of the row `executionConfig.modelId` names (a compare
+   * card's row). Resolves that id to exactly that row — an OpenRouter row
+   * and the hosted row share ids — instead of the global lead's hint.
+   */
+  pinnedModelProvider?: string;
+  /**
    * Phase 3: real host style for direct chat traces. Forwarded into
    * the request body so the backend persists the v2 hostConfig with
    * the user's actual host style rather than defaulting to `'claude'`.
@@ -669,6 +682,16 @@ export interface UseChatSessionReturn {
    * pin). Not remembered: only an explicit pick is.
    */
   seedReasoningEffort: (
+    model: ModelDefinition,
+    effort: ModelReasoningEffort | undefined,
+  ) => void;
+  /** Levels `model` supports here (the model menu's per-row efforts). */
+  reasoningEffortLevelsFor: (model: ModelDefinition) => ModelReasoningEffort[];
+  /**
+   * User pick for `model` (picked with its effort in the model menu), before
+   * it is the selected model. Remembered for it, like `setReasoningEffort`.
+   */
+  setReasoningEffortForModel: (
     model: ModelDefinition,
     effort: ModelReasoningEffort | undefined,
   ) => void;
@@ -1798,6 +1821,8 @@ export function useChatSession(
     onReset,
     reasoningEffortHarness,
     reasoningEffortEnabled = false,
+    fixedReasoningEffort,
+    pinnedModelProvider,
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
@@ -2730,7 +2755,13 @@ export function useChatSession(
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
     const resolveAvailableModel = (modelId?: string | null) =>
-      resolveModelSelection(availableModels, modelId, leadProviderHint);
+      resolveModelSelection(
+        availableModels,
+        modelId,
+        pinnedModelProvider && modelId
+          ? { modelId, provider: pinnedModelProvider }
+          : leadProviderHint,
+      );
     const resolveSelectableModel = (modelId?: string | null) =>
       resolveModelSelection(
         availableModels,
@@ -2757,6 +2788,7 @@ export function useChatSession(
     availableModels,
     initialModelId,
     leadProviderHint,
+    pinnedModelProvider,
     selectableModels,
     selectedModelId,
   ]);
@@ -2771,23 +2803,31 @@ export function useChatSession(
     () => reasoningEffortMemoryKey(selectedModel),
     [selectedModel],
   );
-  const reasoningEffortLevels = useMemo(
-    () =>
+  const reasoningEffortLevelsFor = useCallback(
+    (model: ModelDefinition): ModelReasoningEffort[] =>
       !reasoningEffortEnabled
         ? []
         : reasoningEffortOptions(
-        selectedModel,
-        reasoningEffortRouteForRow(selectedModel),
-        reasoningEffortHarness,
-      ),
-    [selectedModel, reasoningEffortHarness, reasoningEffortEnabled],
+            model,
+            reasoningEffortRouteForRow(model),
+            reasoningEffortHarness,
+          ),
+    [reasoningEffortHarness, reasoningEffortEnabled],
+  );
+  const reasoningEffortLevels = useMemo(
+    () => reasoningEffortLevelsFor(selectedModel),
+    [selectedModel, reasoningEffortLevelsFor],
   );
   const rememberedEffort = useMemo(
     () => loadRememberedReasoningEffort(effortKey),
     [effortKey],
   );
   const storedEffort =
-    effortKey in effortByModel ? effortByModel[effortKey] : rememberedEffort;
+    fixedReasoningEffort !== undefined
+      ? (fixedReasoningEffort ?? undefined)
+      : effortKey in effortByModel
+        ? effortByModel[effortKey]
+        : rememberedEffort;
   // Never report (so never send) a level the model does not offer here.
   const reasoningEffort =
     reasoningEffortEnabled &&
@@ -2801,6 +2841,14 @@ export function useChatSession(
       saveRememberedReasoningEffort(effortKey, effort);
     },
     [effortKey],
+  );
+  const setReasoningEffortForModel = useCallback(
+    (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
+      const key = reasoningEffortMemoryKey(model);
+      setEffortByModel((prev) => ({ ...prev, [key]: effort }));
+      saveRememberedReasoningEffort(key, effort);
+    },
+    [],
   );
   // Keys whose effort came from a restored chat, so a new chat forgets them.
   const restoredEffortKeysRef = useRef<Set<string>>(new Set());
@@ -5565,6 +5613,8 @@ export function useChatSession(
     reasoningEffortLevels,
     setReasoningEffort,
     seedReasoningEffort,
+    reasoningEffortLevelsFor,
+    setReasoningEffortForModel,
 
     // Tools metadata
     toolsMetadata,

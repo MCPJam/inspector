@@ -4,8 +4,22 @@ import userEvent from "@testing-library/user-event";
 import { GoalCompletionCard } from "../goal-completion-card";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 import type { ModelDefinition } from "@/shared/types";
+import { pickEffort } from "@/test/effort";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
+// Whether the deployment stores saved selections. Most tests run against one
+// that does; one test flips it to prove the card falls back to the bare id.
+const capability = vi.hoisted(() => ({ selections: true }));
+vi.mock(
+  "@/hooks/use-project-environment-capability",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@/hooks/use-project-environment-capability")
+    >()),
+    useModelSelectionsSupported: () => capability.selections,
+  }),
+);
 
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => <span aria-hidden="true" />,
@@ -443,9 +457,44 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     ).toHaveTextContent("Claude Haiku 4.5");
     await user.click(screen.getByRole("button", { name: /Run judge/i }));
     expect(onRun).toHaveBeenCalledWith(
-      { runOverride: { judgeModel: "anthropic/claude-haiku-4.5" } },
+      {
+        runOverride: {
+          judgeModel: "anthropic/claude-haiku-4.5",
+          judgeSelection: {
+            modelId: "anthropic/claude-haiku-4.5",
+            source: "hosted",
+            fallback: { provider: "none", model: "none" },
+          },
+        },
+      },
       false,
     );
+  });
+
+  it("sends the judge model alone to a deployment without saved selections", async () => {
+    capability.selections = false;
+    try {
+      const onRun = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <GoalCompletionCard
+          {...baseProps}
+          availableModels={[hosted, ineligibleHosted, bareByok]}
+          onRun={onRun}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: "Judge model" }));
+      await user.click(
+        screen.getByRole("option", { name: /Claude Haiku 4\.5/ }),
+      );
+      await user.click(screen.getByRole("button", { name: /Run judge/i }));
+      expect(onRun).toHaveBeenCalledWith(
+        { runOverride: { judgeModel: "anthropic/claude-haiku-4.5" } },
+        false,
+      );
+    } finally {
+      capability.selections = true;
+    }
   });
 
   it("shows a saved ineligible judge as the current value, disabled", async () => {
@@ -474,7 +523,7 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     expect(current).toHaveTextContent("Not eligible");
   });
 
-  it("shows the suite judge's effort read-only and never sends it in the run override", async () => {
+  it("shows the suite judge's effort; running it unchanged sends no override", async () => {
     const judge: ModelDefinition = {
       id: "anthropic/claude-haiku-4.5",
       name: "Claude Haiku 4.5",
@@ -510,9 +559,57 @@ describe("GoalCompletionCard judge model picker (purpose: judge)", () => {
     );
     const chip = screen.getByTestId("effort-control-trigger");
     expect(chip).toHaveTextContent("High");
-    expect(chip).toBeDisabled();
+    expect(chip).not.toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: /Run judge/i }));
     expect(onRun.mock.calls[0][0].runOverride).toBeUndefined();
+  });
+
+  it("sends the judge's selection when only the effort changes for this run", async () => {
+    const judge: ModelDefinition = {
+      id: "anthropic/claude-haiku-4.5",
+      name: "Claude Haiku 4.5",
+      provider: "anthropic",
+      hosted: true,
+      supportedReasoningEfforts: ["low", "high"],
+    };
+    const onRun = vi.fn();
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        availableModels={[judge]}
+        run={makeRun({
+          configSnapshot: {
+            tests: [],
+            environment: { servers: [] },
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+                judgeSelection: {
+                  modelId: "anthropic/claude-haiku-4.5",
+                  source: "hosted",
+                  fallback: { provider: "none", model: "none" },
+                  settings: { reasoningEffort: "high" },
+                },
+              },
+            },
+          },
+        })}
+        onRun={onRun}
+      />,
+    );
+    await userEvent.click(screen.getByTestId("effort-control-trigger"));
+    await pickEffort("Low");
+    await userEvent.click(screen.getByRole("button", { name: /Run judge/i }));
+    expect(onRun.mock.calls.at(-1)![0].runOverride).toEqual({
+      judgeModel: "anthropic/claude-haiku-4.5",
+      judgeSelection: {
+        modelId: "anthropic/claude-haiku-4.5",
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+        settings: { reasoningEffort: "low" },
+      },
+    });
   });
 });
 

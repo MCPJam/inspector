@@ -1451,6 +1451,41 @@ describe("useChatSession minimal mode parity", () => {
       expect(body).not.toHaveProperty("temperature");
     });
 
+    it("a compare card sends its own fixed effort, not the remembered pick", async () => {
+      window.localStorage.setItem(
+        "mcp-inspector-reasoning-efforts",
+        JSON.stringify({ [`hosted:${String(effortModel.id)}`]: "high" })
+      );
+      const low = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          executionConfig: { modelId: String(effortModel.id) },
+          pinnedModelProvider: String(effortModel.provider),
+          reasoningEffortEnabled: true,
+          fixedReasoningEffort: "low",
+        })
+      );
+      expect(low.result.current.reasoningEffort).toBe("low");
+      act(() => {
+        low.result.current.sendMessage({ text: "hi" });
+      });
+      await waitFor(() => {
+        expect(getTransportRequests().length).toBeGreaterThan(0);
+      });
+      expect(getTransportRequests().at(-1).reasoningEffort).toBe("low");
+
+      // Default (`null`) sends nothing even though "high" is remembered.
+      const defaultCard = renderHook(() =>
+        useChatSession({
+          selectedServers: [],
+          executionConfig: { modelId: String(effortModel.id) },
+          reasoningEffortEnabled: true,
+          fixedReasoningEffort: null,
+        })
+      );
+      expect(defaultCard.result.current.reasoningEffort).toBeUndefined();
+    });
+
     it("sends temperature and no effort when none is set", async () => {
       const { result } = renderHook(() =>
         useChatSession({

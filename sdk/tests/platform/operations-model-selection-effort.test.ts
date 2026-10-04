@@ -339,6 +339,29 @@ describe("update_project_environment", () => {
     expect(writes).toHaveLength(0);
   });
 
+  it("refuses the shorthand on a STORED legacy selection (own key only, no settings)", async () => {
+    const legacyRow = {
+      ...ENV_ROW,
+      modelSelection: { source: "legacy", modelId: ENV_ROW.modelSelection.modelId },
+      modelSelectionOrigin: "backfill",
+    };
+    const { context, writes } = makeRouter({ environment: legacyRow });
+    const error = await refusal(
+      updateEnvironmentOperation.execute(
+        {
+          project: "Acme",
+          environment: "env-1",
+          expectedRevision: 3,
+          reasoningEffort: "low",
+        },
+        context
+      )
+    );
+    expect(error.message).toContain("legacy model selection");
+    expect(error.message).toContain("Send `modelSelection`");
+    expect(writes).toHaveLength(0);
+  });
+
   it("refuses an effort beside a different model up front, before any write", async () => {
     const { context, writes } = makeRouter({ environment: ENV_ROW });
     const error = await refusal(
@@ -498,15 +521,28 @@ describe("composed stacks", () => {
     ).toEqual([{ modelId: "openai/gpt-5", selection: SELECTION }]);
   });
 
-  it("refuses two different selections for one model (an effort axis is a later phase)", () => {
+  it("two efforts of one model are two cells, in the order given", () => {
+    const high = { ...SELECTION, settings: { reasoningEffort: "high" as const } };
+    expect(
+      expandComposeModelChoices({
+        models: ["openai/gpt-5"],
+        modelSelections: [SELECTION, high, high],
+      })
+    ).toEqual([
+      { modelId: "openai/gpt-5", selection: SELECTION },
+      { modelId: "openai/gpt-5", selection: high },
+    ]);
+  });
+
+  it("refuses two selections of one target that differ only in fallback", () => {
     expect(() =>
       expandComposeModelChoices({
         modelSelections: [
           SELECTION,
-          { ...SELECTION, settings: { reasoningEffort: "high" } },
+          { ...SELECTION, fallback: { provider: "openrouter", model: "none" } },
         ],
       })
-    ).toThrow(/one selection per model/);
+    ).toThrow(/same target/);
   });
 
   it("ensure_adhoc_environment sends the selection and pins its model", async () => {

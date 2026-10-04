@@ -3571,7 +3571,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--compose-model-selection <json...>",
-      "A whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -): one cell for its model, at its effort. Alongside --compose-model; one selection per model."
+      "A whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -): one cell for its model, at its effort. Alongside --compose-model. Repeat it to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell."
     )
     .option(
       "--with-client-default",

@@ -46,8 +46,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  ModelSelector,
+  type ModelSelectorEffortProps,
+} from "@/components/chat-v2/chat-input/model-selector";
 import { EffortControl } from "@/components/effort/effort-control";
+import { reasoningEffortDefaultForRow } from "@/lib/reasoning-effort-options";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   ClientSelector,
@@ -318,7 +322,8 @@ interface ChatInputProps {
   temperature: number;
   onTemperatureChange: (temperature: number) => void;
   /**
-   * Reasoning effort chip beside the model picker (single-model chat only).
+   * Reasoning effort chip beside the model picker. In compare mode the
+   * caller passes the lead card's effort (each card has its own chip too).
    * `reasoningEffortLevels` is the row's supported list; empty hides the chip.
    * While an effort is set the temperature slider is disabled and the turn
    * omits temperature.
@@ -326,6 +331,12 @@ interface ChatInputProps {
   reasoningEffort?: ModelReasoningEffort;
   reasoningEffortLevels?: readonly ModelReasoningEffort[];
   onReasoningEffortChange?: (effort: ModelReasoningEffort | undefined) => void;
+  /**
+   * Efforts in the model menu: each model opens its efforts to the side
+   * (single mode picks model + effort; compare mode toggles model × effort
+   * panes). Omitted, the menu picks models only.
+   */
+  modelEfforts?: ModelSelectorEffortProps;
   hasMessages?: boolean;
   onResetChat: () => void;
   tokenUsage?: {
@@ -465,6 +476,7 @@ export function ChatInput({
   reasoningEffort,
   reasoningEffortLevels,
   onReasoningEffortChange,
+  modelEfforts,
   onResetChat,
   hasMessages = false,
   tokenUsage,
@@ -2017,19 +2029,21 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  {...modelEfforts}
                   // Servers attached means the turn can call tools.
                   workload={
                     (selectedServers?.length ?? 0) > 0 ? "mcpChat" : "chat"
                   }
                 />
               )}
-              {/* Compare mode sends to per-model cards that never carry the
-                  effort, so the chip is hidden whenever it is on. */}
-              {!minimalMode && onReasoningEffortChange && !multiModelEnabled ? (
+              {/* In compare mode the chip edits the lead card's effort; every
+                  card also has its own chip and sends its own level. */}
+              {!minimalMode && onReasoningEffortChange ? (
                 <EffortControl
-                  variant="chip"
+                  variant="inline"
                   options={reasoningEffortLevels ?? []}
                   value={reasoningEffort}
+                  defaultLevel={reasoningEffortDefaultForRow(currentModel)}
                   onChange={onReasoningEffortChange}
                   disabled={isLoading}
                   disabledReason="Reasoning effort can't change while a reply is streaming"
@@ -2252,7 +2266,7 @@ export function ChatInput({
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}
-          reasoningEffort={multiModelEnabled ? undefined : reasoningEffort}
+          reasoningEffort={reasoningEffort}
           isLoading={isLoading}
           hasMessages={hasMessages}
           onResetChat={onResetChat}

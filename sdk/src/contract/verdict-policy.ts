@@ -496,6 +496,9 @@ export function isEvalValidityDecisionReason(
 }
 
 // ── execution variants ───────────────────────────────────────────────────────
+/** Upper bound on {@link EvalExecutionVariant.selectionKey} (canonical JSON). */
+export const MAX_EVAL_EXECUTION_VARIANT_SELECTION_KEY_CHARS = 2000;
+
 /**
  * The provider/model pair one aggregate's trials executed under.
  *
@@ -520,6 +523,19 @@ export const evalExecutionVariantSchema = z
   .object({
     model: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
     provider: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS).optional(),
+    /**
+     * Present only when the variant ran a NON-default saved selection (an
+     * effort, a temperature, an org or local connection): the canonical
+     * selection JSON without `fallback`, i.e. `comparisonKey` minus its
+     * `modelId` prefix. Two entries of one model at Low and High are two
+     * variants. Omitted for a default selection, so every key stored before
+     * selections existed is unchanged.
+     */
+    selectionKey: z
+      .string()
+      .min(1)
+      .max(MAX_EVAL_EXECUTION_VARIANT_SELECTION_KEY_CHARS)
+      .optional(),
   })
   .strict();
 export type EvalExecutionVariant = z.infer<typeof evalExecutionVariantSchema>;
@@ -549,8 +565,11 @@ export function evalCaseAggregationKey(entry: {
 }): string {
   const sep = EVAL_CASE_AGGREGATION_KEY_SEPARATOR;
   if (!entry.executionVariant) return `${entry.caseId}${sep}`;
-  const { model, provider } = entry.executionVariant;
-  return `${entry.caseId}${sep}${provider ?? ""}${sep}${model}`;
+  const { model, provider, selectionKey } = entry.executionVariant;
+  const base = `${entry.caseId}${sep}${provider ?? ""}${sep}${model}`;
+  // Appended only for a non-default selection: a default variant keys exactly
+  // as it did before selections existed.
+  return selectionKey === undefined ? base : `${base}${sep}${selectionKey}`;
 }
 
 /**

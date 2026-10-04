@@ -31,7 +31,7 @@
 
 import { modelWorkloadFor } from "./model-workload.js";
 import type { ToolSet } from "ai";
-import type { Harness, ModelSelection } from "@mcpjam/sdk";
+import type { Harness, RequestedModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 import {
   assertOrgModelAllowed,
@@ -46,7 +46,11 @@ import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import { getHarnessAdapter } from "./harness/registry.js";
 import { buildLocalExecutionRecord } from "./local-execution-record.js";
-import { ModelResolutionRefusalError } from "./model-resolution-local.js";
+import {
+  backendModelSelection,
+  ModelResolutionRefusalError,
+} from "./model-resolution-local.js";
+import { forwardableSelection } from "./selection-rail.js";
 import {
   reasoningEffortProviderOptions,
   type EffectiveModelSettings,
@@ -102,13 +106,22 @@ export interface ResolveTurnRuntimeArgs {
   /** Per-run attribution stamped onto the local-BYOK usage record. */
   attribution?: TurnRunAttribution;
   /**
-   * The saved selection behind `modelDefinition`, already checked with
-   * `backendModelSelection()` (so never `local`). Sent as the body's
-   * `modelSelection` only on the rail it names: a `hosted` one on `/stream`,
-   * an `org` one on `/stream/org` and `/stream/org/resolve`. The backend
-   * re-resolves it and records it as the requested selection.
+   * The saved selection behind `modelDefinition`. It DECIDES THE RAIL
+   * (`decideTurnRail`, `selection-rail.ts`):
+   *
+   *   - `hosted` → MCPJam `/stream`;
+   *   - `org` → the org connection (`/stream/org`, or its local runtime);
+   *   - `local` and a STORED legacy selection → the own-key path (the org's
+   *     connection for the model's provider), never MCPJam credits — this
+   *     surface holds no key of the caller's own machine;
+   *   - absent → today's hosted-list check, unchanged.
+   *
+   * Sent as the body's `modelSelection` only on the rail it names: a `hosted`
+   * one on `/stream`, an `org` one on `/stream/org` and `/stream/org/resolve`
+   * (validated first). The backend re-resolves it and records it as the
+   * requested selection. A `local` or legacy one is never sent.
    */
-  modelSelection?: ModelSelection;
+  modelSelection?: RequestedModelSelection;
   /**
    * The settings this turn runs with, already resolved once by
    * `resolveEffectiveModelSettings` (per-run override > saved selection >
@@ -173,14 +186,18 @@ export async function resolveTurnRuntime(
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
     modelWorkload: modelWorkloadFor(args),
-    ...(args.modelSelection?.source === "org"
-      ? { modelSelection: args.modelSelection }
-      : {}),
+    // The WHOLE selection: it decides the source, and the resolver forwards
+    // only an `org` one to `/stream/org/resolve`.
+    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
   });
+  // Validated (and normalized) before it rides on any body; a `local` or
+  // legacy selection is never forwarded.
+  const forwarded = backendModelSelection(
+    forwardableSelection(args.modelSelection),
+  );
   const hostedSelection =
-    args.modelSelection?.source === "hosted" ? args.modelSelection : undefined;
-  const orgSelection =
-    args.modelSelection?.source === "org" ? args.modelSelection : undefined;
+    forwarded?.source === "hosted" ? forwarded : undefined;
+  const orgSelection = forwarded?.source === "org" ? forwarded : undefined;
 
   // --- Local-runtime org BYOK → direct engine ---
   if (

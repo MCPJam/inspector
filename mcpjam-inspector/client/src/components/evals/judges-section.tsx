@@ -120,7 +120,8 @@ export function pruneEmpty(
  * would be refused), and both clear for the managed default.
  */
 export function judgeModelPatch(
-  next: string,
+  /** The picked row itself, or a bare id (resolved like a stored choice). */
+  next: string | ModelDefinition,
   availableModels: readonly ModelDefinition[],
   /** The deployment stores selections (`modelSelectionsSupported`). */
   saveModelSelection = true,
@@ -130,14 +131,20 @@ export function judgeModelPatch(
    */
   previousEffort?: ModelReasoningEffort,
 ): Pick<GoalCompletionJudgeSlot, "judgeModel" | "judgeSelection"> {
-  if (next === MANAGED_DEFAULT_JUDGE_MODEL) {
+  const nextId = typeof next === "string" ? next : String(next.id);
+  if (nextId === MANAGED_DEFAULT_JUDGE_MODEL) {
     return { judgeModel: undefined, judgeSelection: undefined };
   }
-  // The first row with this id is the one saved: the picker passes the
-  // picked row itself first.
-  const row = saveModelSelection
-    ? availableModels.find((model) => String(model.id) === next)
-    : undefined;
+  // The picked row when the picker hands it over; otherwise the row a stored
+  // choice of this id resolves to (`findModelForStoredChoice`, which prefers
+  // the hosted row — judges run only on MCPJam-hosted models), never simply
+  // the first row that happens to share the id (an org row of the same id
+  // would save a non-hosted judge the backend refuses).
+  const row = !saveModelSelection
+    ? undefined
+    : typeof next !== "string"
+      ? next
+      : findModelForStoredChoice({ modelId: nextId }, availableModels, undefined);
   const base = row ? selectionBesideLegacyId(row, "judge") : undefined;
   const keepsEffort =
     row !== undefined &&
@@ -147,7 +154,7 @@ export function judgeModelPatch(
       previousEffort,
     );
   return {
-    judgeModel: next,
+    judgeModel: nextId,
     judgeSelection:
       base && keepsEffort ? withReasoningEffort(base, previousEffort) : base,
   };
@@ -262,8 +269,8 @@ export function JudgesSection({
               onChange={(row) =>
                 update(
                   judgeModelPatch(
-                    String(row.id),
-                    [row, ...availableModels],
+                    row,
+                    availableModels,
                     saveSelections,
                     selectionReasoningEffort(gc?.judgeSelection),
                   ),
@@ -271,7 +278,7 @@ export function JudgesSection({
               }
             />
             <SelectionEffortControl
-              variant="chip"
+              variant="suffix"
               row={judgeRow}
               selection={gc?.judgeSelection}
               purpose="judge"

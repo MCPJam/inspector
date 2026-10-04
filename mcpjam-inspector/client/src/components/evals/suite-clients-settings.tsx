@@ -10,7 +10,11 @@ import {
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import type { ModelSelection } from "@/components/environment-composer/environment-stack";
+import {
+  emptyModelSelection,
+  type ModelSelection,
+} from "@/components/environment-composer/environment-stack";
+import { dedupeModelTargets } from "@/lib/model-target";
 import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
 import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { EvalTargetMatrix } from "../evaluate/eval-target-matrix";
@@ -160,19 +164,20 @@ export function planSuiteClients(
   for (const [hostId, selection] of Object.entries(selections)) {
     const sourceHost = sourceHosts[hostId] ?? hostId;
     const onSource = attached.filter((row) => row.hostId === sourceHost);
-    const models = [
+    // One cell per comparisonKey: two efforts of one model are two
+    // environments. Without stored selections a target is its bare id.
+    const targets = [
       ...(selection.includeClientDefaults ? [undefined] : []),
-      ...new Set(selection.explicitModelIds),
+      ...dedupeModelTargets(
+        options.modelSelections
+          ? selection.explicitTargets
+          : selection.explicitTargets.map(({ modelId }) => ({ modelId })),
+      ),
     ];
-    for (const modelId of models) {
-      const picked =
-        modelId !== undefined
-          ? selection.explicitModelSelections?.[modelId]
-          : undefined;
-      const pickedSelection =
-        options.modelSelections && picked?.modelId === modelId
-          ? picked
-          : undefined;
+    for (const target of targets) {
+      const modelId = target?.modelId;
+      const picked = target?.selection;
+      const pickedSelection = options.modelSelections ? picked : undefined;
       const matches = environmentsForModelCell(attached, {
         hostId,
         modelId,
@@ -596,10 +601,8 @@ export function SuiteClientsSettings({
                 selections[id] ??
                   (ids.length === previousIds.length
                     ? selections[previousIds[index]]
-                    : undefined) ?? {
-                    includeClientDefaults: true,
-                    explicitModelIds: [],
-                  },
+                    : undefined) ??
+                  emptyModelSelection(),
               ]),
             ),
             {
