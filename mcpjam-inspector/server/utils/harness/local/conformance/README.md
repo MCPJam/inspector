@@ -17,6 +17,7 @@ isolated `HOME`, not a test runner's shared one.
 | Script | Argument | Asserts |
 |---|---|---|
 | `run-native-turn.ts` | `full` | a turn end to end: read tool, bash with approval, detach + resume continuity, stop; nothing left in the workspace, no surviving pids, empty registry |
+| `run-native-turn.ts` | `attended-off` | same ask-mode runtime, native requests answered automatically; marker command runs exactly once with zero approval parts; conversation survives detach and resume |
 | `run-native-turn.ts` | `no-launcher` | a pack without the loopback launcher is REFUSED — the exposure probe, not the launcher, is what enforces the guarantee |
 | `run-lifecycle.ts` | `abort` | aborting mid-turn takes the vendor CLI down with the bridge, and removes the session state |
 | `run-lifecycle.ts` | `orphan-a` / `orphan-b` | a tree orphaned by a crashed Inspector is reclaimed by the janitor on the next start |
@@ -47,6 +48,7 @@ cp -R "$S/runtime-src/claude-code" "$S/runtime/claude-code"
 
 for scenario in \
   "run-native-turn.ts full" \
+  "run-native-turn.ts attended-off" \
   "run-native-turn.ts no-launcher" \
   "run-lifecycle.ts abort" \
   "run-lifecycle.ts orphan-a" \
@@ -126,6 +128,7 @@ behind the same `local-gateway.mjs`; it answers `SHELL <cmd>` with Codex's
 | Argument | Asserts |
 |---|---|
 | `attended` | the Playground profile (`workspace-edits` → Codex `untrusted`): a command pauses for approval and runs only once approved, through the LIVE process; a host-executed MCP tool runs through MCPJam's relay with no second Codex prompt; the thread survives detach + resume; Stop leaves no process or registry record; no supervised listener off loopback; the upstream key never reaches a child's environment |
+| `attended-off` | the same attended runtime approval mode, with MCPJam pre-approving native requests: no native approval card, a marker-file command executes exactly once, the host MCP tool runs, and continuity survives detach + resume |
 | `unattended` | the eval/swarm profile (`unrestricted` → `allow-all` inside the explicit D2 sandbox policy): no approval is asked; a command writes the run's folder and its private `$TMPDIR`; a write elsewhere under `/tmp` fails; the command has no network (loopback included); the MCP tool, which is not a command, still runs; plus every attended check that applies |
 
 ```bash
@@ -152,3 +155,15 @@ Both scenarios passed on a linux-x64 development container (root, kernel
 6.18, the pinned 0.149.1 binary) against a pack built from this tree. That is
 development evidence only; it is not a CI leg, not a non-root run, and says
 nothing about macOS.
+
+## Signed-in UI verification
+
+Use a local Claude Code client in a project with a marker-file command and an MCP
+counter tool. Turn Tool Approval off: the **Run commands without asking?** dialog
+must appear. Cancel must restore On and retain the draft. Repeat and choose
+**Run without asking**; verify the marker has one line and the counter increments
+once, with no native approval prompt. Turn On and verify that the next command
+asks. Answer an approval after flipping the toggle and confirm only that answer
+decides the waiting action. Ask about an earlier turn to check conversation
+continuity. Forget the authorization and confirm Off asks for consent again.
+Verify filesystem/counter side effects directly.

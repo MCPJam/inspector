@@ -39,10 +39,8 @@ import type {
  * ── The wording is load-bearing ──────────────────────────────────────────
  * "The folder is where it starts, not a sandbox" is the honest description of
  * `local-native`, and `targets.ts` forbids calling it sandboxed or isolated
- * anywhere in the product. Edits inside the folder run freely under the
- * `workspace-edits` profile; commands ask for approval in chat. Both halves
- * are stated, because stating only the first oversells the containment and
- * stating only the second undersells the reach.
+ * anywhere in the product. Attended runtimes keep ask mode: On waits for
+ * commands and changes; Off requires its own consent and pre-approves them.
  */
 
 export type TrustDialogTrigger = "first_send" | "chip";
@@ -269,8 +267,9 @@ export function LocalHarnessTrustDialog({
                 Codex will run on this computer as your user account, in a
                 runtime MCPJam manages, with models brokered by MCPJam. It does
                 not use a personal Codex or ChatGPT subscription. The folder is
-                where it starts. In chat it asks before every command and file change,
-                reads included. In evals and swarms nobody is there to ask, so
+                where it starts. With Tool Approval on it asks before commands and file changes,
+                reads included. Turning it off requires a separate confirmation
+                to run without asking. In evals and swarms nobody is there to ask, so
                 Codex runs there only on platforms where MCPJam has verified
                 Codex's own sandbox: its commands can write only that run's
                 folder and a private temp folder, and have no network.
@@ -282,8 +281,9 @@ export function LocalHarnessTrustDialog({
               <>
                 Claude Code will run on this computer as your user account. The
                 folder is where it starts, not a sandbox — anything you can read
-                or change, it can. Edits inside the folder run freely; commands
-                ask for approval in chat.
+                or change, it can. With Tool Approval on, commands and changes ask for
+                approval in chat. Turning it off requires a separate confirmation
+                to run without asking.
               </>
             )}
           </DialogDescription>
@@ -303,7 +303,11 @@ export function LocalHarnessTrustDialog({
             </span>
           </div>
           {onPickWorkspace ? (
-            <Button size="sm" variant="outline" onClick={() => void handlePick()}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handlePick()}
+            >
               Change…
             </Button>
           ) : (
@@ -339,7 +343,10 @@ export function LocalHarnessTrustDialog({
           aria-expanded={detailsOpen}
         >
           <ChevronRight
-            className={cn("size-3 transition-transform", detailsOpen && "rotate-90")}
+            className={cn(
+              "size-3 transition-transform",
+              detailsOpen && "rotate-90",
+            )}
             aria-hidden
           />
           Details
@@ -364,14 +371,13 @@ export function LocalHarnessTrustDialog({
             </dd>
             <dt>Permissions</dt>
             <dd>
-              {isCodex
-                ? "commands and file changes ask; evals and swarms only where sandboxed"
-                : "edits in folder, commands ask"}
+              Tool Approval on asks for commands and changes; off pre-approves
+              them{isCodex ? "; evals and swarms only where sandboxed" : ""}
             </dd>
             <dt>Policy</dt>
             <dd className="font-mono">{availability?.policyVersion ?? "—"}</dd>
             <dt>Expires</dt>
-            <dd>12 hours after you allow it</dd>
+            <dd>15 minutes, renewed automatically</dd>
           </dl>
         ) : null}
 
@@ -465,9 +471,88 @@ function installFailureReason(message: string | null): string {
   if (/didn't match|does not match|digest|signature/i.test(message)) {
     return "verification";
   }
-  if (/download|network|offline|responded \d{3}/i.test(message)) return "network";
+  if (/download|network|offline|responded \d{3}/i.test(message))
+    return "network";
   if (/space|permission|ENOSPC|EACCES/i.test(message)) return "disk";
   return "unknown";
 }
 
 export { FAILURE_COPY as LOCAL_HARNESS_FAILURE_COPY };
+
+/** Reuses the trust dialog shell for the distinct attended Off decision. */
+export function LocalHarnessAutoApproveDialog({
+  open,
+  name,
+  onCancel,
+  onApprove,
+}: {
+  open: boolean;
+  name: string;
+  onCancel: () => void;
+  onApprove: () => Promise<void>;
+}) {
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) setError(null);
+  }, [open]);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !working) onCancel();
+      }}
+    >
+      <DialogContent
+        className="sm:max-w-lg"
+        data-testid="local-harness-auto-approve-dialog"
+        onEscapeKeyDown={(event) => {
+          if (working) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (working) event.preventDefault();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>Run commands without asking?</DialogTitle>
+          <DialogDescription>
+            {name} will run commands and change files on this computer as your
+            user account, without asking first. Turn Tool Approval back on
+            anytime.
+          </DialogDescription>
+        </DialogHeader>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button variant="ghost" disabled={working} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            disabled={working}
+            onClick={() => {
+              setWorking(true);
+              setError(null);
+              void onApprove()
+                .catch((error) =>
+                  setError(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not record consent",
+                  ),
+                )
+                .finally(() => setWorking(false));
+            }}
+          >
+            {working ? (
+              <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden />
+            ) : null}
+            Run without asking
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

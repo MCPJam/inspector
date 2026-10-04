@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authorizeLocalHarness, readLocalHarnessAuthorization, revokeLocalHarnessAuthorization, updateAuthorizedWorkspace } from "../authorization.js";
+import { authorizeLocalHarness, readLocalHarnessAuthorization, revokeLocalHarnessAuthorization, updateAuthorizedWorkspace, acknowledgeLocalHarnessAutoApprove } from "../authorization.js";
 import { LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
 import { localHarnessStateRoot } from "../grants.js";
 
@@ -85,4 +85,33 @@ describe("one authorization store shared by every Inspector version", () => {
     expect(await legacyRead("user", "machine", "project")).toBeNull();
     expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).not.toBeNull();
   });
+});
+
+it("auto approval consent is scoped, survives renewal, and is cleared by forgetting", async () => {
+  await authorizeLocalHarness(binding);
+  await acknowledgeLocalHarnessAutoApprove({ ...binding, harnessId: "claude-code" });
+  expect((await readLocalHarnessAuthorization("user", "machine", "project"))?.autoApproveAcknowledgedAt).toBeTruthy();
+  expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).toBeNull();
+  await authorizeLocalHarness(binding);
+  expect((await readLocalHarnessAuthorization("user", "machine", "project"))?.autoApproveAcknowledgedAt).toBeTruthy();
+  await revokeLocalHarnessAuthorization("user", "project");
+  await authorizeLocalHarness(binding);
+  expect((await readLocalHarnessAuthorization("user", "machine", "project"))?.autoApproveAcknowledgedAt).toBeUndefined();
+});
+it("cannot acknowledge absent authorization or an old policy", async () => {
+  await expect(acknowledgeLocalHarnessAutoApprove({ ...binding, harnessId: "claude-code" })).rejects.toThrow("Set up");
+  await authorizeLocalHarness(binding);
+  const path = join(localHarnessStateRoot(), "authorizations.json");
+  const state = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8"));
+  state.authorizations[0].policyVersion = "old";
+  await writeFile(path, JSON.stringify(state));
+  await expect(acknowledgeLocalHarnessAutoApprove({ ...binding, harnessId: "claude-code" })).rejects.toThrow("Set up");
+});
+
+it("keeps consent separate for harnesses sharing one project", async () => {
+  await authorizeLocalHarness(binding);
+  await authorizeLocalHarness({ ...binding, harnessId: "codex" });
+  await acknowledgeLocalHarnessAutoApprove({ ...binding, harnessId: "codex" });
+  expect((await readLocalHarnessAuthorization("user", "machine", "project"))?.autoApproveAcknowledgedAt).toBeUndefined();
+  expect((await readLocalHarnessAuthorization("user", "machine", "project", "codex"))?.autoApproveAcknowledgedAt).toBeTruthy();
 });

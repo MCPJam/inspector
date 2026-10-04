@@ -95,3 +95,14 @@ describe("each local harness has its own authorization, rollout and runtime (D3,
   });
 });
 
+it("refuses attended Off before installation, registration or grant creation", async () => {
+  await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended", requireToolApproval: false })).rejects.toMatchObject({ status: "auto-approve-consent-required" });
+  expect(mocks.status).not.toHaveBeenCalled();
+  expect(mocks.install).not.toHaveBeenCalled();
+  expect(mocks.register).not.toHaveBeenCalled();
+  expect(mocks.grant).not.toHaveBeenCalled();
+});
+it("keeps unattended Off independent of attended acknowledgement", async () => {
+  const result = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "unattended", requireToolApproval: false });
+  expect(result.target.permissionProfile).toBe("unrestricted");
+});

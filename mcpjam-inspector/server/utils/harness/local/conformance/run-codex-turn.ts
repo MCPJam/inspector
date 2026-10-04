@@ -23,7 +23,7 @@
  */
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,7 @@ import { z } from "zod";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { getHarnessAdapter } from "../../registry.js";
 import { withLocalPackBootstrap } from "../pack-bootstrap.js";
+import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -67,8 +68,9 @@ const PACK_TARGET = (() => {
 })();
 const CONFORMANCE_VERSION =
   process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION ?? "local-dev";
-const MODE = (process.argv[2] ?? "attended") as "attended" | "unattended";
+const MODE = (process.argv[2] ?? "attended") as "attended" | "attended-off" | "unattended";
 const UNATTENDED = MODE === "unattended";
+const AUTO_APPROVE = MODE === "attended-off";
 const RUNTIME_ROOT = join(ROOT, "runtime");
 const BUNDLE = join(RUNTIME_ROOT, "codex");
 const WORKSPACE = join(ROOT, UNATTENDED ? "workspace-unattended" : "workspace");
@@ -385,10 +387,11 @@ async function main() {
     auth: { CODEX_API_KEY: CAPABILITY, OPENAI_BASE_URL: gatewayUrl } as any,
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
   });
+  const localHarness = await withLocalPackBootstrap(harness, plan.runtime.rootPath);
   const agent: any = new HarnessAgent({
-    harness: (await withLocalPackBootstrap(harness, plan.runtime.rootPath)) as any,
+    harness: (AUTO_APPROVE ? withAutoApprovedNativeRequests(localHarness) : localHarness) as any,
     sandbox: provider,
-    permissionMode: plan.permissionMode,
+    permissionMode: UNATTENDED ? plan.permissionMode : "allow-reads",
     instructions: "You are running a conformance check.",
     sandboxConfig: { workDir: "project" },
     tools: hostTools as any,
@@ -403,9 +406,16 @@ async function main() {
 
   if (!UNATTENDED) {
     turns.read = await runTurn("attended-read", agent, sessionRef, "SHELL cat hello.txt");
-    if (turns.read.approvals < 1) failures.push("attended: a command ran without an approval request");
+    if (AUTO_APPROVE ? turns.read.approvals !== 0 : turns.read.approvals < 1) failures.push(`attended: unexpected approval count with auto-approve=${AUTO_APPROVE}`);
     if (!ranCommand(turns.read)) failures.push(`attended: no command tool call (tools=${JSON.stringify(turns.read.tools)})`);
     if (!turns.read.text.includes("hello from the codex conformance workspace")) failures.push("attended: the approved command's output did not come back through the model");
+    if (AUTO_APPROVE) {
+      await writeFile(join(WORKSPACE, "attended-off-marker.txt"), "");
+      turns.marker = await runTurn("attended-off-marker", agent, sessionRef, "SHELL printf 'run\\n' >> attended-off-marker.txt");
+      if (turns.marker.approvals !== 0) failures.push("attended Off asked for native approval");
+      if ((await readFile(join(WORKSPACE, "attended-off-marker.txt"), "utf8")) !== "run\n") failures.push("attended Off marker command did not execute exactly once");
+      await rm(join(WORKSPACE, "attended-off-marker.txt"));
+    }
   } else {
     const outsidePath = join("/tmp", `mcpjam-codex-outside-${randomBytes(6).toString("hex")}`);
     turns.inside = await runTurn("unattended-write-inside", agent, sessionRef, "SHELL echo inside > inside.txt && echo WROTE_INSIDE");

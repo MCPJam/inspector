@@ -2,6 +2,7 @@ import {
   localDiskResumeState,
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
+import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
@@ -1668,28 +1669,11 @@ export async function runHarnessTurn(
         deliveredSkills.map((s) => [s.skillId, s.name]),
       );
 
-      // WS3: gate side-effecting built-ins (Bash/Edit/Write) behind approval
-      // when the host requires it, via the adapter's declared approval mode
-      // (Claude Code: allow-edits — reads stay free, the closest faithful
-      // mapping to the emulated engine, which gates tool CALLS, never reads).
-      // The adapter's default otherwise. Computed BEFORE the fingerprint:
-      // flipping approval mode must fork the session (a resumed thread keeps
-      // the mode it was created with).
-      //
-      // A LOCAL turn takes its mode from the CONSENTED PROFILE, not from the
-      // adapter default. Claude Code's default is `allow-all`; the profiles a
-      // user can actually agree to map to `allow-reads` and `allow-edits`. So
-      // consenting to "read-only" and getting an agent built at `allow-all` was
-      // an authorization bypass of the exact promise the consent sheet makes —
-      // and because the fingerprint is computed from this value, two different
-      // profiles hashed the same and a profile change resumed the old session
-      // at the old breadth instead of forking.
-      //
-      // Resolved here, before the fingerprint, from the same manifest mapping
-      // `prepareLocalHarnessTurn` uses; the two are reconciled below once
-      // preparation has run.
-      const localScope =
-        sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended";
+      // Local attended turns always keep the runtime's ask mode. Off answers
+      // native requests in MCPJam, so toggle changes preserve the fingerprint
+      // and any waiting approval. Unattended profiles and hosted modes retain
+      // their existing mapping.
+      const localScope = sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended";
       const localPermissionMode =
         harnessExecutionTarget != null
           ? localPermissionModeFor(
@@ -1726,7 +1710,7 @@ export async function runHarnessTurn(
             // falls to the NARROWEST mode rather than the adapter's default —
             // the turn is refused moments later in preparation, and until then
             // it must not be the widest thing on the menu.
-            requireToolApproval || localPermissionMode === null
+            (sourceType !== "eval" && sourceType !== "swarm") || requireToolApproval || localPermissionMode === null
             ? "allow-reads"
             : localPermissionMode
           : requireToolApproval && harnessAdapter.supportsNativeToolApproval
@@ -1967,7 +1951,7 @@ export async function runHarnessTurn(
         !(localEligibility?.resume && continuity?.state?.awaitingApproval)
       ) {
         throw new Error(
-          "The local session for this approval is no longer available. Start a new turn.",
+          "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
       const localSessionId = harnessExecutionTarget
@@ -2363,7 +2347,14 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: localSandboxPolicy }
                 : {}),
             });
-      if (localPrepared) harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
+      if (localPrepared) {
+        harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
+        if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
+          harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
+            logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
+          }, new Set(approvalContinuations.map(continuation => continuation.approvalResponse.approvalId)));
+        }
+      }
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
       // to the runtime; when the runtime calls one it pauses, the agent runs the
       // tool's `execute()` HERE on MCPJam's server, and submits the result back.
@@ -2384,18 +2375,22 @@ export async function runHarnessTurn(
       //
       // A workspace tool that pauses for approval (MJ-008) is handed over only
       // to a runtime that can pause on a host-executed tool. Anywhere else it
-      // is left out rather than offered without its pause.
+      // is left out rather than offered without its pause. Attended setting-floor
+      // tools are withheld too; automated runs retain their existing posture.
       const offeredBuiltInTools = Object.fromEntries(
         Object.entries((builtInTools ?? {}) as Record<string, unknown>).filter(
           ([name, definition]) => {
             if (
               harnessAdapter.supportsHostExecutedToolApproval ||
-              !requiresServerVerifiedApproval(definition)
+              (!requiresServerVerifiedApproval(definition) &&
+                (sourceType === "eval" || sourceType === "swarm" ||
+                  ((definition as { needsApproval?: unknown } | undefined)?.needsApproval !== true &&
+                    typeof (definition as { needsApproval?: unknown } | undefined)?.needsApproval !== "function")))
             ) {
               return true;
             }
             logger.warn(
-              "[harness] workspace tool withheld: this runtime cannot pause on a host-executed tool for approval",
+              "[harness] tool withheld: this runtime cannot pause on a host-executed tool for approval",
               { harness: harnessAdapter.id, toolName: name },
             );
             return false;
@@ -2742,7 +2737,7 @@ export async function runHarnessTurn(
         eligibility.resume && localPrepared?.sessionStateExists === false;
       if (localStateMissing && isApprovalResume) {
         throw new Error(
-          "The local session for this approval is no longer available. Start a new turn.",
+          "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
       const resumable = eligibility.resume && !localStateMissing
@@ -2766,6 +2761,12 @@ export async function runHarnessTurn(
       // continueFrom (NOT resumeFrom) and continued with continueStream below.
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
+      if (isApprovalResume && !resumeFromApproval) {
+        throw new Error("The session for this approval is no longer available; the pending action will not run. Start a new turn.");
+      }
+      for (const continuation of approvalContinuations) {
+        logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalResponse.approvalId, approvalDecision: "user" });
+      }
       let session: Awaited<ReturnType<typeof agent.createSession>>;
       if (resumeFromApproval && resumable) {
         // No fresh fallback here: if the paused continuation is stale (computer

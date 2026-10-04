@@ -326,6 +326,7 @@ export interface LocalHarnessRuntimeStatus {
 }
 
 export interface LocalHarnessAvailabilityView {
+  autoApproveAcknowledged?: boolean;
   preferredVenue?: "local" | "hosted";
   setupAvailable?: boolean;
   available: boolean;
@@ -757,4 +758,13 @@ export async function ensureLocalHarnessReady(projectId: string, setup = false, 
   signal?.throwIfAborted();
   persistLocalHarnessConsent(projectId, consent, harnessId);
   return consent;
+}
+
+/** Recorded by a separate explicit gesture, never by changing a UI preference. */
+export async function acknowledgeLocalAutoApprove(projectId: string, harnessId: string): Promise<void> {
+  const response = await localHarnessRequest("consent/auto-approve", { projectId, harnessId });
+  const body = await readJsonBody(response);
+  if (!response.ok || body?.autoApproveAcknowledged !== true) {
+    throw new Error(typeof body?.error === "string" ? body.error : "Commands without asking could not be authorized. Try again.");
+  }
 }

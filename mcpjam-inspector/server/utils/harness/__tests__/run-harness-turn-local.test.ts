@@ -75,6 +75,10 @@ vi.mock("../registry.js", () => ({
     id: "claude-code",
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
+    supportsNativeToolApproval: true,
+    supportsHostExecutedToolApproval: true,
+    supportsMcpToolApproval: true,
+    approvalPermissionMode: "allow-reads",
     supportsSkills: harnessState.supportsSkills,
     skillsBaseDir: "/home/user/.claude/skills",
     skillsWriteOptions: { trailingNewline: true },
@@ -159,6 +163,7 @@ import {
 } from "../run-harness-turn";
 import { claimHarnessSessionState, commitHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 import { getHarnessAdapter } from "../registry.js";
+import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
 
@@ -169,7 +174,7 @@ vi.mock("../local/local-turn.js", () => ({
       plan: { runtime: { runtimeId: "runtime-1" } },
       sandbox: {}, auth: {}, sandboxWorkDir: "project",
       skillsBaseDir: "/private/local/home/.claude/skills",
-      permissionMode: "allow-edits",
+      permissionMode: "allow-reads",
       sessionStateExists: harnessState.stateExists,
       teardown: harnessState.teardown,
       discardState: harnessState.discardState,
@@ -354,7 +359,7 @@ describe("runHarnessTurn local continuity", () => {
 
   it("continues a paused approval with the same identity", async () => {
     resume(true);
-    harnessState.continuations = [{ approvalId: "approval-1", approved: true }];
+    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session" }));
     expect(harnessState.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session", continueFrom: expect.any(Object) }));
@@ -469,7 +474,7 @@ describe("runHarnessTurn local continuity", () => {
 
   it("refuses approval continuation after the runtime changes", async () => {
     resume(true);
-    harnessState.continuations = [{ approvalId: "approval-1", approved: true }];
+    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
     const options = baseOptions();
     options.harnessExecutionTarget.runtimeId = "runtime-2";
     await runHarnessTurn(options as any, "none");
@@ -486,6 +491,7 @@ describe("runHarnessTurn local continuity", () => {
   });
 
   it("discards state after a one-shot run without a continuity lane", async () => {
+    vi.mocked(prepareLocalHarnessTurn).mockResolvedValueOnce({ ok: true, prepared: { plan: { runtime: { runtimeId: "runtime-1" } }, permissionMode: "allow-edits", sandbox: {}, auth: {}, teardown: harnessState.teardown, discardState: harnessState.discardState } } as any);
     await runHarnessTurn(baseOptions({ sourceType: "eval", chatSessionId: undefined }) as any, "none");
     expect(harnessState.session.destroy).toHaveBeenCalledOnce();
     expect(harnessState.teardown).toHaveBeenCalledOnce();
@@ -547,7 +553,7 @@ describe("runHarnessTurn local continuity", () => {
   it("rejects an approval whose local state was removed", async () => {
     resume(true);
     harnessState.stateExists = false;
-    harnessState.continuations = [{ approvalId: "approval-1", approved: true }];
+    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(harnessState.create).not.toHaveBeenCalled();
     expect(harnessState.teardown).toHaveBeenCalledOnce();
@@ -720,7 +726,7 @@ describe("runHarnessTurn local continuity", () => {
           sandbox: {}, auth: {}, sandboxWorkDir: "project",
           skillsBaseDir: "/private/local/home/.agents/skills",
           permissionMode:
-            args?.target?.permissionProfile === "unrestricted" ? "allow-all" : "allow-edits",
+            args?.scope !== "unattended" || args?.requireToolApproval ? "allow-reads" : args?.target?.permissionProfile === "unrestricted" ? "allow-all" : "allow-edits",
           sessionStateExists: harnessState.stateExists,
           teardown: harnessState.teardown,
           discardState: harnessState.discardState,
@@ -794,4 +800,23 @@ describe("runHarnessTurn local continuity", () => {
       );
     });
   });
+  it("keeps the local runtime fingerprint and session when Tool Approval flips", async () => {
+    let saved: any;
+    const options = baseOptions({ requireToolApproval: true, onConversationComplete: async (_messages: unknown, _trace: unknown, commit: unknown) => { saved = commit; return { outcome: "saved" }; } });
+    await runHarnessTurn(options as any, "none");
+    const fingerprint = vi.mocked(claimHarnessSessionState).mock.calls[0]![0].runtimeFingerprint;
+    vi.mocked(claimHarnessSessionState).mockResolvedValue({ ok: true, leaseId: "lease-2", stateVersion: 2, fingerprintChanged: false, state: saved } as any);
+    await runHarnessTurn({ ...options, requireToolApproval: false } as any, "none");
+    expect(vi.mocked(claimHarnessSessionState).mock.calls[1]![0].runtimeFingerprint).toBe(fingerprint);
+    expect(harnessState.create).toHaveBeenLastCalledWith({ sessionId: saved.harnessSessionId, resumeFrom: saved.resumeState });
+    expect(harnessState.agentOptions.permissionMode).toBe("allow-reads");
+  });
+
+  it("keeps always-floor host tools gated with local Off", async () => {
+    harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "host-approval", toolCallId: "host-call" }];
+    await runHarnessTurn(baseOptions({ requireToolApproval: false, builtInTools: { workspace_write: markServerVerifiedApproval({ needsApproval: true, execute: vi.fn() }) } }) as any, "none");
+    expect(harnessState.agentOptions.toolApproval).toEqual({ workspace_write: "user-approval" });
+    expect(commitHarnessSessionState).toHaveBeenCalledWith(expect.objectContaining({ awaitingApproval: true }));
+  });
+
 });

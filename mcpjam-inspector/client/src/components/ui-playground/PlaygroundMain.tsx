@@ -1,3 +1,4 @@
+import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
@@ -156,7 +157,10 @@ import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
 import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
-import { LocalHarnessTrustDialog } from "@/components/harness/LocalHarnessTrustDialog";
+import {
+  LocalHarnessTrustDialog,
+  LocalHarnessAutoApproveDialog,
+} from "@/components/harness/LocalHarnessTrustDialog";
 import {
   LocalHarnessComposerNotice,
   LocalHarnessReadyNotice,
@@ -4004,11 +4008,40 @@ export function PlaygroundMain({
     }
   }, [ensureServersReady, serverName, servers]);
 
+  const localAutoApprove = useLocalAutoApproveConsent({
+    enabled: localHarnessRequested && requireToolApproval === false,
+    ready: localHarness.phase === "ready",
+    projectId: convexProjectId,
+    harnessId: localHarness.harnessId ?? "claude-code",
+    scopeKey: localHarnessScopeKey,
+    acknowledged: localHarness.availability?.autoApproveAcknowledged === true,
+    onCancel: () => setRequireToolApproval(true),
+    onAcknowledged: localHarness.refresh,
+  });
+  useEffect(() => {
+    if (
+      localHarnessRequested &&
+      error?.message.includes("auto-approve-consent-required")
+    ) {
+      void localAutoApprove.request();
+    }
+  }, [error, localHarnessRequested, localAutoApprove.request]);
+
   // Handle follow-up messages from widgets
   // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
-      if (!localHarnessRequested || (!setup && localHarness.phase === "ready")) return true;
+      if (!localHarnessRequested) return true;
+      // A ready target sends without a readiness round trip (the turn's own
+      // route re-checks it); only Off still confirms consent first.
+      if (!setup && localHarness.phase === "ready") {
+        try {
+          return await localAutoApprove.ensure();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+          return false;
+        }
+      }
       if (!convexProjectId || localHarnessPreparingRef.current) return false;
       localHarnessPreparingRef.current = true;
       setLocalHarnessPreparing(true);
@@ -4022,7 +4055,7 @@ export function PlaygroundMain({
           undefined,
           localHarness.harnessId ?? "claude-code",
         );
-        return true;
+        return await localAutoApprove.ensure();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
         return false;
@@ -4030,7 +4063,7 @@ export function PlaygroundMain({
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName]);
+    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -5774,6 +5807,12 @@ export function PlaygroundMain({
       {/* ONE dialog for the surface. Rendered here rather than by a composer
           because there are six composers and a compare view mounts several at
           once — each owning its own would race one approval. */}
+      <LocalHarnessAutoApproveDialog
+        open={localAutoApprove.open}
+        name={previewedHost?.config?.harness === "codex" ? "Codex" : "Claude Code"}
+        onCancel={localAutoApprove.cancel}
+        onApprove={localAutoApprove.approve}
+      />
       {localHarnessDialog !== null ? (
         <LocalHarnessTrustDialog
           open

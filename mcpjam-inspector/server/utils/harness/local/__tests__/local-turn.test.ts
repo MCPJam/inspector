@@ -1,3 +1,5 @@
+import { readLocalHarnessAuthorization } from "../authorization.js";
+vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: vi.fn(async () => ({ autoApproveAcknowledgedAt: "2026-10-04T00:00:00.000Z" })) }));
 import { toAdapterPath } from "../adapter-path.js";
 import { resetLocalHarnessRegistryForTests } from "../session-registry.js";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -571,6 +573,7 @@ describe("a local Codex runtime parked on an approval", () => {
     });
     const adopted = await prepareLocalHarnessTurn(
       codexArgs({
+        requireToolApproval: false,
         approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
       }),
     );
@@ -680,3 +683,15 @@ describe("a local Codex runtime parked on an approval", () => {
   });
 });
 
+it("refuses Off without acknowledgement before spawning or minting a lease", async () => {
+  vi.mocked(readLocalHarnessAuthorization).mockResolvedValueOnce(null);
+  expect(await prepareLocalHarnessTurn({ ...turnArgs(), requireToolApproval: false })).toMatchObject({ ok: false, status: "auto-approve-consent-required" });
+  expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+  expect(createSupervisedLocalHarnessProvider).not.toHaveBeenCalled();
+});
+it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async requireToolApproval => {
+  const result = await prepareLocalHarnessTurn({ ...turnArgs(), requireToolApproval });
+  if (!result.ok) throw new Error(result.message);
+  expect(result.prepared.permissionMode).toBe("allow-reads");
+  await result.prepared.teardown();
+});

@@ -30,6 +30,9 @@ const harnessState = vi.hoisted(() => ({
     Record<string, unknown> & { type?: string }
   >,
   finalText: "done",
+  continuations: [] as any[],
+  create: vi.fn(),
+  stream: vi.fn(),
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -47,17 +50,17 @@ vi.mock("@ai-sdk/harness/agent", () => ({
     constructor(options: Record<string, unknown>) {
       agentConstruction.last = options;
     }
-    createSession = vi.fn(async () => harnessState.session);
-    stream = vi.fn(async () => ({
+    createSession = vi.fn(async () => { harnessState.create(); return harnessState.session; });
+    stream = vi.fn(async () => { harnessState.stream(); return ({
       fullStream: (async function* () {
         for (const part of harnessState.streamParts) {
           yield part;
         }
       })(),
       text: Promise.resolve(harnessState.finalText),
-    }));
+    }); });
   },
-  collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
+  collectHarnessAgentToolApprovalContinuations: vi.fn(() => harnessState.continuations),
 }));
 
 vi.mock("../registry.js", () => ({
@@ -187,6 +190,9 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     projectSpy.mockClear();
+    harnessState.continuations = [];
+    harnessState.create.mockClear();
+    harnessState.stream.mockClear();
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -231,6 +237,9 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
     expect(forwardedToolOptions()?.includeAppOnly).toBe(false);
 
     projectSpy.mockClear();
+    harnessState.continuations = [];
+    harnessState.create.mockClear();
+    harnessState.stream.mockClear();
     await runHarnessTurn(
       baseOptions({ respectToolVisibility: true }) as never,
       "none"
@@ -362,6 +371,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
         "list_projects",
       ]);
       expect(agentConstruction.last).not.toHaveProperty("toolApproval");
+      expect(agentConstruction.last?.tools ?? {}).not.toHaveProperty("bash");
     });
 
     it("hands a workspace tool that pauses to a runtime that can pause on it, gated (MJ-008)", async () => {
@@ -408,6 +418,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
         baseOptions({
           requireToolApproval: true,
           selectedServers: [],
+          sourceType: "direct",
           builtInTools: { bash: { needsApproval: true } },
         }) as never,
         "none",
@@ -415,6 +426,17 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
 
       expect(agentConstruction.last).toBeDefined();
       expect(agentConstruction.last).not.toHaveProperty("toolApproval");
+      expect(agentConstruction.last?.tools ?? {}).not.toHaveProperty("bash");
     });
   });
+});
+
+it("refuses hosted approval resumes with no paused state instead of replaying a prompt", async () => {
+  harnessState.continuations = [{ approvalResponse: { approvalId: "old", approved: true } }];
+  harnessState.create.mockClear(); harnessState.stream.mockClear();
+  const result = await runHarnessTurn(baseOptions({ sourceType: "direct", chatSessionId: "chat", selectedServers: [] }) as never, "ui");
+  expect(await result.response!.text()).toContain("pending action will not run");
+  expect(harnessState.create).not.toHaveBeenCalled();
+  expect(harnessState.stream).not.toHaveBeenCalled();
+  harnessState.continuations = [];
 });

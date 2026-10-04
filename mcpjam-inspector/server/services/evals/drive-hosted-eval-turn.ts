@@ -173,9 +173,9 @@ export interface DriveHostedEvalTurnParams {
    *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
   harness?: Harness;
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
-   *  runAssistantTurn ONLY for harness turns — runHarnessTurn fail-closes on it
-   *  (no interactive approval yet). The emulated eval path is unchanged (it
-   *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+   *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
+   *  an interactive approval flow; a gated call can fail during streaming.
+   *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
@@ -783,8 +783,8 @@ export async function driveHostedEvalTurn(
       persistMode: "caller",
       approvalMode: "auto-deny",
       // Harness eval (host harness === "claude-code"): forward the selector and
-      // the host's real approval intent so runHarnessTurn fail-closes on a
-      // requireToolApproval host (it can't do interactive approval yet) while
+      // the host's real approval intent. A gated native call can fail during
+      // streaming because evals cannot interactively approve it, while
       // still running non-approval hosts under allow-all. Gated on harness so
       // emulated evals stay byte-identical (they forward neither today).
       ...(params.harness

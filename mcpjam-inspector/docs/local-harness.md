@@ -42,7 +42,9 @@ Local Claude Code does not support cloud computer images, seeded eval attachment
 or injected browser/desktop/bash tools. Such configurations fail explicitly.
 Claude's own file and command tools remain available. A scratch folder is an
 organizational boundary, not OS containment: the process runs as the operator's
-OS user. Interactive chats use workspace-edit permissions; unattended evals and
+OS user. Interactive chats keep the runtime's approval mode. Tool Approval on
+asks before commands and changes; Off pre-approves native requests after a
+separate confirmation for this user, machine, project and harness. Unattended evals and
 swarms use the approved unattended command profile. Session homes and scratch
 folders are outside the control store, which Claude settings deny for file tools.
 This is defense in depth: OS-user commands can still access the user’s files.
@@ -84,11 +86,13 @@ own MCP configuration, plugins and web search stay off. Because the host runs
 those tool calls, eval grading for local Codex reads the run's transcript
 rather than the local evidence protocol.
 
-Interactive chats are attended. Codex's command and file-change approvals show
+Interactive chats are attended. With Tool Approval on, Codex's command and file-change approvals show
 as the normal approval cards, and the answer goes back to the same live Codex
 process, so a turn waiting on an approval keeps its process until it is
 answered, stopped or expired. Stop interrupts the turn; the next turn resumes
-the saved thread.
+the saved thread. Off requires separate confirmation and pre-approves new native
+requests while preserving the thread. Flipping the toggle does not answer an
+approval already waiting; the user's explicit decision still controls it.
 
 Unattended evals and swarms run Codex commands without approval prompts only
 inside Codex's command sandbox: writes are limited to the run's scratch folder

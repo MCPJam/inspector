@@ -1,6 +1,6 @@
 import { shouldUseLocalHarness, isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
-import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError, LOCAL_HARNESS_DISPLAY_NAMES } from "../../utils/harness/local/readiness.js";
-import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace } from "../../utils/harness/local/authorization.js";
+import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError, LOCAL_HARNESS_DISPLAY_NAMES, verifyLocalHarnessMember } from "../../utils/harness/local/readiness.js";
+import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace, readLocalHarnessAuthorization, acknowledgeLocalHarnessAutoApprove } from "../../utils/harness/local/authorization.js";
 /**
  * Local-harness control routes — `/api/mcp/local-harness/*`.
  *
@@ -162,6 +162,24 @@ for (const path of ["/setup", "/readiness"] as const) {
   });
 }
 
+/** Same-origin explicit Off acknowledgement; identity and machine are server-derived. */
+localHarness.post("/consent/auto-approve", async (c) => {
+  if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body.projectId !== "string" || !body.projectId || !["claude-code", "codex"].includes(body.harnessId)) {
+    return c.json({ error: "projectId and a supported harnessId are required" }, 400);
+  }
+  const actor = await resolveConsentActor(c);
+  if (!actor.ok) return c.json({ error: actor.message }, actor.status);
+  try {
+    await verifyLocalHarnessMember(c.req.header("authorization") ?? "", body.projectId);
+    await acknowledgeLocalHarnessAutoApprove({ userId: actor.actor.userId, machineId: await getLocalMachineId(), projectId: body.projectId, harnessId: body.harnessId });
+    return c.json({ autoApproveAcknowledged: true });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Consent could not be recorded" }, 409);
+  }
+});
+
 /**
  * The signed-in user consent binds to.
  *
@@ -292,8 +310,13 @@ localHarness.get("/availability", async (c) => {
   // Per harness: each has its own rollout, conformance and authorization.
   const preferredVenue = projectId && await shouldUseLocalHarness(harnessId, c.req.header("authorization"), projectId) ? "local" : "hosted";
 
+  const actor = projectId ? await resolveConsentActor(c) : null;
+  const authorization = actor?.ok && machineId && projectId && (harnessId === "claude-code" || harnessId === "codex")
+    ? await readLocalHarnessAuthorization(actor.actor.userId, machineId, projectId, harnessId)
+    : null;
   return c.json({
     harnessId,
+    autoApproveAcknowledged: Boolean(authorization?.autoApproveAcknowledgedAt),
     preferredVenue,
     setupAvailable: isLocalHarnessVenue(harnessId) && await localHarnessAccountEnabled(c.req.header("authorization"), undefined, harnessId),
     available:
