@@ -12,7 +12,12 @@ import { resolveAppVersion, resolveEnvironment } from "./utils/log-events.js";
  *
  * NOT called under Electron — the main-process `@sentry/electron` SDK already
  * owns the global carrier there, and a second init would fight it. Electron's
- * embedded server inherits that client.
+ * embedded server inherits that client ONLY while both resolve the same
+ * `@sentry/core`: the carrier is keyed by SDK version, so a server-side
+ * `@sentry/node` one patch apart from the one `@sentry/electron` pins captures
+ * into a carrier with no client and every desktop server error is dropped.
+ * `@sentry/node`/`@sentry/react` are pinned to `@sentry/electron`'s version
+ * for that reason; `__tests__/sentry-carrier-alignment.test.ts` holds it.
  */
 export function initServerSentry(): void {
   // The conventional opt-out for software that runs on the user's own
