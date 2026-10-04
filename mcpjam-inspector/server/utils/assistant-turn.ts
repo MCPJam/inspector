@@ -43,7 +43,7 @@ import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
   harnessReasoningEffortRefusalReason,
-  selectionReasoningEffort,
+  turnReasoningEffortOf,
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
@@ -682,9 +682,7 @@ export async function runAssistantTurn(
     const harnessAdapter = getHarnessAdapter(opts.harness as string);
     // The turn's effort, else the saved selection's. Refused here too so a
     // path that never runs the pre-flight cannot start a paid box for it.
-    const harnessEffort =
-      opts.reasoningEffort ??
-      selectionReasoningEffort(opts.extraBodyFields?.modelSelection);
+    const harnessEffort = turnReasoningEffortOf(opts);
     // Playground chat (`direct`) may run an unverified harness × model pair
     // with a warning; evals, scenarios and swarms may not.
     const purpose = harnessModelPurposeForSourceType(opts.sourceType);
@@ -700,6 +698,9 @@ export async function runAssistantTurn(
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
       ...(harnessEffort !== undefined ? { reasoningEffort: harnessEffort } : {}),
+      ...(opts.modelDefinition.supportedReasoningEfforts
+        ? { modelEfforts: opts.modelDefinition.supportedReasoningEfforts }
+        : {}),
     });
     if (effortRefusal) {
       throw new Error(

@@ -20,6 +20,7 @@ import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
   backendModelSelection,
   ModelResolutionRefusalError,
+  readStoredLegacySelection,
   readStoredModelSelection,
   wireModelIdForSelection,
 } from "../../utils/model-resolution-local.js";
@@ -209,8 +210,15 @@ export function swarmTargetModelDefinition(
 ): ModelDefinition {
   const selection = readStoredModelSelection(target.resolvedSelection);
   if (!selection || selection.modelId !== target.modelId.trim()) {
+    // A STORED legacy selection means "own key only": `hosted: false` keeps
+    // the id off MCPJam credits however it looks. An unlabelled snapshot keeps
+    // its pinned routing provenance exactly as before.
+    const legacy = readStoredLegacySelection(target.resolvedSelection);
     return buildSyntheticModelDefinition(target.modelId, {
-      hosted: target.hosted,
+      hosted:
+        legacy && legacy.modelId.trim() === target.modelId.trim()
+          ? false
+          : target.hosted,
     });
   }
   const wireModelId = wireModelIdForSelection(selection);

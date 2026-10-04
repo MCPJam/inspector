@@ -347,3 +347,53 @@ it("carries hosted request payloads into the authored eval turn", async () => {
   await driveHostedEvalTurn(params);
   expect(params.acc.requestPayloads).toEqual([{ ...entry, promptIndex: 3 }]);
 });
+
+it("adds the turn's reasoning and cached-input tokens onto the iteration usage", async () => {
+  const params = baseParams();
+  params.acc.accumulatedUsage = {
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15,
+    reasoningTokens: 2,
+  };
+  runAssistantTurnMock.mockImplementationOnce(
+    async () =>
+      ({
+        messages: [],
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          reasoningTokens: 30,
+          cachedInputTokens: 40,
+        },
+        turnTrace: { spans: [] },
+      }) as never,
+  );
+  await driveHostedEvalTurn(params);
+  expect(params.acc.accumulatedUsage).toEqual({
+    inputTokens: 110,
+    outputTokens: 55,
+    totalTokens: 165,
+    reasoningTokens: 32,
+    cachedInputTokens: 40,
+  });
+});
+
+it("leaves the breakdown absent when no turn reported one", async () => {
+  const params = baseParams();
+  runAssistantTurnMock.mockImplementationOnce(
+    async () =>
+      ({
+        messages: [],
+        usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+        turnTrace: { spans: [] },
+      }) as never,
+  );
+  await driveHostedEvalTurn(params);
+  expect(params.acc.accumulatedUsage).toEqual({
+    inputTokens: 3,
+    outputTokens: 2,
+    totalTokens: 5,
+  });
+});

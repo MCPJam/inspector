@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+Reasoning effort is settable through the platform operations that MCP, the in-app agent and the CLI share. `update_client` (`set.modelSelection`), `create_project_environment`, `update_project_environment`, `ensure_adhoc_environment`, `update_eval_suite` (`executionConfig.modelSelection`) and the eval case operations (`models[].selection`) accept a whole model selection, and `run_eval_suite` / `run_eval_case` `compose` accepts `modelSelection` / `modelSelections` (one cell per selection). A `reasoningEffort` shorthand on the update operations edits the effort on the selection the target already has, and is refused with "send `modelSelection`" when there is none. `send_chat_message` takes `reasoningEffort`. `HostRunner` gains a `reasoningEffort` option that is applied through the AI SDK provider's own option (and refused at construction when the model has no effort control), and `runWithClient` now applies a saved hosted selection's `settings` instead of deleting them.

@@ -1335,6 +1335,44 @@ describe("ChatInput", () => {
     });
   });
 
+  describe("reasoning effort chip", () => {
+    const effortProps = {
+      reasoningEffortLevels: ["low", "high"] as const,
+      reasoningEffort: "high" as const,
+      onReasoningEffortChange: vi.fn(),
+    };
+
+    it("shows beside the model picker", () => {
+      render(<ChatInput {...defaultProps} {...effortProps} />);
+      expect(screen.getByTestId("effort-control-trigger")).toBeInTheDocument();
+    });
+
+    it("stays visible in compare mode, showing the lead card's level", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          {...effortProps}
+          multiModelEnabled
+          selectedModels={[defaultModel, { ...defaultModel, id: "gpt-5" }]}
+        />
+      );
+      const trigger = screen.getByTestId("effort-control-trigger");
+      expect(trigger).toHaveAccessibleName("Reasoning effort: High");
+    });
+
+    it("stays visible in compare mode with one model picked", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          {...effortProps}
+          multiModelEnabled
+          selectedModels={[defaultModel]}
+        />
+      );
+      expect(screen.getByTestId("effort-control-trigger")).toBeInTheDocument();
+    });
+  });
+
   describe("minimal mode", () => {
     it("hides plus dropdown, model selector, and context in minimal mode", () => {
       render(<ChatInput {...defaultProps} minimalMode={true} />);

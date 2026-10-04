@@ -71,6 +71,12 @@ import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
+import {
+  CompareCardEffort,
+  type CompareCardEffortProps,
+} from "@/components/chat-v2/compare-card-effort";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -118,7 +124,9 @@ interface MultiModelPlaygroundCardProps {
   browserWorkspace?: { id: string; order: number; clientCount: number };
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
-   * mode `compareId === String(model.id)`; in host mode it's the host id.
+   * mode it's the card's `comparisonKey` (the bare model id for a default
+   * selection, so Sonnet·Low and Sonnet·High are two columns); in host mode
+   * it's the host id.
    * The card uses `compareId` to key transcripts/summaries/`hasMessages`
    * callbacks so two columns running the same default model can't collide.
    */
@@ -133,6 +141,12 @@ interface MultiModelPlaygroundCardProps {
    */
   compareSubLabel?: string;
   model: ModelDefinition;
+  /** This column's own effort, sent on its requests (undefined = Default). */
+  reasoningEffort?: ModelReasoningEffort;
+  /** Harness the column's host runs (gates the levels the turn may send). */
+  reasoningEffortHarness?: HostConfigHarnessV2;
+  /** This card's effort chip (model mode); omitted ⇒ none. */
+  effort?: CompareCardEffortProps;
   comparisonSummaries: MultiModelCardSummary[];
   selectedServers: string[];
   broadcastRequest: BroadcastChatTurnRequest | null;
@@ -248,6 +262,9 @@ export function MultiModelPlaygroundCard({
   compareKind,
   compareSubLabel,
   model,
+  reasoningEffort,
+  reasoningEffortHarness,
+  effort,
   comparisonSummaries,
   selectedServers,
   broadcastRequest,
@@ -302,6 +319,8 @@ export function MultiModelPlaygroundCard({
   // the snapshot is meaningful ("no override; preset wins") — when the
   // snapshot itself is set, we forward the field verbatim including
   // undefined, NOT fall back to the tab-root value.
+  const showEffort =
+    !!effort && (effort.levels.length > 0 || effort.value !== undefined);
   const tabRootHostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
   const tabRootChatUiOverride = useScenarioChatUiOverride();
   const tabRootMcpProfile = useActiveMcpProfile();
@@ -385,6 +404,12 @@ export function MultiModelPlaygroundCard({
       ...executionConfig,
       modelId: String(model.id),
     },
+    // The column's own row and effort: two cards of one model send their own
+    // levels, and an OpenRouter card never resolves to the hosted row.
+    pinnedModelProvider: String(model.provider),
+    reasoningEffortEnabled: true,
+    reasoningEffortHarness,
+    fixedReasoningEffort: reasoningEffort ?? null,
     // Source the host-level toggle from the active host's resolved DTO
     // so flipping it in the host's Agent → Behavior tab takes effect on
     // the next send without remounting. `hostCapsResolver` carries the
@@ -823,7 +848,17 @@ export function MultiModelPlaygroundCard({
         showComparisonChrome={showComparisonChrome}
         showIdentityHeader={showIdentityHeader}
         logoSrc={logoSrc}
+        titleAccessory={
+          effort && showEffort ? (
+            <CompareCardEffort model={model} {...effort} />
+          ) : null
+        }
       />
+      {effort && showEffort && !showComparisonChrome ? (
+        <div className="flex shrink-0 items-center justify-end border-b border-border/60 px-3 py-1">
+          <CompareCardEffort model={model} {...effort} />
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {errorMessage ? (

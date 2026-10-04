@@ -15,9 +15,13 @@ import {
   isRuntimeChosenModelSentinel,
   runtimeChosenModelSentinelName,
 } from "@/shared/model-provider";
-import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
+import { decideTurnRail } from "./selection-rail.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
-import { selectionKey, type ModelSelection } from "@mcpjam/sdk";
+import {
+  selectionKey,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import {
   isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
@@ -802,15 +806,22 @@ export async function resolveSyntheticModelSource(args: {
   accessVersion?: number;
   serverIds?: string[];
   /**
-   * The saved `org` selection behind this model, forwarded to
-   * `/stream/org/resolve` so the backend re-checks its connection. Any other
-   * source is not sent.
+   * The saved selection behind this model. It DECIDES the source
+   * (`decideTurnRail`): `hosted` is MCPJam, `org` / `local` / a stored legacy
+   * one are never MCPJam, and absent keeps today's hosted-list check. Only an
+   * `org` one is forwarded to `/stream/org/resolve`, so the backend re-checks
+   * its connection.
    */
-  modelSelection?: ModelSelection;
+  modelSelection?: RequestedModelSelection;
   modelWorkload?: ModelWorkload;
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
-  if (isHostedModelDefinition(args.modelDefinition)) {
+  if (
+    decideTurnRail({
+      selection: args.modelSelection,
+      model: args.modelDefinition,
+    }) === "hosted"
+  ) {
     return { source: "mcpjam" };
   }
   // A runtime-chosen sentinel resolves NO org provider — see

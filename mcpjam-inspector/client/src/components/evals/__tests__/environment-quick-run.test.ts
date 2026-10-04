@@ -8,6 +8,7 @@ import {
   ensureLocalEnvironmentServers,
   planQuickRunTargets,
   quickRunClientIds,
+  quickRunEnvironmentEffort,
   resolveQuickRunEnvironments,
 } from "../environment-quick-run";
 
@@ -41,6 +42,121 @@ describe("attachedSuiteEnvironments", () => {
     expect(
       attachedSuiteEnvironments({ environmentIds: ["a"] }, undefined),
     ).toBeNull();
+  });
+});
+
+describe("quickRunEnvironmentEffort", () => {
+  const selection = (effort: string) =>
+    ({
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+      settings: { reasoningEffort: effort },
+    }) as never;
+  const attached = [
+    env("a", {
+      hostId: "host-1",
+      modelId: "openai/gpt-5",
+      modelSelection: selection("high"),
+    }),
+    env("b", { hostId: "host-2", modelId: "openai/gpt-5" }),
+  ];
+
+  it("reads the effort the environment on that client and model pins", () => {
+    expect(
+      quickRunEnvironmentEffort(attached, "host-1", "openai/gpt-5"),
+    ).toBe("high");
+  });
+
+  it("reads the effort of an environment that inherits its client's model", () => {
+    const inherited = [
+      env("c", { hostId: "host-3", modelSelection: selection("high") }),
+    ];
+    const clientModelId = (hostId: string) =>
+      hostId === "host-3" ? "openai/gpt-5" : undefined;
+    expect(
+      quickRunEnvironmentEffort(inherited, "host-3", "openai/gpt-5"),
+    ).toBeUndefined();
+    expect(
+      quickRunEnvironmentEffort(
+        inherited,
+        "host-3",
+        "openai/gpt-5",
+        clientModelId,
+      ),
+    ).toBe("high");
+  });
+
+  it("is undefined for another client, another model, or an unpinned environment", () => {
+    expect(
+      quickRunEnvironmentEffort(attached, "host-2", "openai/gpt-5"),
+    ).toBeUndefined();
+    expect(
+      quickRunEnvironmentEffort(attached, "host-1", "openai/gpt-4o"),
+    ).toBeUndefined();
+  });
+});
+
+describe("quick runs of two efforts of one model", () => {
+  const selection = (effort?: string) =>
+    ({
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+      ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+    }) as never;
+  const attached = [
+    env("low", { modelId: "openai/gpt-5", modelSelection: selection("low") }),
+    env("high", { modelId: "openai/gpt-5", modelSelection: selection("high") }),
+  ];
+
+  it("names no single effort when the client runs the model at two", () => {
+    expect(
+      quickRunEnvironmentEffort(attached, "host-1", "openai/gpt-5"),
+    ).toBeUndefined();
+  });
+
+  it("reuses the environment of the requested target (by comparisonKey)", () => {
+    const plans = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: [
+        {
+          key: "k",
+          hostId: "host-1",
+          modelId: "openai/gpt-5",
+          modelSelection: selection("high"),
+        },
+      ],
+    });
+    expect(plans).toEqual([
+      { kind: "reuse", key: "k", environmentId: "high" },
+    ]);
+  });
+
+  it("derives a new target with its selection, and is ambiguous without one", () => {
+    const [derived] = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: [
+        {
+          key: "k",
+          hostId: "host-1",
+          modelId: "openai/gpt-5",
+          modelSelection: selection(),
+        },
+      ],
+    });
+    expect(derived).toMatchObject({
+      kind: "derive",
+      overrides: { modelId: "openai/gpt-5", modelSelection: selection() },
+    });
+    const [ambiguous] = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: [{ key: "k", hostId: "host-1", modelId: "openai/gpt-5" }],
+    });
+    expect(ambiguous?.kind).toBe("blocked");
   });
 });
 

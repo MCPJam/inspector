@@ -1,6 +1,7 @@
 import { Play } from "lucide-react";
 import { RunIterationControl } from "../run-iteration-control";
 import { EvalTargetMatrix, EvalModelChoices } from "../eval-target-matrix";
+import { explicitModelIds } from "@/components/environment-composer/environment-stack";
 import { parseModelValue } from "../../evals/compare-playground-helpers";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -10,8 +11,30 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@mcpjam/design-system/sheet";
-import { type CaseSuiteChipsProps } from "../simple-case/case-suite-chips";
+import type { ModelDefinition } from "@/shared/types";
 import { ServerPicker } from "@/components/hosts/server-picker";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+
+export type CaseSuiteChipOption = {
+  value: string;
+  label: string;
+};
+
+/** The run controls a case workspace hands the Setup Run sheet. */
+export type CaseRunControls = {
+  models: string[];
+  modelLabelByValue?: Record<string, string>;
+  availableModels?: ModelDefinition[];
+  onModelChange?: (next: string) => void;
+  trials: number;
+  onTrialsChange?: (next: number) => void;
+  hostLabel: string;
+  hostValue?: string;
+  hostOptions?: CaseSuiteChipOption[];
+  onHostChange?: (next: string) => void;
+  disabled?: boolean;
+};
 
 export function CaseRunSetup({
   open,
@@ -22,8 +45,15 @@ export function CaseRunSetup({
   disabledReason,
   onModelsChange,
   serverGroup,
+  environmentEffort,
   ...controls
-}: Omit<CaseSuiteChipsProps, "onOpenSuiteSettings"> & {
+}: CaseRunControls & {
+  /**
+   * Environment suites only: the reasoning effort the suite's environment runs
+   * a model at (by model id). The environment wins over anything set here, so
+   * it is shown read-only under the model list and never edited.
+   */
+  environmentEffort?: (modelId: string) => ModelReasoningEffort | undefined;
   onModelsChange?: (models: string[]) => void;
   /**
    * Environment suites only: the server group the run's environments use.
@@ -58,7 +88,7 @@ export function CaseRunSetup({
   const modelIds = controls.models.map((value) => parseModelValue(value).model);
   const selection = {
     includeClientDefaults: false,
-    explicitModelIds: modelIds,
+    explicitTargets: modelIds.map((modelId) => ({ modelId })),
   };
   const validCount =
     Number.isInteger(controls.trials) &&
@@ -113,12 +143,13 @@ export function CaseRunSetup({
               <EvalModelChoices
                 harness={harness}
                 inModal
+                effortEditable={false}
                 value={selection}
                 availableModels={availableModels}
                 disabled={Boolean(controls.disabled)}
                 testId="case-run-models"
                 onChange={(next) => {
-                  const values = next.explicitModelIds.map((id) => {
+                  const values = explicitModelIds(next).map((id) => {
                     const model = availableModels.find(
                       (model) => String(model.id) === id,
                     );
@@ -134,6 +165,20 @@ export function CaseRunSetup({
               />
             )}
           />
+          {environmentEffort
+            ? modelIds.flatMap((modelId) => {
+                const effort = environmentEffort(modelId);
+                return effort ? [{ modelId, effort }] : [];
+              }).map(({ modelId, effort }) => (
+                <p
+                  key={modelId}
+                  data-testid="case-run-environment-effort"
+                  className="text-xs text-muted-foreground"
+                >
+                  {modelId}: {reasoningEffortLabel(effort)} effort
+                </p>
+              ))
+            : null}
         </div>
         <div className="space-y-3 border-t border-border p-6">
           {disabledReason && (
