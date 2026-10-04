@@ -1,0 +1,57 @@
+---
+title: "Local harness"
+description: "Run Claude Code and Codex locally on your machine — with the same model broker, MCP relay, and approval controls as hosted execution"
+icon: "computer"
+---
+
+On Node/npx and Electron installations, Claude Code and Codex can execute locally when a verified runtime pack is installed, your account rollout is on, and the operator kill switch permits it. Hosted Inspector always uses cloud execution. Each harness (Claude Code, Codex) is installed, rolled out, and authorized separately.
+
+## Local Claude Code
+
+### Setup
+
+**Add client → Claude Code → Create** starts installation and records authorization for the signed-in member, machine, and project. The dialog explains that the client runs with your OS-user permissions, and that evals and swarms run commands without approval prompts. Installation is a background operation with status polling; failed downloads have an explicit retry. A verified installation is reused across clients and projects.
+
+The default workspace is a private per-project folder; the npx launch directory is never silently authorized. You can select an explicit workspace instead. The authorization record survives restarts. Reopening Inspector, switching surfaces, and credential expiry do not require another consent action. Membership, rollout, policy, and verified runtime identity are rechecked before issuing fresh credentials. **Forget** revokes the durable authorization and project grants, and stops running sessions.
+
+### Playground
+
+Playground uses the normal Send, streaming, approval, and Stop controls. Stop ends the turn and retains the saved conversation. The next turn resumes the disk session without reconnecting to a stopped bridge.
+
+### Evals and swarms
+
+Evals and swarms use the same harness turn executor, adapter, model broker, MCP bridge, cancellation, and result contracts as hosted execution. Each unattended session receives a private scratch folder and a server-issued unattended grant. Local schedulers share two execution slots. Git 2.31 or newer is required for unattended execution; system Git configuration, hooks, and credential helpers are disabled in those sessions.
+
+### MCP servers, skills, and secrets
+
+Only the MCP servers selected by MCPJam are passed to Claude Code. The patched bootstrap sets `strictMcpConfig: true`, so project and user MCP configuration do not add servers. Local MCP requests go through a turn-scoped loopback listener with a random capability, selected-server restrictions, and the same tool-policy enforcement used by hosted execution.
+
+Skills are materialized in the session's synthetic home. Secrets are delivered through the validated local environment; brokered secrets and runtime-conflicting variables are refused. Model access remains brokered through a registered machine key.
+
+### Limitations
+
+Local Claude Code does not support cloud computer images, seeded eval attachments, or injected browser/desktop/bash tools. Such configurations fail explicitly. Claude's own file and command tools remain available.
+
+A scratch folder is an organizational boundary, not OS containment: the process runs as your OS user. Interactive chats use workspace-edit permissions; unattended evals and swarms use the approved unattended command profile.
+
+## Local Codex
+
+Codex runs locally on the same terms as Claude Code: a verified pack, its own account rollout, and the operator kill switch. **Add client → Codex → Create** installs Codex's pack and records authorization for Codex only; authorizing one harness never authorizes the other. **Forget** revokes every local harness for the project.
+
+### How it works
+
+Codex runs as the pinned `@openai/codex` CLI behind MCPJam's app-server bridge, under a private per-session `CODEX_HOME`. It never reads your `~/.codex`, ChatGPT login, or OpenAI key. Inference goes through the MCPJam model broker on the registered machine key, exactly as hosted Codex does. MCP servers selected by MCPJam reach Codex through the turn-scoped host-tool relay; Codex's own MCP configuration, plugins, and web search stay off.
+
+### Playground
+
+Interactive chats are attended. Codex's command and file-change approvals appear as the normal approval cards, and the answer goes back to the same live Codex process — a turn waiting on an approval keeps its process until it is answered, stopped, or expired. Stop interrupts the turn; the next turn resumes the saved thread.
+
+### Evals and swarms
+
+Unattended evals and swarms run Codex commands without approval prompts only inside Codex's command sandbox: writes are limited to the run's scratch folder and its temporary folder, `/tmp` is excluded, and commands get no network access. A platform is eligible for unattended local Codex only once that sandbox has conformance evidence on it; until then, evals and swarms with a Codex host run in the cloud.
+
+When the Inspector launches a local eval, quick run, or swarm, it declares `local-harness:<id>` for each harness this machine can run unattended for the project. The backend runs exactly those harnesses locally and the rest in the cloud. An older Inspector declares none and keeps its Claude Code-only behavior.
+
+### Limitations
+
+Pinned computer images, seeded eval attachments, and injected browser/desktop/bash tools are refused for local Codex, as for Claude Code. Because the host runs MCP tool calls through the relay, eval grading for local Codex reads the run's transcript rather than the local evidence protocol.
