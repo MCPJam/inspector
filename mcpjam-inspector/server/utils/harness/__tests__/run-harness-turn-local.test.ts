@@ -399,6 +399,29 @@ describe("runHarnessTurn local continuity", () => {
     expect(harnessState.discardState).not.toHaveBeenCalled();
   });
 
+  it("saves a turn paused on approval, without the continuation's commit", async () => {
+    // As the emulated engine does: otherwise a new chat that paused does not
+    // exist in history, and the client reports the reply unsaved.
+    harnessState.streamParts = [
+      { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "rm x" } },
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+    ];
+    const onConversationComplete = vi.fn(async (..._args: unknown[]) => ({ outcome: "saved", version: 2 }));
+    const stream = await (
+      await runHarnessTurn(baseOptions({ onConversationComplete }) as any, "ui")
+    ).response!.text();
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    const [history, , commit] = onConversationComplete.mock.calls[0]!;
+    // The continuation went through the standalone endpoint, which already
+    // advanced the state version; an ingest carrying it would be refused.
+    expect(commit).toBeUndefined();
+    expect(JSON.stringify(history)).toContain("call-1");
+    expect(vi.mocked(commitHarnessSessionState).mock.invocationCallOrder[0]).toBeLessThan(
+      onConversationComplete.mock.invocationCallOrder[0]!,
+    );
+    expect(stream).toContain('"type":"data-persist-receipt"');
+  });
+
   it("discards state when the completed turn could not be persisted", async () => {
     await runHarnessTurn(baseOptions({ onConversationComplete: async () => ({ outcome: "failed" }) }) as any, "none");
     expect(harnessState.discardState).toHaveBeenCalledOnce();
