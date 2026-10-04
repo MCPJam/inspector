@@ -42,6 +42,7 @@ import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
 import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js";
+import type { FailureCapture } from "./agent-failure-capture.js";
 import {
   SANDBOX_NOTICE_DATA_PART_TYPE,
   type SandboxNoticeReason,
@@ -542,14 +543,20 @@ export interface WebChatTurnRuntime {
    * Ask MCPJam only: asks the backend to bill this turn's model calls to
    * MCPJam rather than to the customer.
    *
-   * It is a REQUEST, not a decision. Convex honours it only alongside
-   * `x-inspector-service-token` and only for the pinned agent model
+   * It is a REQUEST, not a decision. Convex honours it only for a signed-in
+   * user, on their own login, and only for the pinned agent model
    * (`shared/mcpjam-agent-model.ts`), and refuses the turn outright if either
    * fails rather than falling back to a customer debit. Set by the agent route
    * for signed-in callers; absent everywhere else, which leaves every other
    * surface on exactly the path it has always taken.
    */
   billingFeature?: string;
+  /**
+   * A surface's capture rule for the engine's failures. Ask MCPJam passes
+   * `MCPJAM_AGENT_FAILURE_CAPTURE` so every one of its failures reaches Sentry
+   * classified; absent everywhere else. See `MCPJamHandlerOptions`.
+   */
+  failureCapture?: FailureCapture;
   /**
    * Per-turn step budget for the MCPJam-free engine. Set alongside
    * `billingFeature` because the backend enforces the same ceiling on every
@@ -1592,6 +1599,9 @@ export async function streamWebChatTurn(
       ? { extraBodyFields: { billingFeature: runtime.billingFeature } }
       : {}),
     ...(runtime.maxSteps !== undefined ? { maxSteps: runtime.maxSteps } : {}),
+    ...(runtime.failureCapture
+      ? { failureCapture: runtime.failureCapture }
+      : {}),
     modelId: mcpjamModelId,
     provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
