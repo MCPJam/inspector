@@ -103,6 +103,8 @@ The model picker in the chat input lets you choose which LLM to use. Models are 
 
 The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together.
 
+When the previewed client runs a harness (Codex or Claude Code), the picker lists only the models that harness can run. Models the harness would refuse are hidden, so the picker never offers a choice the server would reject. If your saved model is not in that list, the client falls back to the harness's own model rather than reverting to the emulated default.
+
 ### Out-of-credits state
 
 When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
