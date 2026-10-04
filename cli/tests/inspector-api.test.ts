@@ -212,7 +212,10 @@ test("InspectorApiClient sends session token auth and supported endpoint payload
         return;
       }
 
-      if (request.method === "POST" && request.url === "/api/mcp/connect") {
+      if (
+        request.method === "POST" &&
+        request.url === "/api/mcp/connect-adhoc"
+      ) {
         const body = await readJsonBody(request);
         seen.push({
           url: request.url,
@@ -249,7 +252,7 @@ test("InspectorApiClient sends session token auth and supported endpoint payload
     },
     async (baseUrl) => {
       const client = new InspectorApiClient({ baseUrl });
-      await client.connectServer("demo", { url: "http://example.test/mcp" });
+      await client.connectServerAdhoc("demo", { url: "http://example.test/mcp" });
       const result = await client.executeTool("demo", "echo", {
         message: "hi",
       });
@@ -260,7 +263,7 @@ test("InspectorApiClient sends session token auth and supported endpoint payload
       });
       assert.deepEqual(seen, [
         {
-          url: "/api/mcp/connect",
+          url: "/api/mcp/connect-adhoc",
           auth: `Bearer ${token}`,
           body: {
             serverId: "demo",
@@ -281,7 +284,7 @@ test("InspectorApiClient sends session token auth and supported endpoint payload
   );
 });
 
-test("InspectorApiClient applies explicit timeout to connectServer", async () => {
+test("InspectorApiClient applies explicit timeout to connectServerAdhoc", async () => {
   await withServer(
     (request, response) => {
       if (request.method === "GET" && request.url === "/api/session-token") {
@@ -290,7 +293,10 @@ test("InspectorApiClient applies explicit timeout to connectServer", async () =>
         return;
       }
 
-      if (request.method === "POST" && request.url === "/api/mcp/connect") {
+      if (
+        request.method === "POST" &&
+        request.url === "/api/mcp/connect-adhoc"
+      ) {
         setTimeout(() => {
           response.writeHead(200, { "Content-Type": "application/json" });
           response.end(JSON.stringify({ success: true, status: "connected" }));
@@ -307,7 +313,7 @@ test("InspectorApiClient applies explicit timeout to connectServer", async () =>
 
       await assert.rejects(
         () =>
-          client.connectServer(
+          client.connectServerAdhoc(
             "slow",
             { url: "http://example.test/mcp" },
             { timeoutMs: 25 },
