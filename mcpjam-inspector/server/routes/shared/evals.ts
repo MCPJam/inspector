@@ -113,8 +113,13 @@ import {
 } from "../../services/evals/pinned-skill-source.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
-import type { ModelSelection } from "@mcpjam/sdk";
-import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
+import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import {
+  readRoutingSelection,
+  readStoredLegacySelection,
+  readStoredModelSelection,
+} from "../../utils/model-resolution-local.js";
+import { routingSelectionForModel } from "../../utils/selection-rail.js";
 import {
   countModelSteps,
   isModelFree,
@@ -747,6 +752,62 @@ export function storedSelectionForCaseModel(
     );
   }) as { selection?: unknown } | undefined;
   return readStoredModelSelection(entry?.selection);
+}
+
+/**
+ * The STORED legacy selection (`{ source: "legacy" }`, "own key only") of the
+ * same `models[]` entry {@link storedSelectionForCaseModel} reads, when that
+ * entry has no full selection. `undefined` for an unlabelled entry, which
+ * keeps today's hosted-first read.
+ */
+export function storedLegacySelectionForCaseModel(
+  testCase: unknown,
+  model: string,
+  provider: string,
+): LegacyModelSelection | undefined {
+  const models = (testCase as { models?: unknown } | null)?.models;
+  if (!Array.isArray(models)) return undefined;
+  const entry = models.find((candidate) => {
+    if (candidate === null || typeof candidate !== "object") return false;
+    const row = candidate as { model?: unknown; provider?: unknown };
+    return (
+      row.model === model &&
+      (row.provider === undefined || row.provider === provider)
+    );
+  }) as { selection?: unknown } | undefined;
+  return readStoredLegacySelection(entry?.selection);
+}
+
+/**
+ * The committed environment quick run's selection, applied to the runtime
+ * case: the frozen host config's `modelSelection` (a full or stored legacy
+ * one) when it is for the committed model, else the case entry's own when
+ * THAT is for it, else none (today's path). A selection is never carried onto
+ * a model it was not saved for.
+ */
+export function applyCommittedRoutingSelection(
+  test: {
+    model: string;
+    provider: string;
+    selection?: ModelSelection;
+    legacySelection?: LegacyModelSelection;
+  },
+  committedHostConfig: Record<string, unknown> | null | undefined,
+): void {
+  const model = { id: test.model, provider: test.provider };
+  const committed = routingSelectionForModel(
+    readRoutingSelection(committedHostConfig?.modelSelection),
+    model,
+  );
+  const fromCase =
+    routingSelectionForModel(test.selection, model) ??
+    routingSelectionForModel(test.legacySelection, model);
+  const chosen = committed ?? fromCase;
+  delete test.selection;
+  delete test.legacySelection;
+  if (!chosen) return;
+  if (chosen.source === "legacy") test.legacySelection = chosen;
+  else test.selection = chosen;
 }
 
 export const RunTestCaseRequestSchema = z.object({
@@ -3184,13 +3245,26 @@ function buildSingleCaseRuntimeTest(args: {
     args.model,
     args.provider,
   );
+  // A stored legacy selection ("own key only"), read when there is no full one.
+  const caseLegacySelection = caseModelSelection
+    ? undefined
+    : storedLegacySelectionForCaseModel(testCase, args.model, args.provider);
   return {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
     runs: testCaseOverrides?.runs ?? 1,
     model: args.model,
     provider: args.provider,
-    ...(caseModelSelection ? { selection: caseModelSelection } : {}),
+    ...(caseModelSelection
+      ? { selection: caseModelSelection as ModelSelection | undefined }
+      : {}),
+    ...(caseLegacySelection
+      ? {
+          legacySelection: caseLegacySelection as
+            | LegacyModelSelection
+            | undefined,
+        }
+      : {}),
     // Freeze the authored analytics label onto the runtime case. The runner
     // carries it into each iteration snapshot; reading it live later would
     // re-attribute historical trials after a case is retagged.
@@ -3576,6 +3650,8 @@ export async function prepareSingleCaseExecution(
     test.model = committed.execution.model;
     test.provider = committed.execution.provider;
     suiteHostConfig = committed.execution.hostConfig;
+    // Route on the selection the commit froze for the model that runs.
+    applyCommittedRoutingSelection(test, committed.execution.hostConfig);
     environment = {
       resolved: environmentLaunch,
       committed,

@@ -799,6 +799,9 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
   // Nothing verified yet: an effort on this harness is refused, not dropped.
+  // `createHarness` below already maps an effort (`effort` option + adaptive
+  // thinking), but it stays inert (the SDK row is empty) until the live check
+  // against the AI Gateway verifies it. See `HARNESS_REASONING_EFFORTS`.
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   requiresComputer: true,
   // MCPJam brokers the model credential: Convex mints a lease, E2B injects it
@@ -866,7 +869,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("claude-code"),
   supportsModel: supportsModelFor("claude-code"),
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, mcpJson }) {
+  createHarness({ modelId, auth, mcpJson, reasoningEffort }) {
     const nativeModel = toClaudeCodeModel(modelId);
     return createClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
@@ -878,7 +881,11 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
       // gateway accepts adaptive. (`"off"` on the canary line; the stable
       // line takes the richer `{ type }` config, where `'disabled'` is the
       // same wire behavior.)
-      thinking: { type: "disabled" },
+      //
+      // WITH an effort the turn asks for adaptive thinking (the only shape the
+      // `effort` option controls), so the disabled pin is dropped for it.
+      // A turn with no effort keeps the exact options above.
+      ...(reasoningEffort ? {} : { thinking: { type: "disabled" as const } }),
       // AI Gateway's Anthropic-compat schema rejects the newer
       // output_config.effort request field ("400 output_config.effort: Extra
       // inputs are not permitted"). "unset" makes the CLI omit the field
@@ -890,7 +897,16 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
       // env, so unlike `??=` it is now authoritative rather than a default —
       // deliberate: the sandbox env is ours, and the adapter's own `effort`
       // option is the supported way to ask for a value.
-      env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" },
+      //
+      // With an effort, the env is set to that level instead: it beats the
+      // `--effort` flag, so leaving "unset" would silently drop the request.
+      ...(reasoningEffort
+        ? {
+            effort: reasoningEffort,
+            thinking: { type: "adaptive" as const },
+            env: { CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
+          }
+        : { env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" } }),
     });
   },
 };
@@ -977,13 +993,15 @@ const codexExecAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth }) {
+  createHarness({ modelId, auth, reasoningEffort }) {
     const nativeModel = toCodexModel(modelId);
     // Same dual-`ai` boundary cast as Claude Code. `auth.openaiCompatible` is
     // accepted by createCodex — the broker dummy auth always carries an
     // explicit baseUrl so the CLI never reads the host env for it.
     return createCodex({
       ...(nativeModel ? { model: nativeModel } : {}),
+      // Codex's own `reasoningEffort` option (exec transport).
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       auth,
     }) as unknown as HarnessAgentAdapter;
   },
@@ -1056,10 +1074,13 @@ const codexAppServerAdapter: HarnessRuntimeAdapter = {
   // wanted here.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
-  createHarness({ modelId, auth, sandboxPolicy }) {
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort }) {
     const nativeModel = toCodexModel(modelId);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
+      // Forwarded on the bridge `start` message, which sends it as
+      // `turn/start` `effort`.
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       auth,
       ...(sandboxPolicy ? { sandboxPolicy } : {}),
     }) as unknown as HarnessAgentAdapter;

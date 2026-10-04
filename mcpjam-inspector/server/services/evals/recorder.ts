@@ -25,7 +25,10 @@ import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import { randomUUID } from "node:crypto";
-import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
+import {
+  readStoredLegacySelection,
+  readStoredModelSelection,
+} from "../../utils/model-resolution-local.js";
 import {
   environmentLaunchConflictError,
   environmentLaunchRejectionError,
@@ -1033,14 +1036,22 @@ export const startSuiteRunWithRecorder = async ({
       }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => {
-          // Saved selection behind this entry; invalid or absent ⇒ legacy.
+          // Saved selection behind this entry; a STORED legacy one means
+          // "own key only"; invalid or absent ⇒ an unlabelled row (today's
+          // hosted-first read).
           const selection = readStoredModelSelection(model.selection);
+          const legacySelection = selection
+            ? undefined
+            : readStoredLegacySelection(model.selection);
           return {
             title: tc.title,
             query: tc.query,
-            model: model.model,
-            provider: model.provider,
+            // Read defensively: a store-once backend computes `model`, but the
+            // selection is the stored copy.
+            model: model.model ?? selection?.modelId ?? legacySelection?.modelId,
+            provider: model.provider ?? legacySelection?.provider,
             ...(selection ? { selection } : {}),
+            ...(legacySelection ? { legacySelection } : {}),
             runs: tc.runs || 1,
             expectedToolCalls: tc.expectedToolCalls || [],
             isNegativeTest: tc.isNegativeTest,

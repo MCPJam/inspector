@@ -46,7 +46,13 @@ import type { RuntimeStandaloneSkill } from "../../services/environments/effecti
 import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
-import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
+import {
+  decideTurnRail,
+  readRoutingSelection,
+  routingSelectionForModel,
+  withSelectionRouting,
+} from "../../utils/selection-rail.js";
+import { backendModelSelection } from "../../utils/model-resolution-local.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
@@ -97,7 +103,13 @@ import {
   type PersistChatOutcome,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
+import {
+  directChatEffort,
+  hostSelectionForTurn,
+  parseChatReasoningEffort,
+  resolveChatReasoningEffort,
+} from "../../utils/chat-reasoning-effort.js";
 import {
   buildWidgetModelContextSystemPrompt,
   advertisedPageToolsOnly,
@@ -184,6 +196,7 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import { ranTurnSelection } from "../../utils/session-model-selection";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -534,6 +547,12 @@ function streamDirectChatWithLiveTrace(options: {
   messageHistory: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Provider options that apply the turn's reasoning effort (the caller
+   * resolved and validated it with `directChatEffort`). Handed to the engine
+   * as-is; absent leaves the call byte-identical.
+   */
+  providerOptions?: ProviderOptions;
   tools: ToolSet;
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
@@ -1164,18 +1183,95 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "messages are required" }, 400);
     }
 
-    const modelDefinition = resolvedModelOverride ?? model;
-    if (!modelDefinition) {
+    const unroutedModelDefinition = resolvedModelOverride ?? model;
+    if (!unroutedModelDefinition) {
       return c.json({ error: "model is not supported" }, 400);
     }
+    // THE SAVED SELECTION DECIDES THE RAIL (`selection-rail.ts`): the turn's
+    // own `modelSelection` (a Playground card's), else the selected host's
+    // saved one — each only when it is for this turn's model. A scenario turn
+    // takes the host's alone: a share-link visitor owns the body. A stored
+    // legacy selection is "own key only"; NO selection keeps today's
+    // hosted-list routing, byte for byte.
+    const routingSelection =
+      (isScenarioSession
+        ? undefined
+        : routingSelectionForModel(
+            readRoutingSelection(
+              (body as { modelSelection?: unknown }).modelSelection,
+            ),
+            unroutedModelDefinition,
+          )) ??
+      routingSelectionForModel(
+        resolvedExecution.routingSelection,
+        unroutedModelDefinition,
+      );
+    // A non-hosted selection stamps `hosted: false`, so every downstream check
+    // (harness eligibility, skills, the dispatch) agrees with the rail.
+    const modelDefinition = withSelectionRouting(
+      unroutedModelDefinition,
+      routingSelection,
+    );
+    const turnRail = decideTurnRail({
+      selection: routingSelection,
+      model: modelDefinition,
+    });
+    // An `org` selection runs on its org connection or not at all: never on a
+    // request key, never on MCPJam credits.
+    if (
+      turnRail === "org" &&
+      !(process.env.CONVEX_HTTP_URL && typeof body.projectId === "string" && body.projectId)
+    ) {
+      return c.json(
+        {
+          error:
+            "credential_missing: this model is saved to run on an organization connection, which needs a project to resolve it in.",
+          code: "credential_missing",
+        },
+        400,
+      );
+    }
+
+    // Reasoning effort: the body's top-level field, else the selected host's
+    // saved effort — the latter only when the host's selection is for THIS
+    // turn's model. A scenario turn takes the host's alone.
+    const bodyEffort = parseChatReasoningEffort(body.reasoningEffort);
+    if (!bodyEffort.ok) return c.json({ error: bodyEffort.error }, 400);
+    const reasoningEffort = resolveChatReasoningEffort({
+      bodyEffort: bodyEffort.effort,
+      hostSelection: hostSelectionForTurn(
+        resolvedExecution.modelSelection,
+        String(modelDefinition.id),
+      ),
+      hostWins: isScenarioSession,
+    });
+    // What the session records for this turn: the selection it ran, effort
+    // included (last turn wins, like its modelId).
+    const sessionModelSelection = ranTurnSelection({
+      selection: routingSelection,
+      model: modelDefinition,
+      reasoningEffort,
+    });
+    // Only a temperature sent ALONGSIDE a body effort counts as explicit: a
+    // host default (or the slider value a client sends with a host's saved
+    // effort) yields to the effort; an explicit pair is refused on the direct
+    // rails.
+    const explicitTemperature =
+      !isScenarioSession &&
+      bodyEffort.effort !== undefined &&
+      bodyTemperature !== undefined
+        ? bodyTemperature
+        : undefined;
 
     const requestAuthHeader = c.req.header("authorization");
     // Matches streamWebChatTurn's dispatch: the whole definition, so a bare
     // hosted id (`gpt-5-nano` + `openai`) still canonicalizes to its prefixed
     // MCPJam form, and the picker's explicit `hosted: false` on a "Your
     // providers" row with the same bare id still routes to the org's key.
+    //
+    // With a saved selection its `source` decides instead (`turnRail`).
     const isMcpJamProvidedModel = Boolean(
-      modelDefinition.id && isHostedModelDefinition(modelDefinition),
+      modelDefinition.id && turnRail === "hosted",
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -1364,6 +1460,8 @@ chatV2.post("/", async (c) => {
         // A local turn reserves and wakes nothing, so the computers-data-plane
         // check does not apply to it. Every other rule still does.
         ...(harnessExecutionTarget ? { localExecution: true } : {}),
+        // Refused before any spend when the adapter has not verified it.
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         requireToolApproval: resolvedExecution.requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
         // The RESOLVED definition — eligibility and the canonical id are both
@@ -1873,6 +1971,7 @@ chatV2.post("/", async (c) => {
         modelDefinition,
         systemPrompt: effectiveSystemPrompt,
         temperature,
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         requireToolApproval,
         respectToolVisibility,
         modelVisibleMcpToolResults,
@@ -2134,6 +2233,7 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
@@ -2214,6 +2314,7 @@ chatV2.post("/", async (c) => {
               return await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
+                modelSelection: sessionModelSelection,
                 // `'external-account'` rather than `'mcpjam'` when the runtime
                 // pays on the customer's own vendor account: `'mcpjam'` is what
                 // makes a turn consume the org's MCPJam spend limit, and this
@@ -2251,6 +2352,7 @@ chatV2.post("/", async (c) => {
                           : { kind: "adhoc" },
                         systemPrompt,
                         temperature,
+                        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
                         requireToolApproval,
                         respectToolVisibility,
                         modelVisibleMcpToolResults,
@@ -2279,11 +2381,16 @@ chatV2.post("/", async (c) => {
     // and the caller hasn't supplied a client-side apiKey, use the org's
     // Convex config. Cloud runtime stays in Convex; local runtime resolves a
     // scoped provider config and executes in this inspector.
+    //
+    // An `org` selection takes this branch even when the request carries a
+    // key (the connection is the choice); a `local` one never takes it (it
+    // runs on this request's own key, below).
     if (
       process.env.CONVEX_HTTP_URL &&
       typeof body.projectId === "string" &&
       body.projectId &&
-      !apiKey
+      (!apiKey || turnRail === "org") &&
+      turnRail !== "local"
     ) {
       const providerKeyResult = deriveOrgProviderKey(modelDefinition);
       if (!providerKeyResult.ok) {
@@ -2328,6 +2435,11 @@ chatV2.post("/", async (c) => {
                   tools: allTools,
                   messages: modelMessages,
                 }),
+                // The saved org connection, re-checked by the backend before
+                // it hands back any key.
+                ...(routingSelection?.source === "org"
+                  ? { modelSelection: backendModelSelection(routingSelection) }
+                  : {}),
               },
             )
           : { runtimeLocation: "cloud", providerKey };
@@ -2340,6 +2452,7 @@ chatV2.post("/", async (c) => {
             return await persistChatSessionToConvex({
               chatSessionId,
               modelId,
+              modelSelection: sessionModelSelection,
               modelSource:
                 runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
@@ -2368,6 +2481,7 @@ chatV2.post("/", async (c) => {
                         : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
+                      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
                       requireToolApproval,
                       respectToolVisibility,
                       modelVisibleMcpToolResults,
@@ -2391,6 +2505,15 @@ chatV2.post("/", async (c) => {
         : undefined;
 
       if (runtime.runtimeLocation === "local") {
+        // The inspector calls the provider on this runtime, so the effort is
+        // applied here as provider options, or refused before any spend.
+        const localEffort = directChatEffort({
+          providerKey: runtime.provider.providerKey,
+          modelId,
+          effort: reasoningEffort,
+          explicitTemperature,
+        });
+        if (!localEffort.ok) return c.json({ error: localEffort.reason }, 400);
         return handleLocalOrgChatModel({
           provider: runtime.provider,
           failureReporter: createRequestStreamFailureReporter(c, "chat"),
@@ -2401,6 +2524,9 @@ chatV2.post("/", async (c) => {
           messages: modelMessages,
           systemPrompt: effectiveEnhancedSystemPrompt,
           temperature: resolvedTemperature,
+          ...(localEffort.providerOptions
+            ? { providerOptions: localEffort.providerOptions }
+            : {}),
           tools: allTools as ToolSet,
           progressivePlan,
           discoveryState,
@@ -2442,6 +2568,7 @@ chatV2.post("/", async (c) => {
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
@@ -2524,6 +2651,16 @@ chatV2.post("/", async (c) => {
       modelMessages as ModelMessage[],
     );
 
+    // The inspector calls the provider with the caller's own key here, so the
+    // effort is applied as provider options, or refused before any spend.
+    const directEffort = directChatEffort({
+      providerKey: String(modelDefinition.provider),
+      modelId: String(modelDefinition.id),
+      effort: reasoningEffort,
+      explicitTemperature,
+    });
+    if (!directEffort.ok) return c.json({ error: directEffort.reason }, 400);
+
     return streamDirectChatWithLiveTrace({
       llmModel,
       modelId: String(modelDefinition.id),
@@ -2535,6 +2672,9 @@ chatV2.post("/", async (c) => {
       messageHistory: [...scrubbedModelMessages],
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
+      ...(directEffort.providerOptions
+        ? { providerOptions: directEffort.providerOptions }
+        : {}),
       tools: allTools as ToolSet,
       progressivePlan,
       discoveryState,
@@ -2566,6 +2706,7 @@ chatV2.post("/", async (c) => {
             return await persistChatSessionToConvex({
               chatSessionId,
               modelId: String(modelDefinition.id),
+              modelSelection: sessionModelSelection,
               modelSource: "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
@@ -2600,6 +2741,7 @@ chatV2.post("/", async (c) => {
                         : { kind: "adhoc" },
                       systemPrompt,
                       temperature,
+                      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
                       requireToolApproval,
                       respectToolVisibility,
                       modelVisibleMcpToolResults,

@@ -28,6 +28,7 @@
  */
 import { logger } from "../../logger.js";
 import type { HarnessAuth, HarnessId } from "../registry.js";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   revokeHarnessModelBroker,
   startLoopbackModelBroker,
@@ -222,6 +223,8 @@ export interface PrepareLocalHarnessTurnArgs {
   scopedEnv?: Readonly<Record<string, string>>;
   onSecretEnvDelivered?: () => void;
   maxOutputTokens?: number;
+  /** The turn's reasoning effort, carried on the lease start. */
+  reasoningEffort?: ModelReasoningEffort;
   signal?: AbortSignal;
 }
 
@@ -498,6 +501,7 @@ async function prepareWithReservedRuntime(outer: {
     ...(args.maxOutputTokens !== undefined
       ? { maxOutputTokens: args.maxOutputTokens }
       : {}),
+    ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
     bearer: args.bearer,
     ...(args.signal ? { signal: args.signal } : {}),
   });

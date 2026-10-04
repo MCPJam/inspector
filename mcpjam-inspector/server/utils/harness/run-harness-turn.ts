@@ -211,7 +211,7 @@ import {
   harnessModelPurposeForSourceType,
   harnessReasoningEffortRefusalReason,
   harnessToolApprovalRefusalReason,
-  selectionReasoningEffort,
+  turnReasoningEffortOf,
 } from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
@@ -757,9 +757,7 @@ export async function runHarnessTurn(
   // The effort this turn asked for: the typed field, else the saved selection it
   // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
   // refusal below and `createHarness` further down cannot disagree.
-  const turnReasoningEffort =
-    options.reasoningEffort ??
-    selectionReasoningEffort(options.extraBodyFields?.modelSelection);
+  const turnReasoningEffort = turnReasoningEffortOf(options);
 
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
@@ -2023,6 +2021,9 @@ export async function runHarnessTurn(
           ...(approvalContinuation ? { approvalContinuation } : {}),
           scopedEnv: sessionSecretEnv,
           onSecretEnvDelivered,
+          ...(turnReasoningEffort !== undefined
+            ? { reasoningEffort: turnReasoningEffort }
+            : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!preparation.ok) {
@@ -2300,6 +2301,9 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           modelId,
           runId: brokerRunId,
+          ...(turnReasoningEffort !== undefined
+            ? { reasoningEffort: turnReasoningEffort }
+            : {}),
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
