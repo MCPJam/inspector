@@ -61,12 +61,12 @@ jobs:
       # push or pull request made with GITHUB_TOKEN, so the PR's required checks
       # would never report and it could never merge.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
