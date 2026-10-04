@@ -185,8 +185,12 @@ export function targetKeyDistinguishers(
   // string) is shown as recorded rather than dropped.
   const rawEffort =
     own.source === "legacy" ? undefined : own.settings?.reasoningEffort;
-  return selectionDistinguishers(own, siblings).map(
-    (label) => label ?? String(rawEffort),
+  return selectionDistinguishers(own, siblings).flatMap((label) =>
+    label !== undefined
+      ? [label]
+      : rawEffort !== undefined
+        ? [String(rawEffort)]
+        : [],
   );
 }
 

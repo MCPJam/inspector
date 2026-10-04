@@ -60,7 +60,11 @@ import {
 } from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
-import { type RequestedModelSelection } from "@mcpjam/sdk";
+import {
+  selectionConfigKey,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
 import {
   ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE,
   computedModelId,
@@ -81,6 +85,19 @@ function requestedSelectionIfMatches(
 ): RequestedModelSelection | undefined {
   if (selection === undefined || modelId === undefined) return undefined;
   return selection.modelId === modelId.trim() ? selection : undefined;
+}
+
+/** Two selections say the same thing (by value, not object identity). */
+function sameRequestedSelection(
+  a: RequestedModelSelection,
+  b: RequestedModelSelection,
+): boolean {
+  if (a.source === "legacy" || b.source === "legacy")
+    return a.source === b.source && a.modelId === b.modelId;
+  return (
+    selectionConfigKey(a as ModelSelection) ===
+    selectionConfigKey(b as ModelSelection)
+  );
 }
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
@@ -8962,8 +8979,13 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       }
     }
     // The conversion marker describes the STORED selection: it survives only
-    // while that exact selection is what is written back.
-    if (input.modelSelection === undefined || input.modelSelection !== storedSelection) {
+    // while that exact selection is what is written back (a PATCH re-sending
+    // it by value keeps it).
+    if (
+      input.modelSelection === undefined ||
+      storedSelection === undefined ||
+      !sameRequestedSelection(input.modelSelection, storedSelection)
+    ) {
       delete input.modelSelectionOrigin;
     }
     if (input.modelSelection === undefined) delete input.modelSelection;

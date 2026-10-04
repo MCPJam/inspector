@@ -604,7 +604,7 @@ export function ModelSelector({
         }));
   const isComparingModels = multiModelEnabled && triggerEntries.length > 1;
   const triggerLabel = isComparingModels
-    ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+    ? `${compactModelLabel(leadModel.name)} +${triggerEntries.length - 1}`
     : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");

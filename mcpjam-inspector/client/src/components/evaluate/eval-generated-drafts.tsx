@@ -558,6 +558,8 @@ function AuthoringDraftSettings({
       <EvalModelChoices
         testId="authoring-models"
         disabled={disabled}
+        // Drafts store model ids alone, so an effort picked here would be lost.
+        effortEditable={false}
         availableModels={availableModels}
         value={{
           includeClientDefaults: false,

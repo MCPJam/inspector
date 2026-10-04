@@ -5284,6 +5284,19 @@ describe("v1 eval routes: store-once selections", () => {
     expect(input.modelSelectionOrigin).toBe("backfill");
   });
 
+  it("suite executionConfig PATCH re-sending the stored selection keeps its marker", async () => {
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...EXEC_CONFIG,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: { modelSelection: { ...HAIKU_SELECTION } },
+    });
+    expect(res.status).toBe(200);
+    expect(setSuiteConfigInput().modelSelectionOrigin).toBe("backfill");
+  });
+
   it("suite executionConfig PATCH with a new selection drops the old marker", async () => {
     withQuery("hostConfigsV2:getSuiteConfig", {
       ...EXEC_CONFIG,

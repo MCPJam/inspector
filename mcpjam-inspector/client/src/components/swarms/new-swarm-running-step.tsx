@@ -801,7 +801,8 @@ export function NewSwarmRunningStep({
             (column, index) =>
               column.key === snapshot.columns[index]?.key &&
               column.hostId === snapshot.columns[index]?.hostId &&
-              column.label === snapshot.columns[index]?.label,
+              column.label === snapshot.columns[index]?.label &&
+              column.detail === snapshot.columns[index]?.detail,
           ) &&
           prev.targets.length === snapshot.targets.length &&
           prev.targets.every(
