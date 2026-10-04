@@ -294,6 +294,17 @@ In Strict mode, a badge shows the number of blocked requests. The panel includes
 - **Blocked requests** — Each violation with the directive and source that was blocked.
 - **Declared domains** — The connect, resource, frame, and base URI domains your widget currently declares.
 
+#### Client CSP limit toasts
+
+When the selected client advertises that it does not support a particular resource capability — for example, a client that disables image or font loading — and your widget triggers a block that matches that declared limit, the inspector shows a single grouped toast:
+
+> **This was blocked by {client}'s CSP limits.**
+> `cspResourceDomains.image is unsupported: img-src data: blob:.`
+
+Each affected capability appears as a separate line in the toast. Multiple violations of the same capability are deduplicated into one entry. The toast is informational and does not indicate a bug in your widget — it means the selected client intentionally restricts that resource type.
+
+If you see this toast and want to test your widget without the restriction, switch to a client preset that supports the blocked capability, or use **Permissive** CSP mode.
+
 #### Mounts
 
 The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
