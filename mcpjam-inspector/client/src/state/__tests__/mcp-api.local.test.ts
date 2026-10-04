@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const authFetchMock = vi.fn();
@@ -152,13 +152,70 @@ describe("mcp-api local-mode resolver-only path", () => {
 });
 
 // Exercise the actual local request boundary, not only the scheduler in isolation.
-describe("local browser connection scheduling", () => {
+describe.each(["native", "fallback"])("local browser connection scheduling (%s)", (support) => {
+  const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any")!;
+  beforeEach(() => {
+    if (support === "fallback")
+      Object.defineProperty(AbortSignal, "any", { ...anyDescriptor, value: undefined });
+  });
+  afterEach(() => {
+    Object.defineProperty(AbortSignal, "any", anyDescriptor);
+    vi.restoreAllMocks();
+  });
   const config = {
     url: "http://localhost:8787/mcp",
   } as unknown as MCPServerConfig;
   const tick = async () => {
     for (let i = 0; i < 20; i++) await Promise.resolve();
   };
+  it.each(["success", "failure", "cancel", "timeout"])(
+    "cleans up local forwarding listeners and deadlines after %s",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const caller = new AbortController();
+      const add = vi.spyOn(caller.signal, "addEventListener");
+      const remove = vi.spyOn(caller.signal, "removeEventListener");
+      const failure = new Error("Connection failed");
+      authFetchMock.mockImplementation((_url, init) => {
+        if (outcome === "success")
+          return Promise.resolve(new Response(JSON.stringify({ success: true })));
+        if (outcome === "failure") return Promise.reject(failure);
+        return new Promise((_resolve, reject) => {
+          init.signal.addEventListener(
+            "abort",
+            () => reject(init.signal.reason),
+            { once: true }
+          );
+        });
+      });
+      const result = reconnectServer("one", config, {
+        projectId: "local-cleanup",
+        queueSignal: caller.signal,
+      });
+      const settled = Promise.allSettled([result]);
+      if (outcome === "cancel") caller.abort(failure);
+      if (outcome === "timeout") await vi.advanceTimersByTimeAsync(50_000);
+      const [value] = await settled;
+      if (outcome === "success")
+        expect(value).toMatchObject({ status: "fulfilled" });
+      else {
+        expect(value.status).toBe("rejected");
+        if (value.status === "rejected") {
+          if (outcome === "timeout")
+            expect(value.reason.name).toBe("TimeoutError");
+          else expect(value.reason).toBe(failure);
+        }
+      }
+      expect(vi.getTimerCount()).toBe(0);
+      if (support === "fallback") {
+        expect(add).toHaveBeenCalledTimes(2);
+        expect(remove).toHaveBeenCalledTimes(2);
+        for (const [type, listener] of add.mock.calls)
+          expect(remove).toHaveBeenCalledWith(type, listener);
+      }
+    }
+  );
+
   it("runs 120 local cards in saved order, deduplicates mounts and reorders waiting work", async () => {
     const { serverCheckQueue: queue } =
       await import("@/lib/server-check-queue");
