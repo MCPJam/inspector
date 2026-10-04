@@ -1304,7 +1304,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
-| `--compose-model-selection <json...>` | No | Whole saved model selection(s) — source, connection, `settings.reasoningEffort` — as JSON: one cell per selection, for its model, at its effort. One selection per model |
+| `--compose-model-selection <json...>` | No | Whole saved model selection(s) — source, connection, `settings.reasoningEffort` — as JSON: one cell per selection, for its model, at its effort. Repeat to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell |
 | `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
 | `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
