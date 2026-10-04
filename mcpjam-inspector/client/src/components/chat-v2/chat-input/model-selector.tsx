@@ -586,7 +586,13 @@ export function ModelSelector({
     !!onSelectedModelsChange &&
     !!onMultiModelEnabledChange &&
     availableModels.length > 1;
-  const leadModel = selectedModelsData[0] ?? currentModel;
+  // Single mode shows the model the chat actually runs. The compare line-up
+  // can lead with another model (it is kept across a reload while the single
+  // chat re-seeds from the client), and labelling the button with it made a
+  // turn on one model read as another.
+  const leadModel = multiModelEnabled
+    ? (selectedModelsData[0] ?? currentModel)
+    : currentModel;
   // One trigger chip per pick: with efforts, one model can be picked twice.
   const triggerEntries: ModelSelectorPickedEntry[] =
     pickedEntries && pickedEntries.length > 0

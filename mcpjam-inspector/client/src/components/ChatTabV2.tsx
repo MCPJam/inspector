@@ -1465,23 +1465,27 @@ export function ChatTabV2({
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
       return;
     }
-
     const sanitizedIds = resolvedSelectedModels.map((model) =>
       String(model.id)
     );
+    // What the ids SHOULD be: the line-up in compare, else the single chat's
+    // own model. Compared against that same value, so the write settles:
+    // comparing against the line-up while writing the single model looped
+    // forever whenever the two differed (a reload keeps the line-up while the
+    // single chat re-seeds from the client).
+    const nextIds =
+      sanitizedIds.length > 0 && multiModelEnabled
+        ? sanitizedIds
+        : selectedModel
+          ? [String(selectedModel.id)]
+          : [];
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
-      sanitizedIds.length !== persistedIds.length ||
-      sanitizedIds.some((modelId, index) => modelId !== persistedIds[index]);
+      nextIds.length !== persistedIds.length ||
+      nextIds.some((modelId, index) => modelId !== persistedIds[index]);
 
     if (idsChanged) {
-      setSelectedModelIds(
-        sanitizedIds.length > 0 && multiModelEnabled
-          ? sanitizedIds
-          : selectedModel
-          ? [String(selectedModel.id)]
-          : []
-      );
+      setSelectedModelIds(nextIds);
     }
   }, [
     canEnableMultiModel,
