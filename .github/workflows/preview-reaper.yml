@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 45
     steps:
       # Checkout is required so the `.github/scripts/` helpers are on disk.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Reap preview environments for closed PRs
         env:
