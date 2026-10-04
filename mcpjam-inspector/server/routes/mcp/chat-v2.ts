@@ -196,6 +196,7 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import { ranTurnSelection } from "../../utils/session-model-selection";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -1243,6 +1244,13 @@ chatV2.post("/", async (c) => {
         String(modelDefinition.id),
       ),
       hostWins: isScenarioSession,
+    });
+    // What the session records for this turn: the selection it ran, effort
+    // included (last turn wins, like its modelId).
+    const sessionModelSelection = ranTurnSelection({
+      selection: routingSelection,
+      model: modelDefinition,
+      reasoningEffort,
     });
     // Only a temperature sent ALONGSIDE a body effort counts as explicit: a
     // host default (or the slider value a client sends with a host's saved
@@ -2299,6 +2307,7 @@ chatV2.post("/", async (c) => {
               return await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
+                modelSelection: sessionModelSelection,
                 // `'external-account'` rather than `'mcpjam'` when the runtime
                 // pays on the customer's own vendor account: `'mcpjam'` is what
                 // makes a turn consume the org's MCPJam spend limit, and this
@@ -2436,6 +2445,7 @@ chatV2.post("/", async (c) => {
             return await persistChatSessionToConvex({
               chatSessionId,
               modelId,
+              modelSelection: sessionModelSelection,
               modelSource:
                 runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
@@ -2689,6 +2699,7 @@ chatV2.post("/", async (c) => {
             return await persistChatSessionToConvex({
               chatSessionId,
               modelId: String(modelDefinition.id),
+              modelSelection: sessionModelSelection,
               modelSource: "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,

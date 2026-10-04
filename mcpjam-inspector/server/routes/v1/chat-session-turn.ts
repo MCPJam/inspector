@@ -146,6 +146,7 @@ import {
 } from "./chat-sessions.js";
 import { joinToolCalls } from "./chat-session-payloads.js";
 import { publicArtifactLink } from "./artifact-links.js";
+import { ranTurnSelection } from "../../utils/session-model-selection";
 
 // ── Caps ────────────────────────────────────────────────────────────────────
 
@@ -1449,6 +1450,13 @@ async function handleTurn(c: Context): Promise<Response> {
     // continuations reload, including one that came from the host.
     const turnReasoningEffort =
       pinnedReasoningEffort ?? hostSelection?.settings?.reasoningEffort;
+    // What the session records for this turn: the selection it ran, effort
+    // included (last turn wins, like its modelId).
+    const sessionModelSelection = ranTurnSelection({
+      selection: routingSelection,
+      model: modelDefinition,
+      reasoningEffort: turnReasoningEffort,
+    });
     // An effort replaces the sampling temperature (`prepareChatV2` drops it).
     // One with a host-sourced effort must be dropped from what is recorded too,
     // or the resume config would claim a temperature the turn never ran at. An
@@ -1945,6 +1953,7 @@ async function handleTurn(c: Context): Promise<Response> {
         {
           chatSessionId: runtimeChatSessionId,
           modelId: String(modelDefinition.id),
+          modelSelection: sessionModelSelection,
           modelSource: runtime.modelSource,
           authHeader,
           projectId,
@@ -2057,6 +2066,7 @@ async function handleTurn(c: Context): Promise<Response> {
       {
         chatSessionId: runtimeChatSessionId,
         modelId: String(modelDefinition.id),
+        modelSelection: sessionModelSelection,
         modelSource: runtime.modelSource,
         authHeader,
         projectId,

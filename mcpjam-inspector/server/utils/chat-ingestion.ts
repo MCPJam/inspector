@@ -3,7 +3,10 @@ import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type {
+  ModelReasoningEffort,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type {
   Harness,
   McpToolResultImageRenderingPolicy,
@@ -324,6 +327,12 @@ interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
   /**
+   * The selection this turn ran, with the effort it applied
+   * (`ranTurnSelection`). The session records it beside `modelId`; last turn
+   * wins, and a turn that sends none clears it.
+   */
+  modelSelection?: RequestedModelSelection;
+  /**
    * Who paid for the turn's model spend. Hand-mirrors the backend's
    * `chatModelSourceValidator`.
    *
@@ -573,6 +582,9 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
   const body = JSON.stringify({
     chatSessionId: options.chatSessionId,
     modelId: options.modelId,
+    ...(options.modelSelection
+      ? { modelSelection: options.modelSelection }
+      : {}),
     modelSource: options.modelSource,
     ...(options.projectId ? { projectId: options.projectId } : {}),
     ...(options.sourceType ? { sourceType: options.sourceType } : {}),

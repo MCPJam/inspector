@@ -148,6 +148,7 @@ import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
+import { ranTurnSelection } from "./session-model-selection";
 import {
   resolveWebAuthorizedHarnessStrategy,
   type HarnessMcpProxyStrategy,
@@ -1301,6 +1302,13 @@ export async function streamWebChatTurn(
         // somebody has to remember to extend.
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
+        // What the session records for this turn: the selection it ran,
+        // effort included (last turn wins, like its modelId).
+        modelSelection: ranTurnSelection({
+          selection: prepare.routingSelection,
+          model: prepare.modelDefinition,
+          reasoningEffort: prepare.reasoningEffort,
+        }),
         modelSource,
         projectId: persist.projectId,
         sourceType: persist.sourceType,
