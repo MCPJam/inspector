@@ -1,5 +1,5 @@
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
-import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
+import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES } from "../../utils/harness/local/readiness.js";
 import { modelWorkloadFor } from "../../utils/model-workload.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
@@ -1420,7 +1420,12 @@ chatV2.post("/", async (c) => {
       localHarnessActingUserId = actor.actor.userId;
     }
     const localSelected = await shouldUseLocalHarness(resolvedExecution.harness, requestAuthHeader, typeof body.projectId === "string" ? body.projectId : undefined);
-    if (asksForLocalNative && !localSelected) return c.json({ error: "Local Claude Code is unavailable or no longer authorized for this project" }, 409);
+    // The harness the host resolves to, for the local target and every message
+    // a user reads about it. Each local harness has its own runtime, rollout
+    // and authorization; a target minted for one is never valid for another.
+    const localHarnessId = localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
+    const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
+    if (asksForLocalNative && !localSelected) return c.json({ error: `Local ${localHarnessName} is unavailable or no longer authorized for this project` }, 409);
     const harnessTargetParse = parseHarnessExecutionTarget({
       body: body.harnessTarget?.serverAuthorized === true ? {} : body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
@@ -1438,11 +1443,13 @@ chatV2.post("/", async (c) => {
         : undefined;
 
     if (localSelected && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
-      if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: "Sign in and choose a project to run Claude Code locally" }, 403);
+      if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: `Sign in and choose a project to run ${localHarnessName} locally` }, 403);
       try {
-        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended" })).target;
+        harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended", harnessId: localHarnessId })).target;
       } catch (error) {
-        return c.json({ error: error instanceof Error ? error.message : "Claude Code is not ready" }, 409);
+        // A local target that cannot be made ready is an actionable local
+        // error (setup / Retry), never a silent switch to the cloud.
+        return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready` }, 409);
       }
     }
 

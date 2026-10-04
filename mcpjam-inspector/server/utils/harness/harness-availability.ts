@@ -468,7 +468,12 @@ export function checkHarnessRuntimeAvailable(args: {
    */
   reasoningEffort?: ModelReasoningEffort;
 }): HarnessAvailability {
-  const adapter = getHarnessAdapter(args.harnessId);
+  // The SAME arm the turn will run: local Codex is always the app-server
+  // adapter, so asking the hosted default here would refuse an approval-gated
+  // local Codex turn the turn itself can serve.
+  const adapter = getHarnessAdapter(args.harnessId, {
+    localExecution: args.localExecution === true,
+  });
   const name = adapter.displayName;
 
   // Does MCPJam supply this runtime's model credential, or does the runtime

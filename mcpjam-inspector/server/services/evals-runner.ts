@@ -1,5 +1,6 @@
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
-import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities } from "../utils/harness/local/run-resources.js";
+import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
 import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
 import {
@@ -1850,6 +1851,8 @@ async function createIterationDirectly(
   params: {
     namedHostId?: string;
     runtimeVenue?: "hosted" | "local";
+    /** The harness this quick run executes locally, when it does. */
+    localHarnessId?: string | null;
     testCaseId?: string;
     testCaseSnapshot: {
       title: string;
@@ -1881,6 +1884,18 @@ async function createIterationDirectly(
       {
         ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
         ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
+        // A local quick run declares the one harness it runs here, so the
+        // backend stamps it local exactly when this runner executes it locally
+        // (quick runs declared nothing before, which the backend reads as a
+        // runner for which "local" means Claude Code alone).
+        ...(params.runtimeVenue === "local" && params.localHarnessId
+          ? {
+              runnerCapabilities: [
+                ...runnerCapabilities(),
+                ...localHarnessCapabilities([params.localHarnessId]),
+              ],
+            }
+          : {}),
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
           snapshotWithStepsForConvex(params.testCaseSnapshot),
@@ -2730,7 +2745,14 @@ const runHostedIteration = async (
     const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
     if (params.harnessRuntimeVenue === "local") {
       if (!project || !("projectId" in project)) throw new Error("Local harness evals require a project");
-      const resources = await prepareLocalHarnessRun({ bearer: params.convexAuthToken, projectId: project.projectId });
+      // The run is prepared for the harness the suite's host selects: each
+      // local harness has its own runtime, authorization and grant, and a
+      // target minted for one is never valid for another.
+      const resources = await prepareLocalHarnessRun({
+        bearer: params.convexAuthToken,
+        projectId: project.projectId,
+        harnessId: localHarnessIdOf(harnessOfHostConfig(params.suiteHostConfig)) ?? "claude-code",
+      });
       try { return await runHostedIterationWithBrowser({ ...params, harnessExecutionTarget: resources.target }, browser); }
       finally { await resources.cleanup(); }
     }
@@ -3541,7 +3563,9 @@ const executeTestCase = async (params: {
       try {
         const iterationParams = {
           namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
           testCaseSnapshot: {
             title: test.title,
@@ -3913,7 +3937,8 @@ export const runEvalSuiteWithAiSdk = async ({
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
-      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined) ? "local" : "hosted");
+      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -4873,7 +4898,9 @@ const runLocalIteration = async ({
   };
   const iterationParamsBase = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -6196,7 +6223,9 @@ const runHostedIterationWithBrowser = async (
 
   const iterationParams = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
@@ -6495,11 +6524,11 @@ const runHostedIterationWithBrowser = async (
       runId,
     });
     if (harnessExecutionTarget) {
-      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy });
+      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
       if (runId) {
         const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
         if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
-        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0) });
+        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0), harnessId: resolvedExecution.harness });
       }
     }
     if (sandboxNeed.needed && !harnessExecutionTarget) {
@@ -7377,7 +7406,8 @@ export const streamTestCase = async (
   const target = params.orgModelConfigTarget;
   const harnessRuntimeVenue = params.harnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), params.convexAuthToken,
-      target && "projectId" in target ? target.projectId : undefined) ? "local" : "hosted");
+      target && "projectId" in target ? target.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
   const pinned = { ...params, harnessRuntimeVenue };
   return harnessRuntimeVenue === "local"
     ? withLocalHarnessSlot(() => executeCommittedTestCase(pinned), params.abortSignal)

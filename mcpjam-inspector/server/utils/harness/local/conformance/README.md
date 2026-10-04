@@ -111,3 +111,44 @@ zero TCP connections while the MCPJam-selected server executes its tool. The
 bridge enforces `strictMcpConfig: true` for local and cloud sessions. It also runs the usual approval, resume, and teardown checks.
 The upstream model and model gateway are deterministic local test servers;
 this is not the signed-in Playground/broker billing check.
+
+## Codex
+
+`run-codex-turn.ts` drives local Codex the same way, against its own pack
+(`build-local-harness-pack.mjs --harness codex`: MCPJam's app-server bridge,
+the host-tool MCP relay, and the pinned `@openai/codex` platform package, every
+file of which the build checks against `codex-vendor-checksums.json`). The
+upstream is `mock-responses.mjs`, a deterministic OpenAI Responses server
+behind the same `local-gateway.mjs`; it answers `SHELL <cmd>` with Codex's
+`exec_command`, `MCPPROBE` with a call to the relay's `probe__echo`, and
+`COUNT` with the user turns it can see.
+
+| Argument | Asserts |
+|---|---|
+| `attended` | the Playground profile (`workspace-edits` → Codex `untrusted`): a command pauses for approval and runs only once approved, through the LIVE process; a host-executed MCP tool runs through MCPJam's relay with no second Codex prompt; the thread survives detach + resume; Stop leaves no process or registry record; no supervised listener off loopback; the upstream key never reaches a child's environment |
+| `unattended` | the eval/swarm profile (`unrestricted` → `allow-all` inside the explicit D2 sandbox policy): no approval is asked; a command writes the run's folder and its private `$TMPDIR`; a write elsewhere under `/tmp` fails; the command has no network (loopback included); the MCP tool, which is not a command, still runs; plus every attended check that applies |
+
+```bash
+# from mcpjam-inspector/, with a pack built as above but with --harness codex
+rm -rf "$CONFORMANCE_ROOT/runtime/codex"
+cp -R "$CONFORMANCE_ROOT/runtime-src/codex" "$CONFORMANCE_ROOT/runtime/codex"
+HOME="$CONFORMANCE_ROOT/home" CONFORMANCE_ROOT="$CONFORMANCE_ROOT" \
+  npx tsx server/utils/harness/local/conformance/run-codex-turn.ts attended
+HOME="$CONFORMANCE_ROOT/home" CONFORMANCE_ROOT="$CONFORMANCE_ROOT" \
+  npx tsx server/utils/harness/local/conformance/run-codex-turn.ts unattended
+```
+
+In CI these are the `codex-scenarios` legs of `local-harness-conformance.yml`,
+stamped separately (`codex_conformance_version`) so a Codex failure never
+withholds Claude Code's version or the reverse. The certified targets
+(`nativeTargets`: darwin-arm64, linux-x64) block; linux-arm64 and darwin-x64
+run without blocking. The unattended leg is evidence, not yet a gate: a target
+is added to `unattendedSandboxTargets` only after it passes there, and until
+then unattended local Codex is refused on it. Ubuntu 24.04's AppArmor
+user-namespace restriction can stop bubblewrap from starting at all — the
+sandbox then fails closed, and this leg is how that shows up.
+
+Both scenarios passed on a linux-x64 development container (root, kernel
+6.18, the pinned 0.149.1 binary) against a pack built from this tree. That is
+development evidence only; it is not a CI leg, not a non-root run, and says
+nothing about macOS.

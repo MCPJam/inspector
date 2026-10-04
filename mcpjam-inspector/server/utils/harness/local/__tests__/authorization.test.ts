@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authorizeLocalHarness, readLocalHarnessAuthorization, revokeLocalHarnessAuthorization } from "../authorization.js";
+import { authorizeLocalHarness, readLocalHarnessAuthorization, revokeLocalHarnessAuthorization, updateAuthorizedWorkspace } from "../authorization.js";
+import { LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
 import { localHarnessStateRoot } from "../grants.js";
 
 let root: string;
@@ -28,5 +29,60 @@ describe("durable local authorization", () => {
     await authorizeLocalHarness(binding);
     await writeFile(join(localHarnessStateRoot(), "authorizations.json"), "broken");
     await expect(readLocalHarnessAuthorization("user", "machine", "project")).rejects.toThrow("could not be read");
+  });
+});
+
+describe("one authorization store shared by every Inspector version", () => {
+  const storePath = () => join(localHarnessStateRoot(), "authorizations.json");
+  /** How a build from before Codex reads the store: no harnessId at all. */
+  async function legacyRead(userId: string, machineId: string, projectId: string) {
+    const raw = JSON.parse(await readFile(storePath(), "utf8")) as {
+      authorizations: Array<{ userId: string; machineId: string; projectId: string }>;
+    };
+    return raw.authorizations.find((a) => a.userId === userId && a.machineId === machineId && a.projectId === projectId) ?? null;
+  }
+
+  it("never lets an older build read a Codex authorization as Claude Code", async () => {
+    await authorizeLocalHarness({ ...binding, harnessId: "codex" });
+    expect(await legacyRead("user", "machine", "project")).toBeNull();
+    expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).not.toBeNull();
+    expect(await readLocalHarnessAuthorization("user", "machine", "project")).toBeNull();
+  });
+
+  it("keeps Claude Code records in the shape older builds read", async () => {
+    await authorizeLocalHarness(binding);
+    const legacy = await legacyRead("user", "machine", "project");
+    expect(legacy).toMatchObject({ workspaceGrantId: "workspace", unattended: true });
+    expect(legacy).not.toHaveProperty("harnessId");
+  });
+
+  it("reads a store written before Codex as Claude Code", async () => {
+    await authorizeLocalHarness(binding); // creates the state directory
+    await writeFile(storePath(), JSON.stringify({
+      version: 1,
+      authorizations: [{ ...binding, policyVersion: LOCAL_HARNESS_POLICY_VERSION, authorizedAt: new Date().toISOString(), unattended: true }],
+    }));
+    expect(await readLocalHarnessAuthorization("user", "machine", "project")).toMatchObject({ harnessId: "claude-code" });
+    expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).toBeNull();
+  });
+
+  it("isolates writes per harness", async () => {
+    await authorizeLocalHarness(binding);
+    await authorizeLocalHarness({ ...binding, harnessId: "codex", workspaceGrantId: "codex-workspace" });
+    await updateAuthorizedWorkspace({ ...binding, harnessId: "codex", workspaceGrantId: "moved" });
+    expect(await readLocalHarnessAuthorization("user", "machine", "project")).toMatchObject({ workspaceGrantId: "workspace" });
+    expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).toMatchObject({ workspaceGrantId: "moved" });
+  });
+
+  it("moves a Codex record an earlier build left in the legacy list", async () => {
+    await authorizeLocalHarness(binding);
+    await writeFile(storePath(), JSON.stringify({
+      version: 1,
+      authorizations: [{ ...binding, harnessId: "codex", policyVersion: LOCAL_HARNESS_POLICY_VERSION, authorizedAt: new Date().toISOString(), unattended: true }],
+    }));
+    expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).not.toBeNull();
+    await authorizeLocalHarness({ ...binding, projectId: "second" }); // any write
+    expect(await legacyRead("user", "machine", "project")).toBeNull();
+    expect(await readLocalHarnessAuthorization("user", "machine", "project", "codex")).not.toBeNull();
   });
 });

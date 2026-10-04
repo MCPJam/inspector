@@ -69,9 +69,10 @@ import { Readable } from "node:stream";
 import { x as extractTar } from "tar";
 import { logger } from "../../logger.js";
 import {
-  EXPECTED_PACK_VERSION,
+  EXPECTED_PACK_VERSIONS,
   PACK_RECORDS,
 } from "./pack-digests.generated.js";
+import { packAssetStem, packReleaseBaseUrl } from "./pack-naming.js";
 import { verifyPackManifestSignature } from "./pack-signing-key.js";
 import {
   clearRuntimeVerificationCache,
@@ -86,6 +87,7 @@ import {
   attemptStillOwns,
   beginInstallAttempt,
   claimStagingDirectory,
+  harnessTargetInstallRoot,
   operationKeyString,
   PREVIOUS_SUFFIX,
   readRuntimeOperation,
@@ -102,6 +104,7 @@ import {
 import {
   currentLocalPlatform,
   localPackTarget,
+  SUPPORTED_LOCAL_HARNESS_IDS,
   type LocalPackTarget,
   type LocalPlatform,
   type SupportedLocalHarnessId,
@@ -141,15 +144,27 @@ export function runtimeInstallRoot(): string {
  * and gives the version sweep a scope that cannot reach across architectures.
  */
 export function packVersionRoot(
+  harnessId: SupportedLocalHarnessId,
   packVersion: string,
   target: LocalPackTarget | null = localPackTarget(),
 ): string {
-  return join(targetInstallRoot(target), packVersion);
+  return join(targetInstallRoot(harnessId, target), packVersion);
 }
 
-/** Where every version for one target lives. */
-function targetInstallRoot(target: LocalPackTarget | null): string {
-  return join(runtimeInstallRoot(), target ?? packPlatformKey());
+/**
+ * Where every version of one harness's pack for one target lives — harness
+ * scoped, because each harness's pack is versioned independently (see
+ * `harnessTargetInstallRoot`).
+ */
+function targetInstallRoot(
+  harnessId: SupportedLocalHarnessId,
+  target: LocalPackTarget | null,
+): string {
+  return harnessTargetInstallRoot(
+    runtimeInstallRoot(),
+    harnessId,
+    target ?? packPlatformKey(),
+  );
 }
 
 /**
@@ -292,6 +307,7 @@ function developmentPackExpectation(): {
  * or a URL.
  */
 export function packSourceFor(
+  harnessId: SupportedLocalHarnessId,
   packVersion: string,
   platformKey: string,
 ): { kind: "file" | "url"; location: string } {
@@ -302,12 +318,13 @@ export function packSourceFor(
       ? { kind: "url", location: value }
       : { kind: "file", location: value.replace(/^file:\/\//, "") };
   }
-  // Pack releases have their own version, independent of Inspector releases.
+  // Pack releases have their own version, independent of Inspector releases
+  // and of every other harness's pack.
   return {
     kind: "url",
     location:
-      `https://github.com/MCPJam/inspector/releases/download/local-harness-pack-v${packVersion}/` +
-      `local-harness-pack-${platformKey}-${packVersion}.tar.gz`,
+      packReleaseBaseUrl(harnessId, packVersion) +
+      `${packAssetStem(harnessId, platformKey, packVersion)}.tar.gz`,
   };
 }
 
@@ -542,7 +559,11 @@ function operationRecordStatus(
       return {
         state: "ready",
         packVersion: record.packVersion,
-        runtimeRoot: packVersionRoot(record.packVersion, record.target),
+        runtimeRoot: packVersionRoot(
+          record.harnessId,
+          record.packVersion,
+          record.target,
+        ),
         digest: record.treeDigest,
       };
   }
@@ -601,7 +622,7 @@ function resolveInstallTarget(args: {
     platform,
     target,
     expected,
-    versionRoot: packVersionRoot(expected.packVersion, target),
+    versionRoot: packVersionRoot(args.harnessId, expected.packVersion, target),
     key: {
       runtimeRoot: runtimeInstallRoot(),
       harnessId: args.harnessId,
@@ -963,10 +984,10 @@ async function performInstall(args: {
   const { expected, setStatus, key, attemptId } = args;
   const platformKey = packPlatformKey(args.platform, args.arch);
   const target = localPackTarget(args.platform, args.arch);
-  const versionRoot = packVersionRoot(expected.packVersion, target);
-  // Per TARGET, so staging is confined to this architecture's directory and
-  // cannot touch another one's runtime.
-  const installRoot = targetInstallRoot(target);
+  const versionRoot = packVersionRoot(args.harnessId, expected.packVersion, target);
+  // Per HARNESS and TARGET, so staging is confined to this pack's directory
+  // and cannot touch another architecture's — or another harness's — runtime.
+  const installRoot = targetInstallRoot(args.harnessId, target);
   await mkdir(installRoot, { recursive: true, mode: 0o700 });
 
   // Reclaim what is PROVABLY abandoned before adding to it. Never by prefix or
@@ -978,7 +999,7 @@ async function performInstall(args: {
   await claimStagingDirectory({ staging, attemptId });
 
   try {
-    const source = packSourceFor(expected.packVersion, platformKey);
+    const source = packSourceFor(args.harnessId, expected.packVersion, platformKey);
     const archivePath = join(staging, "pack.tar.gz");
 
     setStatus({
@@ -1010,6 +1031,7 @@ async function performInstall(args: {
     //    skip this, because it names a file the developer built themselves
     //    rather than something fetched from anywhere.
     const manifest = await loadAndVerifyManifest({
+      harnessId: args.harnessId,
       source,
       packVersion: expected.packVersion,
       platformKey,
@@ -1242,12 +1264,13 @@ async function clearQuarantine(root: string): Promise<void> {
  * produce a signed manifest or the install fails.
  */
 async function loadAndVerifyManifest(args: {
+  harnessId: SupportedLocalHarnessId;
   source: { kind: "file" | "url"; location: string };
   packVersion: string;
   platformKey: string;
   staging: string;
 }): Promise<PackManifest | null> {
-  const stem = `local-harness-pack-${args.platformKey}-${args.packVersion}`;
+  const stem = packAssetStem(args.harnessId, args.platformKey, args.packVersion);
   const manifestName = `${stem}.manifest.json`;
   const signatureName = `${manifestName}.sig`;
 
@@ -1310,6 +1333,15 @@ async function loadAndVerifyManifest(args: {
   if (manifest.platform !== args.platformKey) {
     throw new Error(
       `the signed manifest is for ${manifest.platform}, not ${args.platformKey}`,
+    );
+  }
+  // Both harnesses' packs are signed by the same key, so a valid signature
+  // alone does not say WHICH runtime this is. A Codex manifest served where a
+  // Claude Code one was asked for would otherwise pass every check above.
+  if (manifest.harnessId !== args.harnessId) {
+    throw new Error(
+      `the signed manifest is for the ${manifest.harnessId} runtime, not ` +
+        `${args.harnessId}`,
     );
   }
   return manifest;
@@ -1418,23 +1450,25 @@ async function fetchArchive(args: {
  */
 export function reportLocalHarnessRuntimeStatusInBackground(): void {
   void (async () => {
-    try {
-      const status = await readRuntimeInstallStatus({
-        harnessId: "claude-code",
-      });
-      if (status.state === "ready") {
-        logger.info("[local-harness] runtime pack present", {
-          packVersion: status.packVersion,
+    for (const harnessId of SUPPORTED_LOCAL_HARNESS_IDS) {
+      try {
+        const status = await readRuntimeInstallStatus({ harnessId });
+        if (status.state === "ready") {
+          logger.info("[local-harness] runtime pack present", {
+            harnessId,
+            packVersion: status.packVersion,
+          });
+          continue;
+        }
+        logger.debug("[local-harness] no runtime pack installed", {
+          harnessId,
+          state: status.state,
+          expected: EXPECTED_PACK_VERSIONS[harnessId] || "(none built)",
         });
-        return;
+      } catch {
+        // Reporting is best-effort by construction: a status probe that
+        // throws must not affect server startup, nor the next harness's report.
       }
-      logger.debug("[local-harness] no runtime pack installed", {
-        state: status.state,
-        expected: EXPECTED_PACK_VERSION || "(none built)",
-      });
-    } catch {
-      // Reporting is best-effort by construction: a status probe that throws
-      // must not affect server startup.
     }
   })();
 }

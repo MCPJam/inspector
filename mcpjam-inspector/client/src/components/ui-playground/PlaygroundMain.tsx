@@ -1087,6 +1087,9 @@ export function PlaygroundMain({
       : null,
     inScope: localHarnessInScope,
     scopeKey: localHarnessScopeKey,
+    // The previewed host's harness: each local harness has its own runtime,
+    // rollout, authorization and stored choice.
+    harnessId: previewedHarnessId,
   });
   const localHarnessRequested =
     localHarnessInScope && localHarness.requestedTarget === "local-native";
@@ -2332,16 +2335,23 @@ export function PlaygroundMain({
   const localHarnessExecutionByColumn = useMemo(() => {
     const byColumn = new Map<string, typeof localHarnessExecutionOption>();
     for (const column of multiHostColumns) {
-      const columnInScope = isLocalHarnessScope({
-        // This column's own host, not the previewed one.
-        harnessId: column.hostConfig?.harness ?? null,
-        hostedMode: HOSTED_MODE,
-        environmentId: isEnvironmentMode
-          ? playgroundEnvironment.environmentId ?? null
-          : null,
-        requiresWebChatApi: isEnvironmentMode,
-        sharedRun: isSharedSession || replayingAnotherUsersThread,
-      });
+      const columnHarness = column.hostConfig?.harness ?? null;
+      const columnInScope =
+        isLocalHarnessScope({
+          // This column's own host, not the previewed one.
+          harnessId: columnHarness,
+          hostedMode: HOSTED_MODE,
+          environmentId: isEnvironmentMode
+            ? playgroundEnvironment.environmentId ?? null
+            : null,
+          requiresWebChatApi: isEnvironmentMode,
+          sharedRun: isSharedSession || replayingAnotherUsersThread,
+        }) &&
+        // The page has ONE controller, for the previewed host's harness, and
+        // its authorization is that harness's alone. A column running another
+        // local harness would inherit a target it can never satisfy, so it
+        // keeps its own default instead.
+        columnHarness === previewedHarnessId;
       byColumn.set(column.compareId, {
         requested:
           columnInScope && localHarness.requestedTarget === "local-native",
@@ -2357,6 +2367,7 @@ export function PlaygroundMain({
     replayingAnotherUsersThread,
     localHarness.requestedTarget,
     localHarnessResolveSendTarget,
+    previewedHarnessId,
   ]);
 
   const handleMultiModelTranscriptSync = useCallback(
@@ -4002,16 +4013,24 @@ export function PlaygroundMain({
       localHarnessPreparingRef.current = true;
       setLocalHarnessPreparing(true);
       try {
-        await ensureLocalHarnessReady(convexProjectId, setup);
+        // The previewed harness's own readiness and setup: each local harness
+        // has its own runtime, authorization and stored consent.
+        await ensureLocalHarnessReady(
+          convexProjectId,
+          setup,
+          undefined,
+          undefined,
+          localHarness.harnessId ?? "claude-code",
+        );
         return true;
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Claude Code is not ready. Retry setup from the client settings.");
+        toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
         return false;
       } finally {
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase]);
+    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -5175,6 +5194,9 @@ export function PlaygroundMain({
       ? {
           target: localHarness.requestedTarget,
           phase: localHarness.phase,
+          ...(localHarness.harnessName
+            ? { harnessName: localHarness.harnessName }
+            : {}),
           ...(localHarness.runtimeStatus?.state === "downloading"
             ? { percent: localHarness.runtimeStatus.percent }
             : {}),
