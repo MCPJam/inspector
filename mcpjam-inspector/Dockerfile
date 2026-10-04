@@ -1,11 +1,12 @@
 # Use specific Node.js version to match local/CI runtimes and dependency engines.
 # 24.21 runs ahead of CI's 24.14 deliberately: its bundled npm carries the
 # node-tar fix for CVE-2026-59873, and the Container Scan workflow's gate
-# verifies the Debian layer on every change. Build-time apt/npm upgrades are NOT
-# the way to fix base-image CVEs here — Railway caches that layer while CI
-# rebuilds cold, so the scanned image silently drifts from the deployed one.
-# When the weekly Container Scan fails on a fixable CRITICAL from the base,
-# bump this pin.
+# verifies the Debian layer on every change. UNPINNED build-time apt/npm
+# upgrades are not the way to fix base-image CVEs here — Railway caches that
+# layer while CI rebuilds cold, so the scanned image silently drifts from the
+# deployed one. A pinned version (the npm step below) is deterministic either
+# way. When the weekly Container Scan fails on a fixable CRITICAL from the
+# base, bump this pin.
 ARG NODE_VERSION=24.21.0
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
@@ -13,6 +14,24 @@ ARG NODE_VERSION=24.21.0
 # monitors + browser-render evals) needs a launchable Chromium in this image.
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 WORKDIR /usr/src/app
+
+# The base image's npm bundles dependencies that are behind their upstream
+# security fixes. npm 11.21.0 carries the patched tar and ip-address; no npm
+# release yet bundles the fixed brace-expansion or undici, so overlay those two
+# (both dependency-free) into npm's tree at their pinned fixed versions.
+# Everything here is pinned, so a Railway cache hit and a cold CI build produce
+# the same bytes. Delete the overlays — then the npm pin — once the
+# NODE_VERSION pin bundles an npm whose own copies have caught up.
+RUN npm install -g npm@11.21.0 --no-audit --no-fund \
+    && cd /tmp \
+    && npm pack brace-expansion@5.0.12 undici@6.29.0 --silent \
+    && tar -xzf brace-expansion-5.0.12.tgz \
+    && rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+    && mv package /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+    && tar -xzf undici-6.29.0.tgz \
+    && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \
+    && mv package /usr/local/lib/node_modules/npm/node_modules/undici \
+    && rm /tmp/brace-expansion-5.0.12.tgz /tmp/undici-6.29.0.tgz
 
 ################################################################################
 # Install workspace dependencies with a single root lockfile.
@@ -154,6 +173,16 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
 ################################################################################
+# Runtime dependency set: the deps tree minus devDependencies. The server
+# bundle's externals and bin/start.js resolve only production dependencies at
+# runtime, so dev-only packages (native tsc binaries, bundler toolchains, test
+# runners) have no business in the shipped image — each one is vulnerability
+# surface the weekly container scan has to answer for.
+FROM deps AS prod-deps
+
+RUN npm prune --omit=dev --legacy-peer-deps
+
+################################################################################
 # Runtime image.
 FROM base AS final
 
@@ -173,11 +202,11 @@ COPY sdk/package.json /usr/src/app/sdk/package.json
 COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
 
-COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
+COPY --from=prod-deps /usr/src/app/node_modules /usr/src/app/node_modules
 # Workspace-local deps that can't hoist to root (e.g. @workos-inc/node@^10
 # while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
 # mcpjam-inspector/node_modules and must be carried into the runtime image.
-COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
+COPY --from=prod-deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 
 # Bake in Chromium + its system libraries — the same command CI runs
 # (test.yml) — so widget probes render at runtime instead of recording
@@ -189,8 +218,11 @@ COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 # Build-time egress required: cdn.playwright.dev (browser binary) and the
 # Debian apt mirrors (--with-deps system libs). If the build environment
 # blocks cdn.playwright.dev this step is where it fails — loudly, by design.
+# Invoked through the package entry point, not `npx playwright`: `npm prune`
+# in the prod-deps stage drops the package's .bin link while keeping the
+# package itself, and npx would fall back to fetching an unpinned copy.
 USER root
-RUN npx playwright install --with-deps chromium \
+RUN node ./node_modules/playwright/cli.js install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 USER node
 

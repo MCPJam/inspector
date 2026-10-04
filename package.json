@@ -68,6 +68,7 @@
     "ws": "^8.21.3",
     "ip-address": "^10.7.0",
     "postcss": "^8.5.23",
-    "@ai-sdk/provider-utils@^3.0.0": "3.0.30"
+    "@ai-sdk/provider-utils@^3.0.0": "3.0.30",
+    "undici@>=7.0.0 <7.29.1": "^7.29.1"
   }
 }
