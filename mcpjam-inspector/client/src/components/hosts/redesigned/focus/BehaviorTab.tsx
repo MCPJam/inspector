@@ -39,6 +39,7 @@ import { useHarnessCapabilities } from "@/hooks/useHarnessCapabilities";
 import type { ModelDefinition } from "@/shared/types";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
@@ -197,7 +198,18 @@ export function BehaviorTab({
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
   // OpenRouter are selectable here too.
-  const { availableModels, modelSelectionsSupported } = useAvailableModels();
+  const { availableModels: catalogModels, modelSelectionsSupported } =
+    useAvailableModels();
+  // A harness client lists only what its runtime can run — the same filter as
+  // the Playground picker, so a Codex client cannot be saved on a Claude model.
+  const availableModels = useMemo(
+    () =>
+      harnessPickerModels(
+        catalogModels,
+        draft.harness ? { harnessId: draft.harness } : null,
+      ),
+    [catalogModels, draft.harness],
+  );
   const currentModel = useMemo<ModelDefinition>(() => {
     // With a saved selection, the row it names (an org OpenRouter row and the
     // hosted row of the same id are different rows); else the legacy id.

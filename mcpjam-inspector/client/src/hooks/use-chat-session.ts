@@ -75,6 +75,11 @@ import {
 } from "@/lib/selected-model-storage";
 import { resolveModelSelection } from "@/lib/model-selection";
 import {
+  harnessDefaultModel,
+  harnessPickerModels,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
+import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
@@ -363,6 +368,15 @@ function useMaybeSharedAppState(): AppState | null {
 export interface UseChatSessionOptions {
   /** Server names to connect to */
   selectedServers: string[];
+  /**
+   * The harness this chat's client runs (Codex, Claude Code), when it runs
+   * one. Its picker then offers only models that harness can run, and an
+   * unrunnable saved model falls back to `preferredModelId` instead of the
+   * emulated default (a Claude model).
+   */
+  harnessModelTarget?: HarnessModelTarget | null;
+  /** The client's own configured model: the harness fallback's first choice. */
+  preferredModelId?: string | null;
   /** Visibility to apply when persisting a new direct chat */
   directVisibility?: "private" | "project";
   /** Sanitized organization provider config for org-backed projects */
@@ -1747,6 +1761,8 @@ export function useChatSession(
     personalBrowserEngine,
     localHarnessExecution,
     onReset,
+    harnessModelTarget = null,
+    preferredModelId = null,
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
@@ -2602,7 +2618,7 @@ export function useChatSession(
   const outOfCredits = useOutOfCredits();
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
-  const availableModels = useMemo(
+  const composedModels = useMemo(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
@@ -2631,6 +2647,21 @@ export function useChatSession(
       hostedCatalog,
     ],
   );
+  // A harness client offers only what its runtime can run; see
+  // `harnessPickerModels`. Everything below (selection, fallback, the picker
+  // and every caller that mirrors the selection back) reads this list.
+  const harnessId = harnessModelTarget?.harnessId ?? null;
+  const harnessRuntimeVersion = harnessModelTarget?.runtimeVersion ?? null;
+  const availableModels = useMemo(
+    () =>
+      harnessPickerModels(
+        composedModels,
+        harnessId
+          ? { harnessId, runtimeVersion: harnessRuntimeVersion }
+          : null,
+      ),
+    [composedModels, harnessId, harnessRuntimeVersion],
+  );
 
   // Model selection with persistence
   const {
@@ -2640,6 +2671,7 @@ export function useChatSession(
     setSelectedModelIds: persistSelectedModelIds,
     multiModelEnabled,
     setMultiModelEnabled,
+    isInitialized: isPersistedModelInitialized,
   } = usePersistedModel();
   // Which provider the lead id was picked under. The id alone is ambiguous —
   // see `saveLeadModelProviderHint`. State, not a read inside the memo below:
@@ -2672,9 +2704,17 @@ export function useChatSession(
     [availableModels],
   );
   const selectedModel = useMemo<ModelDefinition>(() => {
-    const fallback = getDefaultModel(
-      selectableModels.length > 0 ? selectableModels : availableModels,
-    );
+    const fallback =
+      (harnessId
+        ? harnessDefaultModel(
+            availableModels,
+            { harnessId, runtimeVersion: harnessRuntimeVersion },
+            preferredModelId,
+          )
+        : undefined) ??
+      getDefaultModel(
+        selectableModels.length > 0 ? selectableModels : availableModels,
+      );
     // Provider-aware: the same id can be a hosted row AND an own-provider row
     // (#5472), and `resolveModelSelection` uses the hint to pick the one the
     // user actually chose.
@@ -2704,8 +2744,11 @@ export function useChatSession(
     return resolveSelectableModel(selectedModelId) ?? fallback;
   }, [
     availableModels,
+    harnessId,
+    harnessRuntimeVersion,
     initialModelId,
     leadProviderHint,
+    preferredModelId,
     selectableModels,
     selectedModelId,
   ]);
@@ -2719,13 +2762,26 @@ export function useChatSession(
   // storage would overwrite the real choice — which is what made an
   // own-provider model look like it never survived a new chat. See
   // BACK2-628.
+  //
+  // Nor before the persisted selection has been READ. It loads in an effect,
+  // so the first render sees no id at all, and a caller mirroring that
+  // render's fallback back into storage replaced the user's saved model (a
+  // Codex client's GPT-5 nano became Claude Haiku on every Playground mount).
+  // For a harness client, a saved model the harness cannot run is unresolved
+  // too: the fallback is shown, and the shared preference is left alone.
   const isSelectedModelResolved = useMemo(() => {
     if (initialModelId) return true;
+    if (isPersistedModelInitialized === false) return false;
     if (!selectedModelId) return true;
     return availableModels.some(
       (model) => String(model.id) === selectedModelId,
     );
-  }, [availableModels, initialModelId, selectedModelId]);
+  }, [
+    availableModels,
+    initialModelId,
+    isPersistedModelInitialized,
+    selectedModelId,
+  ]);
 
   const tokenCountSelectionKey = useMemo(() => {
     if (!selectedModel?.id || !selectedModel?.provider) return "";

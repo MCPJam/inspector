@@ -1256,6 +1256,12 @@ export function PlaygroundMain({
     personalComputerEngine: personalComputerEngineOption,
     personalBrowserEngine: personalBrowserEngineOption,
     localHarnessExecution: localHarnessExecutionOption,
+    // A harness client's picker offers only models that harness can run, and
+    // falls back to the client's own model rather than the emulated default.
+    harnessModelTarget: previewedHarnessId
+      ? { harnessId: previewedHarnessId }
+      : null,
+    preferredModelId: previewedHost?.config?.modelId ?? null,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -2437,6 +2443,11 @@ export function PlaygroundMain({
     if (!isSelectedModelResolved) {
       return;
     }
+    // A host whose config has not arrived may be a harness client whose model
+    // list is narrower; the fallback shown meanwhile is not a choice to save.
+    if (previewedHostConfigUnresolved) {
+      return;
+    }
 
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
@@ -2465,6 +2476,7 @@ export function PlaygroundMain({
     canEnableMultiModel,
     isSelectedModelResolved,
     multiModelEnabled,
+    previewedHostConfigUnresolved,
     resolvedSelectedModels,
     selectedModel,
     selectedModelIds,
