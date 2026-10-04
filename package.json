@@ -68,6 +68,9 @@
     "ws": "^8.21.3",
     "ip-address": "^10.7.0",
     "postcss": "^8.5.23",
-    "@ai-sdk/provider-utils@^3.0.0": "3.0.30"
+    "@ai-sdk/provider-utils@^3.0.0": "3.0.30",
+    "external-editor": {
+      "tmp": "^0.2.6"
+    }
   }
 }
