@@ -5,7 +5,11 @@ import {
   type LocalHarnessClientId,
 } from "@/lib/local-harness-consent";
 
-/** Consent is checked against server state on every send; the toggle is only a preference. */
+/**
+ * Consent is checked against server state before a send unless the polled
+ * availability already shows it; the chat route enforces it either way, and
+ * its typed refusal reopens this dialog. The toggle is only a preference.
+ */
 export function useLocalAutoApproveConsent(args: {
   enabled: boolean;
   ready: boolean;
@@ -51,7 +55,7 @@ export function useLocalAutoApproveConsent(args: {
     return new Promise<boolean>((resolve) => pending.current.push(resolve));
   }, []);
   const ensure = useCallback(async () => {
-    if (!args.enabled) return true;
+    if (!args.enabled || args.acknowledged) return true;
     if (!args.projectId) return false;
     const scope = args.scopeKey;
     const result = await fetchLocalHarnessAvailability(
@@ -62,7 +66,14 @@ export function useLocalAutoApproveConsent(args: {
     if (!result.ok) throw new Error(result.message);
     if (result.availability.autoApproveAcknowledged === true) return true;
     return request();
-  }, [args.enabled, args.projectId, args.scopeKey, args.harnessId, request]);
+  }, [
+    args.enabled,
+    args.acknowledged,
+    args.projectId,
+    args.scopeKey,
+    args.harnessId,
+    request,
+  ]);
   const approve = useCallback(async () => {
     if (!args.projectId) throw new Error("Choose a project first");
     const scope = args.scopeKey;

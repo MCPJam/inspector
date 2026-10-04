@@ -42,6 +42,13 @@ describe("local Off consent gate", () => {
     expect(await send).toBe(true);
     expect(result.current.open).toBe(false);
   });
+  it("trusts acknowledged availability without asking the server", async () => {
+    const options = { ...args(), acknowledged: true };
+    const { result } = renderHook(() => useLocalAutoApproveConsent(options));
+    expect(await result.current.ensure()).toBe(true);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(result.current.open).toBe(false);
+  });
   it("cancels a send and restores On", async () => {
     const options = args();
     const { result } = renderHook(() => useLocalAutoApproveConsent(options));

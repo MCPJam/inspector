@@ -1108,6 +1108,9 @@ describe("PlaygroundMain — local Claude Code", () => {
         screen.queryByTestId("local-harness-trust-dialog"),
       ).not.toBeInTheDocument();
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      // Ready means no readiness round trip and no consent check with On.
+      expect(ensureReadyMock).not.toHaveBeenCalled();
+      expect(autoConsentMocks.fetch).not.toHaveBeenCalled();
     });
   });
   describe("Tool Approval off consent", () => {
@@ -1122,6 +1125,17 @@ describe("PlaygroundMain — local Claude Code", () => {
       fireEvent.click(screen.getByRole("button", { name: "Run without asking" }));
       await waitFor(() => expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce());
       expect(autoConsentMocks.acknowledge).toHaveBeenCalledOnce();
+    });
+    it("sends straight through once consent is known", async () => {
+      mockUseChatSession.requireToolApproval = false;
+      mockLocalHarness.state.phase = "ready";
+      (mockLocalHarness.state.availability as any).autoApproveAcknowledged = true;
+      render(<PlaygroundMain {...defaultProps} />);
+      type("touch a marker"); await submit();
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce();
+      expect(ensureReadyMock).not.toHaveBeenCalled();
+      expect(autoConsentMocks.fetch).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("local-harness-auto-approve-dialog")).not.toBeInTheDocument();
     });
     it("Cancel restores On and preserves the draft", async () => {
       mockUseChatSession.requireToolApproval = false;

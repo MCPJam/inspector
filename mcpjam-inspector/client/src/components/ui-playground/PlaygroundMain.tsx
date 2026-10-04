@@ -4032,6 +4032,16 @@ export function PlaygroundMain({
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
       if (!localHarnessRequested) return true;
+      // A ready target sends without a readiness round trip (the turn's own
+      // route re-checks it); only Off still confirms consent first.
+      if (!setup && localHarness.phase === "ready") {
+        try {
+          return await localAutoApprove.ensure();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+          return false;
+        }
+      }
       if (!convexProjectId || localHarnessPreparingRef.current) return false;
       localHarnessPreparingRef.current = true;
       setLocalHarnessPreparing(true);
