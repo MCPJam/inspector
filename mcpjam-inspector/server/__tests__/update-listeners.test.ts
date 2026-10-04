@@ -1109,3 +1109,30 @@ describe("expired background update records", () => {
     );
   });
 });
+
+it("keeps a shutdown outcome through recovery-marker cleanup and reports the next launch", async () => {
+  downloaded();
+  mod.__setStalledQuitTimeoutForTests(100);
+  mod.installUpdateOnQuit();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(status().reason).toBe("shutdown_stuck");
+  const journal = path.join("/tmp/userData", ".update-install-outcomes.json");
+  const pending = JSON.parse(mocks.files.get(journal)!)[0];
+  const failure = mocks.capture.mock.calls.find(
+    ([e]) => e.event_id === pending.failureEventId,
+  )?.[0];
+  expect(failure?.message).toContain("Download completed");
+  mocks.files.delete(file);
+  mocks.version = "3.11.0";
+  await boot();
+  await settle();
+  const outcome = mocks.capture.mock.calls.find(
+    ([e]) => e.tags.update_reason === "install_outcome",
+  )?.[0];
+  expect(outcome?.contexts.update).toMatchObject({
+    attempt_id: pending.id,
+    failure_event_id: pending.failureEventId,
+    install_outcome: "installed",
+  });
+  expect(JSON.parse(mocks.files.get(journal)!)).toEqual([]);
+});
