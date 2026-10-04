@@ -1,6 +1,10 @@
 import oauthConnections from "./oauth-connections.js";
 import { Hono } from "hono";
 import { mapWebBoundaryError } from "./boundary-error.js";
+import {
+  agentRouteCapture,
+  isAgentRequestPath,
+} from "../../utils/agent-failure-capture.js";
 import { webError, webErrorFromRoute } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
@@ -343,7 +347,17 @@ web.onError((error, c) => {
   // passing only `normalized` here discarded it at the very last step — for
   // every handler on /api/web/* that throws rather than returns. That drop
   // was the single largest reason `origin=mcpjam` never appeared in Axiom.
-  const routeError = mapWebBoundaryError(error);
+  //
+  // An Ask MCPJam path keeps the agent's rule even here (a throw that escaped
+  // its route, or a middleware in front of it): without it the capture would
+  // carry no `surface`/`page_class` tags, match no Ask MCPJam alert, and
+  // record `captured: true` so the request-log backstop skipped it too.
+  const routeError = mapWebBoundaryError(
+    error,
+    isAgentRequestPath(c.req.path)
+      ? { capture: agentRouteCapture("web.onError") }
+      : undefined,
+  );
   return webErrorFromRoute(c, routeError);
 });
 
