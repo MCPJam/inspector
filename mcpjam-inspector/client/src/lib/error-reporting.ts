@@ -32,6 +32,13 @@ export interface ReportOptions {
   extra?: Record<string, unknown>;
   /** Captured from the observed Convex client, never query arguments. */
   queryBackend?: string;
+  /**
+   * Extra Sentry tags, merged under `source` (e.g. `surface`, `page_class` —
+   * what Ask MCPJam's alert rules filter on). Sentry only.
+   */
+  tags?: Record<string, string>;
+  /** Sentry grouping override, for a call site whose stacks are all alike. */
+  fingerprint?: string[];
 }
 
 /**
@@ -181,7 +188,13 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source, ...queryTags, ...recoveryTags },
+      tags: {
+        ...(options.tags ?? {}),
+        source: options.source,
+        ...queryTags,
+        ...recoveryTags,
+      },
+      ...(options.fingerprint ? { fingerprint: options.fingerprint } : {}),
       ...(queryTags
         ? {
             extra: {
