@@ -925,7 +925,7 @@ export function ResourcesTab({
           />
 
           {/* Action buttons */}
-          <div className="ml-auto flex items-center gap-0.5 text-muted-foreground/80">
+          <div className="flex items-center gap-0.5 text-muted-foreground/80">
             <Button
               onClick={() => {
                 if (activeTab === "resources") {
@@ -966,7 +966,7 @@ export function ResourcesTab({
                 templateLoading || !selectedTemplate || !isServerConnected
               }
               size="sm"
-              className="h-8 px-3 text-xs"
+              className="h-8 px-3 text-xs ml-auto"
             >
               {templateLoading ? (
                 <RefreshCw className="h-3 w-3 animate-spin" />
