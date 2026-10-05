@@ -36,13 +36,19 @@ interface MCPJamLimitDialogState {
    */
   staleWaveKeys: ReadonlySet<string>;
   /**
-   * The run keys announced since the last purchase began, while a wave was
-   * stale. A run first seen alone and then with its wave (A, then A with W)
-   * teaches the store W; if the run was announced after the purchase, W is news
-   * that notice already delivered, so W stops being stale. A replay of a run
-   * announced before the purchase is not in this set and leaves W stale.
+   * The run keys known when the last purchase began. A run first seen alone and
+   * then with its wave (A, then A with W) teaches the store W, and W is as old
+   * as A: a run announced after the purchase delivered W's news already, so W is
+   * current; one announced before it leaves W stale (or makes it stale, when W
+   * was unknown at the purchase), and the next run in W is news.
    */
-  runKeysSincePurchase: ReadonlySet<string>;
+  runKeysAtPurchase: ReadonlySet<string>;
+  /**
+   * The organizations that have bought since the store started, or
+   * {@link ANY_ORGANIZATION} for a purchase that named none; a wave learned
+   * later is old news only for a purchase that covers its organization.
+   */
+  purchaseScopes: ReadonlySet<string>;
   /**
    * The organization a wave's notices named, by wave key. A wave whose notices
    * named none has no entry; see
@@ -77,7 +83,11 @@ interface MCPJamLimitDialogState {
    * named a different organization is left as it was: its balance did not
    * change, so its next run is not news. A wave that named none cannot be told
    * apart and is treated as this organization's, as it was before waves knew
-   * theirs.
+   * theirs. The same goes for a wave the store only learns later: checkout can
+   * begin before a run's wave is known (the stream reports run A alone, and the
+   * run document supplies the wave afterwards), and a wave supplied by a run
+   * announced before the purchase is stale at once when the purchase covers its
+   * organization.
    */
   forgetNotifiedWaves: (organizationId?: string) => void;
   close: () => void;
@@ -96,6 +106,7 @@ interface MCPJamLimitDialogState {
  * something new is evidence.
  */
 const WAVE_KEY_PREFIX = "wave:";
+const RUN_KEY_PREFIX = "run:";
 
 const evidenceKey = (runId: string, input: MCPJamLimitNotifyInput): string => {
   const { shortfall, period } = input;
@@ -107,12 +118,28 @@ const evidenceKey = (runId: string, input: MCPJamLimitNotifyInput): string => {
 
 const dedupeKeys = (input: MCPJamLimitNotifyInput): string[] => [
   ...(input.runId
-    ? [`run:${input.runId}`, evidenceKey(input.runId, input)]
+    ? [`${RUN_KEY_PREFIX}${input.runId}`, evidenceKey(input.runId, input)]
     : []),
   ...(input.swarmRunGroupId
     ? [`${WAVE_KEY_PREFIX}${input.swarmRunGroupId}`]
     : []),
 ];
+
+/** What a purchase that named no organization stands for: any of them. */
+const ANY_ORGANIZATION = "*";
+
+/**
+ * Whether a purchase made so far covers a notice's organization. A notice that
+ * names none cannot be told apart and is treated as the purchaser's, as a wave
+ * that named none is when a purchase begins.
+ */
+const purchaseCovers = (
+  scopes: ReadonlySet<string>,
+  organizationId: string | undefined,
+): boolean =>
+  scopes.has(ANY_ORGANIZATION) ||
+  organizationId === undefined ||
+  scopes.has(organizationId);
 
 /**
  * The wave's organization once a notice has named it; the first one named
@@ -202,7 +229,8 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
     notifiedKeys: new Set<string>(),
     staleWaveKeys: new Set<string>(),
-    runKeysSincePurchase: new Set<string>(),
+    runKeysAtPurchase: new Set<string>(),
+    purchaseScopes: new Set<string>(),
     waveOrganizations: {},
     isOpen: false,
     hasPendingLimit: false,
@@ -234,17 +262,37 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           (key) => state.notifiedKeys.has(key) && !state.staleWaveKeys.has(key),
         );
         if (suppressed) {
-          // A run announced since the purchase that turns out to belong to a
-          // stale wave (A, then A with its wave) is that wave's news, already
-          // delivered: the wave is current again, or its next run would open
-          // the dialog a second time. A replay of a run announced before the
-          // purchase is not in the set and leaves the wave stale.
+          // The run speaks for its wave at the age it has. Announced since the
+          // purchase, a run that turns out to belong to a stale wave (A, then A
+          // with its wave) delivered that wave's news already: the wave is
+          // current again, or its next run would open the dialog a second time.
+          // Announced before the purchase, it leaves a stale wave stale, and a
+          // wave it only now supplies is stale at once (checkout began before the
+          // store knew the wave): the next run in it is news.
+          const runKey = input.runId
+            ? `${RUN_KEY_PREFIX}${input.runId}`
+            : undefined;
+          const runIsKnown =
+            runKey !== undefined && state.notifiedKeys.has(runKey);
+          const runPredatesPurchase =
+            runIsKnown && state.runKeysAtPurchase.has(runKey);
+          const waveIsCurrent =
+            runIsKnown &&
+            !runPredatesPurchase &&
+            keys.some((key) => state.staleWaveKeys.has(key));
+          const wavesLearnedStale =
+            runPredatesPurchase &&
+            purchaseCovers(state.purchaseScopes, input.organizationId)
+              ? newKeys.filter((key) => key.startsWith(WAVE_KEY_PREFIX))
+              : [];
           const staleWaveKeys =
-            keys.some((key) => state.staleWaveKeys.has(key)) &&
-            keys.some((key) => state.runKeysSincePurchase.has(key))
-              ? new Set(
-                  [...state.staleWaveKeys].filter((key) => !keys.includes(key)),
-                )
+            waveIsCurrent || wavesLearnedStale.length
+              ? new Set([
+                  ...[...state.staleWaveKeys].filter(
+                    (key) => !waveIsCurrent || !keys.includes(key),
+                  ),
+                  ...wavesLearnedStale,
+                ])
               : state.staleWaveKeys;
           // A replay, every key already known, changes nothing. The views
           // that show a run replay its notice on every Convex push; setting
@@ -291,19 +339,10 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
               [...state.staleWaveKeys].filter((key) => !keys.includes(key)),
             )
           : state.staleWaveKeys;
-        // While a wave is stale, a run announced here is one announced since the
-        // purchase.
-        const runKeysSincePurchase = state.staleWaveKeys.size
-          ? new Set([
-              ...state.runKeysSincePurchase,
-              ...keys.filter((key) => !key.startsWith(WAVE_KEY_PREFIX)),
-            ])
-          : state.runKeysSincePurchase;
         if (state.authStatus === "loading") {
           return {
             notifiedKeys,
             staleWaveKeys,
-            runKeysSincePurchase,
             waveOrganizations,
             hasPendingLimit: true,
             ...latchFor(state, input),
@@ -315,7 +354,6 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           return {
             notifiedKeys,
             staleWaveKeys,
-            runKeysSincePurchase,
             waveOrganizations,
             hasPendingLimit: false,
             ...latchFor(state, input),
@@ -324,7 +362,6 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         return {
           notifiedKeys,
           staleWaveKeys,
-          runKeysSincePurchase,
           waveOrganizations,
           hasPendingLimit: false,
           ...latchFor(state, input),
@@ -386,16 +423,22 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
             owner === organizationId
           );
         });
-        // What counts as announced since the purchase starts over with it.
-        const epoch = state.runKeysSincePurchase.size
-          ? { runKeysSincePurchase: new Set<string>() }
-          : {};
-        return waves.every((key) => state.staleWaveKeys.has(key))
-          ? epoch
-          : {
-              staleWaveKeys: new Set([...state.staleWaveKeys, ...waves]),
-              ...epoch,
-            };
+        return {
+          ...(waves.every((key) => state.staleWaveKeys.has(key))
+            ? {}
+            : { staleWaveKeys: new Set([...state.staleWaveKeys, ...waves]) }),
+          // What counts as announced before the purchase starts over with it, and
+          // so does whose purchase it was.
+          runKeysAtPurchase: new Set(
+            [...state.notifiedKeys].filter((key) =>
+              key.startsWith(RUN_KEY_PREFIX),
+            ),
+          ),
+          purchaseScopes: new Set([
+            ...state.purchaseScopes,
+            organizationId ?? ANY_ORGANIZATION,
+          ]),
+        };
       }),
     close: () =>
       set({

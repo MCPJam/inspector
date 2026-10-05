@@ -16,7 +16,8 @@ beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
     notifiedKeys: new Set<string>(),
     staleWaveKeys: new Set<string>(),
-    runKeysSincePurchase: new Set<string>(),
+    runKeysAtPurchase: new Set<string>(),
+    purchaseScopes: new Set<string>(),
     waveOrganizations: {},
     authStatus: "loading",
     hasPendingLimit: false,
@@ -1070,6 +1071,116 @@ describe("one dialog per swarm wave", () => {
 
     notify({ runId: "run-c", swarmRunGroupId: "wave-1" });
     expect(store.getState().isOpen).toBe(true);
+  });
+
+  // Checkout can begin before the store knows a run's wave: the stream reports
+  // run A alone, and the run document supplies the wave afterwards (A with W).
+  // A was announced before the purchase, so W is as old as A and the next run in
+  // it is news.
+  describe("a wave first learned after the purchase began", () => {
+    it("is as old as the run announced before the purchase that supplied it", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-a" });
+      store.getState().close();
+      store.getState().forgetNotifiedWaves();
+
+      notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      expect(store.getState().isOpen).toBe(false);
+      expect(store.getState().staleWaveKeys).toEqual(new Set(["wave:wave-1"]));
+
+      // A retried launch reuses the wave; running out again after paying is news.
+      notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+      expect(store.getState().isOpen).toBe(true);
+    });
+
+    it("is current when a run announced after the purchase supplied it", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-a" });
+      store.getState().close();
+      store.getState().forgetNotifiedWaves();
+
+      notify({ runId: "run-b" });
+      expect(store.getState().isOpen).toBe(true);
+      store.getState().close();
+
+      notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+      expect(store.getState().staleWaveKeys).toEqual(new Set());
+      notify({ runId: "run-c", swarmRunGroupId: "wave-1" });
+      expect(store.getState().isOpen).toBe(false);
+    });
+
+    it("stays current when no purchase has begun", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-a" });
+      store.getState().close();
+      notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      expect(store.getState().staleWaveKeys).toEqual(new Set());
+      notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+      expect(store.getState().isOpen).toBe(false);
+    });
+
+    it("is left alone when another organization made the purchase", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-x", organizationId: "org-b" });
+      store.getState().close();
+      store.getState().forgetNotifiedWaves("org-a");
+
+      notify({
+        runId: "run-x",
+        swarmRunGroupId: "wave-x",
+        organizationId: "org-b",
+      });
+      expect(store.getState().staleWaveKeys).toEqual(new Set());
+      notify({
+        runId: "run-y",
+        swarmRunGroupId: "wave-x",
+        organizationId: "org-b",
+      });
+      expect(store.getState().isOpen).toBe(false);
+    });
+
+    it("is treated as the purchaser's when its run names no organization", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-x" });
+      store.getState().close();
+      store.getState().forgetNotifiedWaves("org-a");
+
+      notify({ runId: "run-x", swarmRunGroupId: "wave-x" });
+      expect(store.getState().staleWaveKeys).toEqual(new Set(["wave:wave-x"]));
+    });
+
+    it("remembers every organization that has purchased", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-x", organizationId: "org-a" });
+      notify({ runId: "run-z", organizationId: "org-c" });
+      store.getState().close();
+      store.getState().forgetNotifiedWaves("org-a");
+      store.getState().forgetNotifiedWaves("org-b");
+
+      notify({
+        runId: "run-x",
+        swarmRunGroupId: "wave-x",
+        organizationId: "org-a",
+      });
+      notify({
+        runId: "run-z",
+        swarmRunGroupId: "wave-z",
+        organizationId: "org-c",
+      });
+      expect(store.getState().staleWaveKeys).toEqual(new Set(["wave:wave-x"]));
+    });
   });
 
   it("starts over at the next purchase: a run announced between two purchases is old news at the second", () => {
