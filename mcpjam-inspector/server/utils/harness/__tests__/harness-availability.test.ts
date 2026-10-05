@@ -584,6 +584,46 @@ describe("harnessToolApprovalRefusalReason", () => {
     },
   );
 
+  // An eval or swarm has nobody to answer, so a runtime that CAN pause is
+  // refused there too: admitted, it failed at its first gated call (evals) or
+  // parked a pause nobody resumed (swarms).
+  it.each(["claude-code", "codex"] as const)(
+    "refuses %s under approval in an unattended run, servers or not",
+    (harnessId) => {
+      for (const hasSelectedMcpServers of [false, true]) {
+        expect(
+          harnessToolApprovalRefusalReason({
+            adapter: getHarnessAdapter(harnessId),
+            requireToolApproval: true,
+            hasSelectedMcpServers,
+            unattended: true,
+          }),
+        ).toMatch(/can't pause for tool approval in an unattended run/);
+      }
+    },
+  );
+
+  it("leaves an unattended run with approval off alone", () => {
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: claudeCode,
+        requireToolApproval: false,
+        hasSelectedMcpServers: true,
+        unattended: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("still admits Claude Code under approval when someone can answer", () => {
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: claudeCode,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      }),
+    ).toBeUndefined();
+  });
+
   // The gap this closes: Codex's NATIVE tools can't pause either, and its
   // built-in host-executed tools (web_search) are not approval-gated because
   // `supportsHostExecutedToolApproval` is false. Conditioning the refusal on

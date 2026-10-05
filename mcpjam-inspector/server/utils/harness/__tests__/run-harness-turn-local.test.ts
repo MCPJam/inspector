@@ -376,6 +376,37 @@ describe("runHarnessTurn local continuity", () => {
     expect(stream).toContain('"type":"tool-approval-request","approvalId":"approval-1","toolCallId":"call-1"');
   });
 
+  it("tells the user when the chat's runtime changed under its saved session", async () => {
+    vi.mocked(claimHarnessSessionState).mockResolvedValue({
+      ok: true, leaseId: "lease-1", stateVersion: 3, state: null,
+      fingerprintChanged: true,
+    } as any);
+    const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
+    expect(stream).toContain('"type":"data-harness-reset","data":{"reason":"runtime-changed"}');
+  });
+
+  it("stays quiet when the changed lane never committed a session", async () => {
+    vi.mocked(claimHarnessSessionState).mockResolvedValue({
+      ok: true, leaseId: "lease-1", stateVersion: 0, state: null,
+      fingerprintChanged: true,
+    } as any);
+    const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
+    expect(stream).not.toContain("data-harness-reset");
+  });
+
+  it("refuses an approval host on a turn nobody can answer", async () => {
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({
+      requireToolApproval: true,
+      approvalMode: "auto-deny",
+      onEngineError,
+    }) as any, "none").catch((error: unknown) => onEngineError(error));
+    expect(onEngineError).toHaveBeenCalled();
+    expect(String(onEngineError.mock.calls[0]![0]?.message ?? onEngineError.mock.calls[0]![0]))
+      .toMatch(/can't pause for tool approval in an unattended run/);
+    expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
+  });
+
   it("closes a denied call in the UI so the decision is not re-sent", async () => {
     resume(true);
     harnessState.continuations = [{

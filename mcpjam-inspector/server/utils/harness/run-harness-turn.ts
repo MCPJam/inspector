@@ -689,6 +689,7 @@ export async function runHarnessTurn(
     failureReporter: failureReporterOption,
     onLiveTextDelta,
     requireToolApproval,
+    approvalMode,
     modelVisibleMcpToolResults,
     respectToolVisibility,
     tasks,
@@ -1252,6 +1253,9 @@ export async function runHarnessTurn(
         adapter: harnessAdapter,
         requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        // Every caller with nobody to answer (evals, swarms, synthetic
+        // sessions, API turns) says so this way.
+        unattended: approvalMode === "auto-deny",
       });
       if (approvalRefusal) {
         throw new Error(`Can't run this turn: ${approvalRefusal}.`);
@@ -1809,6 +1813,10 @@ export async function runHarnessTurn(
               computerId: string;
               awaitingApproval?: boolean;
             } | null;
+            /** This chat had a committed session under a different runtime
+             *  fingerprint (model, servers, skills, permission mode,
+             *  transport…), so this turn starts fresh. */
+            runtimeChanged: boolean;
           }
         | undefined;
       if (
@@ -1881,6 +1889,9 @@ export async function runHarnessTurn(
             // fresh start (it skips writes on resume). Enforce here rather than
             // trusting the endpoint to null `state` on mismatch.
             state: claim.fingerprintChanged ? null : claim.state,
+            // `stateVersion` only moves on a commit, so > 0 means there was a
+            // session to lose, not just a lane a failed first turn created.
+            runtimeChanged: claim.fingerprintChanged && claim.stateVersion > 0,
           };
           // Bounded: every caller of this is on the terminal path, and a
           // stalled release would hold the turn open exactly like the broker
@@ -2749,7 +2760,9 @@ export async function runHarnessTurn(
         ? "resume-failed"
         : eligibility.reason === "sandbox-replaced"
           ? "sandbox-replaced"
-          : undefined;
+          : continuity?.runtimeChanged
+            ? "runtime-changed"
+            : undefined;
       if (eligibility.reason === "legacy-cold-resume") {
         logger.warn(
           "[harness] resuming a pre-detach sidecar (cold/disk resume; continuity not guaranteed)",
