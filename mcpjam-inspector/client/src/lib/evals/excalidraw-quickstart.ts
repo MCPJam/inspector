@@ -7,7 +7,7 @@ import {
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
 import { QUICKSTART_SUITE_TAG } from "@/components/evals/constants";
-import { navigatePlaygroundEvalsRoute } from "@/components/evals/create-suite-navigation";
+import { navigatePlaygroundEvalsRoute } from "@/components/evaluate/create-suite-navigation";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { EXCALIDRAW_QUICKSTART_CASES } from "./excalidraw-quickstart-cases";
 import type { ServerFormData } from "@/shared/types.js";

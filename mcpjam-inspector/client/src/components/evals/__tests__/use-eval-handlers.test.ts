@@ -195,6 +195,42 @@ describe("useEvalHandlers", () => {
     setApiContext(null);
   });
 
+  // The legacy Evals tabs are gone, so every handler-driven landing is on
+  // Evaluate. These two used to go to `/evals` and bounce through a redirect.
+  describe("suite navigation", () => {
+    it("returns to the Evaluate list after deleting the suite on screen", async () => {
+      mockMutations.deleteSuiteMutation.mockResolvedValue(undefined);
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, selectedSuiteId: "suite-1" }),
+      );
+
+      act(() => {
+        result.current.handleDelete({ _id: "suite-1", name: "Suite" } as any);
+      });
+      await act(async () => {
+        await result.current.confirmDelete();
+      });
+
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate");
+    });
+
+    it("opens a duplicated suite on Evaluate", async () => {
+      mockMutations.duplicateSuiteMutation.mockResolvedValue({
+        _id: "suite-copy",
+      });
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleDuplicateSuite({
+          _id: "suite-1",
+          name: "Suite",
+        } as any);
+      });
+
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/suite/suite-copy");
+    });
+  });
+
   describe("handleRerun", () => {
     it.each([false, true])("opens the first accepted environment run without waiting for siblings (later failure: %s)", async (failSibling) => {
       const slow = createDeferred<Response>();
@@ -204,7 +240,7 @@ describe("useEvalHandlers", () => {
           ? slow.promise
           : createFetchResponse({ success: true, runId: "accepted-run" });
       });
-      const { result } = renderHook(() => useEvalHandlers({ ...defaultProps, evalsNavigationContext: "evaluate" }));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
       let launch!: Promise<unknown>;
       act(() => {
         launch = result.current.handleRerun({
@@ -796,7 +832,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -856,7 +892,7 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -2333,7 +2369,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-456/runs/run-new?insights=1",
+        "/evaluate/suite/suite-456/runs/run-new?insights=1",
       );
     });
   });
@@ -2860,7 +2896,6 @@ describe("useEvalHandlers", () => {
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
-          evalsNavigationContext: "evaluate",
         }),
       );
 
@@ -2879,7 +2914,6 @@ describe("useEvalHandlers", () => {
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
-          evalsNavigationContext: "evaluate",
         }),
       );
 

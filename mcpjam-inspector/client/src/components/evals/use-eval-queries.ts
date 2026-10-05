@@ -9,7 +9,6 @@ import type {
   SuiteDetailsQueryResponse,
   EvalSuiteRun,
 } from "./types";
-import { getIterationRecencyTimestamp } from "./helpers";
 import { useSuiteRunMetrics } from "./use-suite-run-metrics";
 import { useRunsIterations } from "./use-runs-iterations";
 
@@ -53,7 +52,6 @@ export function useEvalQueries({
   projectId,
   organizationId,
   isDirectGuest = false,
-  perRunMetrics = false,
 }: {
   isAuthenticated: boolean;
   selectedSuiteId: string | null;
@@ -61,14 +59,6 @@ export function useEvalQueries({
   projectId: string | null;
   organizationId: string | null;
   isDirectGuest?: boolean;
-  /**
-   * Evaluate's suite page: never read the whole suite's iterations. Cases come
-   * from `listTestCases`, run history from per-run metrics (`metricsByRun`),
-   * and `sortedIterations` / `activeIterations` stay empty — a run or case view
-   * loads its own rows. Off (the legacy Evals surfaces) keeps the single
-   * whole-suite read.
-   */
-  perRunMetrics?: boolean;
 }) {
   const isUserReady = useDbUserReady();
   // Convex's `isAuthenticated` already covers hosted guests — they hold a
@@ -87,7 +77,7 @@ export function useEvalQueries({
   const hasActorAccess = isAuthenticated && isUserReady;
   // Authenticated, but the `users` row is still bootstrapping: the queries are
   // skipped and an answer IS coming, so this window must report as loading.
-  // Reporting it as settled-and-empty makes `EvalsTab`'s redirect read a
+  // Reporting it as settled-and-empty makes Evaluate's redirect read a
   // deep-linked suite as deleted and bounce it, and flashes the "no suites"
   // hero over a project that has suites.
   const isActorBootstrapping = !isDirectGuest && isAuthenticated && !isUserReady;
@@ -118,25 +108,22 @@ export function useEvalQueries({
   const hasSelectedSuiteInPlay =
     !!selectedSuiteId && deletingSuiteId !== selectedSuiteId;
   const enableSuiteDetailsQuery = hasActorAccess && hasSelectedSuiteInPlay;
-  const wholeSuiteDetails = useQuery(
-    "testSuites:getAllTestCasesAndIterationsBySuite" as any,
-    enableSuiteDetailsQuery && !perRunMetrics
-      ? ({ suiteId: selectedSuiteId } as any)
-      : "skip"
-  ) as SuiteDetailsQueryResponse | undefined;
+  // Never the whole suite's iterations. Cases come from `listTestCases`, run
+  // history from per-run metrics (`metricsByRun`), and a run or case view loads
+  // its own rows. The whole-suite read (`getAllTestCasesAndIterationsBySuite`)
+  // loaded every iteration of every run and hit Convex's 16 MiB read limit on
+  // large suites; it went with the legacy Evals tabs.
   const suiteCases = useQuery(
     "testSuites:listTestCases" as any,
-    enableSuiteDetailsQuery && perRunMetrics
-      ? ({ suiteId: selectedSuiteId } as any)
-      : "skip"
+    enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip"
   ) as EvalCase[] | undefined;
-  const suiteDetails = useMemo<SuiteDetailsQueryResponse | undefined>(() => {
-    if (!perRunMetrics) return wholeSuiteDetails;
-    // No suite-wide iterations in this mode, by design — see `perRunMetrics`.
-    return suiteCases
-      ? { testCases: suiteCases, iterations: NO_ITERATIONS }
-      : undefined;
-  }, [perRunMetrics, wholeSuiteDetails, suiteCases]);
+  const suiteDetails = useMemo<SuiteDetailsQueryResponse | undefined>(
+    () =>
+      suiteCases
+        ? { testCases: suiteCases, iterations: NO_ITERATIONS }
+        : undefined,
+    [suiteCases]
+  );
 
   // Raised from 20 → 100 so a multi-host run group (up to ~5 hosts in
   // practice) is never truncated mid-group. The list consumer caps by
@@ -156,7 +143,7 @@ export function useEvalQueries({
   const { metricsByRun, loading: isRunMetricsLoading } = useSuiteRunMetrics(
     projectId,
     suiteRuns,
-    enableSuiteDetailsQuery && perRunMetrics
+    enableSuiteDetailsQuery
   );
 
   const liveRunIds = useRef(new Set<string>());
@@ -165,17 +152,15 @@ export function useEvalQueries({
       liveRunIds.current.add(run._id);
     }
   }
-  // Per-run mode has no suite-wide rows to scan, so it watches the runs seen
-  // in flight this session: a limit error can land as the run finishes.
+  // There are no suite-wide rows to scan, so this watches the runs seen in
+  // flight this session: a limit error can land as the run finishes.
   const liveRunIterations = useRunsIterations(
     (suiteRuns ?? [])
       .filter((run) => liveRunIds.current.has(run._id))
       .map((run) => run._id),
-    enableSuiteDetailsQuery && perRunMetrics
+    enableSuiteDetailsQuery
   );
-  const limitErrorIterations = perRunMetrics
-    ? liveRunIterations.iterations
-    : suiteDetails?.iterations;
+  const limitErrorIterations = liveRunIterations.iterations;
   useEffect(() => {
     for (const iteration of limitErrorIterations ?? []) {
       if (
@@ -210,28 +195,10 @@ export function useEvalQueries({
 
   const selectedSuite = selectedSuiteEntry?.suite ?? null;
 
-  const sortedIterations = useMemo(() => {
-    if (!suiteDetails) return [];
-    return [...suiteDetails.iterations].sort(
-      (a, b) =>
-        getIterationRecencyTimestamp(b) - getIterationRecencyTimestamp(a),
-    );
-  }, [suiteDetails]);
-
   const runsForSelectedSuite = useMemo(
     () => (suiteRuns ? [...suiteRuns] : []),
     [suiteRuns]
   );
-
-  const activeIterations = useMemo(() => {
-    if (!suiteRuns || sortedIterations.length === 0) return sortedIterations;
-
-    const runIds = new Set(suiteRuns.map((run) => run._id));
-
-    return sortedIterations.filter(
-      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId)
-    );
-  }, [sortedIterations, suiteRuns]);
 
   const sortedSuites = useMemo(() => {
     if (!suiteOverview) return [];
@@ -258,9 +225,7 @@ export function useEvalQueries({
     suiteRuns,
     selectedSuiteEntry,
     selectedSuite,
-    sortedIterations,
     runsForSelectedSuite,
-    activeIterations,
     metricsByRun,
     isRunMetricsLoading,
     sortedSuites,

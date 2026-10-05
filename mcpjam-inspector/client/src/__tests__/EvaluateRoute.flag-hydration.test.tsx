@@ -2,8 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Exercise public access and legacy routing for every flag state.
-let flagState: boolean | undefined = undefined;
+// Public Evaluate, and the redirect every legacy `/evals` URL now takes.
 
 const { mockRouteContext } = vi.hoisted(() => ({
   mockRouteContext: {
@@ -15,12 +14,6 @@ const { mockRouteContext } = vi.hoisted(() => ({
     handleContinueEvalInChat: vi.fn(),
     handleConnect: vi.fn(),
   },
-}));
-
-vi.mock("../hooks/useEvaluateEnabled", () => ({
-  EVALUATE_FEATURE_FLAG: "evaluate-enabled",
-  useEvaluateEnabledState: () => flagState,
-  useEvaluateEnabled: () => flagState === true,
 }));
 
 vi.mock("react-router", async (importOriginal) => {
@@ -70,10 +63,10 @@ vi.mock("@codemirror/lint", () => ({
   lintGutter: () => ({}),
 }));
 
-import { EvaluateRoute, EvalsRoute } from "../App";
+import { EvaluateRoute } from "../App";
+import { LegacyEvalRedirect } from "../components/routing/legacy-eval-redirect";
 
 afterEach(() => {
-  flagState = undefined;
   vi.clearAllMocks();
 });
 
@@ -90,32 +83,29 @@ function renderRoute(element: React.ReactElement, initialPath = "/evaluate") {
   );
 }
 
-vi.mock("../components/EvalsTab", () => ({
-  EvalsTab: () => <div data-testid="legacy-tab" />,
-}));
-
-describe("public Evaluate and legacy access", () => {
-  it.each([undefined, false, true])("renders Evaluate with flag %s", (flag) => {
-    flagState = flag;
+describe("public Evaluate and legacy redirects", () => {
+  it("renders Evaluate", () => {
     renderRoute(<EvaluateRoute />);
     expect(screen.getByTestId("evaluate-tab")).toBeInTheDocument();
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
   });
 
-  it.each([undefined, false])("redirects legacy runs with flag %s without mounting legacy content", (flag) => {
-    flagState = flag;
-    const project = "k5700000000000000000000000a";
-    renderRoute(<EvalsRoute />, `/p/${project}/evals/suite/S/runs/R?iteration=I&case=C#trace`);
-    expect(screen.getByTestId("navigate")).toHaveAttribute(
-      "data-to", `/p/${project}/evaluate/suite/S/runs/R?iteration=I&case=C#trace`,
-    );
-    expect(screen.queryByTestId("legacy-tab")).not.toBeInTheDocument();
-  });
-
-  it("keeps legacy Evaluate accessible when the flag is on", () => {
-    flagState = true;
-    renderRoute(<EvalsRoute />, "/evals");
-    expect(screen.getByTestId("legacy-tab")).toBeInTheDocument();
-    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+  // The legacy Evals and CI Evals tabs are gone; the route table sends their
+  // URLs here so bookmarks land on the same suite or run in Evaluate.
+  const project = "k5700000000000000000000000a";
+  it.each([
+    [
+      `/p/${project}/evals/suite/S/runs/R?iteration=I&case=C#trace`,
+      `/p/${project}/evaluate/suite/S/runs/R?iteration=I&case=C#trace`,
+    ],
+    [
+      `/p/${project}/evals/runs/suite/S/runs/R`,
+      `/p/${project}/evaluate/suite/S/runs/R`,
+    ],
+    [`/p/${project}/evals`, `/p/${project}/evaluate`],
+    [`/p/${project}/evals/runs`, `/p/${project}/evaluate`],
+  ])("redirects %s to %s", (from, to) => {
+    renderRoute(<LegacyEvalRedirect />, from);
+    expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", to);
   });
 });

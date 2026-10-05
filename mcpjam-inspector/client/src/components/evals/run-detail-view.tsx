@@ -207,9 +207,8 @@ interface RunDetailViewProps {
   onCancelRun?: (runIds: readonly string[]) => void;
   cancellingRunId?: string | null;
   /**
-   * Navigate to another run on the accuracy hero's recent-run dot. Required for
-   * CI/commit-detail callers so the jump stays on `/evals/runs/...` instead of
-   * the default `buildEvalsPath` (`/evals/...`).
+   * Navigate to another run on the accuracy hero's recent-run dot. Without it
+   * the jump goes to that run on Evaluate.
    */
   onSelectRun?: (runId: string) => void;
   /**

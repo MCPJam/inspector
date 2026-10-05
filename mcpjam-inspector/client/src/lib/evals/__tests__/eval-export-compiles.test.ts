@@ -3,7 +3,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-import { SDK_EVAL_QUICKSTART_RUN } from "@/components/evals/sdk-eval-quickstart";
 import {
   buildSdkTestFile,
   buildServerConnections,
@@ -251,16 +250,6 @@ describe("exported SDK test files compile against the real SDK", () => {
           "empty.test.ts": EMPTY_TURNS,
         })
       ).toEqual([]);
-    },
-    120_000
-  );
-
-  it(
-    "keeps the in-app quickstart snippet compiling",
-    () => {
-      expect(typecheck({ "quickstart.test.ts": SDK_EVAL_QUICKSTART_RUN })).toEqual(
-        []
-      );
     },
     120_000
   );

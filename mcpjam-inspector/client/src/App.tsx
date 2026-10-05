@@ -34,9 +34,7 @@ import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
-import { EvalsTab } from "./components/EvalsTab";
 import { EvaluateTab } from "./components/EvaluateTab";
-import { CiEvalsTab } from "./components/CiEvalsTab";
 import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
@@ -335,7 +333,6 @@ import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePrev
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
-import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import {
   HOST_TEMPLATES,
@@ -378,7 +375,6 @@ import {
   useAppRouteContext,
   type AppRouteContext,
 } from "./lib/app-route-context";
-import { useEvalsMode, type EvalsMode } from "./lib/eval-route-url";
 import {
   Navigate,
   Outlet,
@@ -727,8 +723,10 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ProjectSettingsRoute />;
     case "organizations":
       return <OrganizationsRoute />;
+    // The legacy Evals tabs are gone: their URLs redirect to Evaluate, here
+    // as in the route table.
     case "evals":
-      return <EvalsRoute />;
+      return <LegacyEvalRedirect />;
     case "evaluate":
       return <EvaluateRoute />;
     case "home":
@@ -1528,60 +1526,6 @@ export function ToolsRoute() {
   );
 }
 
-/**
- * Evaluate — one route, two lenses. Suites authors and runs eval suites;
- * Runs reviews what CI already produced. Both gate on the same `evals`
- * billing feature because they are one tab.
- */
-export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
-  const legacyEnabled = useEvaluateEnabled();
-  if (!legacyEnabled) return <LegacyEvalRedirect />;
-  return (
-    <PricingFeatureSignInGate feature="Evals">
-      <EvalsRouteContent mode={mode} />
-    </PricingFeatureSignInGate>
-  );
-}
-
-function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
-  const {
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    ensureServersReady,
-    handleContinueEvalInChat,
-    handleConnect,
-  } = useAppRouteContext();
-  // The route table passes `mode` explicitly. The no-Router fallback body
-  // (component tests) dispatches on the tab id alone, which is `evals` for
-  // both lenses, so resolve from the URL when the prop is absent.
-  const pathnameMode = useEvalsMode();
-  const activeMode = mode ?? pathnameMode;
-
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
-  }
-
-  if (activeMode === "runs") {
-    return (
-      <CiEvalsTab
-        convexProjectId={convexProjectId}
-        ensureServersReady={ensureServersReady}
-      />
-    );
-  }
-
-  return (
-    <EvalsTab
-      projectId={convexProjectId}
-      ensureServersReady={ensureServersReady}
-      onContinueInChat={handleContinueEvalInChat}
-      handleConnect={handleConnect}
-    />
-  );
-}
-
 /** The public Evaluate experience; sign-in and billing still apply. */
 export function EvaluateRoute() {
   return (
@@ -1769,8 +1713,8 @@ export function ScenariosRoute() {
   // whichever flag moves last silently decides what a visitor sees — so REEV-6
   // owns these two routes and the wrapper is removed from them.
   //
-  // It STAYS on Evals (`EvalsRoute`, `EvalRunnerRoute`). Evaluate is out of
-  // REEV-6's scope by decision, so nothing here replaces that gate.
+  // It STAYS on Evaluate (`EvaluateRoute`), which is out of REEV-6's scope by
+  // decision, so nothing here replaces that gate.
   //
   // What the preview has that the message does not: it shows the product, and
   // it offers sign-UP. Their message only offers sign-in, which is the wrong

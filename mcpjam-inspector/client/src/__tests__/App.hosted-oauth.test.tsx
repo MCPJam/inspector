@@ -406,16 +406,10 @@ vi.mock("../components/TasksTab", () => ({
 vi.mock("../components/ChatTabV2", () => ({
   ChatTabV2: () => <div />,
 }));
-vi.mock("../components/EvalsTab", () => ({
-  EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
-}));
 vi.mock("../components/EvaluateTab", () => ({
   EvaluateTab: () => <div data-testid="evaluate-tab">Evaluate</div>,
 }));
 
-vi.mock("../components/CiEvalsTab", () => ({
-  CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
-}));
 vi.mock("../components/UserTestingTab", () => ({
   UserTestingTab: (props: unknown) => mockUserTestingTab(props),
 }));
@@ -5137,44 +5131,28 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders legacy Suites mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
+  // The legacy Evals (Suites) and CI Evals (Runs) tabs are gone. Their URLs
+  // land on Evaluate even for the team members the old flag let in.
+  it.each(["/evals", "/evals/runs"])(
+    "redirects legacy %s to Evaluate",
+    async (legacyPath) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", legacyPath);
+      mockHandleOAuthCallback.mockReset();
+      mockUseFeatureFlagEnabled.mockImplementation(
+        (flag: string) =>
+          flag === "playground-enabled" || flag === "evaluate-enabled",
+      );
 
-    render(<App />);
+      render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/evals");
-    expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders legacy Runs mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals/runs");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/evals/runs");
-    expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
-  });
+      await waitFor(() => {
+        expect(screen.getByTestId("evaluate-tab")).toBeInTheDocument();
+      });
+      expect(window.location.pathname).toBe("/evaluate");
+    },
+  );
 
   it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();

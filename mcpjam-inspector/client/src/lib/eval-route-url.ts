@@ -171,33 +171,6 @@ export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {
   );
 }
 
-/** The two lenses over the same eval suites, switched in the Evaluate header. */
-export type EvalsMode = "suites" | "runs";
-
-export function evalsModeForPathname(pathname: string): EvalsMode {
-  const logical = stripProjectFromPath(pathname);
-  const normalized = logical.startsWith("/") ? logical : `/${logical}`;
-  return normalized === "/evals/runs" || normalized.startsWith("/evals/runs/")
-    ? "runs"
-    : "suites";
-}
-
-export function useEvalsMode(): EvalsMode {
-  const locationContext = useContext(UNSAFE_LocationContext);
-  const pathname =
-    locationContext?.location.pathname ??
-    (typeof window === "undefined" ? "/evals" : window.location.pathname);
-  return evalsModeForPathname(pathname);
-}
-
-export function useEvalsRouteFromUrl(): EvalRoute {
-  return useEvalRouteFromUrl("/evals");
-}
-
-export function useEvalsRunsRouteFromUrl(): EvalRoute {
-  return useEvalRouteFromUrl("/evals/runs");
-}
-
 /** Evaluate (New): same typed routes, parsed under the `/evaluate` prefix. */
 export function useEvaluateRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evaluate");
