@@ -11,11 +11,15 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-10-05
 
+#### Added
+
+- **Codex now supports Tool Approval in chat** — the **Require tool approval** switch is no longer greyed out for Codex hosts. When on, Codex pauses before every command and file change so you can approve or deny each one; a denied command is not run. Evals and swarms still refuse a Codex host with Tool Approval on, because nobody can answer an approval in an unattended run.
+
 #### Changed
 
 - **Evals and swarms refuse `requireToolApproval` up front** — a harness host (Claude Code or Codex) with **Tool Approval on** is now refused before any sandbox is provisioned when running an eval or a swarm. Nobody can answer an approval in an unattended run: previously, the first gated tool call threw mid-run (evals) or parked a pause that the next persona turn silently dropped (swarms). The refusal message reads: "the &lt;harness&gt; harness can't pause for tool approval in an unattended run (evals and swarms) — turn off requireToolApproval on this host". Turn **Tool Approval off** in the suite's execution config or the swarm's host config to resolve it.
 
-- **Chat shows a notice when its harness session was built for a different runtime** — if a chat's saved harness session no longer matches the current client configuration (model, connected servers, skills, approval setting, or transport), the next turn now shows: "Started a new session because this client's runtime changed, so earlier context isn't available." Previously the turn started fresh silently and the model appeared to forget earlier context with no explanation.
+- **Chat shows a notice when its harness session was built for a different runtime** — if a chat's saved harness session no longer matches the current client configuration (model, connected servers, skills, approval setting, or transport), the next turn now shows: "Started a new session because this client's runtime changed, so earlier context isn't available." Previously the turn started fresh silently and the model appeared to forget earlier context with no explanation. Existing Codex chats will show this notice on their next message, because the underlying runtime changed.
 
 ### 2026-10-04
 
