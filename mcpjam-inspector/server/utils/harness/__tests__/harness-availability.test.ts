@@ -185,13 +185,17 @@ describe("checkHarnessRuntimeAvailable", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("still blocks an approval host on Codex (no native approval)", () => {
+  it("admits an approval host on Codex (the app-server adapter pauses)", () => {
     setFullyAvailable();
-    const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", requireToolApproval: true }),
-    );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/tool approval/);
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          requireToolApproval: true,
+          model: { id: "openai/gpt-5-nano", provider: "openai" },
+        }),
+      ),
+    ).toEqual({ ok: true });
   });
 
   it("names the harness in its message (capability-driven, not hardcoded)", () => {
@@ -219,21 +223,20 @@ describe("checkHarnessRuntimeAvailable", () => {
     ).toEqual({ ok: true });
   });
 
-  it("still blocks a Codex approval host with MCP servers (approval can't be honored)", () => {
-    // Advertise = enforce: Codex's MCP tools run on MCPJam's server as
-    // host-executed tools, and Codex declares no host-executed tool approval.
-    // Delivering the servers must NOT quietly turn approval into a no-op.
+  it("admits a Codex approval host with MCP servers (host-executed tools pause)", () => {
+    // Codex's MCP tools run on MCPJam's server as host-executed tools, and the
+    // framework gates them there before `execute`.
     setFullyAvailable();
-    const r = checkHarnessRuntimeAvailable(
-      args({
-        harnessId: "codex",
-        hasSelectedMcpServers: true,
-        requireToolApproval: true,
-        model: { id: "openai/gpt-5-nano", provider: "openai" },
-      }),
-    );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.kind).toBe("tool-approval");
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          hasSelectedMcpServers: true,
+          requireToolApproval: true,
+          model: { id: "openai/gpt-5-nano", provider: "openai" },
+        }),
+      ),
+    ).toEqual({ ok: true });
   });
 
   it("allows a Claude Code host with selected MCP servers (it delivers them)", () => {
@@ -624,28 +627,29 @@ describe("harnessToolApprovalRefusalReason", () => {
     ).toBeUndefined();
   });
 
-  // The gap this closes: Codex's NATIVE tools can't pause either, and its
-  // built-in host-executed tools (web_search) are not approval-gated because
-  // `supportsHostExecutedToolApproval` is false. Conditioning the refusal on
-  // there being MCP servers would let a zero-server eval run them unapproved.
-  it("refuses Codex under approval even with NO servers selected", () => {
+  // A runtime whose NATIVE tools can't pause is unsound under approval whether
+  // or not servers are attached: conditioning the refusal on servers would let
+  // a zero-server run execute its own tools unapproved.
+  it("refuses a runtime that can't pause, even with NO servers selected", () => {
     expect(
       harnessToolApprovalRefusalReason({
-        adapter: codex,
+        adapter: { ...codex, supportsNativeToolApproval: false } as typeof codex,
         requireToolApproval: true,
         hasSelectedMcpServers: false,
       }),
     ).toMatch(/doesn't support interactive tool approval/);
   });
 
-  it("refuses Codex under approval with servers selected", () => {
-    expect(
-      harnessToolApprovalRefusalReason({
-        adapter: codex,
-        requireToolApproval: true,
-        hasSelectedMcpServers: true,
-      }),
-    ).toBeDefined();
+  it("allows Codex under approval, servers or not", () => {
+    for (const hasSelectedMcpServers of [false, true]) {
+      expect(
+        harnessToolApprovalRefusalReason({
+          adapter: codex,
+          requireToolApproval: true,
+          hasSelectedMcpServers,
+        }),
+      ).toBeUndefined();
+    }
   });
 
   // Claude Code pauses on its own native tools (WS3), so approval alone is
@@ -705,18 +709,24 @@ describe("harnessToolApprovalRefusalReason", () => {
   // now TRUE on the other adapter) would have looked like the right check.
   it("reads the capability for the surface each adapter's MCP tools run on", () => {
     expect(codex.mcpDelivery).toBe("host-executed");
-    expect(codex.supportsHostExecutedToolApproval).toBe(false);
-    const stillApproves = {
+    // The MCP flag is the WRONG one for host-executed delivery: claiming it
+    // must not make up for a host-executed surface that cannot pause.
+    const cannotGateHostTools = {
       ...codex,
-      supportsNativeToolApproval: true,
-      supportsHostExecutedToolApproval: true,
-      // Left false on purpose: under host-executed delivery this must not be
-      // what the gate consults.
-      supportsMcpToolApproval: false,
+      supportsHostExecutedToolApproval: false,
+      supportsMcpToolApproval: true,
     } as typeof codex;
     expect(
       harnessToolApprovalRefusalReason({
-        adapter: stillApproves,
+        adapter: cannotGateHostTools,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      }),
+    ).toMatch(/MCP-server tools/);
+    expect(codex.supportsMcpToolApproval).toBe(false);
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: codex,
         requireToolApproval: true,
         hasSelectedMcpServers: true,
       }),

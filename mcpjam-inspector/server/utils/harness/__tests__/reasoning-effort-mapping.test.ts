@@ -11,10 +11,6 @@ vi.mock("../claude-code-bootstrap.js", async (original) => {
     createClaudeCodeHarness: vi.fn(actual.createClaudeCodeHarness),
   };
 });
-vi.mock("@ai-sdk/harness-codex", async (original) => {
-  const actual = await original<typeof import("@ai-sdk/harness-codex")>();
-  return { ...actual, createCodex: vi.fn(actual.createCodex) };
-});
 vi.mock("../codex-appserver/index.js", async (original) => {
   const actual = await original<typeof import("../codex-appserver/index.js")>();
   return {
@@ -23,15 +19,11 @@ vi.mock("../codex-appserver/index.js", async (original) => {
   };
 });
 
-import { createCodex } from "@ai-sdk/harness-codex";
 import { createClaudeCodeHarness } from "../claude-code-bootstrap.js";
 import { createCodexAppServer } from "../codex-appserver/index.js";
 import { getHarnessAdapter } from "../registry";
 
-const FLAG = "MCPJAM_CODEX_APPSERVER_TRANSPORT";
-
 afterEach(() => {
-  delete process.env[FLAG];
   vi.clearAllMocks();
 });
 
@@ -67,27 +59,8 @@ describe("Claude Code effort mapping", () => {
 });
 
 describe("Codex effort mapping", () => {
-  it("exec passes reasoningEffort to createCodex, and nothing without one", () => {
+  it("passes reasoningEffort in its settings (sent as turn/start effort)", () => {
     const adapter = getHarnessAdapter("codex");
-    expect(adapter.transport).toBe("exec");
-    adapter.createHarness({ modelId: "openai/gpt-5", auth: {} });
-    expect(
-      "reasoningEffort" in vi.mocked(createCodex).mock.calls.at(-1)![0]!,
-    ).toBe(false);
-    adapter.createHarness({
-      modelId: "openai/gpt-5",
-      auth: {},
-      reasoningEffort: "xhigh",
-    });
-    expect(vi.mocked(createCodex).mock.calls.at(-1)![0]).toMatchObject({
-      reasoningEffort: "xhigh",
-    });
-  });
-
-  it("app-server passes reasoningEffort in its settings (sent as turn/start effort)", () => {
-    process.env[FLAG] = "true";
-    const adapter = getHarnessAdapter("codex");
-    expect(adapter.transport).toBe("app-server");
     adapter.createHarness({
       modelId: "openai/gpt-5",
       auth: {},
@@ -103,14 +76,7 @@ describe("Codex effort mapping", () => {
     ).toBe(false);
   });
 
-  it("both transports declare the SDK's Codex levels", () => {
-    expect(getHarnessAdapter("codex").supportedReasoningEfforts).toEqual([
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
-    process.env[FLAG] = "true";
+  it("declares the SDK's Codex levels", () => {
     expect(getHarnessAdapter("codex").supportedReasoningEfforts).toEqual([
       "low",
       "medium",

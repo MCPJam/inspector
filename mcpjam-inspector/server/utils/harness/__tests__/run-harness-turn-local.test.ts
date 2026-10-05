@@ -162,7 +162,6 @@ import {
   runHarnessTurn,
 } from "../run-harness-turn";
 import { claimHarnessSessionState, commitHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
-import { getHarnessAdapter } from "../registry.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
@@ -622,11 +621,6 @@ describe("runHarnessTurn local continuity", () => {
         },
       } as any);
     }
-
-    it("looks the adapter up for the LOCAL venue", async () => {
-      await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
-      expect(getHarnessAdapter).toHaveBeenCalledWith("codex", { localExecution: true });
-    });
 
     it("parks the live runtime at an approval pause instead of tearing it down", async () => {
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
