@@ -116,6 +116,94 @@ updates:
       zod-security:
         applies-to: security-updates
         patterns: ["zod"]
+      # The seven carve-outs below were split out of production-major #5772
+      # (2026-10-03). Each one failed typecheck or needs a product decision.
+      #
+      # The AI SDK family moves as one: ai 7 needs the provider majors and the
+      # providers need ai 7. ai 7 makes `TimeoutConfiguration` generic (TS2314
+      # in sdk/src/HostExecutor.ts, which fails the SDK declaration build and
+      # everything behind it), plus about 15 errors across the SDK,
+      # shared/tools.ts and live-trace-prelude.ts. ai is also pinned exactly
+      # inside 6.x (#5823), because ai >= 6.0.259 breaks the HostRunner tests,
+      # so even its patches need a person. The harness adapters keep their own
+      # group above. DELETE once the SDK, inspector and chat-ui are on ai 7 and
+      # the exact pins are lifted.
+      ai-sdk:
+        applies-to: version-updates
+        patterns:
+          [
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+          ]
+        exclude-patterns: ["@ai-sdk/harness", "@ai-sdk/harness-*"]
+      ai-sdk-security:
+        applies-to: security-updates
+        patterns:
+          [
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+          ]
+        exclude-patterns: ["@ai-sdk/harness", "@ai-sdk/harness-*"]
+      # react-resizable-panels 4 changes the panel component API (about 30 type
+      # errors in 7 inspector files). DELETE once the inspector is on 4.
+      resizable-panels:
+        applies-to: version-updates
+        patterns: ["react-resizable-panels"]
+      resizable-panels-security:
+        applies-to: security-updates
+        patterns: ["react-resizable-panels"]
+      # recharts 3 fails typecheck in the chart wrapper (client/src/components/
+      # ui/chart.tsx) and 3 more inspector files. DELETE once they are on 3.
+      recharts:
+        applies-to: version-updates
+        patterns: ["recharts"]
+      recharts-security:
+        applies-to: security-updates
+        patterns: ["recharts"]
+      # @mcp-ui/client 7 removes `UIResourceRenderer`, which
+      # mcp-ui-resource-part.tsx is built on, so taking it is a rewrite of that
+      # renderer. DELETE once it is rewritten against 7.
+      mcp-ui:
+        applies-to: version-updates
+        patterns: ["@mcp-ui/*"]
+      mcp-ui-security:
+        applies-to: security-updates
+        patterns: ["@mcp-ui/*"]
+      # The Sentry SDKs move together: @sentry/electron pins its own
+      # @sentry/node and @sentry/browser, so node/react must match the major
+      # it ships (@sentry/electron 7 is on 10.x; the group offered 11).
+      # @sentry/node 11 also fails typecheck in sdk/src/sentry.ts
+      # (`sendDefaultPii`), and the SDK's peer range would jump ^8 -> ^11,
+      # which breaks every SDK consumer on 8. DELETE once all three are on one
+      # major and the SDK peer range change has been decided.
+      sentry:
+        applies-to: version-updates
+        patterns: ["@sentry/node", "@sentry/react", "@sentry/electron"]
+      sentry-security:
+        applies-to: security-updates
+        patterns: ["@sentry/node", "@sentry/react", "@sentry/electron"]
+      # commander 15 requires Node >= 22.12, but @mcpjam/cli declares
+      # `engines.node >= 20`. Raising that floor is a product decision, not a
+      # dependency bump. DELETE once the CLI's Node floor is 22.12 or higher.
+      commander:
+        applies-to: version-updates
+        patterns: ["commander"]
+      commander-security:
+        applies-to: security-updates
+        patterns: ["commander"]
+      # @modelcontextprotocol/ext-apps 2 is built on the v2 MCP TypeScript
+      # SDK, and it fails typecheck in mcp/ and widget-react/. DELETE once mcp,
+      # widget-react, the SDK and the inspector are migrated to 2.
+      ext-apps:
+        applies-to: version-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
+      ext-apps-security:
+        applies-to: security-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
       production-dependencies:
         applies-to: version-updates
         dependency-type: production
@@ -133,6 +221,18 @@ updates:
             "@ai-sdk/harness",
             "@ai-sdk/harness-*",
             "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
       development-dependencies:
         applies-to: version-updates
@@ -151,6 +251,18 @@ updates:
             "@ai-sdk/harness",
             "@ai-sdk/harness-*",
             "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
       # Majors, split by dependency type so a runtime major that needs work
       # and a tooling major that needs work (an ESLint or TypeScript major is
@@ -173,6 +285,18 @@ updates:
             "@ai-sdk/harness",
             "@ai-sdk/harness-*",
             "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
       development-major:
         applies-to: version-updates
@@ -191,6 +315,18 @@ updates:
             "@ai-sdk/harness",
             "@ai-sdk/harness-*",
             "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
       # Security updates group separately so an advisory PR is never queued
       # behind a routine version bump.
@@ -210,6 +346,18 @@ updates:
             "@ai-sdk/harness",
             "@ai-sdk/harness-*",
             "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
       security-development:
         applies-to: security-updates
@@ -227,6 +375,18 @@ updates:
             "@ai-sdk/harness",
             "@ai-sdk/harness-*",
             "zod",
+            "ai",
+            "@ai-sdk/*",
+            "@openrouter/ai-sdk-provider",
+            "ollama-ai-provider-v2",
+            "react-resizable-panels",
+            "recharts",
+            "@mcp-ui/*",
+            "@sentry/node",
+            "@sentry/react",
+            "@sentry/electron",
+            "commander",
+            "@modelcontextprotocol/ext-apps",
           ]
     # Deliberately NO `ignore` rules, for carve-outs or for electron / sharp
     # majors. `ignore` suppresses SECURITY updates as well as version updates,
@@ -257,17 +417,37 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # @modelcontextprotocol/ext-apps 2.x is built on the v2 MCP TypeScript
+      # SDK: its server helpers take a v2 `McpServer` from
+      # `@modelcontextprotocol/server`, and it needs the v2 `client`/`core`
+      # peers. Every MCP Apps example still runs on `@modelcontextprotocol/sdk`
+      # v1, so taking 2.x means moving each app's server, HTTP transport
+      # (server-utils.ts) and View to the v2 packages together, which is a
+      # migration per app, not a fix that rides along. It broke example-major
+      # #5767 (2026-10-03; 0.3/0.4/1.x -> 2.0.3: TS2353 on `mimeType`, and
+      # registerAppTool/registerAppResource reject a v1 server). This group's
+      # PR is where that migration lands. DELETE this carve-out once every
+      # example is on ext-apps 2 and the v2 SDK.
+      example-ext-apps:
+        applies-to: version-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
+      example-ext-apps-security:
+        applies-to: security-updates
+        patterns: ["@modelcontextprotocol/ext-apps"]
       example-dependencies:
         applies-to: version-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
         update-types: [minor, patch]
       example-major:
         applies-to: version-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
         update-types: [major]
       example-security:
         applies-to: security-updates
         patterns: ["*"]
+        exclude-patterns: ["@modelcontextprotocol/ext-apps"]
 
   # --------------------------------------------------------- GitHub Actions
   - package-ecosystem: github-actions

@@ -200,6 +200,10 @@ describe("runHarnessTurn reasoning effort backstop (refuse, never drop)", () => 
   it.each([
     ["the typed effort", { reasoningEffort: "high" }],
     [
+      "the top-level effort a hosted runtime forwards",
+      { extraBodyFields: { reasoningEffort: "high" } },
+    ],
+    [
       "the effort on the forwarded selection",
       {
         extraBodyFields: {

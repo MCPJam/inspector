@@ -21,6 +21,12 @@ vi.mock("../claude-code-bootstrap.js", async (original) => {
   return { ...actual, createClaudeCodeHarness: vi.fn(actual.createClaudeCodeHarness) };
 });
 import { createClaudeCodeHarness } from "../claude-code-bootstrap.js";
+vi.mock("../codex-appserver/index.js", async (original) => {
+  const actual = await original<typeof import("../codex-appserver/index.js")>();
+  return { ...actual, createCodexAppServer: vi.fn(actual.createCodexAppServer) };
+});
+import { createCodexAppServer } from "../codex-appserver/index.js";
+import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandbox-policy.js";
 
 describe("harness registry", () => {
   it("returns the claude-code adapter", () => {
@@ -939,6 +945,34 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
       getHarnessAdapter("claude-code").runtimeVersionCommand,
     ).toBeUndefined();
     expect(getHarnessAdapter("codex").runtimeVersionCommand).toBeUndefined();
+  });
+});
+
+describe("the local Codex arm and the unattended command sandbox (D2)", () => {
+  const auth = buildBrokerDummyAuth("codex", "https://broker.example/openai/v1");
+
+  it("is the app-server transport, and the only arm that applies a sandbox policy", () => {
+    const local = getHarnessAdapter("codex", { localExecution: true });
+    expect(local.transport).toBe("app-server");
+    expect(local.acceptsSandboxPolicy).toBe(true);
+    expect(getHarnessAdapter("claude-code").acceptsSandboxPolicy).toBeFalsy();
+  });
+
+  it("hands the policy to the runtime when, and only when, the turn sets one", () => {
+    const local = getHarnessAdapter("codex", { localExecution: true });
+    vi.mocked(createCodexAppServer).mockClear();
+    local.createHarness({
+      modelId: "openai/gpt-5.5",
+      auth,
+      sandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
+    } as never);
+    expect(createCodexAppServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY }),
+    );
+    local.createHarness({ modelId: "openai/gpt-5.5", auth } as never);
+    expect(
+      vi.mocked(createCodexAppServer).mock.lastCall?.[0],
+    ).not.toHaveProperty("sandboxPolicy");
   });
 });
 

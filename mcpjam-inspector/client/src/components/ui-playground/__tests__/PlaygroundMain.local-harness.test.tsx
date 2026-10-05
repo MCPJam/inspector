@@ -1,5 +1,6 @@
+const autoConsentMocks = vi.hoisted(() => ({ fetch: vi.fn(async () => ({ ok: true, availability: { autoApproveAcknowledged: true } })), acknowledge: vi.fn(async () => {}) }));
 const ensureReadyMock = vi.hoisted(() => vi.fn(async () => ({})));
-vi.mock("@/lib/local-harness-consent", async () => ({ ...(await vi.importActual("@/lib/local-harness-consent")), ensureLocalHarnessReady: ensureReadyMock }));
+vi.mock("@/lib/local-harness-consent", async () => ({ ...(await vi.importActual("@/lib/local-harness-consent")), ensureLocalHarnessReady: ensureReadyMock, fetchLocalHarnessAvailability: autoConsentMocks.fetch, acknowledgeLocalAutoApprove: autoConsentMocks.acknowledge }));
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
@@ -61,8 +62,14 @@ const mockLocalHarness = vi.hoisted(() => ({
     resolveSendTarget: vi.fn(() => null),
   },
 }));
+const localControllerArgs = vi.hoisted(() => ({
+  last: null as { harnessId?: string | null } | null,
+}));
 vi.mock("@/hooks/useLocalHarnessTarget", () => ({
-  useLocalHarnessController: () => mockLocalHarness.state,
+  useLocalHarnessController: (args: { harnessId?: string | null }) => {
+    localControllerArgs.last = args;
+    return mockLocalHarness.state;
+  },
   useLocalHarnessRunsHere: () => false,
 }));
 vi.mock("@/hooks/useComputersEnabled", async (importOriginal) => {
@@ -802,12 +809,14 @@ describe("PlaygroundMain — local Claude Code", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     ensureReadyMock.mockReset().mockResolvedValue({});
+    autoConsentMocks.fetch.mockResolvedValue({ ok: true, availability: { autoApproveAcknowledged: true } });
+    autoConsentMocks.acknowledge.mockResolvedValue(undefined);
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = true;
     mockHostQueryState.result = null;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
-    // A Claude Code host: the only harness local execution is in scope for.
+    // A Claude Code host, unless a test previews another local harness.
     mockHarnessState.harnessId = "claude-code";
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
@@ -829,6 +838,7 @@ describe("PlaygroundMain — local Claude Code", () => {
     });
     mockSharedAppState.servers["test-server"] = { connectionStatus: "connected" };
     Object.assign(mockUseChatSession, {
+      requireToolApproval: true,
       messages: [],
       status: "ready",
       error: null,
@@ -859,6 +869,7 @@ describe("PlaygroundMain — local Claude Code", () => {
       workspace: { workspaceGrantId: "ws_1", displayRoot: "~/code/project" },
       hostedAvailable: false,
     });
+    (mockLocalHarness.state.availability as any).autoApproveAcknowledged = false;
     mockChatInputProps.mockClear();
   });
 
@@ -885,10 +896,25 @@ describe("PlaygroundMain — local Claude Code", () => {
       expect(chipData()).toMatchObject({ phase: "needs-consent" });
     });
 
-    it("is not offered on another harness", () => {
-      // Codex, and ordinary emulated chat, must not inherit a local
-      // authorization requirement they can never satisfy.
+    it("asks the previewed harness's own controller", () => {
+      // Each local harness has its own runtime, rollout and authorization, so
+      // a Codex host must never be answered by Claude Code's controller.
       mockHarnessState.harnessId = "codex";
+      (mockLocalHarness.state as Record<string, unknown>).harnessName = "Codex";
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        expect(localControllerArgs.last?.harnessId).toBe("codex");
+        expect(chipData()).toMatchObject({ harnessName: "Codex" });
+      } finally {
+        delete (mockLocalHarness.state as Record<string, unknown>).harnessName;
+      }
+    });
+
+    it("is not offered on a harness this machine cannot run locally", () => {
+      // What the controller answers when that harness's rollout is off or it
+      // has no runtime for this platform.
+      mockHarnessState.harnessId = "codex";
+      mockLocalHarness.state.phase = "unavailable";
       render(<PlaygroundMain {...defaultProps} />);
       expect(chipData()).toBeUndefined();
     });
@@ -930,12 +956,33 @@ describe("PlaygroundMain — local Claude Code", () => {
       render(<PlaygroundMain {...defaultProps} />);
       type("keep my draft");
       fireEvent.click(screen.getByRole("button", { name: "Set up" }));
-      expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true);
+      expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "claude-code");
       expect(screen.getByText("Preparing Claude Code on this machine…")).toBeInTheDocument();
       await act(async () => { finish(); });
       expect(mockLocalHarness.state.refresh).toHaveBeenCalled();
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
       expect(screen.getByTestId("chat-input-field")).toHaveValue("keep my draft");
+    });
+    it("sets up and renews the previewed harness, not Claude Code", async () => {
+      // A Codex host's Set up and Send must reach Codex's own readiness:
+      // Claude Code's would store a consent the Codex transport never reads.
+      mockHarnessState.harnessId = "codex";
+      const state = mockLocalHarness.state as Record<string, unknown>;
+      state.harnessId = "codex";
+      state.harnessName = "Codex";
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+        await waitFor(() =>
+          expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "codex"),
+        );
+        await waitFor(() => expect(screen.getByRole("button", { name: "Set up" })).toBeInTheDocument());
+        type("pwd"); await submit();
+        expect(ensureReadyMock).toHaveBeenLastCalledWith(expect.any(String), false, undefined, undefined, "codex");
+      } finally {
+        delete state.harnessId;
+        delete state.harnessName;
+      }
     });
     it("renews readiness and sends without another setup dialog", async () => {
       render(<PlaygroundMain {...defaultProps} />);
@@ -1061,6 +1108,53 @@ describe("PlaygroundMain — local Claude Code", () => {
         screen.queryByTestId("local-harness-trust-dialog"),
       ).not.toBeInTheDocument();
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      // Ready means no readiness round trip and no consent check with On.
+      expect(ensureReadyMock).not.toHaveBeenCalled();
+      expect(autoConsentMocks.fetch).not.toHaveBeenCalled();
     });
   });
+  describe("Tool Approval off consent", () => {
+    it("opens before Send, waits for consent, then sends once", async () => {
+      mockUseChatSession.requireToolApproval = false;
+      mockLocalHarness.state.phase = "ready";
+      autoConsentMocks.fetch.mockResolvedValue({ ok: true, availability: { autoApproveAcknowledged: false } });
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(screen.getByTestId("local-harness-auto-approve-dialog")).toBeInTheDocument();
+      type("touch a marker"); await submit();
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Run without asking" }));
+      await waitFor(() => expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce());
+      expect(autoConsentMocks.acknowledge).toHaveBeenCalledOnce();
+    });
+    it("sends straight through once consent is known", async () => {
+      mockUseChatSession.requireToolApproval = false;
+      mockLocalHarness.state.phase = "ready";
+      (mockLocalHarness.state.availability as any).autoApproveAcknowledged = true;
+      render(<PlaygroundMain {...defaultProps} />);
+      type("touch a marker"); await submit();
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledOnce();
+      expect(ensureReadyMock).not.toHaveBeenCalled();
+      expect(autoConsentMocks.fetch).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("local-harness-auto-approve-dialog")).not.toBeInTheDocument();
+    });
+    it("Cancel restores On and preserves the draft", async () => {
+      mockUseChatSession.requireToolApproval = false;
+      mockLocalHarness.state.phase = "ready";
+      render(<PlaygroundMain {...defaultProps} />);
+      type("keep this");
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(mockUseChatSession.setRequireToolApproval).toHaveBeenCalledWith(true);
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue("keep this");
+    });
+    it("opens again on the server's typed refusal", () => {
+      mockUseChatSession.requireToolApproval = false;
+      (mockLocalHarness.state.availability as any).autoApproveAcknowledged = true;
+      mockUseChatSession.error = new Error('{"status":"auto-approve-consent-required"}') as any;
+      mockLocalHarness.state.phase = "ready";
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(screen.getByText("Run commands without asking?")).toBeInTheDocument();
+    });
+  });
+
 });

@@ -2,6 +2,7 @@ import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
 import type {
   McpToolResultImageRenderingPolicy,
+  ModelReasoningEffort,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config";
 import type {
@@ -58,6 +59,13 @@ export interface ChatV2Request {
   modelId?: string;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * Reasoning effort for this turn: the one per-request (non-saved) carrier of
+   * an effort. Wins over the selected host's saved effort for the same model;
+   * under an effort the server omits the temperature (an explicit temperature
+   * sent with it is refused on the direct route).
+   */
+  reasoningEffort?: ModelReasoningEffort;
   apiKey?: string;
   ollamaBaseUrl?: string;
   azureBaseUrl?: string;

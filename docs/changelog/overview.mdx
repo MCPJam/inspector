@@ -9,6 +9,18 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-04
+
+#### Changed
+
+- **Turning Tool Approval off for local Claude Code and Codex now requires a separate confirmation** — when a local harness is active in chat, switching Tool Approval off opens a **Run without asking?** dialog before the first send. The dialog names the harness and explains that it will run commands and change files on your computer without asking first. Consent is scoped to your signed-in account, this machine, the current project, and the harness.
+
+  - **Cancel** restores Tool Approval to On and keeps your draft intact.
+  - Once confirmed, MCPJam answers native approval requests on your behalf. The runtime stays in ask mode — toggling the switch does not decide any approval that was already waiting; your explicit answer still controls it.
+  - Host-executed tools marked as always requiring approval continue to pause regardless of the toggle.
+  - Forgetting the local authorization clears the Off consent; the confirmation dialog reappears the next time you turn it off.
+  - Unattended eval and swarm runs are unaffected.
+
 ### 2026-09-30
 
 #### Added

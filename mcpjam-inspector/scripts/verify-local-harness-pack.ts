@@ -16,9 +16,14 @@
  *
  *   MCPJAM_RUNTIME_ROOT=<scratch> \
  *   MCPJAM_LOCAL_HARNESS_PACK_SOURCE=<path to .tar.gz> \
- *   npx tsx scripts/verify-local-harness-pack.ts <expected tree digest>
+ *   npx tsx scripts/verify-local-harness-pack.ts <expected tree digest> \
+ *     [<pack version>] [<harness id, default claude-code>]
  */
 import { installRuntimePack } from "../server/utils/harness/local/runtime-install.js";
+import {
+  SUPPORTED_LOCAL_HARNESS_IDS,
+  type SupportedLocalHarnessId,
+} from "../server/utils/harness/local/targets.js";
 
 // Required, not optional. The digest is the ONE thing tying the pack that just
 // installed to the artifact this build produced; treating its absence as
@@ -26,6 +31,14 @@ import { installRuntimePack } from "../server/utils/harness/local/runtime-instal
 // that some pack, possibly from a previous release, installs.
 const expectedDigest = process.argv[2];
 const packVersion = process.argv[3] ?? "verify";
+const harnessId = (process.argv[4] ?? "claude-code") as SupportedLocalHarnessId;
+if (!SUPPORTED_LOCAL_HARNESS_IDS.includes(harnessId)) {
+  console.error(
+    `verify-local-harness-pack: ${JSON.stringify(harnessId)} is not a ` +
+      `supported local harness (${SUPPORTED_LOCAL_HARNESS_IDS.join(", ")})`,
+  );
+  process.exit(1);
+}
 if (
   expectedDigest === undefined ||
   !/^sha256:[0-9a-f]{64}$/.test(expectedDigest)
@@ -38,7 +51,7 @@ if (
 }
 process.env.MCPJAM_LOCAL_HARNESS_EXPECTED_PACK = `${packVersion}:${expectedDigest}`;
 
-const result = await installRuntimePack({ harnessId: "claude-code" });
+const result = await installRuntimePack({ harnessId });
 console.log(JSON.stringify(result, null, 2));
 
 if (result.state !== "ready") {

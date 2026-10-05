@@ -1,4 +1,4 @@
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { anyUnattendedLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -88,8 +88,13 @@ const TraceRepairStopSchema = z.object({
   convexAuthToken: z.string(),
 });
 
+/**
+ * Whether this launch may run locally at all: some local harness is eligible
+ * for unattended work here. Which harness actually runs locally is decided
+ * per launch host downstream, and declared to the backend there.
+ */
 async function requestRuntimeVenue(request: { convexAuthToken?: string; projectId?: string }): Promise<"local" | "hosted"> {
-  return request.projectId && await shouldUseLocalHarness("claude-code", request.convexAuthToken, request.projectId) ? "local" : "hosted";
+  return request.projectId && await anyUnattendedLocalHarness(request.convexAuthToken, request.projectId) ? "local" : "hosted";
 }
 
 evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, true));

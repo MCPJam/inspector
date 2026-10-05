@@ -496,10 +496,27 @@ describe("explicit local execution context", () => {
       environmentId: "env-1",
       runtimeVenue: "local",
     });
+    // A local preview names the harnesses this machine can run, so the backend
+    // narrows the venue exactly as the launch will. None in this checkout.
     expect(query).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForLaunch",
-      { projectId: "project", environmentId: "env-1", runtimeVenue: "local" },
+      { projectId: "project", environmentId: "env-1", runtimeVenue: "local", runnerCapabilities: [] },
     );
+    expect(resolved.runtimeVenue).toBe("local");
+  });
+
+  it("keeps a launch's own declaration, and drops it for a backend that predates it", async () => {
+    const query = vi.fn()
+      .mockRejectedValueOnce(new Error("ArgumentValidationError: Object contains extra field `runnerCapabilities` that is not in the validator."))
+      .mockResolvedValueOnce(local);
+    const resolved = await resolveEnvironmentForLaunch({ query } as any, {
+      projectId: "project",
+      environmentId: "env-1",
+      runtimeVenue: "local",
+      runnerCapabilities: ["local-harness:codex"],
+    });
+    expect(query.mock.calls[0][1]).toMatchObject({ runnerCapabilities: ["local-harness:codex"] });
+    expect(query.mock.calls[1][1]).not.toHaveProperty("runnerCapabilities");
     expect(resolved.runtimeVenue).toBe("local");
   });
 });

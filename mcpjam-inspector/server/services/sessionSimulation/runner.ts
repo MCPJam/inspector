@@ -138,6 +138,7 @@ import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
+import { ranTurnSelection } from "../../utils/session-model-selection";
 
 export interface SimulationManagerFactory {
   /**
@@ -543,6 +544,13 @@ export async function runSyntheticHostSession(
     modelSelection,
     reasoningEffort,
   } = runtime;
+  // What the session records for each turn: the selection it ran, effort
+  // included. (A swarm session's backend pins it from the run snapshot.)
+  const sessionModelSelection = ranTurnSelection({
+    selection: modelSelection,
+    model: modelDefinition,
+    reasoningEffort,
+  });
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
   // does not go through `resolveHostTools`, so without an explicit ephemeral
@@ -668,6 +676,9 @@ export async function runSyntheticHostSession(
         scenarioId,
         accessVersion,
         serverIds: selectedServerIds,
+        // The same selection the turns route by, so this attribution row
+        // cannot name a different source than a real turn would have.
+        ...(modelSelection ? { modelSelection } : {}),
       });
       emptySessionModelSource = resolution.source;
     } catch {
@@ -679,6 +690,7 @@ export async function runSyntheticHostSession(
     const emptySessionPersist = await persistChatSessionToConvex({
       chatSessionId,
       modelId: String(modelDefinition.id),
+      modelSelection: sessionModelSelection,
       modelSource: emptySessionModelSource,
       authHeader,
       projectId,
@@ -1381,6 +1393,7 @@ export async function runSyntheticHostSession(
       const turnPersist = await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
+        modelSelection: sessionModelSelection,
         modelSource: sessionModelSource ?? "mcpjam",
         authHeader,
         projectId,

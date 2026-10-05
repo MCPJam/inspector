@@ -31,6 +31,8 @@ interface SystemPromptSelectorProps {
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
   onTemperatureChange: (temperature: number) => void;
+  /** An effort is set: temperature is not sent, so the slider is inert. */
+  reasoningEffort?: string;
   disabled?: boolean;
   isLoading?: boolean;
   hasMessages?: boolean;
@@ -51,6 +53,7 @@ export function SystemPromptSelector({
   onSystemPromptChange,
   temperature,
   onTemperatureChange,
+  reasoningEffort,
   disabled,
   isLoading,
   hasMessages,
@@ -186,6 +189,13 @@ export function SystemPromptSelector({
                 {draftTemperature.toFixed(1)}
               </span>
             </div>
+            <div
+              title={
+                reasoningEffort !== undefined
+                  ? "Temperature is not sent while a reasoning effort is set"
+                  : undefined
+              }
+            >
             <Slider
               value={[draftTemperature]}
               onValueChange={(value) => {
@@ -196,9 +206,20 @@ export function SystemPromptSelector({
               max={2}
               step={0.1}
               className="w-full"
-              disabled={allSelectedModelsIgnoreTemperature}
+              disabled={
+                allSelectedModelsIgnoreTemperature ||
+                reasoningEffort !== undefined
+              }
             />
-            {allSelectedModelsIgnoreTemperature ? (
+            </div>
+            {reasoningEffort !== undefined ? (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid="temperature-disabled-by-effort"
+              >
+                Not sent while a reasoning effort is set.
+              </p>
+            ) : allSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
                 Temperature is not supported for the selected models
               </p>

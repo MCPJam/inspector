@@ -38,6 +38,12 @@ import { CLIENT_FEATURE_FLAG_KEYS } from "../../../../shared/client-feature-flag
 
 // posthog-js generates a v7 UUID for a visitor it has not identified.
 const ANONYMOUS_ID = "0192a3f1-8c5e-7b3d-8f21-6a4c9e0d1b2f";
+// Each local harness's flag, as answered to anyone the server has not
+// verified as a member who may run it here.
+const LOCAL_HARNESS_FLAGS_OFF = {
+  "local-harness-enabled": false,
+  "local-codex-enabled": false,
+};
 
 function createApp() {
   const app = new Hono();
@@ -82,7 +88,7 @@ describe("GET /api/web/flags", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({
       flags: {
-        "local-harness-enabled": false,
+        ...LOCAL_HARNESS_FLAGS_OFF,
         "computers-enabled": true,
         "guest-credit-wall-copy": "treatment",
         xaa: false,
@@ -90,6 +96,19 @@ describe("GET /api/web/flags", () => {
     });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("vary")).toContain("Authorization");
+  });
+
+  it("answers each local harness flag server-side, never from PostHog alone", async () => {
+    // Without a verified member this machine runs neither harness locally,
+    // whatever PostHog evaluates for the distinct id.
+    mocks.getAllFlags.mockResolvedValueOnce({
+      "local-harness-enabled": true,
+      "local-codex-enabled": true,
+    });
+
+    const { body } = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
+
+    expect(body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
   });
 
   it("evaluates exactly the allowlist, whatever the request names", async () => {
@@ -151,7 +170,7 @@ describe("GET /api/web/flags", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
     expect(mocks.getAllFlags).not.toHaveBeenCalled();
   });
 
@@ -168,7 +187,7 @@ describe("GET /api/web/flags", () => {
     const { response, body } = await getFlags(query);
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
     expect(mocks.getAllFlags).not.toHaveBeenCalled();
   });
 
@@ -176,7 +195,7 @@ describe("GET /api/web/flags", () => {
     mocks.getAllFlags.mockRejectedValueOnce(new Error("unavailable"));
     const failed = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(failed.response.status).toBe(200);
-    expect(failed.body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(failed.body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
 
     await shutdownAnalytics();
     mocks.constructPostHog.mockImplementationOnce(() => {
@@ -184,6 +203,6 @@ describe("GET /api/web/flags", () => {
     });
     const unconfigured = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
     expect(unconfigured.response.status).toBe(200);
-    expect(unconfigured.body).toEqual({ flags: { "local-harness-enabled": false } });
+    expect(unconfigured.body).toEqual({ flags: LOCAL_HARNESS_FLAGS_OFF });
   });
 });

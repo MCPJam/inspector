@@ -16,13 +16,16 @@ import {
   runHostLabel,
 } from "@/components/evals/helpers";
 import { formatRunCaseLatencyMs } from "@/components/evals/run-case-groups";
-import { compactModelIdTail } from "@/lib/environment-label";
+import {
+  runIterationTargetKey,
+  targetKeyLabel,
+  targetKeySuffix,
+} from "@/lib/eval-target-key";
 import { cn } from "@mcpjam/design-system/cn";
 import { computeIterationResult } from "@/components/evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "@/components/evals/types";
 
-const modelName = (it: EvalIteration) =>
-  it.testCaseSnapshot?.model || "Unknown model";
+const UNKNOWN_MODEL = "Unknown model";
 const age = (ts: number) => {
   const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   return minutes < 1
@@ -79,7 +82,9 @@ export function CaseRunTimeline({
           return [
             it._id,
             {
-              model: run?.effectiveModelId || modelName(it),
+              // The TARGET (`targetKey`; the bare model id when default), so
+              // Sonnet at Low and at High are two chips.
+              model: runIterationTargetKey(run, it) || UNKNOWN_MODEL,
               client:
                 (run ? runHostLabel(run, hostNamesById) : null) ||
                 "Suite default",
@@ -144,6 +149,22 @@ export function CaseRunTimeline({
     }
     return [...grouped.values()];
   }, [latestLaunchIterations, pendingRun, runMetadata]);
+  // Labels show only what differs: a lone target reads as its model.
+  const targetKeysInView = useMemo(
+    () => [
+      ...new Set([
+        ...[...runMetadata.values()].map((metadata) => metadata.model),
+        ...(pendingRun ? [pendingRun.model] : []),
+      ]),
+    ],
+    [runMetadata, pendingRun],
+  );
+  const modelLabel = (key: string) =>
+    key === UNKNOWN_MODEL ? key : targetKeyLabel(key, targetKeysInView);
+  const modelTitle = (key: string) =>
+    key === UNKNOWN_MODEL
+      ? key
+      : targetKeyLabel(key, targetKeysInView, (modelId) => modelId);
   const pendingKey = pendingRun
     ? `${pendingRun.client ?? "Suite default"}\u0000${pendingRun.model}`
     : null;
@@ -194,6 +215,11 @@ export function CaseRunTimeline({
     ),
   );
   const selected = iterations.find((it) => it._id === selectedIterationId);
+  const selectedKey = selected ? runMetadata.get(selected._id)?.model : null;
+  const selectedSuffix =
+    selectedKey && selectedKey !== UNKNOWN_MODEL
+      ? targetKeySuffix(selectedKey, targetKeysInView)
+      : "";
   const result = selected ? computeIterationResult(selected) : null;
   const verdict =
     liveVerdict ??
@@ -259,7 +285,7 @@ export function CaseRunTimeline({
                   : "border-border bg-background text-muted-foreground hover:text-foreground",
               )}
             >
-              {target.client} · {compactModelIdTail(target.model)}
+              {target.client} · {modelLabel(target.model)}
             </button>
           ))}
         </div>
@@ -370,13 +396,15 @@ export function CaseRunTimeline({
                   </span>
                   <span
                     className="min-w-0"
-                    title={`${client ?? "Suite default"} · ${recordedModel}`}
+                    title={`${client ?? "Suite default"} · ${modelTitle(
+                      recordedModel,
+                    )}`}
                   >
                     <span className="block truncate">
                       {client ?? "Suite default"}
                     </span>
                     <span className="block truncate text-muted-foreground">
-                      {compactModelIdTail(recordedModel)}
+                      {modelLabel(recordedModel)}
                     </span>
                   </span>
                   <span
@@ -451,9 +479,9 @@ export function CaseRunTimeline({
             </div>
             <SheetDescription>
               {selected
-                ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${modelName(
-                    selected,
-                  )} · ${age(selected.createdAt)}`
+                ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${
+                    selected.testCaseSnapshot?.model || UNKNOWN_MODEL
+                  }${selectedSuffix} · ${age(selected.createdAt)}`
                 : "Conversation, assertions, tool calls, trace, and replay."}
             </SheetDescription>
           </SheetHeader>

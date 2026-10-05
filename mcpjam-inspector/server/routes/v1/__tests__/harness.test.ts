@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
+const localVenue = vi.hoisted(() => ({ harnesses: new Set<string>() }));
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  isLocalHarnessVenue: (harness: string | undefined) =>
+    harness !== undefined && localVenue.harnesses.has(harness),
+}));
+
 // Covers the v1 HARNESS surface (server/routes/v1/harness.ts): auth + guest
 // gating and the read-only built-in-tools catalog. No Convex — the data is
 // static published-package metadata read from the harness registry — so the
@@ -158,6 +164,20 @@ describe("v1 harness routes", () => {
         expect(appServerCaps.mcpDelivery).toBe(execCaps.mcpDelivery);
       } finally {
         delete process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT;
+      }
+    });
+
+    it("answers for the local arm when this Inspector runs the harness locally", async () => {
+      // Local Codex is always the app-server transport, whatever the cloud
+      // transport flag says, so the editor must not gray out approval here.
+      localVenue.harnesses.add("codex");
+      try {
+        const caps = (await capabilities("codex")) as Capabilities & { localExecution?: boolean };
+        expect(caps.localExecution).toBe(true);
+        expect(caps.transport).toBe("app-server");
+        expect(caps.supportsNativeToolApproval).toBe(true);
+      } finally {
+        localVenue.harnesses.clear();
       }
     });
 

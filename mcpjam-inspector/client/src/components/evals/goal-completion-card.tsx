@@ -15,6 +15,14 @@ import {
 } from "./goal-completion-presentation";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
 import { JudgeModelPicker } from "./judge-model-picker";
+import { judgeModelPatch } from "./judges-section";
+import { SelectionEffortControl } from "@/components/effort/selection-effort-control";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { selectionReasoningEffort } from "@/lib/reasoning-effort-selection";
+import {
+  selectionConfigKey,
+  type ModelSelection,
+} from "@mcpjam/sdk/browser";
 import {
   MANAGED_DEFAULT_JUDGE_MODEL as DEFAULT_JUDGE_MODEL,
   DEFAULT_JUDGE_THRESHOLD as DEFAULT_THRESHOLD,
@@ -90,6 +98,23 @@ export function GoalCompletionCard({
   const suiteConfig = run.configSnapshot?.judgeConfig?.goalCompletion;
   const suiteModel = suiteConfig?.judgeModel ?? DEFAULT_JUDGE_MODEL;
   const suiteThreshold = suiteConfig?.threshold ?? DEFAULT_THRESHOLD;
+  // The suite judge's full selection (effort included), when it is a hosted
+  // selection for the suite model. A stored legacy one carries no settings.
+  const suiteSelection = fullSelection(suiteConfig?.judgeSelection, suiteModel);
+  // The run override can carry the judge's selection too, so the effort is
+  // editable per run: seeded from a persisted override, else the suite's.
+  const [selectedSelection, setSelectedSelection] = useState<
+    ModelSelection | undefined
+  >(
+    () =>
+      fullSelection(
+        run.judgeConfigOverride?.goalCompletion?.judgeSelection,
+        initialModel,
+      ) ?? (initialModel === suiteModel ? suiteSelection : undefined),
+  );
+  const selectedRow = availableModels.find(
+    (model) => String(model.id) === selectedModelId,
+  );
   // Backend default is `enabled: true` (see GOAL_COMPLETION_DEFAULTS in
   // convex/lib/judgeConfig.ts) — only an explicit `enabled: false` turns
   // the judge off. The current suite config takes precedence over the
@@ -116,20 +141,41 @@ export function GoalCompletionCard({
     runOverride.threshold !== suiteThreshold
       ? runOverride.threshold
       : undefined;
+  const overrideEffort =
+    runOverride?.judgeSelection !== undefined &&
+    selectionReasoningEffort(fullSelection(runOverride.judgeSelection)) !==
+      selectionReasoningEffort(suiteSelection)
+      ? (selectionReasoningEffort(fullSelection(runOverride.judgeSelection)) ??
+        "default")
+      : undefined;
   const hasMeaningfulOverride =
-    overrideModel !== undefined || overrideThresholdValue !== undefined;
+    overrideModel !== undefined ||
+    overrideThresholdValue !== undefined ||
+    overrideEffort !== undefined;
+
+  // A backend that predates saved selections refuses an override that names
+  // one, so on such a deployment the card sends the model id alone (as
+  // `JudgesSection` does) and offers no effort.
+  const saveSelections = useModelSelectionsSupported();
 
   const handleRun = (force: boolean) => {
     // Only send a runOverride when the user's model selection DIFFERS from the
     // suite config. Threshold is no longer adjustable from this card — it
     // always inherits the suite default.
-    const overrideModel =
-      selectedModelId && selectedModelId !== suiteModel
-        ? selectedModelId
+    // ...or when the judge's selection (its effort) differs from the suite's.
+    const modelDiffers = Boolean(selectedModelId) && selectedModelId !== suiteModel;
+    const selectionDiffers =
+      (selectedSelection ? selectionConfigKey(selectedSelection) : "") !==
+      (suiteSelection ? selectionConfigKey(suiteSelection) : "");
+    const runOverride =
+      modelDiffers || (saveSelections && selectionDiffers)
+        ? {
+            judgeModel: selectedModelId,
+            ...(saveSelections && selectedSelection
+              ? { judgeSelection: selectedSelection }
+              : {}),
+          }
         : undefined;
-    const runOverride = overrideModel
-      ? { judgeModel: overrideModel }
-      : undefined;
     onRun(
       {
         runOverride,
@@ -245,8 +291,34 @@ export function GoalCompletionCard({
                 value={selectedModelId}
                 availableModels={availableModels}
                 managedDefaultModelId={DEFAULT_JUDGE_MODEL}
-                onChange={(row) => setSelectedModelId(String(row.id))}
+                onChange={(row) => {
+                  // The picked row's selection, keeping the effort when the
+                  // new model offers it (an effort belongs to its model).
+                  const patch = judgeModelPatch(
+                    row,
+                    availableModels,
+                    saveSelections,
+                    selectionReasoningEffort(selectedSelection),
+                  );
+                  setSelectedModelId(String(row.id));
+                  setSelectedSelection(fullSelection(patch.judgeSelection));
+                }}
                 disabled={inFlight}
+              />
+              {/* The run override carries the judge's selection, so the
+                  effort is editable for THIS run (the suite keeps its own). */}
+              <SelectionEffortControl
+                variant="suffix"
+                row={selectedRow}
+                selection={selectedSelection}
+                purpose="judge"
+                selectionsSupported={saveSelections}
+                disabled={inFlight}
+                hint="Applies to this run's judge only"
+                onChange={(write) => {
+                  setSelectedModelId(write.modelId);
+                  setSelectedSelection(write.selection);
+                }}
               />
             </div>
             <Button
@@ -284,6 +356,7 @@ export function GoalCompletionCard({
                 <span className="font-mono text-foreground/80">
                   {overrideModel ?? suiteModel} @{" "}
                   {overrideThresholdValue ?? suiteThreshold}
+                  {overrideEffort ? ` · effort ${overrideEffort}` : ""}
                 </span>
               </div>
               <div className="mt-1 text-[11px] text-muted-foreground/80">
@@ -411,4 +484,20 @@ export function GoalCompletionCard({
       )}
     </section>
   );
+}
+
+/**
+ * A full (hosted / org / local) selection for `modelId`, or `undefined` for a
+ * stored legacy selection (no settings to edit) or one for another model.
+ */
+function fullSelection(
+  selection: unknown,
+  modelId?: string,
+): ModelSelection | undefined {
+  if (!selection || typeof selection !== "object") return undefined;
+  const candidate = selection as ModelSelection | { source: "legacy" };
+  if (candidate.source === "legacy") return undefined;
+  const full = candidate as ModelSelection;
+  if (modelId !== undefined && full.modelId !== modelId) return undefined;
+  return full;
 }

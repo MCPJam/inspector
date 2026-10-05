@@ -173,9 +173,9 @@ export interface DriveHostedEvalTurnParams {
    *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
   harness?: Harness;
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
-   *  runAssistantTurn ONLY for harness turns — runHarnessTurn fail-closes on it
-   *  (no interactive approval yet). The emulated eval path is unchanged (it
-   *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+   *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
+   *  an interactive approval flow; a gated call can fail during streaming.
+   *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
@@ -538,6 +538,12 @@ export async function driveHostedEvalTurn(
     outputTokens: acc.accumulatedUsage.outputTokens ?? 0,
     totalTokens: acc.accumulatedUsage.totalTokens ?? 0,
   };
+  // The reasoning / cached-input breakdown at turn start. Kept apart from
+  // `baselineUsage` (the live step sinks only roll the three totals).
+  const baselineBreakdown: UsageTotals = {
+    reasoningTokens: acc.accumulatedUsage.reasoningTokens,
+    cachedInputTokens: acc.accumulatedUsage.cachedInputTokens,
+  };
 
   // Per-turn tool-call accumulator. Index by `promptIndex` (get-or-create)
   // rather than `push()` so a widget `ui/message` follow-up turn — which
@@ -777,8 +783,8 @@ export async function driveHostedEvalTurn(
       persistMode: "caller",
       approvalMode: "auto-deny",
       // Harness eval (host harness === "claude-code"): forward the selector and
-      // the host's real approval intent so runHarnessTurn fail-closes on a
-      // requireToolApproval host (it can't do interactive approval yet) while
+      // the host's real approval intent. A gated native call can fail during
+      // streaming because evals cannot interactively approve it, while
       // still running non-approval hosts under allow-all. Gated on harness so
       // emulated evals stay byte-identical (they forward neither today).
       ...(params.harness
@@ -979,6 +985,12 @@ export async function driveHostedEvalTurn(
       baselineUsage.outputTokens + (turnResult.usage.outputTokens ?? 0);
     acc.accumulatedUsage.totalTokens =
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
+    for (const key of ["reasoningTokens", "cachedInputTokens"] as const) {
+      const turnValue = turnResult.usage[key];
+      if (typeof turnValue === "number") {
+        acc.accumulatedUsage[key] = (baselineBreakdown[key] ?? 0) + turnValue;
+      }
+    }
   }
 
   // Per-turn tool calls — rebuilt from the new messages only, then run

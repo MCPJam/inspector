@@ -232,6 +232,25 @@ export function selectionReasoningEffort(
 }
 
 /**
+ * The effort a turn asked for, from every place it can ride: the typed field,
+ * else the top-level `extraBodyFields.reasoningEffort` (where
+ * `resolveTurnRuntime`'s hosted branch puts a turn's own effort, and which
+ * `/stream` prefers), else the saved selection forwarded with the turn
+ * (`extraBodyFields.modelSelection`). One reader for every harness check so a
+ * turn-level effort cannot be dropped by one and refused by another.
+ */
+export function turnReasoningEffortOf(args: {
+  reasoningEffort?: ModelReasoningEffort;
+  extraBodyFields?: Record<string, unknown>;
+}): ModelReasoningEffort | undefined {
+  return (
+    args.reasoningEffort ??
+    readReasoningEffort(args.extraBodyFields?.reasoningEffort) ??
+    selectionReasoningEffort(args.extraBodyFields?.modelSelection)
+  );
+}
+
+/**
  * Why a harness turn must not run at this reasoning effort, or `undefined` when
  * it may.
  *
@@ -245,10 +264,25 @@ export function selectionReasoningEffort(
 export function harnessReasoningEffortRefusalReason(args: {
   adapter: HarnessRuntimeAdapter;
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The levels the turn's MODEL lists, when the caller has them (the catalog's
+   * `supportedReasoningEfforts`). The adapter applying a level does not mean the
+   * model accepts it (`xhigh` on `gpt-5-nano`), and that otherwise fails late at
+   * the lease mint, after the sandbox is reserved. Absent ⇒ not checked here.
+   */
+  modelEfforts?: readonly string[];
 }): string | undefined {
-  const { adapter, reasoningEffort } = args;
+  const { adapter, reasoningEffort, modelEfforts } = args;
   if (reasoningEffort === undefined) return undefined;
   if (adapter.supportedReasoningEfforts.includes(reasoningEffort)) {
+    if (modelEfforts && !modelEfforts.includes(reasoningEffort)) {
+      return (
+        `this model doesn't accept the "${reasoningEffort}" reasoning effort` +
+        (modelEfforts.length > 0
+          ? ` — it lists ${modelEfforts.map((level) => `"${level}"`).join(", ")}`
+          : " — it lists none")
+      );
+    }
     return undefined;
   }
   const name = adapter.displayName;
@@ -366,7 +400,13 @@ export function checkHarnessRuntimeAvailable(args: {
    * admitted and then silently runs emulated). Deriving both from the resolved
    * definition makes the two answers consistent by construction.
    */
-  model: { id: string; provider?: string; hosted?: boolean };
+  model: {
+    id: string;
+    provider?: string;
+    hosted?: boolean;
+    /** The model's own effort levels (catalog), when known. */
+    supportedReasoningEfforts?: readonly string[];
+  };
   /**
    * The host's CONFIGURED model id, before any body or per-case override.
    *
@@ -428,7 +468,12 @@ export function checkHarnessRuntimeAvailable(args: {
    */
   reasoningEffort?: ModelReasoningEffort;
 }): HarnessAvailability {
-  const adapter = getHarnessAdapter(args.harnessId);
+  // The SAME arm the turn will run: local Codex is always the app-server
+  // adapter, so asking the hosted default here would refuse an approval-gated
+  // local Codex turn the turn itself can serve.
+  const adapter = getHarnessAdapter(args.harnessId, {
+    localExecution: args.localExecution === true,
+  });
   const name = adapter.displayName;
 
   // Does MCPJam supply this runtime's model credential, or does the runtime
@@ -499,6 +544,9 @@ export function checkHarnessRuntimeAvailable(args: {
     adapter,
     ...(args.reasoningEffort !== undefined
       ? { reasoningEffort: args.reasoningEffort }
+      : {}),
+    ...(args.model.supportedReasoningEfforts
+      ? { modelEfforts: args.model.supportedReasoningEfforts }
       : {}),
   });
   if (effortRefusal) {
