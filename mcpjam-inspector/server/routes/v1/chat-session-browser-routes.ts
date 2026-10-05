@@ -602,7 +602,7 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
               );
               const value = (await wrapped[toolName]!.execute!(
                 {},
-                { toolCallId: commandId, messages: [] },
+                { toolCallId: commandId, messages: [], context: {} },
               )) as {
                 response: Parameters<typeof toContractResult>[0]["response"];
               };

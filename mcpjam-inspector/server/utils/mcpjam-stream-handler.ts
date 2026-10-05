@@ -12,6 +12,7 @@ import {
   createUIMessageStreamResponse,
   parseJsonEventStream,
   pruneMessages,
+  uiMessageChunkSchema,
   type ToolSet,
 } from "ai";
 import type {
@@ -25,7 +26,7 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
-import { zodSchema } from "@ai-sdk/provider-utils";
+import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
@@ -35,6 +36,7 @@ import {
   describeAsSlug,
   describeError,
   isNormalizedError,
+  readModelOutputImage,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -185,11 +187,7 @@ function isModelVisibleImageOutput(value: unknown): boolean {
         partRecord.text.startsWith("[embedded image resource omitted:")
       );
     }
-    return (
-      (partRecord.type === "media" || partRecord.type === "image-data") &&
-      typeof partRecord.mediaType === "string" &&
-      partRecord.mediaType.startsWith("image/")
-    );
+    return readModelOutputImage(partRecord) !== undefined;
   });
 }
 
@@ -306,6 +304,7 @@ async function decideToolCallApproval(args: {
   }
 }
 import { logger } from "./logger";
+import { getSystemLogger } from "./request-logger";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
@@ -374,6 +373,52 @@ function readLinkedMcpResourceWithManager(
   };
 }
 const streamChunkSchema = zodSchema(z.unknown());
+
+const chunkGuardLogger = getSystemLogger("mcpjam-stream-handler");
+
+/**
+ * Whether the browser's AI SDK would accept a backend chunk that
+ * `processStream` has no case for and would forward verbatim.
+ *
+ * `uiMessageChunkSchema` comes from the same `ai` the client bundles, so this
+ * is the client's own check run one hop earlier — where a failure can be
+ * dropped and reported, instead of failing the whole turn with "Type
+ * validation failed". That is what happened on 2026-10-05, when the AI SDK 7
+ * backend started streaming `{type:"custom"}` and the `default:` branch
+ * forwarded it.
+ *
+ * Only the `default:` branch asks. The explicit cases feed tool execution and
+ * the persisted message, so dropping one would silently lose a tool call;
+ * field drift there still fails loudly in the browser, which reports it.
+ *
+ * Reported once per chunk type per stream: a drifted type appears on every
+ * step of every turn.
+ */
+async function clientAcceptsBackendChunk(
+  chunk: unknown,
+  reported: Set<string>,
+): Promise<boolean> {
+  const result = await safeValidateTypes({
+    value: chunk,
+    schema: uiMessageChunkSchema,
+  });
+  if (result.success) return true;
+
+  const record =
+    chunk && typeof chunk === "object" && !Array.isArray(chunk)
+      ? (chunk as Record<string, unknown>)
+      : {};
+  const chunkType =
+    typeof record.type === "string" ? record.type.slice(0, 64) : typeof chunk;
+  if (!reported.has(chunkType)) {
+    reported.add(chunkType);
+    chunkGuardLogger.event("chat.stream.chunk_rejected", {
+      chunkType,
+      fields: Object.keys(record).slice(0, 20),
+    });
+  }
+  return false;
+}
 
 let warnedMissingAbortSignal = false;
 /**
@@ -2253,6 +2298,7 @@ async function processStream(
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
   let firstChunkAt: number | undefined;
+  const rejectedChunkTypes = new Set<string>();
 
   const flushText = () => {
     if (pendingText) {
@@ -2619,8 +2665,11 @@ async function processStream(
         }
 
         default:
-          // Forward other chunks (step-start, etc.)
-          writer.write(chunk);
+          // Forward other chunks (step-start, etc.) — only ones the browser
+          // can parse. One it can't would fail the whole turn.
+          if (await clientAcceptsBackendChunk(chunk, rejectedChunkTypes)) {
+            writer.write(chunk);
+          }
       }
     }
   } finally {
