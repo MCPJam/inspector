@@ -324,12 +324,19 @@ router.post("/projects/:projectId/eval-runs/:runId/regrade", async (c) => {
         `Re-grade did not complete within its deadline${partialNote}`,
         partialDetails,
       );
-    throw translateConvexReadError(error, {
+    const translated = translateConvexReadError(error, {
       scope: "v1.eval-regrade",
       notFoundMessage: "Eval run not found or re-grade is not authorized",
       // Only the initial run lookup can be a masked scope refusal.
       redactedIsRefusal: !scopeVerified,
     });
+    // An outage after some batches committed still says what landed; a
+    // NOT_FOUND stays opaque.
+    if (partial && translated.code !== "NOT_FOUND") {
+      translated.message = `${translated.message}${partialNote}`;
+      translated.details = { ...(translated.details ?? {}), ...partialDetails };
+    }
+    throw translated;
   }
 });
 export default router;

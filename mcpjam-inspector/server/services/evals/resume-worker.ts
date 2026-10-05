@@ -137,7 +137,21 @@ export async function reportResumeComplete(args: {
   failureReason?: string;
 }): Promise<void> {
   try {
-    await postServiceRoute("/internal/v1/eval-run-resume/complete", args);
+    const { status, body } = await postServiceRoute(
+      "/internal/v1/eval-run-resume/complete",
+      args,
+    );
+    const result = body?.result;
+    if (status !== 200 || body?.ok !== true || result?.ok === false) {
+      // Refused (superseded, no longer resuming, run gone) or rejected:
+      // nothing to retry here, but say so — the watchdog now owns the run.
+      logger.warn("[eval-resume] completion was not accepted", {
+        runId: args.runId,
+        ok: args.ok,
+        status,
+        error: result?.error ?? body?.error,
+      });
+    }
   } catch (error) {
     // Best-effort: an unreported resume converges through the stale-run
     // watchdog (it parks again or times out).

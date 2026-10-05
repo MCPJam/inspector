@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyResumeFailure,
   executeClaimedResume,
+  reportResumeComplete,
   startEvalResumeWorker,
   type ClaimedEvalRunResume,
 } from "../resume-worker";
+import { logger } from "../../../utils/logger";
 import { EvalWorkerShutdownError } from "../run-lease";
 import { resumeAttemptNumbersFor } from "../../evals-runner";
 
@@ -105,10 +107,15 @@ describe("executeClaimedResume", () => {
   });
 
   it("parks the run when its stored server credentials no longer connect", async () => {
-    const d = deps({ prepareError: new Error("401 Unauthorized: token expired") });
+    const d = deps({
+      prepareError: new Error("401 Unauthorized: token expired"),
+    });
     await executeClaimedResume(claimed, d as any);
     expect(d.complete).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: false, failureReason: expect.stringMatching(/^resume_failed/) }),
+      expect.objectContaining({
+        ok: false,
+        failureReason: expect.stringMatching(/^resume_failed/),
+      }),
     );
   });
 
@@ -182,26 +189,42 @@ describe("resumeAttemptNumbersFor", () => {
   } as any;
 
   it("matches the case and model; ignores other models of a multi-model case", () => {
-    expect(
-      [
-        ...resumeAttemptNumbersFor(test, [
-          { iterationId: "a", testCaseId: "case-1", iterationNumber: 2, model: "m1", provider: "p", trialAttempt: 1 },
-          { iterationId: "b", testCaseId: "case-1", iterationNumber: 3, model: "m2", provider: "p" },
-          { iterationId: "c", testCaseId: "case-2", iterationNumber: 1 },
-        ]),
-      ],
-    ).toEqual([[2, 1]]);
+    expect([
+      ...resumeAttemptNumbersFor(test, [
+        {
+          iterationId: "a",
+          testCaseId: "case-1",
+          iterationNumber: 2,
+          model: "m1",
+          provider: "p",
+          trialAttempt: 1,
+        },
+        {
+          iterationId: "b",
+          testCaseId: "case-1",
+          iterationNumber: 3,
+          model: "m2",
+          provider: "p",
+        },
+        { iterationId: "c", testCaseId: "case-2", iterationNumber: 1 },
+      ]),
+    ]).toEqual([[2, 1]]);
   });
 
   it("a model-free case matches by case id alone", () => {
-    expect(
-      [
-        ...resumeAttemptNumbersFor(
-          { ...test, model: "widget-probe", provider: "none" },
-          [{ iterationId: "a", testCaseId: "case-1", iterationNumber: 1, model: "other" }],
-        ),
-      ],
-    ).toEqual([[1, 0]]);
+    expect([
+      ...resumeAttemptNumbersFor(
+        { ...test, model: "widget-probe", provider: "none" },
+        [
+          {
+            iterationId: "a",
+            testCaseId: "case-1",
+            iterationNumber: 1,
+            model: "other",
+          },
+        ],
+      ),
+    ]).toEqual([[1, 0]]);
   });
 });
 
@@ -225,3 +248,55 @@ describe("startEvalResumeWorker stop()", () => {
   });
 });
 
+describe("reportResumeComplete", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const respond = (status: number, body: unknown) => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(body), { status })),
+    );
+    return vi.spyOn(logger, "warn").mockImplementation(() => {});
+  };
+  const args = { runId: "run-1", driverToken: "drv-1", ok: true };
+
+  it("is quiet when the backend accepts the completion", async () => {
+    const warn = respond(200, {
+      ok: true,
+      result: { ok: true, state: "resumed" },
+    });
+    await reportResumeComplete(args);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns when the backend refuses it", async () => {
+    const warn = respond(200, {
+      ok: true,
+      result: { ok: false, error: "superseded" },
+    });
+    await reportResumeComplete(args);
+    expect(warn).toHaveBeenCalledWith(
+      "[eval-resume] completion was not accepted",
+      expect.objectContaining({
+        runId: "run-1",
+        status: 200,
+        error: "superseded",
+      }),
+    );
+  });
+
+  it("warns on a rejected request", async () => {
+    const warn = respond(401, { ok: false, error: "unauthorized" });
+    await reportResumeComplete(args);
+    expect(warn).toHaveBeenCalledWith(
+      "[eval-resume] completion was not accepted",
+      expect.objectContaining({ status: 401, error: "unauthorized" }),
+    );
+  });
+});

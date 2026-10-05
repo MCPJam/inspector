@@ -23,6 +23,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "actor-token",
 }));
 import router from "../eval-backtest";
+import { REGRADE_PAGE_SIZE } from "../../../services/evals/regrade-run";
 import { v1OnError } from "../envelope";
 const app = new Hono().route("/api/v1", router);
 app.onError(v1OnError);
@@ -175,3 +176,52 @@ it.each([
     expect(await response.text()).not.toContain("private backend context");
   },
 );
+
+it("an outage after a batch committed still reports what landed", async () => {
+  // 26 changed rows: the first batch of 25 commits, the second never arrives.
+  const rows = Array.from({ length: 26 }, (_, index) => ({
+    ...evidencePage.iterations[0]!,
+    iterationId: `iteration-${index}`,
+    updatedAt: 100 + index,
+  }));
+  mocks.action.mockReset();
+  for (let start = 0; start < rows.length; start += REGRADE_PAGE_SIZE) {
+    const isDone = start + REGRADE_PAGE_SIZE >= rows.length;
+    mocks.action.mockResolvedValueOnce({
+      ...evidencePage,
+      isDone,
+      ...(isDone ? {} : { cursor: `page-${start}` }),
+      iterations: rows.slice(start, start + REGRADE_PAGE_SIZE),
+    });
+  }
+  mocks.mutation
+    .mockReset()
+    .mockImplementationOnce(
+      async (
+        _name: string,
+        args: { iterations: { iterationId: string }[] },
+      ) => ({
+        regraded: args.iterations.length,
+        iterations: args.iterations.map((item) => ({
+          iterationId: item.iterationId,
+          gradingRevision: 1,
+        })),
+      }),
+    )
+    .mockRejectedValueOnce(new TypeError("fetch failed"));
+  const response = await post(draft);
+  expect(response.status).toBe(502);
+  const body = (await response.json()) as {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+  expect(body.code).toBe("SERVER_UNREACHABLE");
+  expect(body.message).toMatch(/25 of 26 changed iterations/);
+  expect(body.details).toMatchObject({
+    partiallyApplied: true,
+    committedIterations: 25,
+    changedIterations: 26,
+  });
+  expect((body.details?.committedIterationIds as string[]).length).toBe(25);
+});
