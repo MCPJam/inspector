@@ -32,12 +32,30 @@ import {
  * `fullStream` is read LOOSELY (by part `type`) and we hand-build `ai@6`
  * `UIMessageChunk`s. The `agent.stream(...)` input is cast at the call site.
  *
- * ── NOT runtime-verified here ─────────────────────────────────────────────
- * This compiles against the real APIs, but the live path (E2B connect, harness
- * bootstrap, exact fullStream part shapes, transcript reconstruction) needs a
- * live box + a model credential to exercise — same gate the Phase 0 spike ran.
- * Treat the stream-part mapping + message reconstruction as first-cut until a
- * live run confirms them.
+ * ── What is verified, and where ───────────────────────────────────────────
+ * VERIFIED IN CI on a real box (`.github/workflows/hosted-harness-docker.yml`,
+ * test `docker/__tests__/hosted-harness-docker.e2e.test.ts`): this function,
+ * end to end, for Claude Code and Codex (app-server), with the real
+ * `HarnessAgent`, adapters, bridges and vendor CLIs inside a container baked
+ * from the computer template's bake context (`docker/test-image.Dockerfile`),
+ * reached through the Docker sandbox provider, against the conformance mock
+ * upstreams (`local/conformance/mock-anthropic.mjs`, `mock-responses.mjs`).
+ * Pinned there:
+ *   - the fullStream → UI chunk mapping and the transcript / tool evidence it
+ *     reconstructs, as golden files (`docker/__tests__/goldens/`);
+ *   - native (Claude Code) and host-executed (Codex) MCP calls attributed to
+ *     their server;
+ *   - a baked start (no install at turn time), a stream failure after partial
+ *     output reported once, cancellation, stream termination with at most one
+ *     terminal part, one broker revoke, and no runtime process left in the box.
+ * NOT verified by that job — it mocks them at their module boundary: E2B
+ * itself (`Sandbox.connect`, the egress baseline, the broker lease's egress
+ * transform, brokered secrets, box reservation and teardown) and the control
+ * plane (continuity sidecar, runtime skills, MCP proxy-token mint and the
+ * public proxy route). Docker coverage says nothing about the E2B path, and
+ * no automated check exercises it; it is verified by hand on staging when a
+ * computer template is rolled out (mcpjam-backend
+ * `templates/computer/README.md`).
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
@@ -122,7 +140,11 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
-import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
+import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import {
+  harnessBootstrapLogFields,
+  harnessBootstrapObservation,
+} from "./harness-bake-observer.js";
 import {
   prepareLocalHarnessTurn,
   type PreparedLocalHarnessTurn,
@@ -2236,11 +2258,13 @@ export async function runHarnessTurn(
       // On the LOCAL path the provider was already built by
       // `prepareLocalHarnessTurn`: it supervises a real process tree on this
       // machine, so there is no sandbox id to attach to and nothing to
-      // construct here. The cloud provider is built only when there is a box.
+      // construct here. The cloud provider is built only when there is a box,
+      // through the factory: E2B unless `HARNESS_SANDBOX_PROVIDER=docker`
+      // (dev/CI only, refused in production).
       const sandbox =
         localPrepared !== null
           ? localPrepared.sandbox
-          : createE2BHarnessSandboxProvider({
+          : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
               // The materialized secrets, as a session-wide env bag on every `run`
@@ -3748,7 +3772,16 @@ export async function runHarnessTurn(
         activeDriver.finishTurn(writer, { alreadyEmittedFinish: true });
         runSucceeded = true;
         const tStream = Date.now();
-        // Values inlined into the message — this logger drops the 2nd arg.
+        // Whether the box's runtime came from the baked template or was
+        // installed this turn (and if so why), plus the pinned versions —
+        // empty on the local path. Inlined for the console, and passed as
+        // context too: Axiom keeps the context, and the bake-miss monitor
+        // reads those fields (mcpjam-backend templates/computer/OPS.md).
+        const bootstrapLog = harnessBootstrapLogFields(
+          await harnessBootstrapObservation(sandbox),
+          harnessAdapter.pinnedRuntimeVersion,
+        );
+        // Values inlined into the message — the console drops the 2nd arg.
         logger.info(
           `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
             tSandbox - tClaim
@@ -3756,7 +3789,8 @@ export async function runHarnessTurn(
             tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}`,
+          }ms resumed=${resumedSession}${bootstrapLog.text}`,
+          bootstrapLog.context,
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
