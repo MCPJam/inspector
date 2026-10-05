@@ -5,6 +5,7 @@ const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
   finalText: "",
   textError: undefined as unknown,
+  streamError: undefined as unknown,
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -20,6 +21,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
         for (const part of harnessState.streamParts) {
           yield part;
         }
+        if (harnessState.streamError) throw harnessState.streamError;
       })(),
       text: harnessState.textError
         ? Promise.reject(harnessState.textError)
@@ -80,9 +82,8 @@ vi.mock("../reconcile-skill-dirs.js", () => ({
 }));
 
 vi.mock("../harness-session-state.js", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("../harness-session-state.js")
-  >();
+  const actual =
+    await importOriginal<typeof import("../harness-session-state.js")>();
   return {
     ...actual,
     claimHarnessSessionState: vi.fn(async () => ({
@@ -175,6 +176,7 @@ describe("runHarnessTurn — structured failure evidence (E1)", () => {
     harnessState.streamParts = [];
     harnessState.finalText = "";
     harnessState.textError = undefined;
+    harnessState.streamError = undefined;
   });
 
   afterEach(() => {
@@ -235,6 +237,45 @@ describe("runHarnessTurn — structured failure evidence (E1)", () => {
       code: "codex_responseTooManyFailedAttempts",
       httpStatus: 429,
     });
+  });
+
+  const terminalCodexNotification = {
+    type: "raw",
+    rawValue: {
+      method: "error",
+      params: {
+        error: {
+          message: "exceeded retry limit",
+          codexErrorInfo: {
+            responseTooManyFailedAttempts: { httpStatusCode: 429 },
+          },
+        },
+        willRetry: false,
+      },
+    },
+  };
+
+  it("Codex: the notification also types a failure the stream iterator raises", async () => {
+    harnessState.streamParts = [terminalCodexNotification];
+    harnessState.streamError = new Error("stream closed");
+    const [event] = await runAndCapture({ harness: "codex" });
+    expect(event).toMatchObject({
+      infraLayer: "model",
+      code: "codex_responseTooManyFailedAttempts",
+    });
+  });
+
+  it("Codex: the notification never types a LOCAL failure that follows it", async () => {
+    // A local check throws inside the loop (an approval on a turn that cannot
+    // pause): our failure, not the model's, whatever the runtime said before.
+    harnessState.streamParts = [
+      terminalCodexNotification,
+      { type: "tool-approval-request", approvalId: "approval-1" },
+    ];
+    const [event] = await runAndCapture({ harness: "codex" });
+    expect(event?.message).toMatch(/without a resumable harness session/);
+    expect(event).not.toHaveProperty("infraLayer");
+    expect(event).not.toHaveProperty("code");
   });
 
   it("an untyped bridge failure stays unclassified (no prose guessing)", async () => {

@@ -1051,6 +1051,22 @@ export async function runHarnessTurn(
    * structured evidence — never derived from the error's text.
    */
   let rawProviderEvidence: HarnessFailureEvidence | undefined;
+  /**
+   * The failure the PROVIDER STREAM itself raised (its iterator or `res.text`).
+   * `rawProviderEvidence` types only this one: a local check that throws later
+   * (the plan wall, a malformed approval part) is not the model's failure.
+   */
+  let providerStreamFailure: { error: unknown } | undefined;
+  // Only errors the stream raises are caught here: a throw in the consuming
+  // loop's body calls the generator's `return()`, never its `catch`.
+  async function* providerStream<T>(stream: AsyncIterable<T>) {
+    try {
+      yield* stream;
+    } catch (error) {
+      providerStreamFailure = { error };
+      throw error;
+    }
+  }
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -3236,9 +3252,11 @@ export async function runHarnessTurn(
         driver = activeDriver;
         activeDriver.emitTurnStart(writer);
         stepStartedAt = traceBaseMs;
-        harnessStream: for await (const part of res.fullStream as AsyncIterable<
-          Record<string, unknown> & { type?: string }
-        >) {
+        harnessStream: for await (const part of providerStream(
+          res.fullStream as AsyncIterable<
+            Record<string, unknown> & { type?: string }
+          >,
+        )) {
           if (effectiveAbortSignal.aborted) {
             aborted = true;
             break;
@@ -3775,7 +3793,13 @@ export async function runHarnessTurn(
         // answer + usage. `res.text` settles the complete answer even when the
         // bridge delivered it as a final result rather than streamed
         // `text-delta` parts. Drain it before building the persisted transcript.
-        const finalText = await res.text;
+        let finalText: Awaited<typeof res.text>;
+        try {
+          finalText = await res.text;
+        } catch (error) {
+          providerStreamFailure = { error };
+          throw error;
+        }
         closeReasoning();
 
         // ENTITLEMENT WALL (external-account harnesses only). Cursor answers a
@@ -4073,7 +4097,10 @@ export async function runHarnessTurn(
       // "[object Object]". The structured fields ride separately below.
       const errorText = harnessFailureMessageOf(err);
       const failureEvidence =
-        harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+        harnessFailureEvidenceOf(err) ??
+        (providerStreamFailure && providerStreamFailure.error === err
+          ? rawProviderEvidence
+          : undefined);
       // Reporter, not a bare logger.error: the old call captured to Sentry
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
