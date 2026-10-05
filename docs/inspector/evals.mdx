@@ -591,6 +591,14 @@ A dash (`—`) means **no cost was observed**, never that the trial was free:
 A cost your own SDK runner reported is shown but labelled **runner** — it is
 real, but MCPJam neither computed nor verified it.
 
+### Infrastructure failures
+
+Occasionally MCPJam's own infrastructure — a model provider outage, a rate limit on a hosted key, a sandbox that could not start — fails a trial before it can measure anything about your server. These trials are recorded as `status: "failed"` with a `result: "failed"` label, but they are **excluded from every pass rate and verdict**: neither the numerator nor the denominator counts them. Their eval fee is refunded.
+
+You can identify them in the API by the `infraError` field on the iteration, which is present only on such trials and is absent on every ordinary trial. The `infraError.class` field names the kind of failure (`provider_unavailable`, `rate_limited`, `auth`, `account_limit`, `capacity`, `configuration`, or `sandbox`); `infraError.retryable` says whether it looked transient.
+
+The trial's label in the UI stays **Failed** — it did fail — but the pass rate shown beside it leaves it out, so a provider outage does not count against your server's score.
+
 When only some of a run's trials were priced, the total says so. That
 distinction matters most in CI: a run that looks cheaper may simply be a run
 we priced less of, which is why the compare API reports coverage counts
