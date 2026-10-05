@@ -932,6 +932,7 @@ async function runJourneyFanOut(
                 // A swarm's results are compared, so an unverified harness ×
                 // model pair is refused, not run with a warning.
                 purpose: "swarm",
+                unattended: true,
               });
         harnessTargetBlockedReason = !harnessNeedsBox
           ? undefined

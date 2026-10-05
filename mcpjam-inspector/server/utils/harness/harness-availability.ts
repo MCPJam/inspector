@@ -313,6 +313,12 @@ export function harnessReasoningEffortRefusalReason(args: {
  * (`supportsHostExecutedToolApproval`). Reading the wrong one is the bypass this
  * function exists to make unrepresentable — Codex's MCP tools are host-executed,
  * so `supportsMcpToolApproval` says nothing about them.
+ *
+ * An UNATTENDED run (evals, swarms: nobody can answer) is refused whatever the
+ * adapter can do. A runtime that pauses would otherwise be admitted and then
+ * fail at its first gated call (an eval turn has no session to park in) or
+ * stall silently (a swarm parks a pause nobody resumes). Refusing up front is
+ * the same posture a runtime that can't pause already gets.
  */
 export function harnessToolApprovalRefusalReason(args: {
   adapter: HarnessRuntimeAdapter;
@@ -320,9 +326,17 @@ export function harnessToolApprovalRefusalReason(args: {
   /** Whether the host has any selected MCP servers. Selects whether the
    *  MCP-surface arm applies; the native-surface arm applies regardless. */
   hasSelectedMcpServers: boolean;
+  /** Nobody can answer an approval on this run (evals, swarms). */
+  unattended?: boolean;
 }): string | undefined {
   if (!args.requireToolApproval) return undefined;
   const name = args.adapter.displayName;
+  if (args.unattended) {
+    return (
+      `the ${name} harness can't pause for tool approval in an unattended ` +
+      "run (evals and swarms) — turn off requireToolApproval on this host"
+    );
+  }
   // The runtime runs its own native tools in-sandbox. If it can't pause on
   // those, approval is unsound for the whole turn — servers or no servers.
   if (!args.adapter.supportsNativeToolApproval) {
@@ -467,6 +481,10 @@ export function checkHarnessRuntimeAvailable(args: {
    * adapter has not verified it, rather than silently not applied.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /** Nobody can answer an approval on this run (evals, swarms). Not derived
+   *  from `purpose`: a human scenario chat reads models strictly as `eval`
+   *  but can still answer an approval. */
+  unattended?: boolean;
 }): HarnessAvailability {
   // The SAME arm the turn will run: local Codex is always the app-server
   // adapter, so asking the hosted default here would refuse an approval-gated
@@ -535,6 +553,7 @@ export function checkHarnessRuntimeAvailable(args: {
     adapter,
     requireToolApproval: args.requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
+    unattended: args.unattended === true,
   });
   if (approvalRefusal) {
     return { ok: false, kind: "tool-approval", reason: approvalRefusal };

@@ -188,26 +188,6 @@ vi.mock("../../../utils/built-in-tools/registry.js", async () => {
 // never re-exports it, so mocking that namespace would intercept nothing and
 // this assertion would pass no matter what the runner did — false confidence on
 // exactly the guarantee that matters most here.
-// The approval gate reads the adapter's declared capabilities. One test needs a
-// NATIVE-delivery harness that cannot approve its MCP tools — a combination no
-// registered adapter has anymore — so the flag is overridable here. Everything
-// else on the adapter stays real.
-let forceNoMcpToolApproval = false;
-vi.mock("../../../utils/harness/registry.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../../utils/harness/registry.js")
-  >("../../../utils/harness/registry.js");
-  return {
-    ...actual,
-    getHarnessAdapter: (id: Parameters<typeof actual.getHarnessAdapter>[0]) => {
-      const adapter = actual.getHarnessAdapter(id);
-      return forceNoMcpToolApproval
-        ? { ...adapter, supportsMcpToolApproval: false }
-        : adapter;
-    },
-  };
-});
-
 vi.mock("../../../utils/harness/resolve-sandbox.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/harness/resolve-sandbox.js")
@@ -414,9 +394,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Same reasoning as the timers below: reset unconditionally so a capability
-  // override can never leak into the next test's adapter.
-  forceNoMcpToolApproval = false;
   // Unconditionally, so a run that rejects between `useFakeTimers()` and its
   // matching restore can't leak a frozen clock into the next test and produce
   // a confusing cascade. Cheap, and it covers every fake-timer test here.
@@ -1162,10 +1139,8 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
   });
 
   it("refuses requireToolApproval on a harness that cannot pause", async () => {
-    // Codex builds its thread with `approvalPolicy: "never"` hardcoded, so it
-    // is never asked to pause on any surface — the combination advertises an
-    // approval gate it cannot enforce. (Claude Code CAN pause on all three
-    // surfaces and is admitted; asserted below.)
+    // Nobody can answer an approval in a swarm, so this is refused before a
+    // box is provisioned, whatever the runtime could pause on.
     await startJourneyRun(
       baseOpts({
         harness: "codex",
@@ -1178,65 +1153,26 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
   });
 
-  it("admits requireToolApproval with MCP servers on Claude Code", async () => {
-    // The adapter bridge's `canUseTool` gates MCP tool calls under
-    // "allow-reads", so this target is sound and must reach provisioning
-    // rather than being refused at the preflight.
+  // Claude Code CAN pause, but a swarm has nobody to answer: admitted, the
+  // turn parked at its first gated call and the next persona turn dropped it.
+  // Refused up front instead, with or without (plugin) servers.
+  it.each([
+    ["with MCP servers", { serverIds: ["server-1"] }],
+    ["plugin-only", { serverIds: [], pluginServerIds: ["plugin-server-1"] }],
+    ["with no MCP servers", { serverIds: [], pluginServerIds: [] }],
+  ])("refuses requireToolApproval on Claude Code (%s)", async (_label, servers) => {
     await startJourneyRun(
       baseOpts({
         harness: "claude-code",
         requireToolApproval: true,
-        serverIds: ["server-1"],
-      })
-    );
-
-    expect(provisionJourneySandboxMock).toHaveBeenCalled();
-  });
-
-  it("counts PLUGIN servers toward the approval gate", async () => {
-    // A target whose MCP servers come solely from a plugin has an empty
-    // `serverIds`, so a selected-servers-only predicate reads `false` and the
-    // target slips the very gate the approval rule exists to close.
-    //
-    // Asserted on Claude Code, and it has to be: Codex refuses on the
-    // native-approval arm BEFORE the server count is ever consulted, so a
-    // Codex fixture here would pass without exercising the counting at all.
-    // Claude Code reaches the MCP arm, so the plugin servers are what decides
-    // — proven by the `supportsMcpToolApproval: false` stub, which turns the
-    // same target into a refusal only because the plugin servers counted.
-    forceNoMcpToolApproval = true;
-
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        serverIds: [],
-        pluginServerIds: ["plugin-server-1"],
+        ...servers,
       })
     );
 
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /MCP-server tools/i
+      /unattended run/i
     );
-  });
-
-  it("does NOT refuse the same host once the plugin servers are gone", async () => {
-    // The control for the case above: with no servers at all the identical
-    // stubbed host is admitted, so the refusal really did come from counting
-    // the plugin-contributed ones rather than from the stub itself.
-    forceNoMcpToolApproval = true;
-
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        serverIds: [],
-        pluginServerIds: [],
-      })
-    );
-
-    expect(provisionJourneySandboxMock).toHaveBeenCalled();
   });
 
   it("admits a BARE hosted model id (provider comes from the resolved definition)", async () => {
@@ -1248,23 +1184,6 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     personaDrivesOneTurn();
     await startJourneyRun(
       baseOpts({ harness: "codex", modelId: "gpt-5-nano", serverIds: [] })
-    );
-
-    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
-    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
-  });
-
-  it("still admits an approval target with NO MCP servers", async () => {
-    // The rule is capability-driven, not "approval is unsupported": Claude Code
-    // does gate its own tools. Over-refusing here would silently drop a
-    // configuration the interactive path allows.
-    personaDrivesOneTurn();
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        serverIds: [],
-      })
     );
 
     expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);

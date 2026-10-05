@@ -334,6 +334,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     // Evals refuse an unverified harness × model pair ("not verified for
     // <harness> <version>") rather than run it.
     purpose: "eval",
+    unattended: true,
     // The host's saved effort is known here; refusing it now costs nothing.
     ...(hostSavedReasoningEffort(hostConfig) !== undefined
       ? { reasoningEffort: hostSavedReasoningEffort(hostConfig) }
@@ -435,6 +436,7 @@ export function checkEvalHarnessAdmission(args: {
         ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
         purpose: "eval",
+        unattended: true,
         ...(effort !== undefined ? { reasoningEffort: effort } : {}),
       });
       verdict = availability.ok
