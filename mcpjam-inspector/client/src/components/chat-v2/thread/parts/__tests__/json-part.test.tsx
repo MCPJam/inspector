@@ -85,6 +85,45 @@ describe("JsonPart", () => {
     );
   });
 
+  it("warns when the image count limit omits tool result images", async () => {
+    const value = {
+      content: Array.from({ length: 20 }, () => ({
+        type: "image",
+        data: "aGVsbG8=",
+        mimeType: "image/png",
+      })),
+    };
+
+    render(<JsonPart label="Result" value={value} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "4 images were omitted because image size or count limits were exceeded."
+    );
+    expect(screen.getAllByRole("img")).toHaveLength(16);
+  });
+
+  it("warns when every persisted image was omitted", async () => {
+    render(
+      <JsonPart
+        label="Result"
+        value={{
+          type: "content",
+          value: [
+            {
+              type: "text",
+              text: "[image omitted: image/png exceeds 10 MB limit]",
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 image was omitted because image size or count limits were exceeded."
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
   it("keeps MCP image results raw when rendering is disabled", () => {
     const value = {
       content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
