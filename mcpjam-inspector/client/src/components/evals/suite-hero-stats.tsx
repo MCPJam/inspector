@@ -48,9 +48,13 @@ export function SuiteHeroStats({
   isReplayingLatestRun = false,
 }: SuiteHeroStatsProps) {
   const stats = useMemo(() => {
-    if (runs.length === 0) return null;
+    // A subset rerun (E3) re-ran only what failed: its sample is biased by
+    // that selection, so it feeds none of the suite-level numbers below —
+    // not the accuracy, not the latest run, not the run count or duration.
+    const representativeRuns = runs.filter((run) => !isSubsetRerunRun(run));
+    if (representativeRuns.length === 0) return null;
 
-    const activeRunIds = new Set(runs.map((r) => r._id));
+    const activeRunIds = new Set(representativeRuns.map((r) => r._id));
     const activeIterations = allIterations.filter(
       (iter) => iter.suiteRunId && activeRunIds.has(iter.suiteRunId),
     );
@@ -66,10 +70,8 @@ export function SuiteHeroStats({
 
     const accuracy = Math.round((passed / total) * 100);
 
-    // Latest run info. A subset rerun (E3) re-ran only what failed, so it is
-    // never the "latest run" these numbers describe.
-    const latestRun = runs
-      .filter((run) => !isSubsetRerunRun(run))
+    // Latest run info.
+    const latestRun = [...representativeRuns]
       .sort((a, b) => {
         const aTime = a.completedAt ?? a.createdAt ?? 0;
         const bTime = b.completedAt ?? b.createdAt ?? 0;
@@ -92,7 +94,9 @@ export function SuiteHeroStats({
     ).length;
 
     // Avg duration across runs
-    const completedRuns = runs.filter((r) => r.completedAt && r.createdAt);
+    const completedRuns = representativeRuns.filter(
+      (r) => r.completedAt && r.createdAt,
+    );
     const avgDuration =
       completedRuns.length > 0
         ? completedRuns.reduce(
@@ -106,7 +110,7 @@ export function SuiteHeroStats({
       passed,
       failed,
       total,
-      runCount: runs.length,
+      runCount: representativeRuns.length,
       latestRunAgo,
       latestPassed,
       latestTotal,

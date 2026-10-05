@@ -1,11 +1,11 @@
 /**
  * Rerun failed cases (E3): preview + launch over /api/v1.
  *
- * Convex and the prepare/launch seam are stubbed. The claims under test are
- * the route's own decisions: project match, refusing before a slot or a
- * connection when the preview says there is nothing to rerun, and launching a
- * snapshot replay of THIS run carrying `rerunOfRunId` + `rerunScope` so the
- * backend picks the cases.
+ * Convex and the replay seam are stubbed. The claims under test are the
+ * route's own decisions: project match, refusing before a slot or a
+ * connection when the preview says there is nothing to rerun, and replaying
+ * THIS run from its own stored server configuration, scoped to failed cases
+ * so the backend picks them.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,14 +13,12 @@ import { Hono } from "hono";
 
 const {
   validateGuestTokenMock,
-  prepareEvalRunMock,
-  createAuthorizedManagerMock,
+  prepareSuiteReplayMock,
   convexQueryMock,
   convexMutationMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
-  prepareEvalRunMock: vi.fn(),
-  createAuthorizedManagerMock: vi.fn(),
+  prepareSuiteReplayMock: vi.fn(),
   convexQueryMock: vi.fn(),
   convexMutationMock: vi.fn(),
 }));
@@ -29,19 +27,11 @@ vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
 }));
 
-vi.mock("../../shared/evals.js", async () => {
-  const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
-    "../../shared/evals.js",
-  );
-  return { ...actual, prepareEvalRun: prepareEvalRunMock };
-});
-
-vi.mock("../../web/auth.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../web/auth.js")>(
-      "../../web/auth.js",
-    );
-  return { ...actual, createAuthorizedManager: createAuthorizedManagerMock };
+vi.mock("../../../services/evals/replay-suite-run.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/evals/replay-suite-run.js")
+  >("../../../services/evals/replay-suite-run.js");
+  return { ...actual, prepareSuiteReplayFromRun: prepareSuiteReplayMock };
 });
 
 vi.mock("convex/browser", () => ({
@@ -133,20 +123,18 @@ function mockConvex(handlers: Record<string, (args: any) => unknown> = {}) {
 }
 
 function mockHappyLaunch() {
-  const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
-  createAuthorizedManagerMock.mockResolvedValue({
-    manager: { disconnectAllServers },
-    oauthServerUrls: {},
-    authenticatedUserId: null,
-  });
-  prepareEvalRunMock.mockResolvedValue({
+  const cleanup = vi.fn().mockResolvedValue(undefined);
+  const execute = vi.fn().mockResolvedValue(undefined);
+  prepareSuiteReplayMock.mockResolvedValue({
     suiteId: SUITE_ID,
     runId: RERUN_ID,
-    caseUpsert: { committed: [], failed: [] },
+    sourceRunId: RUN_ID,
+    serverIds: ["s_alpha"],
     recorder: { finalize: vi.fn() },
-    execute: vi.fn().mockResolvedValue(undefined),
+    execute,
+    cleanup,
   });
-  return { disconnectAllServers };
+  return { cleanup, execute };
 }
 
 describe("eval rerun routes", () => {
@@ -209,37 +197,54 @@ describe("eval rerun routes", () => {
   });
 
   describe("POST …/eval-runs/:runId/rerun", () => {
-    it("launches a snapshot replay of this run scoped to failed cases", async () => {
-      mockHappyLaunch();
+    it("replays this run from its own server config, scoped to failed cases", async () => {
+      const { cleanup, execute } = mockHappyLaunch();
       const res = await request(
         "POST",
         `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/rerun`,
-        { scope: "failed_cases" },
+        { scope: "failed_cases", idempotencyKey: "retry-1" },
       );
       expect(res.status).toBe(202);
       expect(await res.json()).toMatchObject({
         runId: RERUN_ID,
         suiteId: SUITE_ID,
+        status: "running",
         rerunOfRunId: RUN_ID,
         rerunScope: "failed_cases",
         selectedCaseCount: 2,
+        servers: [{ id: "s_alpha" }],
       });
-      expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
-      const prepared = prepareEvalRunMock.mock.calls[0]![1] as Record<
+      expect(prepareSuiteReplayMock).toHaveBeenCalledTimes(1);
+      const prepared = prepareSuiteReplayMock.mock.calls[0]![0] as Record<
         string,
         unknown
       >;
       expect(prepared).toMatchObject({
-        suiteId: SUITE_ID,
-        replayedFromRunId: RUN_ID,
-        useCurrentSuiteConfig: false,
-        rerunOfRunId: RUN_ID,
-        rerunScope: "failed_cases",
-        suiteRerun: true,
-        tests: [],
+        sourceRunId: RUN_ID,
+        scope: "failed_cases",
+        source: "api",
+        idempotencyKey: "retry-1",
       });
       // The server picks the cases; the route never sends its own.
       expect(prepared.caseIds).toBeUndefined();
+      // Executed detached; the replay's connections are closed afterwards.
+      await vi.waitFor(() => expect(cleanup).toHaveBeenCalled());
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses a source run with no stored server configuration", async () => {
+      prepareSuiteReplayMock.mockRejectedValue(
+        new Error("This run does not have stored replay config"),
+      );
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/rerun`,
+        { scope: "failed_cases" },
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "RERUN_NO_REPLAY_CONFIG" },
+      });
     });
 
     it("refuses with 409 before connecting when nothing qualifies", async () => {
@@ -261,8 +266,7 @@ describe("eval rerun routes", () => {
       expect(await res.json()).toMatchObject({
         details: { reason: "RERUN_NOTHING_TO_RERUN" },
       });
-      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
-      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(prepareSuiteReplayMock).not.toHaveBeenCalled();
     });
 
     it("refuses with 409 while the source run is still in flight", async () => {
@@ -283,12 +287,12 @@ describe("eval rerun routes", () => {
       expect(await res.json()).toMatchObject({
         details: { reason: "RERUN_SOURCE_NOT_TERMINAL" },
       });
-      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(prepareSuiteReplayMock).not.toHaveBeenCalled();
     });
 
     it("translates the launch mutation's own refusal", async () => {
-      const { disconnectAllServers } = mockHappyLaunch();
-      prepareEvalRunMock.mockRejectedValue(
+      mockHappyLaunch();
+      prepareSuiteReplayMock.mockRejectedValue(
         Object.assign(new Error("nothing to rerun"), {
           data: {
             code: "RERUN_NOTHING_TO_RERUN",
@@ -305,7 +309,6 @@ describe("eval rerun routes", () => {
       expect(await res.json()).toMatchObject({
         details: { reason: "RERUN_NOTHING_TO_RERUN" },
       });
-      expect(disconnectAllServers).toHaveBeenCalled();
     });
 
     it("rejects an unknown scope or extra keys", async () => {
@@ -321,7 +324,7 @@ describe("eval rerun routes", () => {
         );
         expect(res.status).toBe(400);
       }
-      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(prepareSuiteReplayMock).not.toHaveBeenCalled();
     });
   });
 });

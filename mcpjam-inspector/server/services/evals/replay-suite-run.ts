@@ -26,6 +26,7 @@ import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/intern
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import type { LaunchContext } from "../../utils/launch-context.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -43,6 +44,15 @@ export type ExecuteSuiteReplayFromRunParams = {
    * whole run, exactly as before.
    */
   scope?: SuiteReplayScope;
+  /**
+   * The public API's launch fields, forwarded to run creation only when set:
+   * `source: "api"` is STAMPED by the v1 route (never caller-claimed), the
+   * idempotency key makes a retried request replay the run it already
+   * started, and the launch context is the caller's own label.
+   */
+  source?: "api";
+  idempotencyKey?: string;
+  launchContext?: LaunchContext;
 };
 
 /** The subset a replay can be narrowed to. */
@@ -103,6 +113,12 @@ export type PreparedSuiteReplayFromRunResult = {
   suiteId: string;
   runId: string;
   sourceRunId: string;
+  /** The servers this replay connected, from the source run's own config. */
+  serverIds: string[];
+  /** Set when this request REPLAYED an existing run (idempotency hit). */
+  deduped?: boolean;
+  /** That run's own status — terminal on a replay of a finished run. */
+  status?: string;
   recorder: SuiteRunRecorder;
   execute: () => Promise<void>;
   cleanup: () => Promise<void>;
@@ -125,6 +141,9 @@ export async function prepareSuiteReplayFromRun(
     passCriteria,
     useCurrentSuiteConfig,
     scope,
+    source,
+    idempotencyKey,
+    launchContext,
   } = params;
 
   const convexHttpUrl = requireConvexHttpUrl();
@@ -182,6 +201,8 @@ export async function prepareSuiteReplayFromRun(
       hostConfig: runHostConfigSnapshot,
       gradingEngine: runGradingEngine,
       environmentRef,
+      deduped,
+      status,
     } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: replayMetadata.suiteId,
@@ -201,6 +222,12 @@ export async function prepareSuiteReplayFromRun(
           : undefined,
       toolSnapshot,
       toolSnapshotDebug,
+      ...(source ? { source } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(launchContext?.launcher ? { launcher: launchContext.launcher } : {}),
+      ...(launchContext?.ciMetadata
+        ? { ciMetadata: launchContext.ciMetadata }
+        : {}),
     });
     const replayHostConfig =
       runHostConfigSnapshot ??
@@ -276,6 +303,9 @@ export async function prepareSuiteReplayFromRun(
       suiteId: replayMetadata.suiteId,
       runId,
       sourceRunId,
+      serverIds: replayServerIds,
+      ...(deduped !== undefined ? { deduped } : {}),
+      ...(status !== undefined ? { status } : {}),
       recorder,
       execute: async () => {
         await runEvalSuiteWithAiSdk({

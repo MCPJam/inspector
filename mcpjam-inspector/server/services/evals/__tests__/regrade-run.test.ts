@@ -335,6 +335,46 @@ describe("runRegrade", () => {
     ).rejects.toThrow(/Duplicate/);
   });
 
+  it("reports what landed when a LATER batch fails", async () => {
+    const { RegradePartiallyAppliedError } = await import("../regrade-run");
+    // 30 changed rows: two batches. The first commits; the second is stale.
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      evidenceRow([wrongNeedle], {
+        iterationId: `iteration-${index}`,
+        updatedAt: 1_000 + index,
+      }),
+    );
+    const readPage = vi.fn();
+    for (const page of pages(rows)) readPage.mockResolvedValueOnce(page);
+    const applyBatch = vi
+      .fn()
+      .mockImplementationOnce(
+        async (args: { iterations: { iterationId: string }[] }) => ({
+          regraded: args.iterations.length,
+          iterations: args.iterations.map((item) => ({
+            iterationId: item.iterationId,
+            gradingRevision: 1,
+          })),
+        }),
+      )
+      .mockRejectedValueOnce(
+        new Error("EVAL_REGRADE_STALE: the iteration changed"),
+      );
+    const error = await runRegrade({
+      runId: "run",
+      suiteId: "suite",
+      draft: replaceWith([rightNeedle]),
+      dryRun: false,
+      readPage,
+      applyBatch,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RegradePartiallyAppliedError);
+    const partial = error as InstanceType<typeof RegradePartiallyAppliedError>;
+    expect(partial.message).toMatch(/EVAL_REGRADE_STALE/);
+    expect(partial.committedIterationIds).toHaveLength(25);
+    expect(partial.changedIterations).toBe(30);
+  });
+
   it("surfaces a stale write from the backend", async () => {
     const readPage = vi
       .fn()

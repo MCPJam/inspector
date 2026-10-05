@@ -80,6 +80,27 @@ export class IterationClaimRefusedError extends Error {
   }
 }
 
+/**
+ * The claim CALL failed (transport, an unexpected backend error) — distinct
+ * from a refusal. The row is unclaimed and nobody owns it, so it must not be
+ * skipped as if another worker had it: this propagates, the case fails
+ * locally, and the run is left for the backend's recovery (its pending row
+ * keeps the run from finalizing until the watchdog parks or times it out).
+ */
+export class IterationClaimFailedError extends Error {
+  override readonly name = "IterationClaimFailedError";
+  constructor(
+    readonly iterationId: string,
+    readonly cause: unknown,
+  ) {
+    super(
+      `Could not claim iteration ${iterationId}: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    );
+  }
+}
+
 /** The backend's fence refusal, in any of the shapes a client sees it. */
 export function isLeaseLostError(error: unknown): boolean {
   if (error instanceof LeaseLostError) return true;
@@ -151,6 +172,10 @@ export interface RunLeaseDriver {
   readonly driverToken: string;
   /** Was the run accepted as resumable (E4.3)? */
   readonly resumable: boolean;
+  /**
+   * Resolves with the backend's answer (`ok: false` is an explicit refusal);
+   * REJECTS with {@link IterationClaimFailedError} when the call itself failed.
+   */
   claimIteration(
     iterationId: string,
     unitTimeoutMs: number,
@@ -278,10 +303,8 @@ export function createRunLeaseDriver(args: {
         setIterationLease(iterationId, args.runId, claim.leaseToken);
         return { ok: true, leaseToken: claim.leaseToken };
       } catch (error) {
-        return {
-          ok: false,
-          reason: error instanceof Error ? error.message : String(error),
-        };
+        // Only an explicit refusal is skippable; a failed call is not.
+        throw new IterationClaimFailedError(iterationId, error);
       }
     },
     async releaseIteration(iterationId) {

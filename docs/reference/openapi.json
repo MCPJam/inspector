@@ -3196,7 +3196,7 @@
           "Eval runs"
         ],
         "summary": "Rerun a run's failed cases",
-        "description": "Replay a finished run's frozen snapshot narrowed to the cases that did not pass: every case with a trial that is not completed and passed (cancelled and skipped trials do not count). The platform selects the cases — see the rerun preview. The new run records `rerunOfRunId` and `rerunScope`, and because its pass rate is biased by that selection it is never used as the suite's latest run, a trend point, or a comparison/gate baseline. Returns `409` with `details.reason` `RERUN_NOTHING_TO_RERUN` when nothing qualifies, or `RERUN_SOURCE_NOT_TERMINAL` while the run is still in flight. Honors the `Idempotency-Key` header.",
+        "description": "Replay a finished run's frozen snapshot narrowed to the cases that did not pass: every case with a trial that is not completed and passed (cancelled and skipped trials do not count). The platform selects the cases — see the rerun preview. The new run records `rerunOfRunId` and `rerunScope`, and because its pass rate is biased by that selection it is never used as the suite's latest run, a trend point, or a comparison/gate baseline. It connects the servers the source run executed against, from that run's own stored server configuration, never the suite's current selection. Returns `409` with `details.reason` `RERUN_NOTHING_TO_RERUN` when nothing qualifies, `RERUN_SOURCE_NOT_TERMINAL` while the run is still in flight, or `RERUN_NO_REPLAY_CONFIG` when the run has no stored server configuration. Honors the `Idempotency-Key` header.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"

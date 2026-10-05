@@ -177,7 +177,11 @@ import type {
 } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
-import { rerunRefusalError } from "../../services/evals/replay-suite-run.js";
+import {
+  prepareSuiteReplayFromRun,
+  rerunRefusalError,
+} from "../../services/evals/replay-suite-run.js";
+import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -6246,37 +6250,6 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
     );
   }
   requireProjectMatch(sourceRun, projectId, "Eval run");
-  const suiteId = String(sourceRun!.suiteId);
-
-  // The servers the SOURCE run executed against — the same derivation the
-  // description-experiment arms use for their snapshot replays.
-  const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
-    .configSnapshot;
-  const envRef = snapshot?.environmentRef as
-    | { environmentId?: string }
-    | undefined;
-  const namedHostId =
-    (typeof sourceRun!.namedHostId === "string"
-      ? (sourceRun!.namedHostId as string)
-      : undefined) ??
-    (typeof snapshot?.namedHostId === "string"
-      ? snapshot.namedHostId
-      : undefined);
-  const servers = await resolveLaunchServers({
-    convexAuthToken: token,
-    projectId,
-    suiteId,
-    suiteReadPhase: "authorized",
-    requestedEnvironmentId: envRef?.environmentId,
-    namedHostId,
-    requestedServerIds: [],
-    requestedServerNames: undefined,
-  });
-  const runHostConfig = await loadSuiteHostConfig(
-    readClient,
-    suiteId,
-    namedHostId ?? servers.environmentLaunch?.hostId,
-  );
 
   const slotKey = orgConcurrencyKey(c);
   if (!tryAcquireRunSlot(slotKey)) {
@@ -6299,49 +6272,66 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
   };
 
   try {
-    const launched = await launchEvalRun({
-      callerContext: callerContextFromHono(c),
-      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      projectId,
+    // The SOURCE run's own stored server configuration — its server set and
+    // credentials as recorded at launch — through the same replay path the
+    // app's "rerun" uses. Resolving the environment or suite selection LIVE
+    // would connect whatever it says today, and a "rerun" of this run could
+    // then execute against a different configuration than the run it is
+    // attributed to.
+    const prepared = await prepareSuiteReplayFromRun({
+      convexClient: createConvexClients(token).convexClient,
       convexAuthToken: token,
-      vocabulary: vocabularyOf(c),
-      hostConfig: runHostConfig,
+      sourceRunId: runId,
+      scope: body.scope,
+      // STAMPED: everything that reaches this route is an API call.
+      source: "api",
+      ...(body.notes !== undefined ? { notes: body.notes } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       launchContext: readLaunchContext(c),
-      body: {
-        suiteId,
-        tests: [] as PublicInlineTest[],
-        replayedFromRunId: runId,
-        useCurrentSuiteConfig: false,
-        rerunOfRunId: runId,
-        rerunScope: body.scope,
-        ...(body.notes !== undefined ? { notes: body.notes } : {}),
-        ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
+
+    detachPreparedEvalRun({
+      prepared,
+      convexAuthToken: token,
+      logPrefix: "[v1 evals.rerun]",
+      logContext: { route: "/api/v1 eval-runs rerun", sourceRunId: runId },
+      cleanup: async () => {
+        try {
+          await prepared.cleanup();
+        } finally {
+          releaseSlotOnce();
+        }
       },
-      suiteRerun: true,
-      environmentId: servers.environmentId,
-      environmentLaunch: servers.environmentLaunch,
-      serverIds: servers.serverIds,
-      serverNames: servers.serverNames,
-      onSettled: releaseSlotOnce,
     });
 
     return v1Resource(
       c,
       {
-        runId: launched.runId,
-        suiteId: launched.suiteId,
-        status: launched.status,
-        ...(launched.deduped ? { deduped: true } : {}),
+        runId: prepared.runId,
+        suiteId: prepared.suiteId,
+        status: prepared.status ?? "running",
+        ...(prepared.deduped ? { deduped: true } : {}),
         rerunOfRunId: runId,
         rerunScope: body.scope,
         selectedCaseCount: preview.selectedCaseCount,
-        servers: launched.servers,
-        environment: launched.environment,
+        servers: prepared.serverIds.map((id) => ({ id })),
       },
       202,
     );
   } catch (error) {
     releaseSlotOnce();
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.includes("stored replay config") ||
+      message.includes("No replay configuration")
+    ) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        "This run has no stored server configuration, so its failed cases cannot be rerun against the servers it ran on.",
+        { reason: "RERUN_NO_REPLAY_CONFIG" },
+      );
+    }
     throw (
       rerunRefusalError(error) ?? translateImportIneligibleError(error) ?? error
     );

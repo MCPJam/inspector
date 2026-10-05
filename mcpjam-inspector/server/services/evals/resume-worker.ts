@@ -43,6 +43,8 @@ const POLL_JITTER_MS = 5_000;
 const ERROR_BACKOFF_MS = 60_000;
 /** Per-request cap on claim/complete calls so a stalled Convex can't wedge the loop. */
 const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
+/** How long `stop()` waits for the loop before letting shutdown proceed. */
+const STOP_WAIT_MS = 1_000;
 
 export type ClaimedEvalRunResume = {
   runId: string;
@@ -89,6 +91,7 @@ async function postServiceRoute(
     SERVICE_ROUTE_TIMEOUT_MS,
   );
   let response: Response;
+  let parsed: any = null;
   try {
     response = await fetch(`${env.convexUrl}${path}`, {
       method: "POST",
@@ -99,14 +102,15 @@ async function postServiceRoute(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+    // Under the same deadline: a backend that sends headers and then stalls
+    // the body must not wedge the (single-resume) loop.
+    try {
+      parsed = await response.json();
+    } catch {
+      // tolerated; status carries the signal
+    }
   } finally {
     clearTimeout(timeout);
-  }
-  let parsed: any = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    // tolerated; status carries the signal
   }
   return { status: response.status, body: parsed };
 }
@@ -219,6 +223,12 @@ export async function executeClaimedResume(
     rows: prepared.resumeIterationCount,
   });
   try {
+    // Nothing was requeued (every row already has its outcome): the resume
+    // is complete without running anything.
+    if (prepared.resumeIterationCount === 0) {
+      await complete(true);
+      return;
+    }
     await prepared.execute();
     await complete(true);
   } catch (error) {
@@ -312,9 +322,18 @@ export function startEvalResumeWorker(options?: {
   return {
     stop: async () => {
       abort.abort();
-      // An in-flight resume was already stopped and handed back by
-      // `shutdownActiveEvalRuns`; this only waits for the loop to notice.
-      await loop;
+      // With the shutdown handoff on, an in-flight resume was already stopped
+      // and handed back; with it off, nothing stopped it. Either way shutdown
+      // never waits on a whole resumed run — the watchdog recovers it.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        loop,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, STOP_WAIT_MS);
+          timer.unref?.();
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
     },
   };
 }

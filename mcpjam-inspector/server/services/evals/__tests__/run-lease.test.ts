@@ -180,7 +180,7 @@ describe("createRunLeaseDriver", () => {
     expect(driver.heartbeatArgs().iterationTokens).toEqual([]);
   });
 
-  it("a refused or failed claim is reported, never thrown", async () => {
+  it("a refusal is reported; a failed claim CALL throws (never read as a refusal)", async () => {
     const refused = make({
       "evalRunLeases:claimTestIteration": () => ({ ok: false, reason: "lease_live" }),
     });
@@ -193,9 +193,9 @@ describe("createRunLeaseDriver", () => {
         throw new Error("convex down");
       },
     });
-    expect(await broken.driver.claimIteration("it-1", 1)).toEqual({
-      ok: false,
-      reason: "convex down",
+    await expect(broken.driver.claimIteration("it-1", 1)).rejects.toMatchObject({
+      name: "IterationClaimFailedError",
+      iterationId: "it-1",
     });
     expect(leaseTokenArg("it-1")).toEqual({});
   });

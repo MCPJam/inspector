@@ -127,3 +127,32 @@ describe("a subset rerun is never a trend point", () => {
     ]);
   });
 });
+
+describe("a subset rerun feeds no suite-level aggregate", () => {
+  it("the hero's accuracy, run count and latest run ignore it", async () => {
+    const { screen } = await import("@testing-library/react");
+    const React = await import("react");
+    const { renderWithProviders } = await import("@/test");
+    const { SuiteHeroStats } = await import("../suite-hero-stats");
+    // The full run passed its one trial; the subset rerun of its (now fixed)
+    // failures is all fails. Counting the rerun would drag accuracy to 50%.
+    renderWithProviders(
+      React.createElement(SuiteHeroStats, {
+        runs: [
+          { ...full, completedAt: 1_500 },
+          { ...rerun, completedAt: 99_999 },
+        ],
+        allIterations: [
+          iteration("i-full", "run-1", "passed"),
+          iteration("i-rerun", "run-2", "failed"),
+        ],
+        runTrendData: [],
+        modelStats: [],
+        testCaseCount: 1,
+        isSDK: false,
+      }),
+    );
+    expect(screen.getAllByText("100%").length).toBeGreaterThan(0);
+    expect(screen.queryByText("50%")).toBeNull();
+  });
+});

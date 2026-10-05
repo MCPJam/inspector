@@ -7,6 +7,7 @@ import {
 } from "../../../../sdk/src/contract/eval-backtest.js";
 import { runAssertionBacktest } from "../../services/evals/assertion-backtest.js";
 import {
+  RegradePartiallyAppliedError,
   runRegrade,
   type RegradeApplyResponse,
   type RegradeEvidencePage,
@@ -249,7 +250,23 @@ router.post("/projects/:projectId/eval-runs/:runId/regrade", async (c) => {
         ) as Promise<RegradeApplyResponse>,
     });
     return v1Resource(c, report);
-  } catch (error) {
+  } catch (caught) {
+    // A failure after some batches committed is classified by its cause,
+    // and every refusal below says what already landed.
+    const partial =
+      caught instanceof RegradePartiallyAppliedError ? caught : undefined;
+    const error = partial ? partial.cause : caught;
+    const partialDetails = partial
+      ? {
+          partiallyApplied: true,
+          committedIterations: partial.committedIterationIds.length,
+          changedIterations: partial.changedIterations,
+          committedIterationIds: partial.committedIterationIds,
+        }
+      : undefined;
+    const partialNote = partial
+      ? ` (${partial.committedIterationIds.length} of ${partial.changedIterations} changed iterations were already re-graded; run the re-grade again to finish)`
+      : "";
     const message = error instanceof Error ? error.message : "";
     const data =
       error && typeof error === "object" && "data" in error
@@ -267,7 +284,8 @@ router.post("/projects/:projectId/eval-runs/:runId/regrade", async (c) => {
       return v1Error(
         c,
         "CONFLICT",
-        "An iteration changed while it was being re-graded; run the re-grade again",
+        `An iteration changed while it was being re-graded; run the re-grade again${partialNote}`,
+        partialDetails,
       );
     if (detail.includes("EVAL_RUN_NOT_REGRADABLE"))
       return v1Error(
@@ -276,7 +294,12 @@ router.post("/projects/:projectId/eval-runs/:runId/regrade", async (c) => {
         "Re-grade requires a completed run that was not SDK-reported",
       );
     if (code === "CONFLICT")
-      return v1Error(c, "CONFLICT", "The run changed; run the re-grade again");
+      return v1Error(
+        c,
+        "CONFLICT",
+        `The run changed; run the re-grade again${partialNote}`,
+        partialDetails,
+      );
     if (code === "VALIDATION_ERROR")
       return v1Error(c, "VALIDATION_ERROR", "Invalid re-grade request");
     if (code === "NOT_FOUND")
@@ -298,7 +321,8 @@ router.post("/projects/:projectId/eval-runs/:runId/regrade", async (c) => {
       return v1Error(
         c,
         "TIMEOUT",
-        "Re-grade did not complete within its deadline",
+        `Re-grade did not complete within its deadline${partialNote}`,
+        partialDetails,
       );
     throw translateConvexReadError(error, {
       scope: "v1.eval-regrade",

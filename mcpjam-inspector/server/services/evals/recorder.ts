@@ -28,6 +28,7 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import { randomUUID } from "node:crypto";
 import {
+  IterationClaimFailedError,
   IterationClaimRefusedError,
   leaseTokenArg,
   type RunLeaseDriver,
@@ -445,7 +446,12 @@ export const createSuiteRunRecorder = ({
 
         return matchingIteration._id as string;
       } catch (error) {
-        if (error instanceof IterationClaimRefusedError) throw error;
+        if (
+          error instanceof IterationClaimRefusedError ||
+          error instanceof IterationClaimFailedError
+        ) {
+          throw error;
+        }
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 

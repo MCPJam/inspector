@@ -3049,7 +3049,12 @@ export class PlatformApiClient {
     params: { projectId: string; runId: string } & PlatformEvalRunRerunBody,
     options?: RequestOptions
   ): Promise<PlatformEvalRunRerunCreated> {
-    const { projectId, runId, ...body } = params;
+    // Only the documented fields: the route's schema is strict, so a wider
+    // object a caller passes must not turn into a 400.
+    const { projectId, runId, scope, notes, idempotencyKey } = params;
+    const body: Record<string, unknown> = { scope };
+    if (notes !== undefined) body.notes = notes;
+    if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(

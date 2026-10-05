@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  cpSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
-  cpSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -319,7 +320,9 @@ describe("the generated bake context", () => {
       /markers are only found at \/home\/user\/\.harness-bootstrap/,
     );
 
-    const ctx = join(out, "ctx");
+    // The CANONICAL path: Node resolves symlinks for the main module, so
+    // bake.mjs sees `/private/var/...` where macOS `tmpdir()` says `/var/...`.
+    const ctx = realpathSync(join(out, "ctx"));
     const relocated = {
       ...manifest,
       bakeRoot: ctx,

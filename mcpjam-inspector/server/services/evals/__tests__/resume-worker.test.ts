@@ -70,6 +70,26 @@ describe("executeClaimedResume", () => {
     expect(d.cleanup).toHaveBeenCalled();
   });
 
+  it("completes without executing when nothing was requeued", async () => {
+    const d = deps({});
+    const execute = vi.fn(async () => {});
+    d.prepare.mockResolvedValueOnce({
+      suiteId: "suite-1",
+      runId: "run-1",
+      resumeIterationCount: 0,
+      execute,
+      cleanup: d.cleanup,
+    });
+    await executeClaimedResume(claimed, d as any);
+    expect(execute).not.toHaveBeenCalled();
+    expect(d.complete).toHaveBeenCalledWith({
+      runId: "run-1",
+      driverToken: "drv-1",
+      ok: true,
+    });
+    expect(d.cleanup).toHaveBeenCalled();
+  });
+
   it("parks the run when the creator's token cannot be minted (lost membership)", async () => {
     const d = deps({
       mintError: new Error("delegated token exchange failed (403): no member"),
@@ -184,3 +204,24 @@ describe("resumeAttemptNumbersFor", () => {
     ).toEqual([[1, 0]]);
   });
 });
+
+describe("startEvalResumeWorker stop()", () => {
+  it("never holds shutdown on a resume that is still running", async () => {
+    let finish!: () => void;
+    const execute = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    const handle = startEvalResumeWorker({
+      claimedBy: "test",
+      claim: vi.fn(async () => claimed),
+      execute,
+      pollIntervalMs: 10,
+    });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled());
+    const started = Date.now();
+    await handle.stop();
+    expect(Date.now() - started).toBeLessThan(3_000);
+    finish();
+  });
+});
+

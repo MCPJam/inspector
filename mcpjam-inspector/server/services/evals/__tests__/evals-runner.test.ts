@@ -4274,6 +4274,28 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
+    it("a claim that could not be MADE is not skipped as someone else's row", async () => {
+      const { IterationClaimFailedError } = await import("../run-lease");
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation(success as never);
+      const recorder = makeRecorder(async () => {
+        throw new IterationClaimFailedError("iter-1", new Error("convex down"));
+      });
+      try {
+        await runSuite(recorder);
+        expect(spy).not.toHaveBeenCalled();
+        // Counted as a failed case — never a silently shrunk denominator.
+        expect(recorder.finalize.mock.calls[0]![0].summary).toMatchObject({
+          total: 1,
+          failed: 1,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     it("a lease lost mid-iteration stops that iteration silently and leaves it out of the summary", async () => {
       let driver: { applyHeartbeatResult(result: unknown): void } | undefined;
       const assistantTurnModule = await import("../../../utils/assistant-turn");

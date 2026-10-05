@@ -257,6 +257,39 @@ describe("effect dispatch gate", () => {
     expect(order).toHaveLength(2);
   });
 
+  it("a leased row whose attempt is refused for ownership dispatches nothing", async () => {
+    const { beginEffectDispatchGate } = await import("../effect-dispatch-gate");
+    const { ConvexError } = await import("convex/values");
+    const { LeaseLostError } = await import("../run-lease");
+    for (const code of ["LEASE_LOST", "TRIAL_ATTEMPT_REFUSED"]) {
+      const mutation = vi.fn(async () => {
+        throw new ConvexError({ code, message: "not yours" });
+      });
+      await expect(
+        beginEffectDispatchGate({
+          convexClient: { mutation } as never,
+          iterationId: "it-1",
+          attempt: 1,
+          leaseToken: "lease-1",
+        }),
+      ).rejects.toBeInstanceOf(LeaseLostError);
+    }
+    // Unleased (legacy) rows keep the permissive unarmed fallback.
+    const unleased = await beginEffectDispatchGate({
+      convexClient: {
+        mutation: vi.fn(async () => {
+          throw new Error("LEASE_LOST");
+        }),
+      } as never,
+      iterationId: "it-legacy",
+      attempt: 1,
+    });
+    expect(unleased.replaySafety()).toEqual({
+      safe: false,
+      reason: "attempt_state_missing",
+    });
+  });
+
   it("wrapping is a no-op without a gate", () => {
     const tools = { t: { execute: async () => 1 } };
     expect(wrapToolSetWithEffectGate(tools, undefined)).toBe(tools);

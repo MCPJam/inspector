@@ -340,6 +340,22 @@ async function bounded<T>(
 }
 
 /**
+ * A batch failed AFTER earlier batches committed: the run is partially
+ * re-graded. Carries what landed so the route can report it; the message is
+ * the underlying failure's, so its refusal codes still classify.
+ */
+export class RegradePartiallyAppliedError extends Error {
+  override readonly name = "RegradePartiallyAppliedError";
+  constructor(
+    readonly cause: unknown,
+    readonly committedIterationIds: string[],
+    readonly changedIterations: number,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
+/**
  * Re-grade a completed run. Reads EVERY page before writing anything, so a run
  * that cannot be read whole is refused rather than half re-graded.
  */
@@ -437,18 +453,34 @@ export async function runRegrade(input: {
 
   let applied: RegradeApplyResponse | undefined;
   if (!input.dryRun) {
+    const committed: string[] = [];
     for (let start = 0; start < writes.length; start += REGRADE_WRITE_BATCH) {
       const batch = writes.slice(start, start + REGRADE_WRITE_BATCH);
-      applied = await bounded(
-        () =>
-          input.applyBatch({
-            runId: input.runId,
-            draftHash,
-            iterations: batch,
-          }),
-        deadline,
-        input.signal,
-      );
+      try {
+        applied = await bounded(
+          () =>
+            input.applyBatch({
+              runId: input.runId,
+              draftHash,
+              iterations: batch,
+            }),
+          deadline,
+          input.signal,
+        );
+      } catch (error) {
+        // Earlier batches are already committed: say so, rather than let
+        // the caller read "nothing happened" off a run that is now half
+        // re-graded. A rerun converges (committed rows read as unchanged).
+        if (committed.length > 0) {
+          throw new RegradePartiallyAppliedError(
+            error,
+            committed,
+            writes.length,
+          );
+        }
+        throw error;
+      }
+      committed.push(...batch.map((write) => write.iterationId));
       const revisions = new Map(
         (applied.iterations ?? []).map((item) => [
           item.iterationId,

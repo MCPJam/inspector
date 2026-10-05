@@ -132,7 +132,13 @@ function record(harness, name, status, detail = {}) {
 // ── Preconditions ───────────────────────────────────────────────────────────
 
 const missing = REQUIRED.filter((name) => !env[name]?.trim());
-if (missing.length === REQUIRED.length) {
+// The template id is a REQUIRED dispatch input, so it is always set: it says
+// nothing about whether an operator configured the check. Skip only when none
+// of the operator-provisioned inputs exist; any partial set still fails below.
+const OPERATOR_PROVISIONED = REQUIRED.filter(
+  (name) => name !== "RELEASE_CHECK_TEMPLATE_ID",
+);
+if (OPERATOR_PROVISIONED.every((name) => !env[name]?.trim())) {
   result.status = "skipped";
   result.reason = "no release-check inputs are configured; nothing was run";
   save();
@@ -298,10 +304,17 @@ async function watchBox(runId, recipe) {
     RUN_TIMEOUT_MS,
     `a box for run ${runId}`,
   );
+  // `connect` ARMS a window on the box. Re-arm exactly the window the box
+  // already has, so the observer never replaces the lifecycle the backend
+  // gave it (and that the teardown checks below then verify).
+  const remainingMs = box.endAt
+    ? new Date(box.endAt).getTime() - Date.now()
+    : Number.NaN;
   const sandbox = await Sandbox.connect(box.sandboxId, {
     ...e2b,
-    // Long enough to outlive the turn; the backend tears the box down itself.
-    timeoutMs: RUN_TIMEOUT_MS,
+    timeoutMs: Number.isFinite(remainingMs)
+      ? Math.max(1_000, remainingMs)
+      : RUN_TIMEOUT_MS,
   });
   const marker = `/home/user/${recipe.bootstrapDir}/${recipe.marker}`;
   let content = null;

@@ -32,7 +32,7 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { randomUUID } from "node:crypto";
 import { logger } from "../../utils/logger";
-import { leaseTokenArg } from "./run-lease";
+import { LeaseLostError, isLeaseLostError, leaseTokenArg } from "./run-lease";
 import type { ReplaySafety } from "./infra-retry";
 
 export type EffectKind = "tool" | "scripted_tool" | "browser" | "shell";
@@ -73,8 +73,11 @@ export interface EffectDispatchGate {
 type GateConvex = Pick<ConvexHttpClient, "mutation">;
 
 /**
- * Start an attempt's gate. Never throws: a failed start write yields an
- * UNARMED gate, which changes nothing about execution and forbids replay.
+ * Start an attempt's gate. A failed start write yields an UNARMED gate, which
+ * changes nothing about execution and forbids replay — EXCEPT on a leased row
+ * whose start was refused because this worker no longer owns it: that throws
+ * {@link LeaseLostError}, so nothing is dispatched for a row a successor now
+ * holds.
  */
 export async function beginEffectDispatchGate(args: {
   convexClient: GateConvex;
@@ -98,6 +101,11 @@ export async function beginEffectDispatchGate(args: {
     });
     armed = true;
   } catch (error) {
+    if (leaseToken && attemptRefusedForOwnership(error)) {
+      throw new LeaseLostError(
+        "trial attempt refused: this worker no longer owns the iteration",
+      );
+    }
     logger.warn("[evals] could not record trial attempt; replay disabled", {
       iterationId: args.iterationId,
       attempt: args.attempt,
@@ -116,6 +124,21 @@ export async function beginEffectDispatchGate(args: {
         ...(leaseToken ? { leaseToken } : {}),
       }),
   });
+}
+
+/**
+ * The backend refused the attempt because the row is not this worker's to
+ * run: the lease fence (`LEASE_LOST`), or `TRIAL_ATTEMPT_REFUSED` (a newer
+ * attempt already began, or the row is terminal).
+ */
+function attemptRefusedForOwnership(error: unknown): boolean {
+  if (isLeaseLostError(error)) return true;
+  const data = (error as { data?: { code?: unknown } } | null)?.data;
+  if (data && typeof data === "object" && data.code === "TRIAL_ATTEMPT_REFUSED") {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : "";
+  return /\bTRIAL_ATTEMPT_REFUSED\b/.test(message);
 }
 
 /** The gate's state machine, with its persistence injected (testable). */
