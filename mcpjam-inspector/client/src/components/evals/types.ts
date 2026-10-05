@@ -412,6 +412,11 @@ export type EvalSuite = {
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
   /**
+   * The skills a suite WITHOUT environments runs with. An environment suite's
+   * skills live on its environments; the read sends this raw field either way.
+   */
+  selectedSkillIds?: string[];
+  /**
    * Attach-ordered project environments (`projectEnvironments` docs). When
    * non-empty, Run all fans out ONE run per environment (replacing
    * hostAttachments as the fan-out axis — env pointers win over the legacy
