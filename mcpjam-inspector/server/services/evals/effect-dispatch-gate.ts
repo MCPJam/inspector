@@ -12,9 +12,16 @@
  *
  *  1. At attempt start the gate persists the attempt's identity on the
  *     iteration (`testSuites:beginTrialAttempt`), with
- *     `effectDispatch.mayHaveEffects = false`. If that write fails the gate is
- *     UNARMED: dispatch proceeds exactly as before this existed, but the
- *     attempt can never be replayed (`attempt_state_missing`).
+ *     `effectDispatch.mayHaveEffects = false`. The write is idempotent by
+ *     attempt id, so a failure of unknown outcome is retried. If it still
+ *     fails the gate is UNARMED (the attempt is never replayed in place,
+ *     `attempt_state_missing`) but STILL needs the marker below before any
+ *     dispatch: the start may have committed with only its answer lost, or
+ *     an earlier attempt's proof may still say "no effects" — either way the
+ *     row could read as replay-safe while this attempt acts. A marker that
+ *     cannot be written then refuses the dispatch. Only a backend that has
+ *     no such function at all (deploy skew, so it cannot recover anything
+ *     either) keeps the old permissive behaviour.
  *  2. Before the attempt's FIRST potentially effectful dispatch, an armed gate
  *     persists `mayHaveEffects = true` (`testSuites:markTrialEffectDispatch`)
  *     and only then lets the dispatch through. That write is an ADMISSION
@@ -72,12 +79,29 @@ export interface EffectDispatchGate {
 
 type GateConvex = Pick<ConvexHttpClient, "mutation">;
 
+/** Start writes per attempt; each retry repeats the same attempt id. */
+const BEGIN_WRITE_ATTEMPTS = 3;
+const BEGIN_RETRY_DELAY_MS = 100;
+
+/** The backend answered with a structured refusal: nothing was committed. */
+function isStructuredRefusal(error: unknown): boolean {
+  const data = (error as { data?: unknown } | null)?.data;
+  return data !== null && typeof data === "object";
+}
+
+/** The backend predates the function (deploy skew): it cannot recover either. */
+function isMissingFunctionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Could not find (public )?function/i.test(message);
+}
+
 /**
- * Start an attempt's gate. A failed start write yields an UNARMED gate, which
- * changes nothing about execution and forbids replay — EXCEPT on a leased row
- * whose start was refused because this worker no longer owns it: that throws
- * {@link LeaseLostError}, so nothing is dispatched for a row a successor now
- * holds.
+ * Start an attempt's gate. A start write that still fails after its retries
+ * yields an UNARMED gate, which forbids replay and admits a dispatch only once
+ * the marker is written (see the header). On a leased row whose start was
+ * refused because this worker no longer owns it, it throws
+ * {@link LeaseLostError} instead, so nothing is dispatched for a row a
+ * successor now holds.
  */
 export async function beginEffectDispatchGate(args: {
   convexClient: GateConvex;
@@ -92,30 +116,45 @@ export async function beginEffectDispatchGate(args: {
   const leaseToken =
     args.leaseToken ?? leaseTokenArg(args.iterationId).leaseToken;
   let armed = false;
-  try {
-    await args.convexClient.mutation("testSuites:beginTrialAttempt" as any, {
-      iterationId: args.iterationId,
-      attempt: args.attempt,
-      attemptId,
-      ...(leaseToken ? { leaseToken } : {}),
-    });
-    armed = true;
-  } catch (error) {
-    if (leaseToken && attemptRefusedForOwnership(error)) {
-      throw new LeaseLostError(
-        "trial attempt refused: this worker no longer owns the iteration",
-      );
+  let legacyBackend = false;
+  for (let write = 1; ; write += 1) {
+    try {
+      await args.convexClient.mutation("testSuites:beginTrialAttempt" as any, {
+        iterationId: args.iterationId,
+        attempt: args.attempt,
+        attemptId,
+        ...(leaseToken ? { leaseToken } : {}),
+      });
+      armed = true;
+      break;
+    } catch (error) {
+      if (leaseToken && attemptRefusedForOwnership(error)) {
+        throw new LeaseLostError(
+          "trial attempt refused: this worker no longer owns the iteration",
+        );
+      }
+      legacyBackend = isMissingFunctionError(error);
+      const unknownOutcome = !legacyBackend && !isStructuredRefusal(error);
+      if (unknownOutcome && write < BEGIN_WRITE_ATTEMPTS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, BEGIN_RETRY_DELAY_MS * write),
+        );
+        continue;
+      }
+      logger.warn("[evals] could not record trial attempt; replay disabled", {
+        iterationId: args.iterationId,
+        attempt: args.attempt,
+        markerRequired: !legacyBackend,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      break;
     }
-    logger.warn("[evals] could not record trial attempt; replay disabled", {
-      iterationId: args.iterationId,
-      attempt: args.attempt,
-      error: error instanceof Error ? error.message : String(error),
-    });
   }
   return createEffectDispatchGate({
     attempt: args.attempt,
     attemptId,
     armed,
+    requireMarker: !legacyBackend,
     persistMarker: (kind) =>
       args.convexClient.mutation("testSuites:markTrialEffectDispatch" as any, {
         iterationId: args.iterationId,
@@ -146,8 +185,14 @@ export function createEffectDispatchGate(args: {
   attempt: number;
   attemptId: string;
   armed: boolean;
+  /**
+   * Write the marker before the first dispatch. Defaults to `armed`; an
+   * unarmed gate that could not rule out a committed start passes `true`.
+   */
+  requireMarker?: boolean;
   persistMarker: (kind: EffectKind) => Promise<unknown>;
 }): EffectDispatchGate {
+  const requireMarker = args.requireMarker ?? args.armed;
   let dispatched = false;
   let marked = false;
   let refusal: EffectDispatchRefusedError | undefined;
@@ -169,7 +214,7 @@ export function createEffectDispatchGate(args: {
       // attempt is already unsafe in memory.
       dispatched = true;
       if (refusal) throw refusal;
-      if (!args.armed || marked) return;
+      if (!requireMarker || marked) return;
       pending ??= args.persistMarker(kind).then(
         () => {
           marked = true;

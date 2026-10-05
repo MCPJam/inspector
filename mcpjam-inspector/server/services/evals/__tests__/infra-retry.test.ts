@@ -274,7 +274,7 @@ describe("effect dispatch gate", () => {
         }),
       ).rejects.toBeInstanceOf(LeaseLostError);
     }
-    // Unleased (legacy) rows keep the permissive unarmed fallback.
+    // An unleased row that cannot record its attempt never replays.
     const unleased = await beginEffectDispatchGate({
       convexClient: {
         mutation: vi.fn(async () => {
@@ -288,6 +288,91 @@ describe("effect dispatch gate", () => {
       safe: false,
       reason: "attempt_state_missing",
     });
+  });
+
+  it("retries a start of unknown outcome with the same attempt id", async () => {
+    const { beginEffectDispatchGate } = await import("../effect-dispatch-gate");
+    const calls: unknown[] = [];
+    const mutation = vi.fn(async (name: string, args: unknown) => {
+      if (name === "testSuites:beginTrialAttempt") {
+        calls.push(args);
+        if (calls.length === 1) throw new Error("fetch failed");
+      }
+      return { ok: true };
+    });
+    const gate = await beginEffectDispatchGate({
+      convexClient: { mutation } as never,
+      iterationId: "it-1",
+      attempt: 1,
+      attemptId: "a1",
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(calls[1]);
+    expect(gate.armed).toBe(true);
+  });
+
+  it("a start that may have committed still needs the marker before any dispatch", async () => {
+    const { beginEffectDispatchGate } = await import("../effect-dispatch-gate");
+    const beginFails = (marker: () => Promise<unknown>) =>
+      vi.fn(async (name: string) => {
+        if (name === "testSuites:beginTrialAttempt") {
+          // The write may have landed; only its answer was lost.
+          throw new Error("fetch failed");
+        }
+        return marker();
+      });
+
+    // The start DID commit: the marker lands, the dispatch goes ahead, and
+    // the row now says this attempt may have had effects.
+    const committed = beginFails(async () => ({ ok: true }));
+    const gate = await beginEffectDispatchGate({
+      convexClient: { mutation: committed } as never,
+      iterationId: "it-1",
+      attempt: 2,
+      attemptId: "a2",
+    });
+    expect(gate.armed).toBe(false);
+    await gate.admit("tool");
+    expect(committed).toHaveBeenCalledWith(
+      "testSuites:markTrialEffectDispatch",
+      expect.objectContaining({ attemptId: "a2", kind: "tool" }),
+    );
+
+    // It did NOT (the row still holds an earlier attempt's proof): the marker
+    // is refused, so nothing is dispatched and that proof stays true.
+    const notCommitted = beginFails(async () => {
+      throw new Error("EFFECT_DISPATCH_REFUSED: stale_attempt");
+    });
+    const refused = await beginEffectDispatchGate({
+      convexClient: { mutation: notCommitted } as never,
+      iterationId: "it-1",
+      attempt: 2,
+      attemptId: "a2b",
+    });
+    await expect(refused.admit("tool")).rejects.toBeInstanceOf(
+      EffectDispatchRefusedError,
+    );
+    expect(refused.replaySafety()).toEqual({
+      safe: false,
+      reason: "attempt_state_missing",
+    });
+  });
+
+  it("a backend without the start function keeps the old permissive path", async () => {
+    const { beginEffectDispatchGate } = await import("../effect-dispatch-gate");
+    const mutation = vi.fn(async () => {
+      throw new Error(
+        "Could not find public function for 'testSuites:beginTrialAttempt'",
+      );
+    });
+    const gate = await beginEffectDispatchGate({
+      convexClient: { mutation } as never,
+      iterationId: "it-1",
+      attempt: 1,
+    });
+    await gate.admit("tool");
+    // One start write, no retries, no marker.
+    expect(mutation).toHaveBeenCalledTimes(1);
   });
 
   it("wrapping is a no-op without a gate", () => {
