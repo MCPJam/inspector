@@ -15,8 +15,8 @@ import {
   ErrorCode,
   WebRouteError,
   webErrorFromRoute,
-  mapRuntimeError,
 } from "../web/errors.js";
+import { mapWebBoundaryError } from "../web/boundary-error.js";
 import { createEvalCasesInBatches } from "./eval-case-batch.js";
 import {
   selectSuiteEnvironmentId,
@@ -319,6 +319,8 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
       }),
     );
   } catch (error) {
-    return webErrorFromRoute(c, mapRuntimeError(error));
+    // The boundary mapper, so a backend `ConvexError({ code, message })` (a
+    // stale draft's CONFLICT) answers its own status instead of a 500.
+    return webErrorFromRoute(c, mapWebBoundaryError(error));
   }
 }

@@ -201,8 +201,99 @@ import {
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
-/** Every catalog operation registered as a tool, in list order. */
-export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
+/**
+ * Catalog tools HELD off this surface while their feature is in beta.
+ *
+ * This catalog is one static list, built with no caller in hand, so it cannot
+ * offer a beta only to the organizations that have it. Advertising these to
+ * everyone would offer most callers tools they cannot use, so they are
+ * withheld from everyone instead, until the tool list is resolved per caller.
+ * REST, the SDK and the CLI are unaffected.
+ *
+ * Each held operation keeps its place, and its rationale, in
+ * `CATALOG_OPERATIONS_INCLUDING_HELD` below; `PLATFORM_CATALOG_OPERATIONS`
+ * filters it out and `EXCLUDED_FROM_CATALOG` gives the reason. Releasing a
+ * feature is deleting its entry here.
+ */
+const HELD_WHILE_IN_BETA: ReadonlyArray<{
+  feature: string;
+  operations: ReadonlyArray<PlatformOperation<any, any>>;
+}> = [
+  {
+    feature: "conformance and readiness",
+    operations: [
+      startClaudeReadinessRunOperation,
+      startOpenAIReadinessRunOperation,
+      getReadinessRunOperation,
+      listReadinessRunsOperation,
+      cancelReadinessRunOperation,
+      getReadinessReportOperation,
+      startConformanceRunOperation,
+      getConformanceRunOperation,
+      listConformanceRunsOperation,
+      getConformanceReportOperation,
+    ],
+  },
+  { feature: "unified sessions", operations: [searchSessionsOperation] },
+  {
+    feature: "the registry directory",
+    operations: [
+      searchRegistryDirectoryOperation,
+      getRegistryDirectoryServerOperation,
+      listRegistryDirectorySourcesOperation,
+      installRegistryDirectoryServerOperation,
+    ],
+  },
+  {
+    feature: "the hosted browser",
+    operations: [
+      driveChatSessionBrowserOperation,
+      observeChatSessionBrowserOperation,
+    ],
+  },
+  {
+    feature: "Cloud Skills",
+    operations: [listProjectSkillsOperation, getProjectSkillOperation],
+  },
+  {
+    feature: "Computers",
+    operations: [listImagesOperation, getImageOperation],
+  },
+  {
+    feature: "Agent Plugins",
+    operations: [listProjectPluginsOperation, getPluginVersionOperation],
+  },
+  {
+    feature: "GitHub checks",
+    operations: [
+      listEvalGithubReposOperation,
+      connectEvalGithubRepoOperation,
+      listEvalCheckReposOperation,
+      connectEvalCheckRepoOperation,
+    ],
+  },
+  {
+    feature: "description experiments",
+    operations: [
+      proposeEvalDescriptionRewriteOperation,
+      startEvalDescriptionExperimentOperation,
+      getEvalDescriptionExperimentOperation,
+    ],
+  },
+  { feature: "scheduled runs", operations: [setEvalSuiteScheduleOperation] },
+];
+
+const HELD_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  HELD_WHILE_IN_BETA.flatMap(({ operations }) =>
+    operations.map((operation) => operation.name)
+  )
+);
+
+/**
+ * Every operation this catalog carries, in list order — including the held
+ * betas, which `PLATFORM_CATALOG_OPERATIONS` filters out.
+ */
+const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   PlatformOperation<any, any>
 > = [
   getMeOperation,
@@ -464,8 +555,23 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   sendFeedbackOperation,
 ];
 
+/** Every catalog operation registered as a tool, in list order. */
+export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
+  PlatformOperation<any, any>
+> = CATALOG_OPERATIONS_INCLUDING_HELD.filter(
+  (operation) => !HELD_OPERATION_NAMES.has(operation.name)
+);
+
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(
+    HELD_WHILE_IN_BETA.flatMap(({ feature, operations }) =>
+      operations.map((operation) => [
+        operation.name,
+        `Held while ${feature} is in beta. This catalog is one static list for every caller, so it would offer the tool to organizations that cannot use it; it returns when the tool list is resolved per caller.`,
+      ])
+    )
+  ),
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
   // Its create/update siblings moved INTO the catalog; this reason had to stop
   // being the blanket one they shared, because that rationale is no longer
@@ -620,16 +726,25 @@ const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
     !catalogOperationNames.has(operation.name) &&
     !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
 );
+// A held operation must be one the catalog would otherwise register; holding
+// anything else would leave its real exclusion reason unwritten.
+const orderedOperationNames = new Set(
+  CATALOG_OPERATIONS_INCLUDING_HELD.map((operation) => operation.name)
+);
+const strayHeldOperations = [...HELD_OPERATION_NAMES].filter(
+  (name) => !orderedOperationNames.has(name)
+);
 if (
   staleCatalogExclusions.length > 0 ||
-  uncoveredCatalogOperations.length > 0
+  uncoveredCatalogOperations.length > 0 ||
+  strayHeldOperations.length > 0
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
       ","
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`
+      .join(",")}; heldOutsideCatalog=${strayHeldOperations.join(",")}`
   );
 }
 

@@ -250,10 +250,9 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
     sessionRef.s = await agent.createSession({ sessionId: sessionRef.s.sessionId, continueFrom: cont });
     res = await agent.continueStream({
       session: sessionRef.s,
-      toolApprovalContinuations: [{
-        approvalResponse: { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
-        toolCall: { type: "tool-call", toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.input },
-      }],
+      toolApprovalContinuations: [
+        { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
+      ],
     });
     stream = res.fullStream;
   }
@@ -378,7 +377,7 @@ async function main() {
   };
   // Narrowed on the delivery mode, as the turn runner does: local Codex's MCP
   // tools are host-executed, so its adapter takes no MCP config at all.
-  const adapter = getHarnessAdapter("codex", { localExecution: true });
+  const adapter = getHarnessAdapter("codex");
   if (adapter.mcpDelivery !== "host-executed") {
     throw new Error("local Codex must use host-executed MCP delivery");
   }

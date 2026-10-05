@@ -21506,6 +21506,37 @@
           }
         }
       },
+      "EvalInfraError": {
+        "type": "object",
+        "required": [
+          "class",
+          "layer",
+          "retryable"
+        ],
+        "description": "Why MCPJam's own infrastructure, not the server under test, failed a trial. Present only on such a trial, which is `status: \"failed\"`, measured nothing about the server, is excluded from every pass rate and verdict, and has its eval fee refunded.",
+        "properties": {
+          "class": {
+            "type": "string",
+            "description": "`provider_unavailable`, `rate_limited`, `capacity`, `auth`, `account_limit`, `configuration` or `sandbox`. Read unknown values as an infrastructure failure of an unnamed kind."
+          },
+          "layer": {
+            "type": "string",
+            "description": "`model`, `sandbox` or `platform`."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether the failure looked transient. Advisory."
+          },
+          "code": {
+            "type": "string",
+            "description": "The producer's structured code, when it sent one."
+          },
+          "httpStatus": {
+            "type": "integer",
+            "description": "The upstream HTTP status, when there was one."
+          }
+        }
+      },
       "EvalIteration": {
         "type": "object",
         "required": [
@@ -21590,6 +21621,9 @@
           },
           "error": {
             "type": ["string", "null"]
+          },
+          "infraError": {
+            "$ref": "#/components/schemas/EvalInfraError"
           },
           "scores": {
             "type": ["array", "null"],

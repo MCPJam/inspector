@@ -108,6 +108,57 @@ describe("swarm target models with effort", () => {
   });
 });
 
+describe("a target that ran the client's own model", () => {
+  const ran = (environmentName: string) => ({
+    hostId: "h1",
+    hostName: "MCPJam",
+    targetId: "environment:e1",
+    environmentRef: { environmentId: "e1", name: environmentName, revision: 1 },
+    modelId: "anthropic/claude-haiku-4.5",
+  });
+  const columnsFor = (environmentName: string, liveName = "MCPJam") =>
+    buildSwarmRunTargets({
+      hostSummaries: [{ hostId: "h1", targetId: "environment:e1" }],
+      snapshotHosts: [ran(environmentName)],
+      hostName: () => liveName,
+    });
+
+  it("names the model it ran beside the bare client name", () => {
+    expect(columnsFor("MCPJam")[0]!.label).toBe("MCPJam · claude-haiku-4.5");
+  });
+
+  it("uses the model recorded at launch even after the client is renamed", () => {
+    expect(columnsFor("MCPJam", "Renamed")[0]!.label).toBe(
+      "MCPJam · claude-haiku-4.5",
+    );
+  });
+
+  it("keeps a custom environment name as it is", () => {
+    expect(columnsFor("Prod")[0]!.label).toBe("Prod");
+  });
+
+  it("keeps a custom name when the client is later renamed to it", () => {
+    expect(columnsFor("Prod", "Prod")[0]!.label).toBe("Prod");
+  });
+
+  it("does not repeat a model the saved name already carries", () => {
+    expect(columnsFor("MCPJam · claude-haiku-4.5")[0]!.label).toBe(
+      "MCPJam · claude-haiku-4.5",
+    );
+  });
+
+  it("names it on a legacy host target too", () => {
+    const columns = buildSwarmRunTargets({
+      hostSummaries: [{ hostId: "h1" }],
+      snapshotHosts: [
+        { hostId: "h1", hostName: "MCPJam", modelId: "openai/gpt-5-nano" },
+      ],
+      hostName: () => "MCPJam",
+    });
+    expect(columns[0]!.label).toBe("MCPJam · gpt-5-nano");
+  });
+});
+
 describe("buildUnrunJourneyTargets", () => {
   it("env-based journey: environmentIds order, env labels, host from the live env", () => {
     const targets = buildUnrunJourneyTargets({

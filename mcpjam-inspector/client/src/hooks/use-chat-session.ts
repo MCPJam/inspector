@@ -283,6 +283,8 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
     "Started a new session — the project computer was reset, so earlier context isn't available.",
   "resume-failed":
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
+  "runtime-changed":
+    "Started a new session because this client's runtime changed, so earlier context isn't available.",
   "legacy-cold-resume": null,
 };
 
@@ -3652,6 +3654,9 @@ export function useChatSession(
     addToolOutput,
   } = useChat({
     id: chatSessionId,
+    // Buffered stream chunks can otherwise publish enough synchronous store
+    // updates to exhaust React's update-depth limit before it drains effects.
+    experimental_throttle: 50,
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,

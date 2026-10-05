@@ -7,7 +7,7 @@ import {
   targetKeyLabels,
 } from "@/lib/eval-target-key";
 import { formatRunId, runEnvironmentRef, runClientIdentity } from "../helpers";
-import { computeIterationResult } from "../pass-criteria";
+import { computeMeasuredIterationResult } from "../pass-criteria";
 import type {
   EvalCase,
   EvalIteration,
@@ -235,14 +235,17 @@ export function buildCellTrendSeries(
     let passCount = 0;
     let failCount = 0;
     let pendingCount = 0;
+    let infraCount = 0;
     let totalTokens = 0;
     let totalToolCalls = 0;
     const latencySamples: number[] = [];
 
     for (const iter of iters) {
-      const result = computeIterationResult(iter);
+      const result = computeMeasuredIterationResult(iter);
       if (result === "passed") passCount++;
       else if (result === "failed") failCount++;
+      // An infra row measured nothing: in no count.
+      else if (result === "infra_error") infraCount++;
       else pendingCount++;
 
       totalTokens += iter.tokensUsed || 0;
@@ -253,6 +256,7 @@ export function buildCellTrendSeries(
     }
 
     const totalCount = iters.length;
+    const measuredCount = totalCount - infraCount;
 
     return {
       runId: run._id,
@@ -262,11 +266,11 @@ export function buildCellTrendSeries(
         passCount,
         failCount,
         pendingCount,
-        totalCount,
+        measuredCount,
       ),
       passed: passCount,
       failed: failCount,
-      total: totalCount,
+      total: measuredCount,
       latencyMs: median(latencySamples),
       latencyP95Ms: percentile(latencySamples, 95),
       tokens:
@@ -284,10 +288,11 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   const latencySamples: number[] = [];
 
   for (const iter of iterations) {
-    const result = computeIterationResult(iter);
+    const result = computeMeasuredIterationResult(iter);
     if (result === "passed") passCount++;
     else if (result === "failed") failCount++;
-    else pendingCount++;
+    // An infra row measured nothing: in no count, pending included.
+    else if (result !== "infra_error") pendingCount++;
 
     totalTokens += iter.tokensUsed || 0;
 

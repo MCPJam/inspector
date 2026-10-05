@@ -35,7 +35,12 @@ vi.mock("../../../utils/host-execution-context.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../../utils/harness/local/readiness.js", () => ({
+// These turns exercise the CLOUD harness path. With a published local pack
+// the route asks whether this member runs the harness locally; the answer here
+// is no, so the published packs do not reroute these tests.
+vi.mock("../../../utils/harness/local/readiness.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>()),
+  localHarnessAccountEnabled: vi.fn(async () => false),
   ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
     kind: "local-native", actingUserId: "authkit:owner", workspaceGrantId: "ws",
     runtimeId: "runtime", machineId: "machine", grantToken: "grant",
