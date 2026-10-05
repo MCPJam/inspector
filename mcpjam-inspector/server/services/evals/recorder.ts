@@ -16,6 +16,7 @@ import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
+import { recordRunVacuousCases } from "./case-can-fail.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
@@ -973,6 +974,9 @@ export const startSuiteRunWithRecorder = async ({
   let suiteDefaultPredicates:
     | import("@/shared/eval-matching").Predicate[]
     | undefined;
+  // The live suite, when read here; the can-it-fail lint below needs its
+  // judge setting.
+  let liveSuite: unknown;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -983,6 +987,7 @@ export const startSuiteRunWithRecorder = async ({
       const suite = await convexClient.query("testSuites:getTestSuite" as any, {
         suiteId,
       });
+      liveSuite = suite;
       const defaults = (suite as { defaultPredicates?: unknown } | undefined)
         ?.defaultPredicates;
       suiteDefaultPredicates =
@@ -1007,6 +1012,27 @@ export const startSuiteRunWithRecorder = async ({
         | import("@/shared/eval-matching").Predicate[]
         | undefined,
     });
+
+  // Cases whose effective checks all pass on an empty answer, recorded on the
+  // run for run insights. Never changes grading; never fails the start. A run
+  // that froze its defaults has not read the suite yet; without it the lint
+  // records nothing.
+  if (Array.isArray(snapshotDefaults)) {
+    try {
+      liveSuite = await convexClient.query("testSuites:getTestSuite" as any, {
+        suiteId,
+      });
+    } catch {
+      liveSuite = undefined;
+    }
+  }
+  await recordRunVacuousCases(
+    convexClient,
+    runId,
+    testCases,
+    resolvePredicatesForCase,
+    liveSuite,
+  );
 
   // Build config from test cases for backward compatibility
   const config = {

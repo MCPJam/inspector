@@ -193,6 +193,11 @@ import {
 } from "../../services/evals/run-status.js";
 import { shouldSkipExecution } from "../shared/evals.js";
 import {
+  caseAuthoringWarnings,
+  withCaseAuthoringWarnings,
+  type CaseAuthoringWarning,
+} from "../../services/evals/case-can-fail.js";
+import {
   createEvalCasesInBatches,
   withMintedCaseIds,
   MAX_CASES_PER_BATCH,
@@ -3410,11 +3415,20 @@ function parseCreateCasesBatchBody(
  * policy role), then the field spellings are renamed on top — one pipeline,
  * in that order. `vocabularyOf` has already appended `Vary`.
  */
-function caseResource(c: Context, doc: CaseDoc, status = 200) {
+function caseResource(
+  c: Context,
+  doc: CaseDoc,
+  status = 200,
+  /** Authoring notes for a create/update response; never on a read. */
+  warnings: CaseAuthoringWarning[] = [],
+) {
   const vocabulary = vocabularyOf(c);
   return v1Resource(
     c,
-    projectCaseDto(toCaseDto(doc, vocabulary), vocabulary),
+    {
+      ...projectCaseDto(toCaseDto(doc, vocabulary), vocabulary),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    },
     status,
   );
 }
@@ -9386,7 +9400,8 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     String(committed.testCaseId),
     "authorized",
   );
-  return caseResource(c, created, 201);
+  // A case that can never fail is saved, and said so — never refused.
+  return caseResource(c, created, 201, caseAuthoringWarnings(created, suite));
 });
 
 // POST /v1/projects/:projectId/eval-suites/:suiteId/cases/batch
@@ -9501,6 +9516,8 @@ evals.post(
     } catch (error) {
       throw translateConvexWriteError(error);
     }
+    // A case that can never fail is saved, and said so in its own entry.
+    result = withCaseAuthoringWarnings(result, items, suite);
 
     // Committed entries are summaries, not full case DTOs. Reading back 100
     // cases to echo bodies the caller just sent is 100 queries for data it
@@ -9607,7 +9624,17 @@ evals.patch(
         "authorized",
       );
     }
-    return caseResource(c, updated);
+    // The suite's default checks decide whether the edited case can fail.
+    // Best effort: an unreadable suite costs the warning, never the update.
+    const suiteForWarnings = await createConvexReadClient(token)
+      .query("testSuites:getTestSuite" as any, { suiteId })
+      .catch(() => null);
+    return caseResource(
+      c,
+      updated,
+      200,
+      caseAuthoringWarnings(updated, suiteForWarnings),
+    );
   },
 );
 

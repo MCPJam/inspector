@@ -16,9 +16,11 @@ vi.mock("../route-helpers.js", async () => {
 });
 
 import {
+  buildTraceRepairVerificationOverrides,
   captureTraceRepairJobToolSnapshot,
   failedQuickIterationId,
   isTraceRepairGenerationFailureSession,
+  resolveTraceRepairCandidatePredicates,
   parseRefinementCaseConcurrency,
   resolveTraceRepairFailureStopReason,
   runWithConcurrencyLimit,
@@ -295,5 +297,137 @@ describe("captureTraceRepairJobToolSnapshot", () => {
     ).resolves.toBeUndefined();
 
     expect(mutationMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildTraceRepairVerificationOverrides", () => {
+  // The stored case the candidate would replace has different steps, a
+  // rubric and its own match options. None of it may leak into verification.
+  const candidate = {
+    query: "List open tickets, then summarize them.",
+    steps: [
+      {
+        id: "p1",
+        kind: "prompt",
+        prompt: "List open tickets, then summarize them.",
+      },
+      {
+        id: "a1",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "list_tickets",
+          args: { args: { status: "open" } },
+        },
+      },
+    ],
+    expectedToolCalls: [
+      { toolName: "list_tickets", arguments: { status: "open" } },
+    ],
+    isNegativeTest: false,
+    predicates: {
+      mode: "replace",
+      list: [{ type: "responseContains", needle: "ticket" }],
+    },
+  };
+
+  it("sends the candidate's full execution/grading snapshot", () => {
+    const overrides = buildTraceRepairVerificationOverrides({
+      candidateSnapshot: candidate,
+      query: candidate.query,
+      effectivePredicates: [{ type: "responseContains", needle: "ticket" }],
+    });
+    expect(overrides).toEqual({
+      query: candidate.query,
+      steps: candidate.steps,
+      expectedToolCalls: candidate.expectedToolCalls,
+      isNegativeTest: false,
+      predicates: candidate.predicates,
+      successPredicates: [{ type: "responseContains", needle: "ticket" }],
+      runs: 1,
+      // Removals are sent as removals, never left to fall back to the
+      // stored case's rubric / match options / config.
+      expectedOutput: "",
+      matchOptions: {},
+      advancedConfig: {},
+    });
+  });
+
+  it("keeps an empty resolved check list explicit (no fallback to stored checks)", () => {
+    const overrides = buildTraceRepairVerificationOverrides({
+      candidateSnapshot: { ...candidate, predicates: undefined },
+      query: candidate.query,
+      effectivePredicates: [],
+    });
+    expect(overrides.successPredicates).toEqual([]);
+    expect(overrides).not.toHaveProperty("predicates");
+  });
+
+  it("rewords the first prompt for a paraphrase run", () => {
+    const overrides = buildTraceRepairVerificationOverrides({
+      candidateSnapshot: candidate,
+      query: "Which tickets are open? Summarize.",
+      effectivePredicates: [],
+    });
+    expect(overrides.steps?.[0]).toMatchObject({
+      kind: "prompt",
+      prompt: "Which tickets are open? Summarize.",
+    });
+    expect(overrides.steps?.[1]).toEqual(candidate.steps[1]);
+  });
+
+  it("runs a step-less candidate's own legacy fields, never the stored steps", () => {
+    const overrides = buildTraceRepairVerificationOverrides({
+      candidateSnapshot: {
+        query: "List open tickets.",
+        expectedToolCalls: [
+          { toolName: "list_tickets", arguments: { status: "open" } },
+        ],
+      },
+      query: "List open tickets.",
+      effectivePredicates: [],
+    });
+    expect(overrides.steps?.[0]).toMatchObject({
+      kind: "prompt",
+      prompt: "List open tickets.",
+    });
+    expect(
+      overrides.steps?.some(
+        (step) =>
+          step.kind === "assert" &&
+          (step as { assertion?: { toolName?: string } }).assertion
+            ?.toolName === "list_tickets",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("resolveTraceRepairCandidatePredicates", () => {
+  it("resolves suite defaults against the candidate's envelope", () => {
+    expect(
+      resolveTraceRepairCandidatePredicates(
+        {
+          predicates: {
+            mode: "extend",
+            list: [{ type: "finalAssistantMessageNonEmpty" }],
+          },
+        },
+        undefined,
+        { defaultPredicates: [{ type: "noToolErrors" }] },
+      ),
+    ).toEqual([
+      { type: "noToolErrors" },
+      { type: "finalAssistantMessageNonEmpty" },
+    ]);
+  });
+
+  it("uses the case row's legacy list when the candidate has no envelope", () => {
+    expect(
+      resolveTraceRepairCandidatePredicates(
+        {},
+        { successPredicates: [{ type: "responseContains", needle: "x" }] },
+        { defaultPredicates: [{ type: "noToolErrors" }] },
+      ),
+    ).toEqual([{ type: "responseContains", needle: "x" }]);
   });
 });

@@ -2276,6 +2276,13 @@ export interface PlatformEvalCaseBase {
   source?: CaseSource;
   createdAt: number | null;
   updatedAt: number | null;
+  /**
+   * Authoring notes on a create or update response — never on a read. They
+   * block nothing: the case was saved. `case_passes_with_empty_answer` means
+   * every gating check passes when the agent does nothing, so the case can
+   * never fail.
+   */
+  warnings?: PlatformEvalCaseWarning[];
 }
 
 /** A case as vocabulary 1 (no header) returns it. */

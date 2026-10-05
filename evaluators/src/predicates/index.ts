@@ -12,6 +12,15 @@ export {
   finalMessageEndsWithQuestion,
   type TurnChecksInput,
 } from "./evaluate.js";
+export {
+  checkCaseCanFail,
+  buildEmptyAnswerTranscript,
+  CASE_CAN_FAIL_UNFED_KINDS,
+  REQUIRED_GOAL_COMPLETION_JUDGE_LABEL,
+  type CaseCanFailOptions,
+  type CaseCanFailResult,
+  type CaseCanFailVerdict,
+} from "./case-can-fail.js";
 export { argMatch } from "./argMatcher.js";
 export {
   buildIterationTranscript,

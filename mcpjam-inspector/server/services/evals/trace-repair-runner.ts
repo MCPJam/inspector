@@ -4,8 +4,22 @@ import {
   type RefinementVerificationPlanStep,
 } from "../../../shared/refinement-verification-plan.js";
 import { isHostedCatalogModel } from "../hosted-model-catalog.js";
-import { runEvalTestCaseWithManager } from "../../routes/shared/evals.js";
+import {
+  runEvalTestCaseWithManager,
+  type RunTestCaseRequest,
+} from "../../routes/shared/evals.js";
 import { logger } from "../../utils/logger.js";
+import type { Predicate } from "@mcpjam/sdk/predicates";
+import {
+  normalizeSteps,
+  promptTurnsToSteps,
+  resolvePromptTurns,
+  type TestStep,
+} from "@/shared/steps";
+import {
+  checkStoredCaseCanFail,
+  resolveEffectiveCasePredicates,
+} from "./case-can-fail.js";
 import {
   buildReplayManager,
   captureToolSnapshotForEvalAuthoring,
@@ -253,6 +267,100 @@ export function resolveTraceRepairFailureStopReason(
     return "stopped_generation_error";
   }
   return "stopped_no_progress";
+}
+
+type CandidateSnapshot = Record<string, any>;
+
+/**
+ * The checks a candidate is graded by — during verification AND once
+ * promoted — resolved exactly as live grading resolves them: the suite's
+ * default checks against the CANDIDATE's envelope, with the case row's legacy
+ * list and suppressed standard checks (fields a candidate never carries).
+ *
+ * @internal exported for unit tests
+ */
+export function resolveTraceRepairCandidatePredicates(
+  candidateSnapshot: CandidateSnapshot,
+  caseRow: Record<string, any> | undefined,
+  suite: unknown,
+): Predicate[] {
+  return (
+    resolveEffectiveCasePredicates(
+      {
+        predicates: candidateSnapshot.predicates,
+        successPredicates: caseRow?.successPredicates,
+        suppressedSuiteStandardCheckIds:
+          caseRow?.suppressedSuiteStandardCheckIds,
+      },
+      suite,
+    ) ?? []
+  );
+}
+
+/** The candidate's steps with its first prompt reworded (paraphrase runs). */
+function withFirstPrompt(steps: TestStep[], prompt: string): TestStep[] {
+  let replaced = false;
+  return steps.map((step) => {
+    if (replaced || step.kind !== "prompt") return step;
+    replaced = true;
+    return step.prompt === prompt ? step : { ...step, prompt };
+  });
+}
+
+/**
+ * The single-case overrides that make a verification run execute and grade
+ * THE CANDIDATE — not the stored case it would replace.
+ *
+ * Every execution/grading field is sent, removals included: an override left
+ * `undefined` falls back to the stored case's value, which would verify the
+ * old case under the new name. So an absent rubric is `""`, absent match
+ * options are `{}`, a candidate without `steps` runs the turns its own legacy
+ * fields describe, and the checks are the exact resolved list
+ * (`successPredicates` outranks every other source).
+ *
+ * @internal exported for unit tests
+ */
+export function buildTraceRepairVerificationOverrides(args: {
+  candidateSnapshot: CandidateSnapshot;
+  /** The plan step's query (the paraphrase step rewords the prompt). */
+  query: string;
+  effectivePredicates: Predicate[];
+}): NonNullable<RunTestCaseRequest["testCaseOverrides"]> {
+  const candidate = args.candidateSnapshot;
+  const expectedOutput =
+    typeof candidate.expectedOutput === "string"
+      ? candidate.expectedOutput
+      : "";
+  const authoredSteps = normalizeSteps(candidate.steps);
+  const steps =
+    authoredSteps.length > 0
+      ? authoredSteps
+      : promptTurnsToSteps(
+          resolvePromptTurns({
+            promptTurns: candidate.promptTurns,
+            advancedConfig: candidate.advancedConfig,
+            query: typeof candidate.query === "string" ? candidate.query : "",
+            expectedToolCalls: candidate.expectedToolCalls,
+            expectedOutput: expectedOutput || undefined,
+          }),
+        );
+  return {
+    query: args.query,
+    expectedToolCalls: Array.isArray(candidate.expectedToolCalls)
+      ? candidate.expectedToolCalls
+      : [],
+    isNegativeTest: candidate.isNegativeTest === true,
+    expectedOutput,
+    steps:
+      args.query === candidate.query
+        ? steps
+        : withFirstPrompt(steps, args.query),
+    advancedConfig: candidate.advancedConfig ?? {},
+    matchOptions: candidate.matchOptions ?? {},
+    ...(candidate.predicates ? { predicates: candidate.predicates } : {}),
+    successPredicates: args.effectivePredicates,
+    runs: 1,
+  } as NonNullable<RunTestCaseRequest["testCaseOverrides"]>;
 }
 
 export type TraceRepairRunnerParams = {
@@ -638,20 +746,70 @@ export async function runTraceRepairJob(
           );
           const sess = pack?.session;
           const candSnap = pack?.candidateSnapshot;
+          if (!candSnap || !sess?.candidateRevisionId) {
+            // Nothing to verify: running the stored case under the candidate's
+            // name is exactly what verification must never do.
+            logger.warn("[trace-repair] Verification pack has no candidate", {
+              jobId,
+              sessionId,
+            });
+            attemptSigs.push("");
+            continue;
+          }
+          // What the runner attests on every verification run it records, so
+          // promotion is tied to THIS candidate (absent on an older backend).
+          const candidateAttestation =
+            typeof pack?.candidateSnapshotHash === "string"
+              ? {
+                  candidateRevisionId: sess.candidateRevisionId as string,
+                  candidateSnapshotHash: pack.candidateSnapshotHash as string,
+                }
+              : {};
+          const candidatePredicates = resolveTraceRepairCandidatePredicates(
+            candSnap,
+            testCases.find(
+              (tc: { _id?: unknown }) =>
+                String(tc._id) === String(fc.testCaseId),
+            ),
+            suite,
+          );
+
+          // A rewrite that passes on an empty answer can never fail: refuse it
+          // the way the generation guardrails refuse a candidate, instead of
+          // verifying (and promoting) a case that cannot regress.
+          const canFail = checkStoredCaseCanFail(candSnap, suite, {
+            effectivePredicates: candidatePredicates,
+          });
+          if (canFail.vacuous) {
+            try {
+              await convexClient.mutation(
+                "testSuites:recordTraceRepairCandidateRejection" as any,
+                {
+                  sessionId,
+                  candidateRevisionId: sess.candidateRevisionId,
+                  caseCanFail: { verdict: "vacuous", reason: canFail.reason },
+                },
+              );
+            } catch (error) {
+              logger.warn("[trace-repair] Failed to record vacuous rejection", {
+                jobId,
+                sessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            attemptSigs.push("");
+            continue;
+          }
 
           const repIt = iterationByCaseKey.get(fc.caseKey);
           const fullPlan = buildRefinementVerificationPlan({
-            session: sess
-              ? {
-                  candidateParaphraseQuery: sess.candidateParaphraseQuery,
-                  candidateSnapshot: candSnap
-                    ? {
-                        query: candSnap.query,
-                        models: candSnap.models ?? [],
-                      }
-                    : null,
-                }
-              : null,
+            session: {
+              candidateParaphraseQuery: sess.candidateParaphraseQuery,
+              candidateSnapshot: {
+                query: candSnap.query,
+                models: candSnap.models ?? [],
+              },
+            },
             representativeIteration: repIt
               ? { testCaseSnapshot: repIt.testCaseSnapshot ?? undefined }
               : null,
@@ -706,14 +864,13 @@ export async function runTraceRepairJob(
                   modelApiKeys: mergedApiKeys,
                   orgModelConfig,
                   convexAuthToken,
-                  testCaseOverrides: {
+                  // The full candidate snapshot, removals included — never
+                  // the stored case's fields under the candidate's query.
+                  testCaseOverrides: buildTraceRepairVerificationOverrides({
+                    candidateSnapshot: candSnap,
                     query: step.query,
-                    expectedToolCalls:
-                      (candSnap?.expectedToolCalls as unknown[] | undefined) ??
-                      [],
-                    isNegativeTest: Boolean(candSnap?.isNegativeTest),
-                    runs: 1,
-                  },
+                    effectivePredicates: candidatePredicates,
+                  }),
                 },
                 { skipLastMessageRunUpdate: true },
               );
@@ -728,6 +885,7 @@ export async function runTraceRepairJob(
                   sessionId,
                   label: step.label,
                   iterationId,
+                  ...candidateAttestation,
                 },
               );
             } finally {

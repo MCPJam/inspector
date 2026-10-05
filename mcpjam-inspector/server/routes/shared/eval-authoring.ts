@@ -18,6 +18,7 @@ import {
 } from "../web/errors.js";
 import { mapWebBoundaryError } from "../web/boundary-error.js";
 import { createEvalCasesInBatches } from "./eval-case-batch.js";
+import { withCaseAuthoringWarnings } from "../../services/evals/case-can-fail.js";
 import {
   selectSuiteEnvironmentId,
   fetchSuiteRunServerSelection,
@@ -311,13 +312,17 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
         caseId: request.caseId,
       },
     );
-    return c.json(
-      await createEvalCasesInBatches(convex, {
-        suiteId: request.suiteId,
-        duplicatePolicy: "block",
-        cases: [item],
-      }),
-    );
+    const committed = await createEvalCasesInBatches(convex, {
+      suiteId: request.suiteId,
+      duplicatePolicy: "block",
+      cases: [item],
+    });
+    // A committed case that can never fail is saved, and said so in its
+    // `warnings`. Best effort: an unreadable suite costs only the warning.
+    const suite = await convex
+      .query("testSuites:getTestSuite" as any, { suiteId: request.suiteId })
+      .catch(() => null);
+    return c.json(withCaseAuthoringWarnings(committed, [item], suite));
   } catch (error) {
     // The boundary mapper, so a backend `ConvexError({ code, message })` (a
     // stale draft's CONFLICT) answers its own status instead of a 500.

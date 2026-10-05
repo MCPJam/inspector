@@ -327,6 +327,61 @@ describe("startSuiteRunWithRecorder", () => {
     expect(result.config.environment).toEqual(snapshotEnvironment);
   });
 
+  it("records at start which cases pass on an empty answer, judged by the suite", async () => {
+    const start = {
+      runId: "run-1",
+      testCases: [
+        {
+          _id: "tc-vacuous",
+          title: "Summarize",
+          steps: [{ id: "p1", kind: "prompt", prompt: "Summarize." }],
+          models: [{ model: "gpt-5", provider: "openai" }],
+        },
+        {
+          _id: "tc-real",
+          title: "List",
+          query: "List tickets.",
+          expectedToolCalls: [{ toolName: "list_tickets", arguments: {} }],
+          models: [{ model: "gpt-5", provider: "openai" }],
+        },
+      ],
+    };
+    const startWith = async (suite: Record<string, unknown>) => {
+      const mutation = vi.fn(async (name: string) =>
+        name === "testSuites:startTestSuiteRun" ? start : undefined,
+      );
+      const query = vi.fn(async () => suite);
+      await startSuiteRunWithRecorder({
+        convexClient: {
+          mutation,
+          query,
+          action: vi.fn().mockResolvedValue(undefined),
+        } as any,
+        suiteId: "suite-1",
+      });
+      return mutation.mock.calls.filter(
+        ([name]) => name === "testSuites:recordRunVacuousCases",
+      );
+    };
+
+    // The suite's only default check passes when the agent does nothing.
+    expect(
+      await startWith({ defaultPredicates: [{ type: "noToolErrors" }] }),
+    ).toEqual([
+      [
+        "testSuites:recordRunVacuousCases",
+        { runId: "run-1", testCaseIds: ["tc-vacuous"] },
+      ],
+    ]);
+    // A required judge grades every case: none is recorded.
+    expect(
+      await startWith({
+        defaultPredicates: [{ type: "noToolErrors" }],
+        judgeConfig: { goalCompletion: { enabled: true, role: "required" } },
+      }),
+    ).toEqual([]);
+  });
+
   it("forwards all three environment preconditions to the start mutation", async () => {
     // The revision alone does not make an environment launch atomic: the env
     // pins a hostId (not a config) and optionally an attachment, both

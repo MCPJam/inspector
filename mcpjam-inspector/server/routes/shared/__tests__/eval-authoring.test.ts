@@ -62,6 +62,76 @@ beforeEach(() => {
   mocks.selectEnvironment.mockReset();
   mocks.selectEnvironment.mockResolvedValue(undefined);
 });
+describe("authoring commit", () => {
+  function commitMutations() {
+    mocks.mutation.mockImplementation(async (name: string) => {
+      if (name === "evalAuthoringState:prepareCommit") {
+        return {
+          title: "Summarize",
+          steps: [{ id: "p1", kind: "prompt", prompt: "Summarize." }],
+        };
+      }
+      if (name === "testSuites:createTestCases") {
+        return {
+          caseUpsert: {
+            committed: [
+              {
+                index: 0,
+                title: "Summarize",
+                testCaseId: "tc1",
+                replayed: false,
+              },
+            ],
+            failed: [],
+          },
+          warnings: [],
+        };
+      }
+      return null;
+    });
+  }
+  const commit = () =>
+    post(
+      JSON.stringify({
+        operation: "commit",
+        suiteId: "s",
+        draftId: "d",
+        revision: 0,
+        caseId: "c",
+      }),
+    );
+
+  it("returns the can-it-fail warning on a committed case without blocking it", async () => {
+    // The suite's only default check passes on an empty answer, and the
+    // committed draft expects no tool call: it can never fail.
+    mocks.query.mockImplementation(async (name: string) =>
+      name === "testSuites:getTestSuite"
+        ? { defaultPredicates: [{ type: "noToolErrors" }] }
+        : {},
+    );
+    commitMutations();
+    const response = await commit();
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as any;
+    expect(body.committed[0]).toMatchObject({
+      testCaseId: "tc1",
+      warnings: [{ code: "case_passes_with_empty_answer" }],
+    });
+  });
+
+  it("commits without a warning when the suite cannot be read", async () => {
+    mocks.query.mockImplementation(async (name: string) => {
+      if (name === "testSuites:getTestSuite") throw new Error("gone");
+      return {};
+    });
+    commitMutations();
+    const response = await commit();
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as any;
+    expect(body.committed[0].testCaseId).toBe("tc1");
+    expect(body.committed[0].warnings).toBeUndefined();
+  });
+});
 describe("authoring adapter", () => {
   it.each([
     "{",

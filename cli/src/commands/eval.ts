@@ -119,6 +119,7 @@ import type {
   SuiteGateReportV1,
 } from "@mcpjam/sdk/contract";
 import { isPlatformApiError, PlatformApiError } from "@mcpjam/sdk/platform";
+import { withCaseWarningsOnStderr } from "../lib/eval-case-warnings.js";
 import { HOST_TEMPLATE_IDS } from "@mcpjam/sdk/host-config/templates";
 import type {
   PlatformApiClient,
@@ -6170,7 +6171,17 @@ export function registerEvalCommands(program: Command): void {
         createEvalCaseOperation,
         buildCaseInput(options, { requireCase: false })
       );
-      await executeOp(createEvalCaseOperation, input, options, command);
+      // A saved case can still carry warnings (e.g. it can never fail):
+      // stderr in human output, the result's `warnings` in JSON.
+      await executeOp(
+        withCaseWarningsOnStderr(
+          createEvalCaseOperation,
+          getGlobalOptions(command).format
+        ),
+        input,
+        options,
+        command
+      );
     });
 
   cases
@@ -6187,7 +6198,15 @@ export function registerEvalCommands(program: Command): void {
         updateEvalCaseOperation,
         buildCaseInput(options, { requireCase: true })
       );
-      await executeOp(updateEvalCaseOperation, input, options, command);
+      await executeOp(
+        withCaseWarningsOnStderr(
+          updateEvalCaseOperation,
+          getGlobalOptions(command).format
+        ),
+        input,
+        options,
+        command
+      );
     });
 
   cases
