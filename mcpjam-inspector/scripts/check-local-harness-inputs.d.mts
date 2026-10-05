@@ -10,6 +10,14 @@ export interface PackInputIo {
   loadHarness(
     harnessId: string,
   ): Promise<Pick<PackHarnessRecipe, "recipeSources" | "dependencyRoots" | "loadRecipe">>;
+  /** What is installed at a lockfile key. Only `installedClosureDrift` uses it. */
+  inspectInstalled?(
+    key: string,
+  ): Promise<
+    | { kind: "absent" }
+    | { kind: "linked"; target?: string }
+    | { kind: "installed"; version: string }
+  >;
 }
 export declare const defaultPackInputIo: PackInputIo;
 export declare function packDependencyClosure(
@@ -24,6 +32,8 @@ export declare function computePackInputs(io?: PackInputIo): Promise<{
   schema: 2;
   harnesses: Record<string, { fingerprint: string; inputs: Record<string, string> }>;
 }>;
+/** Why the installed tree cannot produce a trustworthy snapshot; [] when it can. */
+export declare function installedClosureDrift(io?: PackInputIo): Promise<string[]>;
 export declare function readRecordedPackInputs(
   harnessId: string,
 ): Promise<{ fingerprint: string; inputs: Record<string, string> } | null>;

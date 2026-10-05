@@ -143,6 +143,17 @@ inputs, regenerate and review the snapshot:
 node scripts/check-local-harness-inputs.mjs --write
 ```
 
+`--write` refuses to record a snapshot from a tree that is not the locked one:
+a package in any harness's dependency closure installed at a version other than
+`package-lock.json` names (or missing, unless the lock marks it optional), or
+any `@ai-sdk/harness*` package or closure package that is a symlink. Those are
+the two ways a wrong snapshot has been written; run `npm ci --legacy-peer-deps`
+from the repo root and unlink any linked adapter first.
+
+PR builds verify the snapshot but not the published packs: packs publish only
+from main, so `check-local-harness-release.mjs --assets` runs before a release
+is versioned (`prepare-release.yml`) and before it publishes (`release.yml`).
+
 To publish, dispatch `local-harness-pack.yml` with `harness` and a new
 `pack_version`, then record the digests for that harness only:
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   computePackInputs,
   defaultPackInputIo,
+  installedClosureDrift,
   SHARED_PACK_INPUTS,
   type PackInputIo,
 } from "../../../../../scripts/check-local-harness-inputs.mjs";
@@ -157,6 +158,97 @@ describe("per-harness pack fingerprints", () => {
     );
     expect(betaLockfile.alpha).toBe(before.alpha);
     expect(betaLockfile.beta).not.toBe(before.beta);
+  });
+});
+
+describe("refusing to snapshot a tree that is not the locked one", () => {
+  type Installed = Awaited<ReturnType<NonNullable<PackInputIo["inspectInstalled"]>>>;
+
+  /** The fake repo above, with an installed tree that defaults to the lock. */
+  function installedIo(
+    installed: Record<string, Installed> = {},
+    scopes: Record<string, string[]> = {},
+  ): PackInputIo {
+    const base = fakeIo({
+      lock: {
+        "": { name: "root" },
+        "node_modules/alpha-dep": { version: "1.0.0", integrity: "sha512-a" },
+        "node_modules/beta-dep": {
+          version: "2.0.0",
+          integrity: "sha512-b",
+          dependencies: { "beta-child": "1" },
+          optionalDependencies: { "beta-linux": "1" },
+        },
+        "node_modules/beta-child": { version: "3.0.0", integrity: "sha512-c" },
+        "node_modules/beta-linux": { version: "3.0.0", integrity: "sha512-l", optional: true },
+        "node_modules/@ai-sdk/harness-alpha": { version: "1.0.0", integrity: "sha512-h" },
+      },
+    });
+    const lock = {
+      "node_modules/alpha-dep": "1.0.0",
+      "node_modules/beta-dep": "2.0.0",
+      "node_modules/beta-child": "3.0.0",
+      "node_modules/@ai-sdk/harness-alpha": "1.0.0",
+    } as Record<string, string>;
+    return {
+      ...base,
+      readdir: async (path) => {
+        if (path in scopes) return scopes[path]!;
+        if (path.endsWith("@ai-sdk")) throw new Error("ENOENT");
+        return base.readdir(path);
+      },
+      inspectInstalled: async (key) =>
+        installed[key] ??
+        (key in lock ? { kind: "installed", version: lock[key]! } : { kind: "absent" }),
+    };
+  }
+
+  it("accepts an install that matches the lock, with another platform's optional package absent", async () => {
+    expect(await installedClosureDrift(installedIo())).toEqual([]);
+  });
+
+  it("refuses a closure package installed at a version the lock does not name (#5823)", async () => {
+    const drift = await installedClosureDrift(
+      installedIo({ "node_modules/beta-child": { kind: "installed", version: "2.9.0" } }),
+    );
+    expect(drift).toHaveLength(1);
+    expect(drift[0]).toMatch(/beta-child is installed at 2\.9\.0 but package-lock\.json has 3\.0\.0/);
+  });
+
+  it("refuses a required closure package that is not installed", async () => {
+    const drift = await installedClosureDrift(
+      installedIo({ "node_modules/alpha-dep": { kind: "absent" } }),
+    );
+    expect(drift).toEqual([expect.stringMatching(/alpha-dep is not installed/)]);
+  });
+
+  it("refuses a linked closure package", async () => {
+    const drift = await installedClosureDrift(
+      installedIo({ "node_modules/beta-dep": { kind: "linked", target: "/src/beta" } }),
+    );
+    expect(drift).toEqual([expect.stringMatching(/beta-dep is a symlink \(to \/src\/beta\)/)]);
+  });
+
+  it("refuses a linked @ai-sdk/harness* package even outside every closure", async () => {
+    const drift = await installedClosureDrift(
+      installedIo(
+        {
+          "mcpjam-inspector/node_modules/@ai-sdk/harness-dev": { kind: "linked", target: "/src/harness" },
+        },
+        {
+          "node_modules/@ai-sdk": ["harness-alpha", "provider"],
+          "mcpjam-inspector/node_modules/@ai-sdk": ["harness-dev"],
+        },
+      ),
+    );
+    expect(drift).toEqual([
+      expect.stringMatching(/mcpjam-inspector\/node_modules\/@ai-sdk\/harness-dev is a symlink/),
+    ]);
+  });
+
+  it("passes on this checkout's real install", async () => {
+    // CI installs with `npm ci`, so the tree is the locked one by construction.
+    expect(await installedClosureDrift(defaultPackInputIo)).toEqual([]);
   });
 });
 

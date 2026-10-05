@@ -5,11 +5,21 @@ import { describe, expect, it } from "vitest";
 const workflow = (name: string) => parse(readFileSync(new URL(`../../../../../../.github/workflows/${name}.yml`, import.meta.url), "utf8"));
 
 describe("pack release boundaries", () => {
-  it("checks the published manifest in the required build and before versioning a release", () => {
-    for (const name of ["lint", "prepare-release"]) {
-      const steps = Object.values(workflow(name).jobs).flatMap((job: any) => job.steps ?? []);
-      expect(steps.some((step: any) => /check-local-harness-release\.mjs --assets/.test(step.run ?? ""))).toBe(true);
+  const runsAssetCheck = (name: string) =>
+    Object.values(workflow(name).jobs)
+      .flatMap((job: any) => job.steps ?? [])
+      .some((step: any) => /check-local-harness-release\.mjs[^\n]*--assets/.test(step.run ?? ""));
+
+  it("checks the published manifest before versioning a release and before publishing it", () => {
+    for (const name of ["prepare-release", "release"]) {
+      expect(runsAssetCheck(name), name).toBe(true);
     }
+  });
+
+  it("does not check published assets on a PR, where they cannot exist yet", () => {
+    // Packs publish only from main, so a PR changing a pack input could never
+    // pass this and had to merge with the required check red.
+    expect(runsAssetCheck("lint")).toBe(false);
   });
 
   it("never gives the vendor build job the signing environment or secret", () => {

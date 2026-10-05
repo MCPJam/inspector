@@ -77,8 +77,12 @@ jobs:
       - name: Verify local runtime input fingerprint
         run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
 
-      - name: Verify pinned runtime remains publishable
-        run: node mcpjam-inspector/scripts/check-local-harness-release.mjs --assets
+      # No `check-local-harness-release.mjs --assets` here. It compares the
+      # PUBLISHED packs with this checkout, and packs publish only from main,
+      # so a PR that changes a pack input could never pass it and had to merge
+      # red. It also downloaded every pinned pack (~1.1 GB) on every PR. The
+      # published-asset check runs where it can be satisfied: before a release
+      # is versioned (prepare-release.yml) and before it publishes (release.yml).
 
       - name: Typecheck releasable packages
         run: npm run typecheck

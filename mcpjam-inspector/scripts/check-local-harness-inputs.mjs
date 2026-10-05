@@ -27,8 +27,8 @@
  * record byte-identical.
  */
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
-import { resolve, relative, dirname } from 'node:path';
+import { readFile, writeFile, readdir, lstat, realpath } from 'node:fs/promises';
+import { resolve, relative, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { listPackHarnessIds, loadPackHarness, packRecipeModulePath } from './local-harness-pack-harnesses.mjs';
 
@@ -85,6 +85,31 @@ export function packDependencyClosure(packages, roots = ['@ai-sdk/harness-claude
 
 const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 
+/**
+ * What is actually installed at a lockfile key (`node_modules/x`,
+ * `mcpjam-inspector/node_modules/@scope/y`): `absent`, `linked` (the path, or
+ * a directory above it inside the repo, is a symlink — `npm link`, a `file:`
+ * dependency), or the installed `package.json` version.
+ */
+async function inspectInstalledPackage(key) {
+  const full = resolve(root, key);
+  try {
+    await lstat(full);
+  } catch {
+    return { kind: 'absent' };
+  }
+  // realpath, not lstat of the leaf: a linked `@ai-sdk` scope directory
+  // redirects every package under it while each leaf is a plain directory.
+  const [real, realRoot] = await Promise.all([realpath(full), realpath(root)]);
+  if (real !== join(realRoot, relative(root, full))) return { kind: 'linked', target: real };
+  try {
+    const pkg = JSON.parse(await readFile(join(full, 'package.json'), 'utf8'));
+    return { kind: 'installed', version: String(pkg.version ?? '') };
+  } catch {
+    return { kind: 'installed', version: '' };
+  }
+}
+
 /** The real filesystem and repo, for everything but tests. */
 export const defaultPackInputIo = {
   readFile: path => readFile(resolve(root, path)),
@@ -92,7 +117,55 @@ export const defaultPackInputIo = {
   readLockPackages: async () => JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8')).packages,
   listHarnesses: async () => listPackHarnessIds(),
   loadHarness: harnessId => loadPackHarness(harnessId),
+  inspectInstalled: key => inspectInstalledPackage(key),
 };
+
+/** Where an `@ai-sdk/harness*` package can be installed in this workspace. */
+const HARNESS_SCOPE_DIRS = ['node_modules/@ai-sdk', 'mcpjam-inspector/node_modules/@ai-sdk'];
+
+/**
+ * Why the installed tree cannot produce a trustworthy snapshot, or [] when it
+ * can.
+ *
+ * The recipe's EMITTED bytes — the Claude Code bridge, the Codex bundle — are
+ * read from whatever `node_modules` holds, not from the lockfile. A snapshot
+ * written from a stale install (#5823) or a linked adapter checkout records
+ * hashes no clean CI install will ever reproduce, and the pack built from the
+ * lock then fails the release check it was supposed to satisfy. These are the
+ * two ways that has actually happened, so `--write` refuses both:
+ *
+ *   - a package in any harness's locked closure is installed at a different
+ *     version than `package-lock.json` names (or not installed at all, unless
+ *     the lock marks it optional — a platform package for another OS);
+ *   - an `@ai-sdk/harness*` package, or anything in a closure, is a symlink.
+ */
+export async function installedClosureDrift(io = defaultPackInputIo) {
+  const packages = await io.readLockPackages();
+  const keys = new Set();
+  for (const harnessId of await io.listHarnesses()) {
+    const recipe = await io.loadHarness(harnessId);
+    for (const key of Object.keys(packDependencyClosure(packages, recipe.dependencyRoots))) keys.add(key);
+  }
+  for (const dir of HARNESS_SCOPE_DIRS) {
+    const names = await io.readdir(dir).catch(() => []);
+    for (const name of names) if (String(name).startsWith('harness')) keys.add(`${dir}/${name}`);
+  }
+  const problems = [];
+  for (const key of [...keys].sort()) {
+    const installed = await io.inspectInstalled(key);
+    const locked = packages[key];
+    if (installed.kind === 'linked') {
+      problems.push(`${key} is a symlink (to ${installed.target ?? 'elsewhere'}); a linked package's bytes are not the locked ones`);
+    } else if (installed.kind === 'absent') {
+      if (locked !== undefined && locked.optional !== true) problems.push(`${key} is not installed (package-lock.json has ${locked.version})`);
+    } else if (locked === undefined) {
+      problems.push(`${key} is installed (${installed.version}) but package-lock.json has no entry for it`);
+    } else if (installed.version !== locked.version) {
+      problems.push(`${key} is installed at ${installed.version || '(unknown)'} but package-lock.json has ${locked.version}`);
+    }
+  }
+  return problems;
+}
 
 /** Shared inputs, with the Go sources the Job Object launcher is built from. */
 async function sharedInputPaths(io) {
@@ -145,8 +218,21 @@ export async function readRecordedPackInputs(harnessId) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  const write = process.argv.includes('--write');
+  if (write) {
+    const drift = await installedClosureDrift();
+    if (drift.length > 0) {
+      process.stderr.write(
+        'Refusing to write pack-inputs.generated.json: the installed tree is not the locked one, so the ' +
+          'recorded recipe hashes would not match a clean install.\n' +
+          drift.map(problem => `  - ${problem}\n`).join('') +
+          'Run `npm ci --legacy-peer-deps` from the repo root (and unlink any linked adapter), then retry.\n',
+      );
+      process.exit(1);
+    }
+  }
   const result = `${JSON.stringify(await computePackInputs(), null, 2)}\n`;
-  if (process.argv.includes('--write')) await writeFile(output, result);
+  if (write) await writeFile(output, result);
   else {
     const recorded = await readFile(output, 'utf8').catch(() => '');
     if (recorded !== result) throw new Error('Pack inputs changed. Run node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --write and review which harness fingerprints moved; publish a new pack for each before recording its digests.');
