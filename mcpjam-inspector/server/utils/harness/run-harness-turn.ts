@@ -2028,7 +2028,7 @@ export async function runHarnessTurn(
           approvalContinuation = {
             generation,
             approvalIds: approvalContinuations.map((continuation) =>
-              String(continuation.approvalResponse.approvalId),
+              String(continuation.approvalId),
             ),
           };
         }
@@ -2389,10 +2389,16 @@ export async function runHarnessTurn(
       // uses the same one).
       // (permissionMode was computed above, before the runtime fingerprint.)
 
-      // The adapter maps the host modelId to the harness's native model and
-      // constructs it (for Claude Code: the gateway `creator/model` id becomes a
-      // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
-      // do zero inference). Returns the HarnessAgent boundary type directly.
+      // The adapter maps the host modelId to the harness's native model (for
+      // Claude Code: the gateway `creator/model` id becomes a CLI-native alias
+      // `sonnet|opus|haiku`; the raw gateway id makes the CLI do zero
+      // inference). That model rides on `HarnessAgent` below, not on
+      // `createHarness`: the AI SDK adapters removed their deprecated
+      // construction-time `model` setting (harness 1.0.108), so a model handed
+      // only to the adapter would silently run the runtime's default model.
+      const nativeModel = harnessAdapter.toNativeModel?.(modelId);
+
+      // `createHarness` returns the HarnessAgent boundary type directly.
       //
       // Narrowed on the delivery MECHANISM rather than called through the
       // union: a `session-config` adapter's `createHarness` REQUIRES `mcpJson`
@@ -2426,7 +2432,7 @@ export async function runHarnessTurn(
         if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
           harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
             logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
-          }, new Set(approvalContinuations.map(continuation => continuation.approvalResponse.approvalId)));
+          }, new Set(approvalContinuations.map(continuation => continuation.approvalId)));
         }
       }
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
@@ -2511,6 +2517,7 @@ export async function runHarnessTurn(
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
+        ...(nativeModel ? { model: nativeModel } : {}),
         ...(localPrepared
           ? { sandboxConfig: { workDir: localPrepared.sandboxWorkDir } }
           : {}),
@@ -2841,7 +2848,7 @@ export async function runHarnessTurn(
         throw new Error("The session for this approval is no longer available; the pending action will not run. Start a new turn.");
       }
       for (const continuation of approvalContinuations) {
-        logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalResponse.approvalId, approvalDecision: "user" });
+        logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalId, approvalDecision: "user" });
       }
       let session: Awaited<ReturnType<typeof agent.createSession>>;
       if (resumeFromApproval && resumable) {
@@ -3013,9 +3020,20 @@ export async function runHarnessTurn(
         // or trips the duplicate-decision guard. `streamText` closes denied
         // calls the same way for the emulated engine.
         if (resumeFromApproval) {
+          // A continuation is the bare approval response; the call it answers
+          // is named by the earlier `tool-approval-request` part.
+          const toolCallIdByApprovalId = new Map<string, string>();
+          for (const message of messages) {
+            if (message.role !== "assistant" || typeof message.content === "string") continue;
+            for (const part of message.content) {
+              if (part.type === "tool-approval-request") {
+                toolCallIdByApprovalId.set(part.approvalId, part.toolCallId);
+              }
+            }
+          }
           for (const continuation of approvalContinuations) {
-            const toolCallId = continuation.toolCall?.toolCallId;
-            if (continuation.approvalResponse?.approved === false && toolCallId) {
+            const toolCallId = toolCallIdByApprovalId.get(continuation.approvalId);
+            if (continuation.approved === false && toolCallId) {
               emitToolOutputDenied(writer, { toolCallId });
             }
           }

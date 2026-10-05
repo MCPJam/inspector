@@ -270,7 +270,6 @@ describe("harness registry", () => {
     // omitted the override the wire id would not be the model asked for.
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "claude-fable-5",
         auth: {
           AI_GATEWAY_API_KEY: "test",
           AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
@@ -309,7 +308,6 @@ describe("harness registry", () => {
     // that moves an anchor leaves the bridge untyped at runtime (safe) but
     // fails HERE, loudly.
     const harness = createHostedClaudeCodeHarness({
-      model: "claude-sonnet-4-5",
       auth: {
         AI_GATEWAY_API_KEY: "test",
         AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
@@ -606,7 +604,6 @@ const toUserMessage = (options) => ({
   it("patches the installed Claude Code bridge bootstrap", async () => {
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "haiku",
         // Stable's environment auth arm (the canary `gateway` object is gone).
         auth: {
           AI_GATEWAY_API_KEY: "test",
@@ -641,7 +638,6 @@ const toUserMessage = (options) => ({
 
   it("enforces strict MCP config on previously patched bridges and remains idempotent", async () => {
     const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
-      model: "haiku",
       auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
     }) as any);
     const bootstrap = (await original.getBootstrap?.())!;
@@ -677,7 +673,6 @@ const toUserMessage = (options) => ({
   it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "haiku",
         auth: {
           AI_GATEWAY_API_KEY: "test",
           AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
