@@ -96,6 +96,7 @@ export const MCP_CHECK_IDS = [
   // are safe to call. Skips with an explanation when no fixture is supplied.
   "modern-tool-output-schema-conformant",
   "modern-logs-require-log-level",
+  "modern-log-level-filtering",
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
   "modern-subscription-graceful-close",
@@ -257,6 +258,7 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-resource-read-no-empty-contents": ["modern"],
   "modern-tool-output-schema-conformant": ["modern"],
   "modern-logs-require-log-level": ["modern"],
+  "modern-log-level-filtering": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
   "modern-subscription-graceful-close": ["modern"],
@@ -310,14 +312,18 @@ export interface MCPConformanceConfig {
     arguments?: Record<string, unknown>;
   };
   /**
-   * Tool the `modern-logs-require-log-level` check may call to make the server
-   * actually EMIT log records. Opt-in for the same reason as
+   * Tool the modern logging checks may call to make the server emit log
+   * records. Supplying it asserts that it produces logs when requested,
+   * including warning-or-higher logs for `modern-log-level-filtering`.
+   * It must be safe to call repeatedly: the checks call it without a level,
+   * with debug, and with warning when both checks are selected.
+   * Opt-in for the same reason as
    * {@link MCPConformanceConfig.inputRequiredProbe}: no metadata says which
    * tool logs, and the check must not fire arbitrary side-effecting tools.
    *
-   * Absent ⇒ the check still asserts the MUST against an ordinary request
-   * (any log record on a level-less request is a violation), but it cannot
-   * show the server logs at all, so the evidence is weaker.
+   * Absent ⇒ the checks report could-not-run, except that unrequested logs
+   * observed on an ordinary request still fail the opt-in check. A successful
+   * supplied tool call that produces no requested logs fails rather than skips.
    */
   logProbe?: {
     toolName: string;
