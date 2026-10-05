@@ -262,11 +262,20 @@ export async function resolveLocalHarnessAvailability(
           // reading of the same table. They differ only under the documented
           // development override — and there they differed fatally: a locally
           // built pack installed and then could never run.
-          manifest: manifestWithExpectedBundleDigest(
-            compatibility.manifest,
-            compatibility.manifest.harnessId,
-            localPackTarget(platform),
-          ),
+          //
+          // EXCEPT for a caller that supplied its own manifests (the
+          // conformance runners): their manifest names the pack under test,
+          // and replacing its digest with the pinned one made a pack built
+          // from changed inputs — exactly what a pack-input change or a new
+          // pack's pre-pin conformance has to run — unrunnable.
+          manifest:
+            query.manifests !== undefined
+              ? compatibility.manifest
+              : manifestWithExpectedBundleDigest(
+                  compatibility.manifest,
+                  compatibility.manifest.harnessId,
+                  localPackTarget(platform),
+                ),
           runtimeRoot: query.runtimeRoot,
           platform: currentLocalPlatform(platform)!,
         })

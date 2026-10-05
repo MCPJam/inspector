@@ -272,6 +272,11 @@ jobs:
           jq -nc --arg k "$PLATFORM_KEY" --arg d "$digest" '{($k): $d}' \
             > "$RUNNER_TEMP/pack-out/digest.json"
 
+      # The installer is server code, and resolving a runtime writes the
+      # Inspector layer from a generated module. Nothing of it reaches the pack.
+      - name: Generate the Inspector layer module
+        run: node mcpjam-inspector/scripts/bundle-local-harness-layer.mjs
+
       # Proves the pack the installer would download actually verifies, before
       # it is published. A pack that fails here never reaches a release.
       - name: Verify the pack installs from its own archive

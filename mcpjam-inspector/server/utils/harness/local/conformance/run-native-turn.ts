@@ -1,5 +1,5 @@
 import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
-import { withLocalPackBootstrap } from "../pack-bootstrap.js";
+import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { localDiskResumeState } from "../resume-state.js";
 /**
  * TURN CONFORMANCE RUNNER — drives the merged local-harness foundation end to end on this
@@ -542,7 +542,7 @@ async function main() {
     },
     startupTimeoutMs: 90_000,
   });
-  const bootstrapped = await withLocalPackBootstrap(harness, plan.runtime.rootPath);
+  const bootstrapped = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
     harness: (MODE === "attended-off" ? withAutoApprovedNativeRequests(bootstrapped) : bootstrapped) as any, sandbox: provider, permissionMode: "allow-reads", instructions: "You are running a conformance check.",
     // The model rides on the agent: the adapter no longer reads one at

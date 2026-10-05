@@ -629,6 +629,38 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await session.stop();
   });
 
+  it("refuses a runtime that sits inside a directory the session may write", async () => {
+    // The agent could rewrite the bytes it is launched from between the
+    // pre-exec re-hash and the exec, so this is a refusal, not a warning.
+    const manifest = LOCAL_HARNESS_MANIFEST["claude-code"];
+    const digest = await computeTreeDigest(bundleRoot);
+    const provider = createSupervisedLocalHarnessProvider({
+      harnessId: "claude-code",
+      manifest,
+      runtime: {
+        runtimeId: "rt_inside",
+        source: "managed-bundle",
+        harnessId: "claude-code",
+        platform: "linux",
+        adapterVersion: manifest.adapterVersion,
+        rootPath: join(workspace, "vendored-pack"),
+        launcherPath: join(workspace, "vendored-pack", "launcher.mjs"),
+        digest,
+        vendorPackages: {},
+      },
+      supervisor: supervisor(),
+      launcher: resolveNodeLauncher({ bundledNodePath: process.execPath }),
+      workspacePath: workspace,
+      workspaceGrantId: "ws_test",
+      sessionStateDir: sessionStateDirFor(localHarnessStateRoot(), "inside-runtime"),
+      targetKind: "local-native",
+      bridgePort: await reserveLoopbackPort(),
+    });
+    await expect(provider.createSession({ sessionId: "inside-runtime" })).rejects.toThrow(
+      /inside a directory this session may write/,
+    );
+  });
+
   it("resolves a port only on loopback, and only one it leased", async () => {
     const sup = supervisor();
     const { session, bridgePort } = await buildSession("ports", sup);

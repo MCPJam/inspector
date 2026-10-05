@@ -1,6 +1,9 @@
 /**
  * Types for the release check's one exported reader.
  *
+ * Reads the generated JSON record (`runtime-compat.generated.json`) for pins
+ * and conformance, and `compatibility.ts` for the reviewed native policy.
+ *
  * The script is plain ESM — it runs under a bare Node in the release workflow,
  * with no TypeScript in the loop — so it carries a hand-written declaration
  * rather than being compiled. Only `readCommittedFacts` is exported;
@@ -14,9 +17,11 @@ export declare function readCommittedFacts(): Promise<
     {
       /** `EXPECTED_PACK_VERSIONS[harnessId]`, or "" when no pack build has been recorded. */
       expectedVersion: string;
-      /** `PACK_RECORDS[harnessId]`, keyed by pack target. */
+      /** `PACK_RECORDS[harnessId]` (the DESIRED pack), keyed by pack target. */
       records: Record<string, { packVersion: string; treeDigest: string }>;
-      /** The harness manifest's `lifecycleConformanceVersion`. */
+      /** `PERMITTED_PACK_RECORDS[harnessId]`, keyed by pack target. */
+      permitted: Record<string, { packVersion: string; treeDigest: string }>;
+      /** The recorded conformance stamp (`lifecycleConformanceVersion`). */
       conformance: string;
       /** The harness manifest's `nativePlatforms`. */
       nativePlatforms: string[];

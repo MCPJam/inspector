@@ -1,4 +1,4 @@
-vi.mock("../local/pack-bootstrap.js", () => ({ withLocalPackBootstrap: async (adapter: unknown) => adapter }));
+vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
 const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
 vi.mock("../local/approval-park.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../local/approval-park.js")>()),

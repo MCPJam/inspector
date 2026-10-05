@@ -67,7 +67,11 @@ native.**
 | `compatibility.ts`       | The Inspector-owned manifest. An adapter cannot self-assert local compatibility                                              |
 | `argv-policy.ts`         | Structural + capability checks on every argument the supervisor passes                                                       |
 | `command-translation.ts` | The closed adapter command grammar → structured operations. **No shell, ever**                                               |
-| `runtime-identity.ts`    | Managed-bundle tree digests, system-install discovery, and re-verification before spawn                                      |
+| `runtime-identity.ts`    | Managed-bundle resolution, the launch identity (`runtimeId`), system-install discovery, and re-verification before spawn     |
+| `tree-digest.ts`         | The canonical tree digest every pack and layer is identified by. A SHARED pack input, so it holds nothing else               |
+| `runtime-compat.ts`      | The generated record of which packs this build may select: desired and at most one permitted previous, per harness and target |
+| `inspector-layer.ts`     | The Inspector layer: MCPJam's bridge and launcher, written content-addressed and read-only, re-hashed before every exec       |
+| `layer/launcher.mjs`     | The layer's launcher: loopback listeners, and module resolution limited to the layer, builtins and the verified pack           |
 | `grants.ts`              | Workspace grants (opaque ids → canonical paths) and the local harness consent capability                                     |
 | `local-state-lock.ts`    | Reusable cross-process lock for security-sensitive local state mutations                                                     |
 | `runtime-install.ts`     | Downloads, verifies (signature → archive hash → tree digest), extracts, activates. Only from an explicit gesture              |
@@ -353,6 +357,50 @@ container whose PID 1 is an application rather than a real init — which is whe
 CI runs — orphaned zombies persist indefinitely. `process-identity.ts` reads the
 state field and treats `Z`/`X`/`x` as gone, on both the Linux `/proc` path and
 the macOS `ps` path, and both parsers are pure and directly tested.
+
+## Dependable updates: the runtime contract
+
+A local runtime is two things from two places, and nothing else ever runs.
+These five rules are what make an update routine rather than a risk; each is
+enforced in code, not by convention.
+
+1. **Two trusted sources only.** Every executable component comes either from a
+   verified vendor pack (signature, archive sha and tree digest —
+   `runtime-install.ts`, re-checked by `revalidateRuntime`) or from the Inspector
+   distribution itself (the layer, `inspector-layer.ts`, re-hashed against the
+   digest compiled into the build before every exec). `resolveManagedBundle`
+   takes the launcher from the layer and `bin/node` (and the Windows job
+   launcher) from the pack, and `layer/launcher.mjs` refuses any module
+   resolution from the layer that lands outside the layer, Node's builtins or
+   the pack.
+2. **One identity per launch.** The launch identity is vendor pack digest +
+   Inspector layer digest + platform + policy version, folded into `runtimeId`
+   (`runtime-identity.ts`), plus the permission profile, which the grant binds
+   beside it (`HarnessGrantBinding` in `grants.ts`). Grants bind to the whole
+   tuple; a mismatch is refused (`availability.ts`), as `consent-context-changed`
+   already is in the local-harness route.
+3. **Updates never widen permissions.** A pack or bridge update changes
+   `runtimeId`, and a fresh grant is minted under the existing durable
+   authorization at the SAME profile (`readiness.ts`). A change to policy version
+   or profile needs consent through its own path (`authorization.ts` keys durable
+   authorization by policy version).
+4. **Runtimes are selected per Inspector build.** A build runs only its
+   *desired* pack, or the one *permitted previous* pack it was tested against
+   (`runtime-compat.generated.json`, generated, never hand-typed). A release
+   proves it: conformance evidence for the build's layer digest × each pack it
+   may select × every advertised target (`check-local-harness-release.mjs
+   --evidence`), attested as `runtime-contract.json`.
+5. **No automatic replay.** Falling back to a previous runtime changes which
+   runtime NEW sessions select. It never replays a turn that may already have
+   changed files.
+
+The layer lives at `<runtimeRoot>/inspector-layer/<digest>/`: content-addressed
+(two Inspector versions with different bridges get two directories), read-only,
+outside every session root, and named in every session's denied roots
+(`session-env.ts`). A session whose runtime sits inside a directory it may write
+is refused (`supervised-provider.ts`). A layer that does not match when it is
+ENSURED is rewritten from the compiled bytes; one that changed between
+resolution and exec is REFUSED — never healed under a session.
 
 ## Invariants, and where each is enforced
 

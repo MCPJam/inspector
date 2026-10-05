@@ -110,21 +110,42 @@ browser/desktop/bash tools are refused for local Codex, as for Claude Code.
 
 ## Runtime distribution
 
-The runtime is versioned independently of Inspector, and each harness's pack is
-versioned independently of every other harness's. Each supported OS/architecture
-gets its own archive, manifest, signature and digest under an immutable release
-tag: `local-harness-pack-v<version>` for Claude Code (the names its first pack
-shipped under) and `local-harness-pack-<harness>-v<version>` for every other
-harness, whose asset names also carry the harness id. Inspector downloads and
-verifies the expected pack for each harness (`EXPECTED_PACK_VERSIONS` in
-`pack-digests.generated.ts`); it never builds or installs a vendor runtime from
-a mutable dependency range on the user's machine. Electron reads the bootstrap
-from the verified pack and does not require an unpackaged `node_modules` tree.
+A local runtime has two halves, and they come from the only two trusted sources
+(invariant 1 in `server/utils/harness/local/README.md`):
+
+- **The vendor pack**: `bin/node`, the vendor CLI/SDK and its platform binary,
+  and on Windows the Job Object launcher. It is versioned independently of
+  Inspector, each harness's pack independently of every other harness's, and
+  each supported OS/architecture gets its own archive, manifest, signature and
+  digest under an immutable release tag: `local-harness-pack-v<version>` for
+  Claude Code (the names its first pack shipped under) and
+  `local-harness-pack-<harness>-v<version>` for every other harness.
+- **The Inspector layer**: MCPJam's bridge, its loopback launcher and (for Codex)
+  the host-tools MCP entrypoint. It ships inside the Inspector, is written at run
+  time to a content-addressed, read-only directory
+  (`<runtime root>/inspector-layer/<digest>/`), sits outside every session root
+  and in every session's denied roots, and is re-hashed against the digest
+  compiled into the Inspector before every exec. A bridge change is therefore an
+  ordinary Inspector change: it needs no new pack.
+
+Codex is split this way today; Claude Code's bridge still ships inside its pack
+until its own split lands.
 
 Each harness's pack installs under its own root (Claude Code keeps
 `<runtime>/<target>/<version>`; other harnesses use
 `<runtime>/<harness>/<target>/<version>`), so packs with the same version number
 never replace each other.
+
+Which packs a build may run is the generated record
+`server/utils/harness/local/runtime-compat.generated.json`: per harness and pack
+target, the **desired** pack and at most one **permitted** previous pack the
+build was tested against, plus the conformance stamp the pin rests on (it
+replaces the `lifecycleConformanceVersion` that used to be typed into
+`compatibility.ts`). `pack-digests.generated.ts` and `compatibility.ts` read it.
+Inspector never builds or installs a vendor runtime from a mutable dependency
+range on the user's machine. Electron reads the bootstrap from the verified pack
+(Claude Code) or from the Inspector layer (Codex), and does not require an
+unpackaged `node_modules` tree.
 
 Toolchain versions are pinned in `scripts/local-harness-toolchain.json`.
 `scripts/check-local-harness-inputs.mjs` fingerprints each harness's pack
@@ -133,11 +154,11 @@ separately. A harness's fingerprint covers its recipe module
 declares, the locked dependency closure of its declared roots (not unrelated
 lockfile entries) and the recipe bytes it emits — plus the shared build
 machinery every pack uses (the build script, the recipe loader, the workflow,
-toolchain pins, the loopback launcher, the tree-digest module and the Job Object
-launcher). A change only one harness reads moves only that harness's
-fingerprint; a change to shared machinery moves every harness's, and each
-affected pack must then be re-published. After intentionally changing those
-inputs, regenerate and review the snapshot:
+toolchain pins, the tree-digest module and the Job Object launcher). A change
+only one harness reads moves only that harness's fingerprint; a change to
+shared machinery moves every harness's, and each affected pack must then be
+re-published. After intentionally changing those inputs, regenerate and review
+the snapshot:
 
 ```sh
 node scripts/check-local-harness-inputs.mjs --write
@@ -155,12 +176,18 @@ from main, so `check-local-harness-release.mjs --assets` runs before a release
 is versioned (`prepare-release.yml`) and before it publishes (`release.yml`).
 
 To publish, dispatch `local-harness-pack.yml` with `harness` and a new
-`pack_version`, then record the digests for that harness only:
+`pack_version`, then pin it for that harness only:
 
 ```sh
 node scripts/write-pack-digests.mjs --harness <harness> --version <version> \
-  --digests '<flat digest map printed by the workflow>'
+  --digests '<flat digest map printed by the workflow>' \
+  [--permit-previous] [--conformance <stamp> --evidence <run url>]
 ```
+
+`--permit-previous` keeps the pack being replaced selectable as the one
+permitted previous pack; pass it only once conformance has passed for this
+build's layer against both packs. Without it the previous pack is no longer
+selectable.
 
 Publish a new pack rather than replacing an existing tag. The pack workflow
 requires main, a new independent semver and the signing secret from the
@@ -172,34 +199,34 @@ existing tag or release. The repository ruleset template in
 `.github/rulesets/local-harness-pack-tags.json` additionally protects tags from
 update/deletion when applied by repository administration.
 
-Inspector release preflight checks the already-published signed assets against
-its committed expected digests and fingerprint, for exactly the targets each
-harness advertises (`nativeTargets`, when a harness certifies per architecture),
-and checks that each published pack carries the bridge this checkout builds. It
-does not rebuild the runtime. An Inspector version bump alone does not require a
-new runtime version.
+Inspector release preflight checks the already-published signed assets of
+every pack the build may select — desired and permitted — against the committed
+record, for exactly the targets each harness advertises (`nativeTargets`, when
+a harness certifies per architecture), and checks that the desired pack was
+built from this checkout's reviewed inputs. It does not rebuild the runtime, and
+it no longer compares a bridge inside the pack: the bridge is the Inspector
+layer. An Inspector version bump alone does not require a new runtime version.
 
 To install a pack from the command line, `mcpjam-inspector harness install`
 (or `status`) takes `--harness <id>`; without it, it means Claude Code.
 
 ### Codex pack
 
-Codex's pack (`--harness codex`) carries MCPJam's app-server bridge and
-host-tool MCP relay — rebuilt from source by the recipe, never taken from a
-generated file on disk — and the pinned `@openai/codex` wrapper plus exactly
-one platform package, every file of which is checked against
-`scripts/local-harness-pack-recipes/codex-vendor-checksums.json` (recorded
-from the published tarballs). A pack is built on the target it is for.
+Codex's pack (`--harness codex`) carries vendor bytes only: the pinned
+`@openai/codex` wrapper plus exactly one platform package, every file of which
+is checked against `scripts/local-harness-pack-recipes/codex-vendor-checksums.json`
+(recorded from the published tarballs), `bin/node`, and on Windows the Job
+Object launcher. A pack is built on the target it is for.
 
-**Any change under `server/utils/harness/codex-appserver/` that reaches the
-bridge bundle needs a Codex pack bump, and the data PR recording its digests,
-before it ships to local users.** A local session byte-compares the pack's
-`bridge.mjs` with the bridge the Inspector carries and refuses to start on a
-mismatch, so an unbumped bridge change would fail every local Codex session.
-The fingerprint makes such a change visible (the bridge sources, the bundler,
-the bootstrap package and lockfile, and the `@ai-sdk/harness` and `esbuild`
-closures are all inputs), and release preflight blocks on a published
-`bridgeDigest` that differs from this checkout's.
+MCPJam's app-server bridge and host-tool MCP relay are Codex's Inspector layer:
+bundled from `server/utils/harness/codex-appserver/` with every dependency
+(including `ws`) inlined, written next to the pack at run time, and launched by
+the layer's launcher with the pack's Node. **A change under
+`server/utils/harness/codex-appserver/` needs no Codex pack.** The bridge reads
+Codex from the pack (`--vendor-dir`) and its own MCP entrypoint from the layer
+(`--layer-dir`); a sandbox still passes one `--bootstrap-dir`. Only the vendor
+graph — the bootstrap `package.json` and lockfile that pin `@openai/codex`, and
+the recorded checksums — is a Codex pack input.
 
 ## Validation and activation
 
@@ -208,14 +235,27 @@ Linux arm64/x64, and Windows x64, and Codex's own legs on the four POSIX
 targets (the certified ones block; see the conformance README). It exercises process lifecycle, cancellation,
 workspace access, skills, secrets, selected MCP delivery, exclusion of a real
 planted project MCP server, and resume after Stop. The upstream model is mocked;
-the vendor CLI, bridge and supervisor are real. For release evidence, dispatch
-with `published_pack_version` after committing the reviewed digest records. This
-mode downloads and verifies the signed published archive and runs those exact
+the vendor CLI, bridge and supervisor are real. With `published_pack_version`
+(and `codex_published_pack_version`) it downloads and verifies the signed
+published archive and runs this checkout's Inspector layer against those exact
 bytes instead of a separately built pack.
 
+On a pull request the workflow runs Linux x64 only, against the **pinned**
+published packs: a bridge change is tested with the pack users already have, and
+nothing has to be published for the PR to pass.
+
+Every passing leg writes a conformance evidence record — this commit's layer
+digest × the pack it ran × the target — and uploads it. A release runs the legs
+against every pack it may select (desired, then permitted), and
+`check-local-harness-release.mjs --evidence` refuses the release unless every
+(harness × selected pack × advertised target) is covered at this commit's layer
+digest. It then writes `runtime-contract.json` (the layer digests, the selected
+packs and the run behind each), which the release attests with
+`actions/attest-build-provenance` and attaches to the Inspector release.
+
 Passing unit tests or a local macOS smoke test does not establish support for all
-platforms. The expected pack digest table and lifecycle conformance record remain
-the release gate. An empty table deliberately keeps public installation dark.
+platforms. The compatibility record and the release contract remain the release
+gate. An empty record deliberately keeps public installation dark.
 Activation requires published signed assets, matching committed digests, passing
 platform evidence, the matching backend deployment, and enabling the account
 rollout. Never synthesize conformance evidence or enable the flag to bypass a

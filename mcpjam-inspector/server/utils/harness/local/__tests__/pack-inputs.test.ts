@@ -16,6 +16,8 @@ import {
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
   parsePackTables,
+  parseRuntimeCompat,
+  renderRuntimeCompat,
   rewriteHarnessPackTables,
 } from "../../../../../scripts/local-harness-pack-tables.mjs";
 
@@ -125,8 +127,7 @@ describe("per-harness pack fingerprints", () => {
   it("invalidates every harness on a change to the shared build machinery", async () => {
     const before = await fingerprints(fakeIo());
     for (const shared of [
-      "mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs",
-      "mcpjam-inspector/server/utils/harness/local/runtime-identity.ts",
+      "mcpjam-inspector/server/utils/harness/local/tree-digest.ts",
       "mcpjam-inspector/scripts/local-harness-toolchain.json",
       "mcpjam-inspector/scripts/build-local-harness-pack.mjs",
       ".github/workflows/local-harness-pack.yml",
@@ -267,16 +268,18 @@ describe("the committed fingerprint file", () => {
   });
 });
 
-describe("rewriting one harness's digest entries", () => {
+describe("the runtime compatibility record", () => {
   const source = readFileSync(
-    new URL("../pack-digests.generated.ts", import.meta.url),
+    new URL("../runtime-compat.generated.json", import.meta.url),
     "utf8",
   );
   const digest = `sha256:${"b".repeat(64)}`;
+  const other = `sha256:${"c".repeat(64)}`;
 
   it("is a no-op re-render of the committed file", () => {
     // `--check` compares a re-render against the source, so the canonical form
     // and the committed form must be the same bytes.
+    expect(renderRuntimeCompat(parseRuntimeCompat(source))).toBe(source);
     const state = parsePackTables(source);
     for (const [harnessId, entry] of Object.entries(state)) {
       expect(
@@ -286,33 +289,74 @@ describe("rewriting one harness's digest entries", () => {
   });
 
   it("rewrites the named harness and carries every other one over", () => {
-    const withClaude = rewriteHarnessPackTables(source, "claude-code", "1.0.0", {
+    const withClaude = rewriteHarnessPackTables(source, "claude-code", "9.0.0", {
       "linux-x64": digest,
     });
-    const withBoth = rewriteHarnessPackTables(withClaude, "codex", "1.0.0", {
+    const withBoth = rewriteHarnessPackTables(withClaude, "codex", "9.0.0", {
       "darwin-arm64": digest,
     });
     const state = parsePackTables(withBoth);
-    expect(state["claude-code"]).toEqual({
-      version: "1.0.0",
+    expect(state["claude-code"]).toMatchObject({
+      version: "9.0.0",
       digests: { "linux-x64": digest },
-      records: { "linux-x64": { packVersion: "1.0.0", treeDigest: digest } },
+      records: { "linux-x64": { packVersion: "9.0.0", treeDigest: digest } },
+      permitted: {},
     });
-    expect(state.codex).toEqual({
-      version: "1.0.0",
+    expect(state.codex).toMatchObject({
+      version: "9.0.0",
       digests: { "darwin-arm64": digest },
-      records: { "darwin-arm64": { packVersion: "1.0.0", treeDigest: digest } },
+      permitted: {},
     });
     // Republishing Codex leaves the Claude Code entries byte-identical.
-    const republished = rewriteHarnessPackTables(withBoth, "codex", "1.0.1", {
-      "darwin-arm64": `sha256:${"c".repeat(64)}`,
+    const republished = rewriteHarnessPackTables(withBoth, "codex", "9.0.1", {
+      "darwin-arm64": other,
     });
     expect(parsePackTables(republished)["claude-code"]).toEqual(state["claude-code"]);
   });
 
-  it("refuses a harness the tables do not already carry", () => {
+  it("keeps the replaced pack as the one permitted previous only when asked", () => {
+    const first = rewriteHarnessPackTables(source, "codex", "9.0.0", { "linux-x64": digest });
+    const without = parsePackTables(
+      rewriteHarnessPackTables(first, "codex", "9.0.1", { "linux-x64": other }),
+    ).codex;
+    expect(without.permitted).toEqual({});
+
+    const promoted = rewriteHarnessPackTables(first, "codex", "9.0.1", { "linux-x64": other }, { permitPrevious: true });
+    expect(parsePackTables(promoted).codex.permitted).toEqual({
+      "linux-x64": { packVersion: "9.0.0", treeDigest: digest },
+    });
+    // Idempotent: re-pinning the same desired pack keeps the same previous,
+    // even when the flag is passed again — a re-run of the pin never shifts
+    // the window.
+    expect(
+      rewriteHarnessPackTables(promoted, "codex", "9.0.1", { "linux-x64": other }, { permitPrevious: true }),
+    ).toBe(promoted);
+    // At most ONE previous: the next pin replaces it.
+    const third = `sha256:${"d".repeat(64)}`;
+    const next = rewriteHarnessPackTables(promoted, "codex", "9.0.2", { "linux-x64": third }, { permitPrevious: true });
+    expect(parsePackTables(next).codex.permitted).toEqual({
+      "linux-x64": { packVersion: "9.0.1", treeDigest: other },
+    });
+  });
+
+  it("records the conformance stamp the pin rests on", () => {
+    const next = rewriteHarnessPackTables(source, "codex", "9.0.0", { "linux-x64": digest }, {
+      conformance: "published-codex-9.0.0-abcdef123456",
+      evidence: "https://github.com/MCPJam/inspector/actions/runs/1",
+    });
+    expect(parsePackTables(next).codex).toMatchObject({
+      conformance: "published-codex-9.0.0-abcdef123456",
+      evidence: "https://github.com/MCPJam/inspector/actions/runs/1",
+    });
+  });
+
+  it("refuses a harness the record does not already carry, and a malformed record", () => {
     expect(() =>
       rewriteHarnessPackTables(source, "gemini", "1.0.0", { "linux-x64": digest }),
     ).toThrow(/no gemini entry/);
+    const self = JSON.parse(source);
+    self.harnesses.codex.targets["linux-x64"].permitted = { ...self.harnesses.codex.targets["linux-x64"].desired };
+    expect(() => parseRuntimeCompat(JSON.stringify(self))).toThrow(/permits the desired pack/);
+    expect(() => parseRuntimeCompat(JSON.stringify({ schema: 2, harnesses: {} }))).toThrow(/unknown schema/);
   });
 });

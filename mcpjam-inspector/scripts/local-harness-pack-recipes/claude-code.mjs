@@ -29,12 +29,20 @@ import { join, relative, sep } from "node:path";
 export const harnessId = "claude-code";
 
 /**
+ * Claude Code's bridge still ships INSIDE its pack, so the pack build copies
+ * the loopback launcher in beside it (see `build-local-harness-pack.mjs`).
+ */
+export const packLauncher = true;
+
+/**
  * Repo-relative sources whose bytes shape this recipe. The recipe's EMITTED
  * bytes are fingerprinted too; these are listed so a change to the code that
  * produces them is visible in the input diff rather than only in its output.
  */
 export const recipeSources = [
   "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts",
+  // Copied into this pack (`packLauncher`), so an input of THIS pack only.
+  "mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs",
 ];
 
 /**

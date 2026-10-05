@@ -19,13 +19,16 @@
 // defaults to `claude-code`, the pack this script built before it was split.
 //
 // ── What goes in (every harness) ─────────────────────────────────────────
-//   - the harness recipe, byte-identical to the one used at runtime;
-//   - `launcher.mjs`, Inspector-owned, which forces the bridge's listeners
-//     onto loopback and then imports the bridge;
-//   - a hoisted, symlink-free `node_modules` with no `.bin` shims;
+//   - the vendor graph the harness recipe installs, as a hoisted, symlink-free
+//     `node_modules` with no `.bin` shims;
 //   - `bin/node`, an official nodejs.org build, because Electron's `RunAsNode`
 //     fuse is off and the npx server's own Node is outside the digest;
 //   - on Windows, the Job Object launcher.
+//
+// MCPJam's own code — the bridge and its loopback launcher — is the Inspector
+// layer, shipped with the Inspector (`server/utils/harness/local/inspector-layer.ts`)
+// rather than in a pack. A recipe that still ships its bridge in the pack
+// (`packLauncher = true`) also gets `launcher.mjs` copied in here.
 //
 // ── What comes out ───────────────────────────────────────────────────────
 //   <stem>.tar.gz, <stem>.tar.gz.sha256, <stem>.manifest.json (+ .sig),
@@ -481,6 +484,10 @@ async function main() {
   //    harness's frozen dependency graph installed into it. Hoisted: the
   //    verified tree refuses pnpm's default symlink layout.
   let bridgeDigest;
+  // Taken right after the install, while the recipe's `package.json` is still
+  // there to describe the graph: a vendor-only recipe removes its install
+  // manifests afterwards, and cyclonedx cannot read a tree without one.
+  let sbom = null;
   try {
     ({ bridgeDigest } = await recipe.stageRecipe(packRoot, () => {
       assertPnpmVersion();
@@ -495,6 +502,15 @@ async function main() {
         ],
         { cwd: packRoot, stdio: "inherit", env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.includes("SIGNING_KEY"))) },
       );
+      try {
+        sbom = execFileSync(
+          "npx",
+          ["--yes", "@cyclonedx/cyclonedx-npm", "--output-format", "JSON", "--output-file", "-"],
+          { cwd: packRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
+        );
+      } catch {
+        sbom = null;
+      }
     }));
   } catch (error) {
     fail(error.stack ?? error.message);
@@ -504,12 +520,16 @@ async function main() {
   const adapterVersion = recipe.adapterVersion();
   const packVersion = String(args["pack-version"] ?? adapterVersion);
 
-  // 2. The Inspector-owned loopback launcher, from the repo (digest-covered,
-  //    reviewed in a diff like any other source file).
-  copyFileSync(
-    join(inspectorRoot, "server/utils/harness/local/pack/launcher.mjs"),
-    join(packRoot, "launcher.mjs"),
-  );
+  // 2. A recipe whose bridge still ships in its pack also needs the
+  //    Inspector-owned loopback launcher beside it (digest-covered, reviewed in
+  //    a diff like any other source file). Every other harness's launcher is
+  //    the Inspector layer's and stays out of the pack.
+  if (recipe.packLauncher === true) {
+    copyFileSync(
+      join(inspectorRoot, "server/utils/harness/local/pack/launcher.mjs"),
+      join(packRoot, "launcher.mjs"),
+    );
+  }
 
   // 3. Verify the vendor binary, then prune. `.bin` shims are symlinks and
   //    nothing in the pack invokes them; what else a harness drops is its
@@ -586,7 +606,9 @@ async function main() {
     platform: platformKey,
     nodeVersion: node.version,
     treeDigest: digest,
-    bridgeDigest,
+    // Only for a pack that still carries its harness's bridge. A layer-split
+    // pack carries no bridge, and the release gate no longer compares one.
+    ...(typeof bridgeDigest === "string" ? { bridgeDigest } : {}),
     files,
     bytes,
     vendorPackages,
@@ -712,13 +734,10 @@ async function main() {
     );
   }
 
-  // An SBOM and a license listing, from the graph that is actually in the pack.
+  // An SBOM of the installed graph (taken before a recipe pruned what the pack
+  // does not ship), or a license listing of the tree as shipped.
   try {
-    const sbom = execFileSync(
-      "npx",
-      ["--yes", "@cyclonedx/cyclonedx-npm", "--output-format", "JSON", "--output-file", "-"],
-      { cwd: packRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-    );
+    if (sbom === null) throw new Error("no SBOM");
     writeFileSync(join(outRoot, `${stem}.sbom.json`), sbom);
   } catch {
     // A missing SBOM must not fail the build; the license listing below is the

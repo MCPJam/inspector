@@ -31,4 +31,41 @@ describe("pack release boundaries", () => {
     expect(jobs.publish.needs).toContain("sign");
     expect(jobs.publish.steps.find((step: any) => step.uses?.startsWith("actions/download-artifact")).with.name).toBe("signed-local-harness-pack");
   });
+
+  it("ships a runtime contract proven by THIS commit's layer against every selected pack", () => {
+    const { jobs } = workflow("release");
+    // Evidence for the desired packs and, when the record permits one, the
+    // previous ones — both from the conformance workflow, on the release commit.
+    expect(jobs["local-harness-evidence"].uses).toBe("./.github/workflows/local-harness-conformance.yml");
+    expect(jobs["local-harness-evidence-permitted"].uses).toBe("./.github/workflows/local-harness-conformance.yml");
+    expect(jobs["local-harness-evidence-permitted"].with.harnesses).toContain("permitted_harnesses");
+    const contract = jobs["local-harness-contract"];
+    const runs = contract.steps.map((step: any) => step.run ?? "").join("\n");
+    expect(runs).toMatch(/check-local-harness-release\.mjs[\s\S]*--evidence[\s\S]*--contract/);
+    expect(contract.steps.some((step: any) => String(step.uses).startsWith("actions/attest-build-provenance"))).toBe(true);
+    expect(contract.permissions).toMatchObject({ "id-token": "write", attestations: "write" });
+    // No contract, no release: the artifact gate requires it, and the
+    // published release carries it.
+    expect(jobs["artifact-gate"].needs).toContain("local-harness-contract");
+    const finalizeFiles = jobs.finalize.steps
+      .filter((step: any) => step.with?.files)
+      .map((step: any) => step.with.files)
+      .join("\n");
+    expect(finalizeFiles).toContain("runtime-contract");
+  });
+
+  it("records conformance evidence in every leg, and plans PR legs against the pinned packs", () => {
+    const { jobs } = workflow("local-harness-conformance");
+    expect(jobs.plan.steps.some((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""))).toBe(true);
+    for (const name of ["scenarios", "windows", "codex-scenarios"]) {
+      const steps = jobs[name].steps;
+      expect(steps.some((step: any) => /write-conformance-evidence\.mjs/.test(step.run ?? "")), name).toBe(true);
+      expect(
+        steps.some((step: any) => String(step.with?.name ?? "").startsWith("conformance-evidence-")),
+        name,
+      ).toBe(true);
+      expect(jobs[name].needs, name).toContain("plan");
+    }
+  });
 });
+

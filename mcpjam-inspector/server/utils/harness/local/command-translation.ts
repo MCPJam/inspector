@@ -121,8 +121,18 @@ export interface CommandTranslationContext {
    * verified managed bundle.
    */
   adapterBootstrapDir: string;
-  /** Verified, read-only managed runtime bundle root that stands in for it. */
+  /** Verified, read-only managed runtime bundle root that stands in for it —
+   *  the VENDOR half of the runtime. */
   managedBundleRoot: string;
+  /**
+   * The verified Inspector layer — the half of the runtime that is MCPJam's
+   * own code — when this harness's bridge comes from one. Bootstrap files the
+   * layer holds (`layerFiles`) resolve here instead of into the pack, and
+   * Codex's `--bootstrap-dir` becomes a vendor path plus this layer path.
+   */
+  layerRoot?: string;
+  /** Relative names of the files `layerRoot` holds. */
+  layerFiles?: readonly string[];
   /**
    * The pinned adapter's declared bootstrap files, relative to
    * `adapterBootstrapDir`. Straight from the manifest — an adapter cannot
@@ -138,15 +148,13 @@ export interface CommandTranslationContext {
   /** Absolute path to the Node launcher shipped/verified with the bundle. */
   nodeExecutable: string;
   /**
-   * The script the bridge launch actually runs, when the pack ships a launcher
-   * wrapper in front of the verbatim `bridge.mjs`.
+   * The script the bridge launch actually runs: the launcher in front of the
+   * bridge (the Inspector layer's, or a legacy pack's).
    *
-   * The adapters' bridges bind `0.0.0.0`, and the provider byte-compares the
-   * recipe's `bridge.mjs` against the pack's copy — so the loopback constraint
-   * cannot be applied by editing the bridge. The pack's `launcher.mjs` forces
-   * every listener onto loopback and then imports the unmodified bridge.
+   * The adapters' bridges bind `0.0.0.0`, so the launcher forces every
+   * listener onto loopback and then imports the bridge beside it.
    *
-   * Optional: a pack without a launcher launches the remapped `bridge.mjs`
+   * Optional: a runtime without a launcher launches the remapped `bridge.mjs`
    * itself, and the exposure probe is what refuses it.
    */
   bridgeLauncherPath?: string;
@@ -426,6 +434,20 @@ export function classifyBootstrapPath(
     };
   }
   if (ctx.adapterBootstrapFiles.includes(relative)) {
+    // An asset the Inspector layer holds is the layer's copy, never the
+    // pack's: the pack is vendor bytes only. `relative` is a declared, flat
+    // file name here, so joining it cannot leave the layer.
+    if (
+      ctx.layerRoot !== undefined &&
+      ctx.layerFiles?.includes(relative) === true &&
+      !relative.includes("/")
+    ) {
+      return {
+        kind: "bundle-asset",
+        bundlePath: `${ctx.layerRoot}${sep}${relative}`,
+        relativePath: relative,
+      };
+    }
     return {
       kind: "bundle-asset",
       bundlePath: remapBootstrapPath(normalized, ctx),
@@ -621,7 +643,10 @@ async function matchBridgeLaunch(
   }
 
   const args: string[] = [
-    ctx.bridgeLauncherPath ?? remapBootstrapPath(expectedBridge, ctx),
+    ctx.bridgeLauncherPath ??
+      (ctx.layerRoot !== undefined
+        ? `${ctx.layerRoot}${sep}bridge.mjs`
+        : remapBootstrapPath(expectedBridge, ctx)),
   ];
   for (let i = 0; i < flags.length; i += 1) {
     const flag = tokens[1 + i * 2]!;
@@ -635,9 +660,11 @@ async function matchBridgeLaunch(
     }
     assertPlainPathOperand(value, command);
     if (flag === "--bootstrap-dir") {
-      // Exactly the adapter's bootstrap directory, remapped onto the verified
-      // bundle: the bridge loads Codex, its MCP entrypoint and `ws` from here,
-      // so it must be the digest-covered tree and nothing else.
+      // Exactly the adapter's bootstrap directory. In a sandbox it holds
+      // everything; locally it is SPLIT along the two trusted sources: the
+      // vendor half (Codex's `bin/codex.js` and platform package) is the
+      // digest-verified pack, and the MCPJam half (the host-tools MCP
+      // entrypoint Codex spawns) is the Inspector layer.
       if (
         posix.normalize(value) !== posix.normalize(ctx.adapterBootstrapDir)
       ) {
@@ -647,7 +674,16 @@ async function matchBridgeLaunch(
           command,
         );
       }
-      args.push(flag, remapBootstrapPath(value, ctx));
+      if (ctx.layerRoot !== undefined) {
+        args.push(
+          "--vendor-dir",
+          remapBootstrapPath(value, ctx),
+          "--layer-dir",
+          ctx.layerRoot,
+        );
+      } else {
+        args.push(flag, remapBootstrapPath(value, ctx));
+      }
       continue;
     }
     if (

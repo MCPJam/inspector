@@ -14,7 +14,10 @@ export interface PackHarnessRecipe {
   recipeSources: readonly string[];
   dependencyRoots: readonly string[];
   loadRecipe(): Promise<{ bootstrapDir: string; files: Array<{ path: string; content: string }> }>;
-  stageRecipe(packRoot: string, install: () => void | Promise<void>): Promise<{ bridgeDigest: string }>;
+  /** True for a recipe whose bridge still ships in its pack; the build then
+   *  copies the loopback launcher in beside it. */
+  packLauncher?: boolean;
+  stageRecipe(packRoot: string, install: () => void | Promise<void>): Promise<{ bridgeDigest?: string }>;
   verifyVendorBinary(packRoot: string, platformKey: string): { path: string; sha256: string; bytes: number };
   prunePack(packRoot: string, platformKey?: string): void;
   vendorPackages(packRoot: string): Record<string, string>;

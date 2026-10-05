@@ -7,6 +7,16 @@
 # standing in only for Anthropic.
 #
 # Five native targets cover platform-specific process supervision and delivery.
+#
+# Every leg that passes writes a CONFORMANCE EVIDENCE record (this commit's
+# Inspector layer digest × the pack it ran × the target) and uploads it as a
+# `conformance-evidence-*` artifact. A release requires one for every pack it
+# may select (`check-local-harness-release.mjs --evidence`).
+#
+# On a pull request only Linux x64 runs, and it runs THIS PR's layer against
+# the PINNED published pack: nothing has to be published for it to pass, so a
+# bridge change can never deadlock on a pack only main can publish. Which legs
+# run where is `scripts/plan-local-harness-conformance.mjs`.
 name: Local harness conformance
 
 on:
@@ -35,6 +45,11 @@ on:
         required: false
         type: string
         default: ""
+      harnesses:
+        description: Comma-separated harnesses whose legs run (default both).
+        required: false
+        type: string
+        default: "claude-code,codex"
     outputs:
       conformance_version:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
@@ -75,7 +90,10 @@ on:
       - ".github/workflows/local-harness-conformance.yml"
 
 concurrency:
-  group: local-harness-conformance-${{ github.ref }}-${{ inputs.published_pack_version }}
+  # The versions AND the harness selection: a release calls this twice (its
+  # desired packs, then its permitted ones), and the two must not cancel each
+  # other.
+  group: local-harness-conformance-${{ github.ref }}-${{ inputs.published_pack_version }}-${{ inputs.codex_published_pack_version }}-${{ inputs.harnesses }}
   cancel-in-progress: true
 
 permissions:
@@ -92,6 +110,27 @@ env:
   MOCK_LATENCY_MS: "50"
 
 jobs:
+  plan:
+    name: plan legs
+    runs-on: ubuntu-latest
+    outputs:
+      claude_pack_version: ${{ steps.plan.outputs.claude_pack_version }}
+      codex_pack_version: ${{ steps.plan.outputs.codex_pack_version }}
+      run_claude: ${{ steps.plan.outputs.run_claude }}
+      run_codex: ${{ steps.plan.outputs.run_codex }}
+      run_windows: ${{ steps.plan.outputs.run_windows }}
+      posix_matrix: ${{ steps.plan.outputs.posix_matrix }}
+      codex_matrix: ${{ steps.plan.outputs.codex_matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          CLAUDE_INPUT: ${{ inputs.published_pack_version }}
+          CODEX_INPUT: ${{ inputs.codex_published_pack_version }}
+          HARNESSES: ${{ inputs.harnesses }}
+        run: node mcpjam-inspector/scripts/plan-local-harness-conformance.mjs >> "$GITHUB_OUTPUT"
+
   unit:
     name: foundation unit tests
     runs-on: ubuntu-latest
@@ -126,28 +165,13 @@ jobs:
 
   scenarios:
     name: ${{ matrix.label }}
-    needs: unit
+    needs: [unit, plan]
+    if: needs.plan.outputs.run_claude == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - label: linux-x64 scenarios
-            runner: ubuntu-latest
-            platform_key: linux-x64
-            node_dist: linux-x64
-          - label: darwin-x64 scenarios
-            runner: macos-15-intel
-            platform_key: darwin-x64
-            node_dist: darwin-x64
-          - label: linux-arm64 scenarios
-            runner: ubuntu-24.04-arm
-            platform_key: linux-arm64
-            node_dist: linux-arm64
-          - label: darwin-arm64 scenarios
-            runner: macos-latest
-            platform_key: darwin-arm64
-            node_dist: darwin-arm64
+        include: ${{ fromJSON(needs.plan.outputs.posix_matrix) }}
     steps:
       - uses: actions/checkout@v7
       - name: Read pack toolchain pins
@@ -187,14 +211,14 @@ jobs:
       # The real thing, not a fixture: these scenarios exist to prove the pack
       # a user would install actually runs.
       - name: Prepare the pinned published pack
-        if: inputs.published_pack_version != ''
+        if: needs.plan.outputs.claude_pack_version != ''
         working-directory: mcpjam-inspector
         env:
-          PACK_VERSION: ${{ inputs.published_pack_version }}
+          PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
         run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
 
       - name: Build the pack
-        if: inputs.published_pack_version == ''
+        if: needs.plan.outputs.claude_pack_version == ''
         working-directory: mcpjam-inspector
         run: |
           node scripts/build-local-harness-pack.mjs \
@@ -313,8 +337,35 @@ jobs:
             exit 1
           fi
 
+      # Written only when every step above passed: this commit's layer ran on
+      # this pack on this target. A release requires one per selected pack.
+      - name: Record conformance evidence
+        working-directory: mcpjam-inspector
+        shell: bash
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
+        run: |
+          set -euo pipefail
+          published=()
+          if [ -n "$PACK_VERSION" ]; then
+            published=(--published "$CONFORMANCE_ROOT/published-conformance-input.json")
+          fi
+          node scripts/write-conformance-evidence.mjs \
+            --harness claude-code --target "${{ matrix.platform_key }}" \
+            --runtime "$CONFORMANCE_ROOT/runtime/claude-code" \
+            --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
+            --scenarios "full,attended-off,delivery,no-launcher,abort,orphan"
+
+      - name: Upload conformance evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-evidence-claude-code-${{ matrix.platform_key }}-${{ needs.plan.outputs.claude_pack_version || 'source' }}
+          path: ${{ runner.temp }}/conformance/evidence/*.json
+          if-no-files-found: error
+
       - name: Preserve verified published-pack identity
-        if: inputs.published_pack_version != ''
+        if: needs.plan.outputs.claude_pack_version != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: published-pack-${{ matrix.platform_key }}
@@ -333,7 +384,8 @@ jobs:
   # path composition surviving contact with a drive letter.
   windows:
     name: windows-latest scenarios
-    needs: unit
+    needs: [unit, plan]
+    if: needs.plan.outputs.run_windows == 'true'
     runs-on: windows-latest
     defaults:
       run:
@@ -401,14 +453,14 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Prepare the pinned published pack
-        if: inputs.published_pack_version != ''
+        if: needs.plan.outputs.claude_pack_version != ''
         working-directory: mcpjam-inspector
         env:
-          PACK_VERSION: ${{ inputs.published_pack_version }}
+          PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
         run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
 
       - name: Build the pack
-        if: inputs.published_pack_version == ''
+        if: needs.plan.outputs.claude_pack_version == ''
         working-directory: mcpjam-inspector
         run: |
           node scripts/build-local-harness-pack.mjs \
@@ -504,8 +556,35 @@ jobs:
             exit 1
           fi
 
+      # Written only when every step above passed: this commit's layer ran on
+      # this pack on this target. A release requires one per selected pack.
+      - name: Record conformance evidence
+        working-directory: mcpjam-inspector
+        shell: bash
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
+        run: |
+          set -euo pipefail
+          published=()
+          if [ -n "$PACK_VERSION" ]; then
+            published=(--published "$CONFORMANCE_ROOT/published-conformance-input.json")
+          fi
+          node scripts/write-conformance-evidence.mjs \
+            --harness claude-code --target "win32-x64" \
+            --runtime "$CONFORMANCE_ROOT/runtime/claude-code" \
+            --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
+            --scenarios "full,attended-off,delivery,abort"
+
+      - name: Upload conformance evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-evidence-claude-code-win32-x64-${{ needs.plan.outputs.claude_pack_version || 'source' }}
+          path: ${{ runner.temp }}/conformance/evidence/*.json
+          if-no-files-found: error
+
       - name: Preserve verified published-pack identity
-        if: inputs.published_pack_version != ''
+        if: needs.plan.outputs.claude_pack_version != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: published-pack-windows-x64
@@ -523,29 +602,14 @@ jobs:
   # its sandbox (`windowsSandbox/setupStart`) has no evidence yet.
   codex-scenarios:
     name: codex ${{ matrix.platform_key }}
-    needs: unit
+    needs: [unit, plan]
+    if: needs.plan.outputs.run_codex == 'true'
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ !matrix.certified }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform_key: linux-x64
-            runner: ubuntu-latest
-            node_dist: linux-x64
-            certified: true
-          - platform_key: darwin-arm64
-            runner: macos-latest
-            node_dist: darwin-arm64
-            certified: true
-          - platform_key: linux-arm64
-            runner: ubuntu-24.04-arm
-            node_dist: linux-arm64
-            certified: false
-          - platform_key: darwin-x64
-            runner: macos-15-intel
-            node_dist: darwin-x64
-            certified: false
+        include: ${{ fromJSON(needs.plan.outputs.codex_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Read pack toolchain pins
@@ -576,16 +640,18 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Prepare the pinned published Codex pack
-        if: inputs.codex_published_pack_version != ''
+        if: needs.plan.outputs.codex_pack_version != ''
         working-directory: mcpjam-inspector
         env:
-          PACK_VERSION: ${{ inputs.codex_published_pack_version }}
+          PACK_VERSION: ${{ needs.plan.outputs.codex_pack_version }}
         run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key }}" "$RUNNER_TEMP/conformance" codex
 
-      # The recipe regenerates the bridge bundle from source and checks every
-      # file of the platform package against `codex-vendor-checksums.json`.
+      # Vendor bytes only: the recipe installs `@openai/codex` from the frozen
+      # bootstrap lockfile and checks every file of the platform package
+      # against `codex-vendor-checksums.json`. The bridge is this checkout's
+      # Inspector layer, written next to the pack when the session resolves.
       - name: Build the Codex pack
-        if: inputs.codex_published_pack_version == ''
+        if: needs.plan.outputs.codex_pack_version == ''
         working-directory: mcpjam-inspector
         run: |
           node scripts/build-local-harness-pack.mjs \
@@ -668,23 +734,47 @@ jobs:
             exit 1
           fi
 
+      - name: Record conformance evidence
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          PACK_VERSION: ${{ needs.plan.outputs.codex_pack_version }}
+        run: |
+          set -euo pipefail
+          published=()
+          if [ -n "$PACK_VERSION" ]; then
+            published=(--published "$CONFORMANCE_ROOT/published-conformance-input.json")
+          fi
+          node scripts/write-conformance-evidence.mjs \
+            --harness codex --target "${{ matrix.platform_key }}" \
+            --runtime "$CONFORMANCE_ROOT/runtime/codex" \
+            --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
+            --scenarios attended,attended-off
+
+      - name: Upload conformance evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-evidence-codex-${{ matrix.platform_key }}-${{ needs.plan.outputs.codex_pack_version || 'source' }}
+          path: ${{ runner.temp }}/conformance/evidence/*.json
+          if-no-files-found: error
+
   summarize:
     name: conformance version
     # A conformance version records the evidence behind EVERY platform the
     # manifest calls native. Windows is one of them now, so its leg holds up
     # the stamp exactly as the POSIX legs do: a version minted without it
     # would certify a platform whose scenarios had not run.
-    needs: [scenarios, windows]
+    needs: [scenarios, windows, plan]
     runs-on: ubuntu-latest
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
-      # The value the manifest records. It names the RUN that produced the
+      # The value the record carries. It names the RUN that produced the
       # evidence, so a recorded conformance version can always be traced back to
       # the scenarios that justified it.
       - id: stamp
         env:
-          PUBLISHED_PACK_VERSION: ${{ inputs.published_pack_version }}
+          PUBLISHED_PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
         run: |
           if [ -n "$PUBLISHED_PACK_VERSION" ]; then
             echo "version=published-${PUBLISHED_PACK_VERSION}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
@@ -697,14 +787,14 @@ jobs:
   # harness's evidence certifies that harness alone (D4).
   codex-summarize:
     name: codex conformance version
-    needs: [codex-scenarios]
+    needs: [codex-scenarios, plan]
     runs-on: ubuntu-latest
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}
     steps:
       - id: stamp
         env:
-          PUBLISHED_PACK_VERSION: ${{ inputs.codex_published_pack_version }}
+          PUBLISHED_PACK_VERSION: ${{ needs.plan.outputs.codex_pack_version }}
         run: |
           if [ -n "$PUBLISHED_PACK_VERSION" ]; then
             echo "version=published-codex-${PUBLISHED_PACK_VERSION}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"

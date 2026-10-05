@@ -3,6 +3,8 @@
  * Node in CI, so it carries a hand-written declaration.
  */
 export declare const harnessId: "claude-code";
+/** The bridge still ships in this pack, so the launcher is copied beside it. */
+export declare const packLauncher: true;
 export declare const recipeSources: readonly string[];
 export declare const dependencyRoots: readonly string[];
 export declare function loadRecipe(): Promise<{

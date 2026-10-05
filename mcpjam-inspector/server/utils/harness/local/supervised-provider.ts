@@ -631,6 +631,27 @@ export function createSupervisedLocalHarnessProvider(
       opts.harnessId === "claude-code"
         ? await resolveGitBashPath(platform)
         : undefined;
+    // The runtime this session launches from — the vendor pack and, where the
+    // harness has one, the Inspector layer — must sit OUTSIDE both roots the
+    // session may write. Inside one, the agent could rewrite the bytes it is
+    // launched from between the pre-exec re-hash and the exec; refused rather
+    // than run. (A workspace that contains the runtime root is a choice like a
+    // parent of the home directory, which the grant rules do not refuse.)
+    for (const runtimeDir of [
+      opts.runtime.rootPath,
+      ...(opts.runtime.layer !== undefined ? [opts.runtime.layer.root] : []),
+    ]) {
+      for (const writable of roots) {
+        if (runtimeDir === writable || runtimeDir.startsWith(writable + sep)) {
+          throw new Error(
+            `the local runtime at ${runtimeDir} is inside a directory this ` +
+              `session may write, so it cannot be protected from the agent it ` +
+              `launches. Pick a workspace that does not contain the Inspector's ` +
+              `runtime directory.`,
+          );
+        }
+      }
+    }
     const env = {
       ...buildLocalHarnessEnv({
         syntheticHome,
@@ -638,6 +659,11 @@ export function createSupervisedLocalHarnessProvider(
         platform,
         ...(opts.scopedEnv ? { scoped: opts.scopedEnv } : {}),
         ...(gitBashPath !== undefined ? { gitBashPath } : {}),
+        // Named in the agent's own deny rules, alongside sibling sessions.
+        extraDeniedRoots: [
+          ...(opts.runtime.layer !== undefined ? [opts.runtime.layer.root] : []),
+          opts.runtime.rootPath,
+        ],
       }),
       ...opts.launcher.requiredEnv,
     };
@@ -652,11 +678,14 @@ export function createSupervisedLocalHarnessProvider(
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
+      ...(opts.runtime.layer !== undefined
+        ? { layerRoot: opts.runtime.layer.root, layerFiles: opts.runtime.layer.files }
+        : {}),
       adapterBootstrapFiles: opts.manifest.adapterBootstrapFiles,
       bootstrapOverlayDir: bootstrapOverlay,
       nodeExecutable: opts.launcher.executable,
-      // Launch the pack's loopback wrapper rather than the remapped
-      // `bridge.mjs`, which stays byte-identical so the recipe compare holds.
+      // Launch the loopback/resolution wrapper (the Inspector layer's, or a
+      // legacy pack's) rather than `bridge.mjs` directly.
       bridgeLauncherPath: opts.runtime.launcherPath,
       // The framework's default working directory (and the bridge's cwd), in
       // the shape the adapter composes with. `confine` turns it native.

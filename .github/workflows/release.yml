@@ -54,6 +54,9 @@ permissions:
   contents: write
   actions: read
   packages: write
+  # `local-harness-contract` attests the runtime contract it attaches.
+  id-token: write
+  attestations: write
 
 jobs:
   preflight:
@@ -75,6 +78,11 @@ jobs:
       release_tag: ${{ steps.plan.outputs.release_tag }}
       scope: ${{ steps.plan.outputs.scope }}
       evals_action_changed: ${{ steps.evals_action.outputs.changed }}
+      claude_desired_pack: ${{ steps.local_harness_packs.outputs.claude_desired }}
+      codex_desired_pack: ${{ steps.local_harness_packs.outputs.codex_desired }}
+      claude_permitted_pack: ${{ steps.local_harness_packs.outputs.claude_permitted }}
+      codex_permitted_pack: ${{ steps.local_harness_packs.outputs.codex_permitted }}
+      permitted_harnesses: ${{ steps.local_harness_packs.outputs.permitted_harnesses }}
     steps:
       - name: Enforce main branch
         run: |
@@ -305,6 +313,102 @@ jobs:
           INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
         run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" --assets
 
+      # Every pack this build may SELECT: the desired one per harness, and the
+      # one permitted previous (one version across targets; a record that
+      # permits two is refused here rather than half-tested).
+      - name: Local harness packs this build selects
+        id: local_harness_packs
+        working-directory: mcpjam-inspector
+        run: |
+          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
+          import { readRuntimeCompat } from "./scripts/local-harness-pack-tables.mjs";
+          const record = readRuntimeCompat();
+          const one = (harnessId, role) => {
+            const versions = new Set(Object.values(record.harnesses[harnessId]?.targets ?? {})
+              .map((slot) => slot[role]?.packVersion).filter(Boolean));
+            if (versions.size > 1) throw new Error(`${harnessId} ${role} packs differ across targets: ${[...versions]}`);
+            return [...versions][0] ?? "";
+          };
+          const out = {
+            claude_desired: one("claude-code", "desired"),
+            codex_desired: one("codex", "desired"),
+            claude_permitted: one("claude-code", "permitted"),
+            codex_permitted: one("codex", "permitted"),
+          };
+          out.permitted_harnesses = [out.claude_permitted && "claude-code", out.codex_permitted && "codex"].filter(Boolean).join(",");
+          for (const [key, value] of Object.entries(out)) console.log(`${key}=${value}`);
+          JS
+
+  # The release contract (`runtime-contract.json`): conformance evidence for
+  # THIS commit's Inspector layer × every pack the build may select, on every
+  # advertised platform. Run here, on the release commit, so a bridge change
+  # needs no extra step: the evidence is produced by the release itself.
+  local-harness-evidence:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.publish_inspector) }}
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.preflight.outputs.claude_desired_pack }}
+      codex_published_pack_version: ${{ needs.preflight.outputs.codex_desired_pack }}
+
+  local-harness-evidence-permitted:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.publish_inspector) && needs.preflight.outputs.permitted_harnesses != '' }}
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.preflight.outputs.claude_permitted_pack }}
+      codex_published_pack_version: ${{ needs.preflight.outputs.codex_permitted_pack }}
+      harnesses: ${{ needs.preflight.outputs.permitted_harnesses }}
+
+  local-harness-contract:
+    needs: [preflight, local-harness-evidence, local-harness-evidence-permitted]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      fromJSON(needs.preflight.outputs.publish_inspector) &&
+      needs.local-harness-evidence.result == 'success' &&
+      (needs.local-harness-evidence-permitted.result == 'success' || needs.local-harness-evidence-permitted.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+      - name: Collect conformance evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: conformance-evidence-*
+          path: ${{ runner.temp }}/evidence
+          merge-multiple: true
+      # The gate: refuses a release whose layer was not run against every pack
+      # it may select, and writes the contract a user's installer can be held to.
+      - name: Check the evidence and write the runtime contract
+        working-directory: mcpjam-inspector
+        env:
+          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
+          EVIDENCE: ${{ runner.temp }}/evidence
+        run: |
+          node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" \
+            --evidence "$EVIDENCE" --commit "$GITHUB_SHA" --contract "$RUNNER_TEMP/runtime-contract.json"
+      - name: Attest the runtime contract
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ runner.temp }}/runtime-contract.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-harness-runtime-contract
+          path: ${{ runner.temp }}/runtime-contract.json
+          if-no-files-found: error
+
   build-mac:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
@@ -412,6 +516,7 @@ jobs:
       - preflight
       - build-mac
       - build-windows
+      - local-harness-contract
     # Not when preflight stood down (see its `if`): there is nothing to gate,
     # and the check below would fail a run that is meant to end green.
     if: always() && needs.preflight.result != 'skipped'
@@ -435,6 +540,11 @@ jobs:
 
           if [ "${{ needs.build-windows.result }}" != "success" ]; then
             echo "Windows artifact build failed." >&2
+            exit 1
+          fi
+
+          if [ "${{ needs.local-harness-contract.result }}" != "success" ]; then
+            echo "The local harness runtime contract (conformance evidence for this layer × every selected pack) failed." >&2
             exit 1
           fi
 
@@ -917,6 +1027,15 @@ jobs:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/windows
 
+      # Attested by `local-harness-contract`: the layer digest and the packs
+      # this Inspector selects, with the conformance runs behind each.
+      - name: Download the local harness runtime contract
+        if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: local-harness-runtime-contract
+          path: .release-assets/runtime-contract
+
       - name: Create GitHub release (draft)
         if: needs.preflight.outputs.release_tag != ''
         uses: softprops/action-gh-release@v3
@@ -929,6 +1048,7 @@ jobs:
           files: |
             .release-assets/macos/**
             .release-assets/windows/**
+            .release-assets/runtime-contract/**
 
       # Everything above has passed, so the draft becomes the release. Same
       # action and same tag: `action-gh-release` updates the existing release

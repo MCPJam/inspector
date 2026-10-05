@@ -14,10 +14,12 @@
  *
  *   - SHARED inputs: the generic orchestration every pack is built by (the
  *     build script, this script, the recipe loader, the workflow, the
- *     toolchain pins, the loopback launcher, the tree-digest module, the Job
- *     Object launcher). A change here invalidates EVERY harness's pack, and
- *     must: those bytes are in, or decide, every pack. Never drop a real
- *     input from this list to keep CI green — publish the affected packs.
+ *     toolchain pins, the tree-digest module, the Job Object launcher). A
+ *     change here invalidates EVERY harness's pack, and must: those bytes are
+ *     in, or decide, every pack. Never drop a real input from this list to
+ *     keep CI green — publish the affected packs. (The bridge launcher is not
+ *     here: it is the Inspector layer's, shipped with the Inspector, and a
+ *     recipe that still copies it into its pack lists it as its own input.)
  *   - PER-HARNESS inputs: the harness's recipe module, the sources its recipe
  *     declares, the locked dependency closure of its declared roots, and the
  *     recipe bytes it actually emits. Nothing another harness reads.
@@ -43,8 +45,7 @@ export const SHARED_PACK_INPUTS = [
   'mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs',
   'mcpjam-inspector/scripts/local-harness-toolchain.json',
   'mcpjam-inspector/scripts/read-local-harness-toolchain.mjs',
-  'mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs',
-  'mcpjam-inspector/server/utils/harness/local/runtime-identity.ts',
+  'mcpjam-inspector/server/utils/harness/local/tree-digest.ts',
 ];
 const JOB_LAUNCHER_DIR = 'mcpjam-inspector/tools/mcpjam-job-launcher';
 

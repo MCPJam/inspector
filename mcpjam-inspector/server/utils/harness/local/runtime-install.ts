@@ -62,12 +62,12 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { x as extractTar } from "tar";
 import { logger } from "../../logger.js";
+import { runtimeInstallRoot } from "./runtime-root.js";
 import {
   EXPECTED_PACK_VERSIONS,
   PACK_RECORDS,
@@ -117,20 +117,8 @@ const MAX_ARCHIVE_BYTES = 1_500 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 
-/**
- * Where packs live.
- *
- * Electron sets `MCPJAM_RUNTIME_ROOT` from `app.getPath("userData")` so a
- * packaged app keeps its runtime with the rest of its own state; npx falls
- * back to the same `~/.mcpjam` tree the grants and machine identity already
- * use. Both are per-user and outside any workspace, which is what keeps the
- * pack out of reach of the agent it launches.
- */
-export function runtimeInstallRoot(): string {
-  const override = process.env.MCPJAM_RUNTIME_ROOT;
-  if (override && override.trim().length > 0) return override.trim();
-  return join(homedir(), ".mcpjam", "harness-local", "runtime");
-}
+/** Where packs live (see `runtime-root.ts`). */
+export { runtimeInstallRoot };
 
 /**
  * The directory a pack activates into, and the `runtimeRoot` the availability

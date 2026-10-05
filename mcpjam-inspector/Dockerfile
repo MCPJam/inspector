@@ -112,11 +112,15 @@ COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 # transport: its bridge and the MCP server Codex spawns are uploaded into a
 # sandbox and executed there, so nothing in the import graph reaches them and
 # `codex-appserver-bootstrap.ts` imports the generated const at top level.
+# `bundle:local-harness-layer` likewise: the local runtime's Inspector layer
+# (launcher + bridges) is a generated const `local/inspector-layer.ts` imports,
+# even though a hosted server never runs a local harness.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run bundle:plugin-shim -w @mcpjam/inspector && \
-    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector
+    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector && \
+    npm run bundle:local-harness-layer -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
