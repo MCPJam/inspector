@@ -7,7 +7,8 @@ import {
 } from "@/components/ui/chart";
 import { Button } from "@mcpjam/design-system/button";
 import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
+import { isSubsetRerunRun } from "./helpers";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
 interface SuiteHeroStatsProps {
@@ -49,13 +50,18 @@ export function SuiteHeroStats({
   const stats = useMemo(() => {
     if (runs.length === 0) return null;
 
-    const activeRunIds = new Set(runs.map((r) => r._id));
+    // A subset rerun re-ran only what failed: its trials would count those
+    // cases twice, and it is never the "latest run" these numbers describe.
+    const representativeRuns = runs.filter((run) => !isSubsetRerunRun(run));
+    const activeRunIds = new Set(representativeRuns.map((r) => r._id));
     const activeIterations = allIterations.filter(
       (iter) => iter.suiteRunId && activeRunIds.has(iter.suiteRunId),
     );
 
+    // Measured results: infra rows count in no rate (see
+    // `computeMeasuredIterationResult`).
     const results = activeIterations.map((iter) =>
-      computeIterationResult(iter),
+      computeMeasuredIterationResult(iter),
     );
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter((r) => r === "failed").length;
@@ -66,7 +72,7 @@ export function SuiteHeroStats({
     const accuracy = Math.round((passed / total) * 100);
 
     // Latest run info
-    const latestRun = [...runs].sort((a, b) => {
+    const latestRun = [...representativeRuns].sort((a, b) => {
       const aTime = a.completedAt ?? a.createdAt ?? 0;
       const bTime = b.completedAt ?? b.createdAt ?? 0;
       return bTime - aTime;
@@ -80,7 +86,7 @@ export function SuiteHeroStats({
       (iter) => iter.suiteRunId === latestRun?._id,
     );
     const latestResults = latestRunIterations.map((iter) =>
-      computeIterationResult(iter),
+      computeMeasuredIterationResult(iter),
     );
     const latestPassed = latestResults.filter((r) => r === "passed").length;
     const latestTotal = latestResults.filter(
@@ -142,7 +148,7 @@ export function SuiteHeroStats({
   const showTrend = runTrendData.length >= 3;
   const showModelComparison = modelStats.length >= 2;
   const latestReplayableRun = [...runs]
-    .filter((run) => run.hasServerReplayConfig)
+    .filter((run) => run.hasServerReplayConfig && !isSubsetRerunRun(run))
     .sort((a, b) => {
       const aTime = a.completedAt ?? a.createdAt ?? 0;
       const bTime = b.completedAt ?? b.createdAt ?? 0;

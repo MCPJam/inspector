@@ -16,9 +16,11 @@ const mocks = vi.hoisted(() => {
     }
   }
   class FakeFileNotFoundError extends Error {}
+  class FakeSandboxNotFoundError extends Error {}
   return {
     FakeCommandExitError,
     FakeFileNotFoundError,
+    FakeSandboxNotFoundError,
     run: vi.fn(),
     read: vi.fn(),
     write: vi.fn(),
@@ -31,7 +33,7 @@ const sandboxState = mocks;
 vi.mock("e2b", () => ({
   Sandbox: {
     connect: async (id: string, opts?: Record<string, unknown>) => {
-      mocks.connect(id, opts);
+      await mocks.connect(id, opts);
       return {
         sandboxId: id,
         commands: { run: mocks.run },
@@ -42,9 +44,15 @@ vi.mock("e2b", () => ({
   },
   CommandExitError: mocks.FakeCommandExitError,
   FileNotFoundError: mocks.FakeFileNotFoundError,
+  SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
 }));
 
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
+import { HARNESS_TEMPLATE_PNPM_VERSION } from "../harness-bake.js";
+import {
+  HarnessInfraSetupError,
+  harnessFailureEvidenceOf,
+} from "../harness-provider-error.js";
 
 beforeEach(() => {
   sandboxState.run.mockReset();
@@ -85,6 +93,31 @@ describe("the pnpm guard", () => {
     );
   });
 
+  it("types a box the vendor no longer has as a sandbox setup failure", async () => {
+    // The SDK's own typed error, not its message: an eval classifies this as
+    // OUR sandbox layer failing, never as the server under test.
+    sandboxState.connect.mockRejectedValueOnce(
+      new mocks.FakeSandboxNotFoundError("Sandbox sbx_1 not found"),
+    );
+    const failure = await Promise.resolve(provider().createSession()).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(HarnessInfraSetupError);
+    expect(harnessFailureEvidenceOf(failure)).toEqual({
+      source: "sandbox_setup",
+      code: "sandbox_not_found",
+    });
+  });
+
+  it("passes any other connect failure through untouched", async () => {
+    sandboxState.connect.mockRejectedValueOnce(new Error("socket hang up"));
+    const failure = await Promise.resolve(provider().createSession()).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).not.toBeInstanceOf(HarnessInfraSetupError);
+    expect(harnessFailureEvidenceOf(failure)).toBeUndefined();
+  });
+
   it("passes a non-exit failure through untouched", async () => {
     // A transport failure is not a command that ran and failed; dressing it up
     // as one would be a lie about what happened.
@@ -97,6 +130,18 @@ describe("the pnpm guard", () => {
     await expect(provider().createSession()).resolves.toMatchObject({
       id: "sbx_1",
     });
+  });
+
+  it("installs the template's pinned pnpm, never whatever is current", async () => {
+    // A custom image or an old template has no pnpm, and the fallback used to
+    // be a bare `npm install -g pnpm` — which is how pnpm 11 reached hosted
+    // turns. The fallback is the same exact version the template bakes.
+    await provider().createSession();
+    const command = sandboxState.run.mock.calls[0]?.[0] as string;
+    expect(command).toBe(
+      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`
+    );
+    expect(command).toMatch(/pnpm@\d+\.\d+\.\d+$/);
   });
 });
 

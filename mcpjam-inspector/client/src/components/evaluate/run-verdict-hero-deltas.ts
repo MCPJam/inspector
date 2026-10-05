@@ -6,6 +6,7 @@
  */
 import {
   compareRunsBySequence,
+  isSubsetRerunRun,
   iterationLatencyP50,
   iterationLatencyP95,
   runClientIdentity,
@@ -14,7 +15,7 @@ import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import { runTargetKey, sameRunTarget } from "@/lib/eval-target-key";
 import type { HeroStats } from "./run-verdict-hero-model";
-import { resultCounts } from "./run-results-matrix-model";
+import { measuredResultCounts } from "./run-results-matrix-model";
 
 export type HeroDeltaTone = "progress" | "regression" | "same";
 export type HeroDeltaDirection = "up" | "down" | "same";
@@ -192,6 +193,8 @@ export function previousCompletedRunOf(
         (run) =>
           run._id !== current._id &&
           run.status === "completed" &&
+          // A subset rerun measured only what failed: never a baseline.
+          !isSubsetRerunRun(run) &&
           runClientIdentity(run).key === runClientIdentity(current).key &&
           // Same TARGET, not just the same model id: Sonnet at High is not
           // the baseline for Sonnet at Low. Falls back to the model id when
@@ -279,14 +282,17 @@ export function buildHeroPairings({
   previousIterations: readonly EvalIteration[] | null;
 }): HeroPairingPass[] {
   return targets.map((target) => {
-    const counts = resultCounts(target.iterations);
+    // Measured counts: an infra row is in neither the pass rate nor its delta.
+    const counts = measuredResultCounts(target.iterations);
     const previousRows = previousRowsFor(
       target,
       previousLaunch,
       previousIterations,
       targets.length,
     );
-    const previousCounts = previousRows ? resultCounts(previousRows) : null;
+    const previousCounts = previousRows
+      ? measuredResultCounts(previousRows)
+      : null;
     const stats = pairingStatsOf(target.iterations);
     const previousStats = previousRows ? pairingStatsOf(previousRows) : null;
     const passRate = pairingPassRate(counts);
@@ -388,6 +394,7 @@ export function previousLaunchRuns(
       .filter(
         (run) =>
           run.status === "completed" &&
+          !isSubsetRerunRun(run) &&
           !currentIds.has(run._id) &&
           (newest.suiteId == null || run.suiteId === newest.suiteId) &&
           (!newest.runGroupId || run.runGroupId !== newest.runGroupId) &&
@@ -400,7 +407,9 @@ export function previousLaunchRuns(
   if (anchor.runGroupId) {
     const group = suiteRuns.filter(
       (run) =>
-        run.runGroupId === anchor.runGroupId && run.status === "completed",
+        run.runGroupId === anchor.runGroupId &&
+        run.status === "completed" &&
+        !isSubsetRerunRun(run),
     );
     if (group.length > 0) return group;
   }

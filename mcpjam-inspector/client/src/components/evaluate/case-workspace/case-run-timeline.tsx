@@ -22,7 +22,10 @@ import {
   targetKeySuffix,
 } from "@/lib/eval-target-key";
 import { cn } from "@mcpjam/design-system/cn";
-import { computeIterationResult } from "@/components/evals/pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "@/components/evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "@/components/evals/types";
 
 const UNKNOWN_MODEL = "Unknown model";
@@ -192,14 +195,17 @@ export function CaseRunTimeline({
   const showPendingRun = Boolean(
     pendingRun && pendingKey === selectedTargetKey,
   );
+  // Measured results: an infra row is in neither the pass count nor the tone.
   const completed = filtered.filter((it) =>
-    ["passed", "failed", "timed_out"].includes(computeIterationResult(it)),
+    ["passed", "failed", "timed_out"].includes(
+      computeMeasuredIterationResult(it),
+    ),
   );
   const passed = completed.filter(
-    (it) => computeIterationResult(it) === "passed",
+    (it) => computeMeasuredIterationResult(it) === "passed",
   ).length;
   const hasFailures = completed.some((it) =>
-    ["failed", "timed_out"].includes(computeIterationResult(it)),
+    ["failed", "timed_out"].includes(computeMeasuredIterationResult(it)),
   );
   const tokenAverage = average(
     completed.flatMap((it) =>

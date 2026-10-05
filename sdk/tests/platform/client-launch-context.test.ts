@@ -134,6 +134,40 @@ describe("declared launch context", () => {
     expect(headersOf(fetchMock)[RUN_LAUNCH_HEADERS.launcher]).toBeDefined();
   });
 
+  it("rides them on a failed-cases rerun, and not on its preview", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    const client = makeClient(fetchMock, { launcher: { ...CLI_LAUNCHER } });
+
+    await client.getEvalRunRerunPreview({ projectId: "p1", runId: "r1" });
+    await client.rerunEvalRun({
+      projectId: "p1",
+      runId: "r1",
+      scope: "failed_cases",
+      notes: "flake check",
+    });
+
+    const [previewUrl, previewInit] = fetchMock.mock.calls[0];
+    expect(String(previewUrl)).toBe(
+      "https://api.example.com/api/v1/projects/p1/eval-runs/r1/rerun-preview"
+    );
+    expect(previewInit.method).toBe("GET");
+    expect(headersOf(fetchMock, 0)).not.toHaveProperty(
+      RUN_LAUNCH_HEADERS.launcher
+    );
+
+    const [rerunUrl, rerunInit] = fetchMock.mock.calls[1];
+    expect(String(rerunUrl)).toBe(
+      "https://api.example.com/api/v1/projects/p1/eval-runs/r1/rerun"
+    );
+    expect(rerunInit.method).toBe("POST");
+    // The platform picks the cases: the body names the scope, never ids.
+    expect(JSON.parse(rerunInit.body as string)).toEqual({
+      scope: "failed_cases",
+      notes: "flake check",
+    });
+    expect(headersOf(fetchMock, 1)[RUN_LAUNCH_HEADERS.launcher]).toBeDefined();
+  });
+
   it("is absent from every call that is not a launch", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => ok());
     const client = makeClient(fetchMock, { launcher: { ...CLI_LAUNCHER } });

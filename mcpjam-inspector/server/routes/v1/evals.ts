@@ -40,6 +40,7 @@ import {
   toScoreProjection,
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
+import { toInfraErrorProjection } from "./eval-infra-error-projection.js";
 import {
   toFrictionSignalsProjection,
   toSuspectedConditionProjection,
@@ -176,6 +177,7 @@ import type {
 } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
+import { rerunPreviewRefusal } from "../../services/evals/rerun-refusal.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -1962,6 +1964,16 @@ function toRunDto(run: RunDoc) {
     ...(typeof run.runGroupId === "string"
       ? { runGroupId: run.runGroupId }
       : {}),
+    // Rerun lineage. `rerunScope: "failed_cases"` means this run re-ran only
+    // the cases of `rerunOfRunId` that did not pass, so its pass rate is
+    // biased by that selection: it is never a suite's latest run, a trend
+    // point, or a baseline. OMITTED on every other run.
+    ...(typeof run.rerunOfRunId === "string"
+      ? { rerunOfRunId: run.rerunOfRunId }
+      : {}),
+    ...(run.rerunScope === "failed_cases"
+      ? { rerunScope: run.rerunScope as "failed_cases" }
+      : {}),
     ...(typeof run.effectiveModelId === "string"
       ? { effectiveModelId: run.effectiveModelId }
       : {}),
@@ -2186,6 +2198,10 @@ function toIterationDto(
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     ...(snapshot.isNegativeTest === true ? { isNegativeTest: true } : {}),
     error: iteration.error ?? null,
+    // OUR infrastructure failed this trial (a provider outage, a sandbox, an
+    // account limit). It measured nothing about the server, and every score
+    // excludes it. OMITTED on every trial without one.
+    ...toInfraErrorProjection(iteration.infraError),
     ...toScoreProjection(iteration.metadata, vocabulary),
     ...toStageProjection(iteration.metadata),
     // Observable patterns in this trial's tool calls — a report beside the
@@ -6132,6 +6148,212 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     .query("testSuites:getTestSuiteRun" as any, { runId })
     .catch(() => null);
   return v1Resource(c, toRunDto((updated ?? run)!));
+});
+
+// ── Rerun failed cases ──────────────────────────────────────────────────────
+//
+// Replay a finished run narrowed to the cases that did not pass there. The
+// BACKEND picks the cases (`startTestSuiteRun` with `rerunScope:
+// 'failed_cases'`): any case with a trial that is not completed+passed, with
+// cancelled and skipped trials not counting. The preview reports that same
+// selection before anything spends. The new run is stamped `rerunOfRunId` +
+// `rerunScope`, and because its pass rate is biased by that selection it never
+// becomes the suite's latest run, a trend point, or a baseline.
+
+const rerunEvalRunSchema = z
+  .object({
+    scope: z.literal("failed_cases"),
+    notes: z.string().optional(),
+    idempotencyKey: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+function toRerunPreviewDto(raw: RunDoc) {
+  const counts = (value: unknown): Record<string, number> =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(
+            (entry): entry is [string, number] => typeof entry[1] === "number",
+          ),
+        )
+      : {};
+  return {
+    runId: String(raw.runId),
+    suiteId: String(raw.suiteId),
+    scope: "failed_cases" as const,
+    sourceStatus: String(raw.sourceStatus),
+    sourceTerminal: raw.sourceTerminal === true,
+    totalCaseCount: Number(raw.totalCaseCount ?? 0),
+    selectedCaseCount: Number(raw.selectedCaseCount ?? 0),
+    selectedCaseIds: Array.isArray(raw.selectedCaseIds)
+      ? raw.selectedCaseIds.map(String)
+      : [],
+    reasons: counts(raw.reasons),
+    excluded: counts(raw.excluded),
+    rerunnable: raw.rerunnable === true,
+  };
+}
+
+async function readRerunPreview(
+  token: string,
+  runId: string,
+  projectId: string,
+) {
+  let preview: RunDoc | null;
+  try {
+    preview = await createConvexReadClient(token).query(
+      "testSuites:getRerunPreview" as any,
+      { runId },
+    );
+  } catch (error) {
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
+  }
+  requireProjectMatch(preview, projectId, "Eval run");
+  return toRerunPreviewDto(preview!);
+}
+
+// GET /v1/projects/:projectId/eval-runs/:runId/rerun-preview
+// What `POST …/rerun` with `scope: "failed_cases"` would execute. Read-only.
+evals.get("/projects/:projectId/eval-runs/:runId/rerun-preview", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = evalIdParam(c, "runId", "Eval run");
+  const token = await getConvexBearerForRequest(c);
+  return v1Resource(c, await readRerunPreview(token, runId, projectId));
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/rerun
+// Launch the rerun. 202 with the new run's id; 409 when the source is still in
+// flight or nothing in it qualifies (`details.reason` names which).
+evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = evalIdParam(c, "runId", "Eval run");
+  const headerIdempotencyKey = readIdempotencyKey(c);
+  const body = parseWithSchema(rerunEvalRunSchema, await readJsonObjectBody(c));
+  // Same precedence as the run launch: the header wins over a body value.
+  const idempotencyKey = headerIdempotencyKey ?? body.idempotencyKey;
+  const token = await getConvexBearerForRequest(c);
+  const readClient = createConvexReadClient(token);
+
+  // Refused at the door, before a server is connected or a slot is taken. The
+  // launch mutation makes the same decision again; this only spares the
+  // caller a connection cycle for an answer that is already known.
+  const preview = await readRerunPreview(token, runId, projectId);
+  const refusal = rerunPreviewRefusal(preview);
+  if (refusal) throw refusal;
+
+  let sourceRun: RunDoc | null;
+  try {
+    sourceRun = await readClient.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
+  }
+  requireProjectMatch(sourceRun, projectId, "Eval run");
+  const suiteId = String(sourceRun!.suiteId);
+
+  // The servers the SOURCE run executed against — the same derivation the
+  // description-experiment arms use for their snapshot replays.
+  const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
+    .configSnapshot;
+  const envRef = snapshot?.environmentRef as
+    { environmentId?: string } | undefined;
+  const namedHostId =
+    (typeof sourceRun!.namedHostId === "string"
+      ? (sourceRun!.namedHostId as string)
+      : undefined) ??
+    (typeof snapshot?.namedHostId === "string"
+      ? snapshot.namedHostId
+      : undefined);
+  const servers = await resolveLaunchServers({
+    convexAuthToken: token,
+    projectId,
+    suiteId,
+    suiteReadPhase: "authorized",
+    requestedEnvironmentId: envRef?.environmentId,
+    namedHostId,
+    requestedServerIds: [],
+    requestedServerNames: undefined,
+  });
+  const runHostConfig = await loadSuiteHostConfig(
+    readClient,
+    suiteId,
+    namedHostId ?? servers.environmentLaunch?.hostId,
+  );
+
+  const slotKey = orgConcurrencyKey(c);
+  if (!tryAcquireRunSlot(slotKey)) {
+    return v1Error(
+      c,
+      "RATE_LIMITED",
+      `Too many concurrent eval runs (max ${MAX_CONCURRENT_RUNS}). Wait for an active run to finish.`,
+      {
+        reason: "CONCURRENT_RUN_LIMIT",
+        maxConcurrentRuns: MAX_CONCURRENT_RUNS,
+      },
+    );
+  }
+  let released = false;
+  const releaseSlotOnce = () => {
+    if (!released) {
+      released = true;
+      releaseRunSlot(slotKey);
+    }
+  };
+
+  try {
+    const launched = await launchEvalRun({
+      callerContext: callerContextFromHono(c),
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      projectId,
+      convexAuthToken: token,
+      vocabulary: vocabularyOf(c),
+      hostConfig: runHostConfig,
+      launchContext: readLaunchContext(c),
+      body: {
+        suiteId,
+        tests: [] as PublicInlineTest[],
+        replayedFromRunId: runId,
+        useCurrentSuiteConfig: false,
+        rerunOfRunId: runId,
+        rerunScope: body.scope,
+        ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      },
+      suiteRerun: true,
+      environmentId: servers.environmentId,
+      environmentLaunch: servers.environmentLaunch,
+      serverIds: servers.serverIds,
+      serverNames: servers.serverNames,
+      onSettled: releaseSlotOnce,
+    });
+
+    return v1Resource(
+      c,
+      {
+        runId: launched.runId,
+        suiteId: launched.suiteId,
+        status: launched.status,
+        ...(launched.deduped ? { deduped: true } : {}),
+        rerunOfRunId: runId,
+        rerunScope: body.scope,
+        servers: launched.servers,
+        environment: launched.environment,
+      },
+      202,
+    );
+  } catch (error) {
+    releaseSlotOnce();
+    // The rerun refusals are already route errors (`startSuiteRunWithRecorder`
+    // translates them); an import refusal is the caller's to fix as well.
+    throw translateImportIneligibleError(error) ?? error;
+  }
 });
 
 // ── Gate waivers ────────────────────────────────────────────────────────────

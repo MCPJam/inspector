@@ -358,7 +358,7 @@ describe("runHarnessTurn local continuity", () => {
 
   it("continues a paused approval with the same identity", async () => {
     resume(true);
-    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+    harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session" }));
     expect(harnessState.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "local-session", continueFrom: expect.any(Object) }));
@@ -408,20 +408,34 @@ describe("runHarnessTurn local continuity", () => {
 
   it("closes a denied call in the UI so the decision is not re-sent", async () => {
     resume(true);
-    harnessState.continuations = [{
-      approvalResponse: { type: "tool-approval-response", approvalId: "approval-1", approved: false },
-      toolCall: { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "rm x" } },
-    }];
-    const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
+    harnessState.continuations = [
+      { type: "tool-approval-response", approvalId: "approval-1", approved: false },
+    ];
+    // The bare response names only the approval; the call id comes from the
+    // assistant's earlier approval request.
+    const options = baseOptions();
+    options.messages.push(
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "rm x" } },
+          { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+        ],
+      } as unknown as ModelMessage,
+      {
+        role: "tool",
+        content: [{ type: "tool-approval-response", approvalId: "approval-1", approved: false }],
+      } as unknown as ModelMessage,
+    );
+    const stream = await (await runHarnessTurn(options as any, "ui")).response!.text();
     expect(stream).toContain('"type":"tool-output-denied","toolCallId":"call-1"');
   });
 
   it("leaves an approved call for its tool result to close", async () => {
     resume(true);
-    harnessState.continuations = [{
-      approvalResponse: { type: "tool-approval-response", approvalId: "approval-1", approved: true },
-      toolCall: { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "ls" } },
-    }];
+    harnessState.continuations = [
+      { type: "tool-approval-response", approvalId: "approval-1", approved: true },
+    ];
     const stream = await (await runHarnessTurn(baseOptions() as any, "ui")).response!.text();
     expect(stream).not.toContain("tool-output-denied");
   });
@@ -504,7 +518,7 @@ describe("runHarnessTurn local continuity", () => {
 
   it("refuses approval continuation after the runtime changes", async () => {
     resume(true);
-    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+    harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
     const options = baseOptions();
     options.harnessExecutionTarget.runtimeId = "runtime-2";
     await runHarnessTurn(options as any, "none");
@@ -583,7 +597,7 @@ describe("runHarnessTurn local continuity", () => {
   it("rejects an approval whose local state was removed", async () => {
     resume(true);
     harnessState.stateExists = false;
-    harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+    harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
     await runHarnessTurn(baseOptions() as any, "none");
     expect(harnessState.create).not.toHaveBeenCalled();
     expect(harnessState.teardown).toHaveBeenCalledOnce();
@@ -679,7 +693,7 @@ describe("runHarnessTurn local continuity", () => {
 
     it("delivers the decision to the parked process generation and hands it back after", async () => {
       pausedLane();
-      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
       await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
       expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: "local-session",
@@ -697,7 +711,7 @@ describe("runHarnessTurn local continuity", () => {
 
     it("refuses a decision when the parked runtime refuses it, running nothing", async () => {
       pausedLane();
-      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
       vi.mocked(prepareLocalHarnessTurn).mockResolvedValueOnce({
         ok: false, status: "approval-duplicate-approval",
         message: "This approval was already answered; the action will not run twice.",
@@ -715,7 +729,7 @@ describe("runHarnessTurn local continuity", () => {
           awaitingApproval: true,
         },
       } as any);
-      harnessState.continuations = [{ approvalResponse: { approvalId: "approval-1", approved: true } }];
+      harnessState.continuations = [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }];
       await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
       expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
       expect(harnessState.create).not.toHaveBeenCalled();

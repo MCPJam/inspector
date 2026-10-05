@@ -11,7 +11,10 @@ import {
   SuiteAggregate,
   TagGroupAggregate,
 } from "./types";
-import { computeIterationResult } from "./pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -567,15 +570,54 @@ export function getTemplateKey(test: {
   return `fallback:${test.title}-${test.query}`;
 }
 
+/**
+ * A run that re-ran only the cases that did not pass in an earlier run. Its
+ * pass rate is biased by that selection, so it is never a suite's latest run,
+ * a point on its trend, a baseline, or part of a suite aggregate. Mirrors the
+ * backend's `isSubsetRerunRun` (`convex/lib/evalRerun.ts`): keyed on the
+ * subset scope, not on lineage alone.
+ */
+export function isSubsetRerunRun(
+  run: { rerunScope?: string } | null | undefined,
+): boolean {
+  return run?.rerunScope === "failed_cases";
+}
+
+/**
+ * `iterations` without the ones a subset rerun produced. Counting them would
+ * add a second trial to exactly the cases that already failed. Iterations
+ * with no run (quick runs) are kept. Returns the input array itself when no
+ * run is a subset rerun.
+ */
+export function withoutSubsetRerunIterations<
+  T extends { suiteRunId?: string },
+>(
+  iterations: T[],
+  runs: ReadonlyArray<{ _id: string; rerunScope?: string }>,
+): T[] {
+  const rerunIds = new Set(
+    runs.filter((run) => isSubsetRerunRun(run)).map((run) => run._id),
+  );
+  if (rerunIds.size === 0) return iterations;
+  return iterations.filter(
+    (it) => !it.suiteRunId || !rerunIds.has(it.suiteRunId),
+  );
+}
+
 export function aggregateSuite(
   _suite: EvalSuite,
   cases: EvalCase[],
-  iterations: EvalIteration[],
+  allIterations: EvalIteration[],
+  /** The suite's runs, so subset reruns stay out of the totals. */
+  runs: ReadonlyArray<{ _id: string; rerunScope?: string }> = [],
 ): SuiteAggregate {
   // Backend already filters iterations by suite, so we use them directly
+  const iterations = withoutSubsetRerunIterations(allIterations, runs);
   const totals = iterations.reduce(
     (acc, it) => {
-      const result = computeIterationResult(it);
+      // Measured result: an infra row is counted in no bucket, matching the
+      // backend's rates (see `computeMeasuredIterationResult`).
+      const result = computeMeasuredIterationResult(it);
       if (result === "pending") {
         acc.pending += 1;
       } else if (result === "passed") {
@@ -676,7 +718,7 @@ export function aggregateSuite(
       });
     }
     const entry = byCaseMap.get(id)!;
-    const result = computeIterationResult(it);
+    const result = computeMeasuredIterationResult(it);
     if (result === "pending") {
       // do not count pending/running
     } else if (result === "passed") {
@@ -1338,11 +1380,13 @@ export function compareRunsBySequence(
   return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
-/** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
+/** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). Subset reruns never count. */
 export function pickLatestCompletedRun(
   runs: EvalSuiteRun[],
 ): EvalSuiteRun | null {
-  const completed = runs.filter((r) => r.status === "completed");
+  const completed = runs.filter(
+    (r) => r.status === "completed" && !isSubsetRerunRun(r),
+  );
   if (completed.length === 0) {
     return null;
   }
