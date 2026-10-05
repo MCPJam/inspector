@@ -19,6 +19,7 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
+import { rerunRefusalError } from "./rerun-refusal.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
@@ -589,6 +590,8 @@ export const startSuiteRunWithRecorder = async ({
   serverIds,
   replayedFromRunId,
   useCurrentSuiteConfig,
+  rerunOfRunId,
+  rerunScope,
   environmentOverride,
   githubCheckServerOverride,
   toolSnapshot,
@@ -624,6 +627,14 @@ export const startSuiteRunWithRecorder = async ({
   serverIds?: string[];
   replayedFromRunId?: string;
   useCurrentSuiteConfig?: boolean;
+  /**
+   * Rerun only the cases of `rerunOfRunId` that did not pass. Sent with
+   * `replayedFromRunId` set to the same run; the backend picks the cases and
+   * refuses `RERUN_NOTHING_TO_RERUN` when none qualify. Forwarded only when
+   * set, so ordinary launches send exactly the args they always sent.
+   */
+  rerunOfRunId?: string;
+  rerunScope?: "failed_cases";
   environmentOverride?: {
     servers: string[];
     serverBindings?: Array<{
@@ -787,6 +798,8 @@ export const startSuiteRunWithRecorder = async ({
       passCriteria,
       replayedFromRunId,
       useCurrentSuiteConfig,
+      ...(rerunOfRunId ? { rerunOfRunId } : {}),
+      ...(rerunScope ? { rerunScope } : {}),
       ...(environmentOverride ? { environmentOverride } : {}),
       ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
@@ -881,6 +894,12 @@ export const startSuiteRunWithRecorder = async ({
     const rejection = environmentLaunchRejectionError(error);
     if (rejection) {
       throw rejection;
+    }
+    // A rerun refused before anything was created: nothing to rerun, a source
+    // still in flight, or a source from another suite.
+    const rerunRefusal = rerunScope ? rerunRefusalError(error) : null;
+    if (rerunRefusal) {
+      throw rerunRefusal;
     }
     throw error;
   }

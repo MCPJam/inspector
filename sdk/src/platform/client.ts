@@ -67,6 +67,9 @@ import type {
   PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
   PlatformEvalRunDisclosure,
+  PlatformEvalRunRerunBody,
+  PlatformEvalRunRerunCreated,
+  PlatformEvalRunRerunPreview,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -2986,6 +2989,46 @@ export class PlatformApiClient {
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
       {},
+      options
+    );
+  }
+
+  /**
+   * What a `failed_cases` rerun of this run would execute — the platform's
+   * own selection (any case with a trial that is not completed and passed;
+   * cancelled and skipped trials do not count). Read-only.
+   */
+  getEvalRunRerunPreview(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunRerunPreview> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/rerun-preview`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Rerun a finished run's failed cases as a new run stamped with
+   * `rerunOfRunId`. Refused with `409` (`details.reason`
+   * `RERUN_NOTHING_TO_RERUN` / `RERUN_SOURCE_NOT_TERMINAL`) when nothing
+   * qualifies or the run is still in flight.
+   */
+  rerunEvalRun(
+    params: { projectId: string; runId: string } & PlatformEvalRunRerunBody,
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunRerunCreated> {
+    const { projectId, runId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        projectId
+      )}/eval-runs/${encodeURIComponent(runId)}/rerun`,
+      { body, declareLaunch: true },
       options
     );
   }
