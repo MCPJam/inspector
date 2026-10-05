@@ -267,7 +267,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     nativePlatforms: ["darwin", "linux", "win32"],
     // Empty until a backend's escape probes actually pass (I6).
     isolatedBackends: {},
-    lifecycleConformanceVersion: "published-1.0.0-c2bc887b85b1",
+    lifecycleConformanceVersion: "",
     adapterBootstrapDir: ".harness-bootstrap/claude-code",
     adapterBootstrapFiles: [
       "package.json",
@@ -323,7 +323,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     unattendedSandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
     isolatedBackends: {},
     // Dark until the Codex lifecycle conformance legs pass and are recorded.
-    lifecycleConformanceVersion: "published-codex-1.0.0-c2bc887b85b1",
+    lifecycleConformanceVersion: "",
     adapterBootstrapDir: ".harness-bootstrap/codex-appserver",
     adapterBootstrapFiles: [
       "package.json",
