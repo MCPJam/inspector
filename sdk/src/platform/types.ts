@@ -24,6 +24,10 @@ import type {
 } from "./browser-agent-contract.js";
 import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 import type { ExecutionRecord } from "../host-config/execution-record.js";
+import type {
+  ModelReasoningEffort,
+  RequestedModelSelection,
+} from "../host-config/model-selection.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -345,6 +349,12 @@ export interface PlatformModel {
   id: string;
   name?: string;
   provider?: string;
+  /**
+   * The reasoning-effort levels this model accepts. Empty or absent means no
+   * effort is offered for it (it takes none, or the catalog does not know) —
+   * never guess a level for it.
+   */
+  supportedReasoningEfforts?: ModelReasoningEffort[];
   [field: string]: unknown;
 }
 
@@ -1736,7 +1746,16 @@ export interface PlatformExpectedToolCall {
 export type PlatformEvalSuiteGoalCompletionJudge = {
   /** Judge is available on the suite. Does NOT by itself grade anything. */
   enabled: boolean;
+  /** COMPUTED: `judgeSelection.modelId`, else the stored `judgeModel`. */
   model: string | null;
+  /**
+   * The judge's saved model choice (source, connection, effort), when the
+   * suite stores one. May be a STORED legacy selection: "own key only".
+   * Absent on an unlabelled suite and on older API deployments.
+   */
+  judgeSelection?: RequestedModelSelection;
+  /** `"backfill"` when a conversion (not a person) chose `judgeSelection`. */
+  judgeSelectionOrigin?: "backfill";
   /**
    * The flag that makes grading HAPPEN — fires the judge as each run
    * completes. Absent on older API deployments.
@@ -2056,9 +2075,21 @@ export interface PlatformEvalSuiteDetailBase {
   environmentIds?: string[];
   /** Suite-level execution config; null when none is pinned. */
   executionConfig: {
+    /**
+     * COMPUTED: the selection's `modelId`, else the stored bare id. Also
+     * accepted on writes as a shorthand (the platform converts it).
+     */
     model: string;
     systemPrompt: string;
     temperature: number;
+    /**
+     * The saved model choice behind `model`, including its effort. May be a
+     * STORED legacy selection (`{ source: "legacy", modelId }`), which means
+     * "own key only" — never MCPJam credits.
+     */
+    modelSelection?: RequestedModelSelection;
+    /** `"backfill"` when a conversion (not a person) chose `modelSelection`. */
+    modelSelectionOrigin?: "backfill";
   } | null;
   /** Host attachments (multi-host). */
   hosts: PlatformEvalSuiteHost[];
@@ -2148,8 +2179,33 @@ export interface PlatformFileOwnedEvalSuiteSynced {
 }
 
 export interface PlatformEvalCaseModel {
+  /** COMPUTED: `selection.modelId`, else the stored bare id. */
   model: string;
   provider?: string;
+  /**
+   * The saved model choice behind `model` (source, connection,
+   * `settings.reasoningEffort`). Absent when the case stores only a bare id
+   * (an unlabelled row). May be a STORED legacy selection
+   * (`{ source: "legacy", modelId, provider? }`): "own key only", never MCPJam
+   * credits. On a `models` PATCH an entry that omits it keeps the existing
+   * selection for that model; `null` (see {@link PlatformEvalCaseModelInput})
+   * drops it.
+   */
+  selection?: RequestedModelSelection;
+  /** `"backfill"` when a conversion (not a person) chose `selection`. */
+  selectionOrigin?: "backfill";
+}
+
+/** A `models[]` entry on a case write. */
+export interface PlatformEvalCaseModelInput {
+  /** A bare id is accepted as a shorthand; the platform converts it. */
+  model: string;
+  provider?: string;
+  /**
+   * Must be FOR `model`. `null` drops the saved selection (PATCH only). A
+   * stored legacy selection read back from a case may be sent back verbatim.
+   */
+  selection?: RequestedModelSelection | null;
 }
 
 /**
@@ -2859,6 +2915,16 @@ export interface PlatformEnvironment {
    * environment and read `effectiveModelId`.
    */
   modelId?: string;
+  /**
+   * The saved selection behind `modelId` (whose credentials run it, and
+   * `settings.reasoningEffort`). Absent for an unlabelled bare id or an
+   * inheriting environment. May be a STORED legacy selection
+   * (`{ source: "legacy", modelId }`): "own key only", never MCPJam credits.
+   * When present, `modelId` is computed from it.
+   */
+  modelSelection?: RequestedModelSelection;
+  /** `"backfill"` when a conversion (not a person) chose `modelSelection`. */
+  modelSelectionOrigin?: "backfill";
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   /**
@@ -2904,6 +2970,10 @@ export interface PlatformAdhocEnvironment {
   serverAttachmentId?: string;
   /** See `PlatformEnvironment.modelId` — absent means "inherit the host's". */
   modelId?: string;
+  /** See `PlatformEnvironment.modelSelection`. */
+  modelSelection?: RequestedModelSelection;
+  /** See `PlatformEnvironment.modelSelectionOrigin`. */
+  modelSelectionOrigin?: "backfill";
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2938,6 +3008,8 @@ export interface PlatformAdhocEnvironmentBody {
   hostId: string;
   serverAttachmentId?: string;
   modelId?: string;
+  /** Saved selection behind `modelId`; needs `modelSelections` capability. */
+  modelSelection?: RequestedModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2972,6 +3044,12 @@ export interface PlatformEnvironmentCreateBody {
   serverAttachmentId?: string;
   /** Model to run instead of the host's; omit to inherit the host's. */
   modelId?: string;
+  /**
+   * Saved selection behind `modelId` (source, connection, effort). Must be FOR
+   * `modelId`; sent alone it pins its own model. Needs the `modelSelections`
+   * capability.
+   */
+  modelSelection?: RequestedModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2998,6 +3076,8 @@ export interface PlatformEnvironmentUpdateBody {
    * way to clear.
    */
   modelId?: string | null;
+  /** New saved selection, or `null` to clear it (the bare `modelId` stays). */
+  modelSelection?: RequestedModelSelection | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
   /**
    * New credential grant, or `null` to REVOKE it entirely. Omit to leave
@@ -3024,6 +3104,13 @@ export interface PlatformEnvironmentCapabilities {
   modelOverrides: boolean;
   /** Environment cells may vary by model on one host (the compare grid). */
   modelMatrix: boolean;
+  /**
+   * `modelSelection` is accepted on create / update / ad-hoc, so an
+   * environment can carry a saved selection (source, connection, effort).
+   * Absent/false on older backends, which reject the unknown field — probe
+   * this before sending one.
+   */
+  modelSelections?: boolean;
   /**
    * `startTestSuiteRun` accepts `ephemeralEnvironment` — a project-scoped
    * env may launch without suite membership. Absent/false on older backends.
@@ -3355,6 +3442,24 @@ export interface PlatformEvalIterationUsage {
   [key: string]: unknown;
 }
 
+/** Why MCPJam's infrastructure, not the server under test, failed a trial. */
+export interface PlatformEvalInfraError {
+  /**
+   * `provider_unavailable`, `rate_limited`, `capacity`, `auth`,
+   * `account_limit`, `configuration` or `sandbox`. Typed as a
+   * string so a class added later still reads.
+   */
+  class: string;
+  /** `model`, `sandbox` or `platform`. */
+  layer: string;
+  /** Whether the failure looked transient. Advisory. */
+  retryable: boolean;
+  /** The producer's structured code, when it sent one. */
+  code?: string;
+  /** The upstream HTTP status, when there was one. */
+  httpStatus?: number;
+}
+
 export interface PlatformEvalIteration {
   id: string;
   /**
@@ -3419,6 +3524,15 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * PRESENT when MCPJam's own infrastructure failed this trial — the model
+   * provider (`layer: "model"`), the sandbox, or the platform (an account or
+   * admission limit). Such a trial is `status: "failed"`, measured nothing
+   * about the server, is EXCLUDED from every pass rate and verdict, and its
+   * eval fee is refunded. ABSENT on every other trial, including ones that
+   * failed on the server or the agent.
+   */
+  infraError?: PlatformEvalInfraError;
   /**
    * Per-scorer verdicts for this iteration, in the evaluation contract's
    * shape. `null` when the run predates scoring, or when the stored payload

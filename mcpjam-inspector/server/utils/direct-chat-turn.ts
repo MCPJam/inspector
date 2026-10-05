@@ -33,6 +33,7 @@ import {
 } from "./live-chat-trace-stream";
 import { normalizeSystemPromptForProvider } from "./model-request-payload";
 import {
+  liveChatTraceUsageFromAiSdk,
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
@@ -241,11 +242,7 @@ export interface DirectChatTurnStepFinishEvent {
    * tracks per-turn aggregates, not per-step deltas). Undefined when
    * the step had no usage signal.
    */
-  turnUsage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  };
+  turnUsage?: LiveChatTraceUsage;
   settledWithError: boolean;
   /**
    * Defensive copy of `traceTurn.turnSpans` as of step settlement.
@@ -508,25 +505,6 @@ export function withMcpToolOriginChunkMetadata<
     pageToolBindingOf(tools[chunk.toolName])
   );
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
-}
-
-function toLiveChatTraceUsage(
-  usage:
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-      }
-    | null
-    | undefined,
-): LiveChatTraceUsage | undefined {
-  if (!usage) return undefined;
-  const next: LiveChatTraceUsage = {};
-  if (typeof usage.inputTokens === "number") next.inputTokens = usage.inputTokens;
-  if (typeof usage.outputTokens === "number")
-    next.outputTokens = usage.outputTokens;
-  if (typeof usage.totalTokens === "number") next.totalTokens = usage.totalTokens;
-  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 /**
@@ -904,7 +882,9 @@ export function runDirectChatTurn(
         afterLength > beforeLength ? beforeLength : undefined;
       const messageEndIndex =
         afterLength > beforeLength ? afterLength - 1 : undefined;
-      const stepUsage = toLiveChatTraceUsage(step.usage);
+      // Includes the reasoning / cached-input breakdown, so the local-usage
+      // writeback and the eval runner see the reasoning tokens a turn spent.
+      const stepUsage = liveChatTraceUsageFromAiSdk(step.usage);
 
       traceTurn.turnUsage = mergeLiveChatTraceUsage(
         traceTurn.turnUsage,
@@ -974,6 +954,12 @@ export function runDirectChatTurn(
                   : {}),
                 ...(traceTurn.turnUsage.totalTokens !== undefined
                   ? { totalTokens: traceTurn.turnUsage.totalTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.reasoningTokens !== undefined
+                  ? { reasoningTokens: traceTurn.turnUsage.reasoningTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.cachedInputTokens !== undefined
+                  ? { cachedInputTokens: traceTurn.turnUsage.cachedInputTokens }
                   : {}),
               }
             : undefined,
@@ -1054,7 +1040,7 @@ export function runDirectChatTurn(
       );
       traceTurn.turnSpans = [...traceContext.recordedSpans];
       traceTurn.turnUsage =
-        toLiveChatTraceUsage(event.totalUsage) ?? traceTurn.turnUsage;
+        liveChatTraceUsageFromAiSdk(event.totalUsage) ?? traceTurn.turnUsage;
 
       if (!turnFinished) {
         traceEvents?.onTurnFinish?.({

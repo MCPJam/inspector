@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // `vi.hoisted` because both vi.mock factories are lifted above these
@@ -64,6 +65,21 @@ describe("authorization refusals", () => {
     reportCaught(
       new ConvexError({
         kind: "session_revoked",
+        message: "Authentication required",
+      }),
+      { source: "convex_query_subscription" },
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(posthogCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("drops an unauthenticated refusal before it reaches either sink", () => {
+    // What a live subscription gets when Convex re-runs it between an auth
+    // clear and the re-auth that follows (PLB-159).
+    reportCaught(
+      new ConvexError({
+        kind: "unauthenticated",
         message: "Authentication required",
       }),
       { source: "convex_query_subscription" },
@@ -375,5 +391,35 @@ describe("query correlation", () => {
       queryBackend: "another.convex.cloud",
     });
     expect(captureException).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("auth recovery correlation", () => {
+  it("keeps backend request IDs and adds the current recovery ID", async () => {
+    captureException.mockReset();
+    useSessionRefreshStore.setState({
+      recoveryId: "test-recovery",
+      recoveryAt: Date.now(),
+    });
+    reportCaught(
+      new Error(
+        "[CONVEX Q(hosts:getHost)] [Request ID: abc123def4567890] Server Error",
+      ),
+      {
+        source: "convex_query_subscription",
+        queryBackend: "test.convex.cloud",
+      },
+    );
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({
+          auth_recovery_id: "test-recovery",
+          request_id: "abc123def4567890",
+          convex_backend: "test.convex.cloud",
+        }),
+      }),
+    );
+    useSessionRefreshStore.setState({ recoveryId: null, recoveryAt: 0 });
   });
 });

@@ -43,7 +43,7 @@ import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
   harnessReasoningEffortRefusalReason,
-  selectionReasoningEffort,
+  turnReasoningEffortOf,
 } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
@@ -218,6 +218,9 @@ export interface RunAssistantTurnOptions {
    * system-reporter fallback applies (requestId: null on the emitted rows).
    */
   failureReporter?: MCPJamHandlerOptions["failureReporter"];
+
+  /** A surface's capture rule; see `MCPJamHandlerOptions.failureCapture`. */
+  failureCapture?: MCPJamHandlerOptions["failureCapture"];
 
   /**
    * Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing
@@ -586,6 +589,7 @@ function buildHandlerOptions(
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),
+    ...(opts.failureCapture ? { failureCapture: opts.failureCapture } : {}),
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     ...(opts.prepareAdvertisedTools
       ? { prepareAdvertisedTools: opts.prepareAdvertisedTools }
@@ -675,12 +679,12 @@ export async function runAssistantTurn(
   const harnessRequested = !!opts.harness;
   const harnessModelId = String(opts.modelDefinition.id);
   if (harnessRequested) {
+    // Venue-aware: a local target runs the local arm (app-server for Codex),
+    // and this backstop must judge the adapter that will actually run.
     const harnessAdapter = getHarnessAdapter(opts.harness as string);
     // The turn's effort, else the saved selection's. Refused here too so a
     // path that never runs the pre-flight cannot start a paid box for it.
-    const harnessEffort =
-      opts.reasoningEffort ??
-      selectionReasoningEffort(opts.extraBodyFields?.modelSelection);
+    const harnessEffort = turnReasoningEffortOf(opts);
     // Playground chat (`direct`) may run an unverified harness × model pair
     // with a warning; evals, scenarios and swarms may not.
     const purpose = harnessModelPurposeForSourceType(opts.sourceType);
@@ -696,6 +700,9 @@ export async function runAssistantTurn(
     const effortRefusal = harnessReasoningEffortRefusalReason({
       adapter: harnessAdapter,
       ...(harnessEffort !== undefined ? { reasoningEffort: harnessEffort } : {}),
+      ...(opts.modelDefinition.supportedReasoningEfforts
+        ? { modelEfforts: opts.modelDefinition.supportedReasoningEfforts }
+        : {}),
     });
     if (effortRefusal) {
       throw new Error(

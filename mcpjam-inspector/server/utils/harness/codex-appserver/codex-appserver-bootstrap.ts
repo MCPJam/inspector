@@ -16,6 +16,7 @@ import {
   CODEX_APPSERVER_BUNDLE_VERSION,
   CODEX_APPSERVER_HOST_TOOLS_MCP_SOURCE,
   CODEX_APPSERVER_BOOTSTRAP_PACKAGE_JSON,
+  CODEX_APPSERVER_BOOTSTRAP_PNPM_LOCK,
 } from "./bootstrap/generated/codex-appserver-bridge.bundled.js";
 
 /** Where the recipe lands, relative to the session working directory. */
@@ -42,6 +43,10 @@ export function getCodexAppServerBootstrap(): CodexAppServerBootstrap {
         content: CODEX_APPSERVER_BOOTSTRAP_PACKAGE_JSON,
       },
       {
+        path: `${CODEX_APPSERVER_BOOTSTRAP_DIR}/pnpm-lock.yaml`,
+        content: CODEX_APPSERVER_BOOTSTRAP_PNPM_LOCK,
+      },
+      {
         path: `${CODEX_APPSERVER_BOOTSTRAP_DIR}/bridge.mjs`,
         content: CODEX_APPSERVER_BRIDGE_SOURCE,
       },
@@ -52,21 +57,25 @@ export function getCodexAppServerBootstrap(): CodexAppServerBootstrap {
         content: CODEX_APPSERVER_HOST_TOOLS_MCP_SOURCE,
       },
     ],
+    /*
+     * The framework runs every command with `workingDirectory` set to the
+     * resolved bootstrap directory (`applyBootstrapRecipe`), so paths here are
+     * RELATIVE TO IT. The previous recipe repeated the bootstrap path
+     * (`--dir .harness-bootstrap/codex-appserver`), which resolved to a nested
+     * directory that did not exist and failed the first session on any box.
+     */
     commands: [
-      // No `--frozen-lockfile` until a lockfile is committed (see
-      // `bootstrap/README.md`). The single dependency is an exact pin, so the
-      // resolution is deterministic either way. `--store-dir` keeps the store
-      // inside the bootstrap directory so a re-run reuses it.
-      {
-        command: `pnpm install --dir ${CODEX_APPSERVER_BOOTSTRAP_DIR} --store-dir ${CODEX_APPSERVER_BOOTSTRAP_DIR}/.pnpm-store`,
-      },
+      // The published adapters' literal, byte for byte: the lockfile is
+      // committed, so the install is frozen, and the store stays inside the
+      // bootstrap directory so a re-run reuses it. The local translator treats
+      // exactly this string as a no-op (the verified pack already holds the
+      // graph), so it must not drift.
+      { command: "pnpm install --frozen-lockfile --store-dir .pnpm-store" },
       // Proves the platform-specific optional dependency actually landed. The
       // wrapper installs fine on its own and only fails at RUN time with
       // "Missing optional dependency", which would otherwise surface as an
       // opaque bridge startup failure minutes later.
-      {
-        command: `node ${CODEX_APPSERVER_BOOTSTRAP_DIR}/node_modules/@openai/codex/bin/codex.js --version`,
-      },
+      { command: "node node_modules/@openai/codex/bin/codex.js --version" },
     ],
   };
   return cached;

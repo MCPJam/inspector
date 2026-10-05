@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/chart";
 import { Button } from "@mcpjam/design-system/button";
 import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
 interface SuiteHeroStatsProps {
@@ -20,6 +20,8 @@ interface SuiteHeroStatsProps {
     label: string;
   }>;
   modelStats: Array<{
+    /** Target identity (`targetKey`); `model` is its display label. */
+    key?: string;
     model: string;
     passRate: number;
     passed: number;
@@ -52,8 +54,10 @@ export function SuiteHeroStats({
       (iter) => iter.suiteRunId && activeRunIds.has(iter.suiteRunId),
     );
 
+    // Measured results: infra rows count in no rate (see
+    // `computeMeasuredIterationResult`).
     const results = activeIterations.map((iter) =>
-      computeIterationResult(iter),
+      computeMeasuredIterationResult(iter),
     );
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter((r) => r === "failed").length;
@@ -78,7 +82,7 @@ export function SuiteHeroStats({
       (iter) => iter.suiteRunId === latestRun?._id,
     );
     const latestResults = latestRunIterations.map((iter) =>
-      computeIterationResult(iter),
+      computeMeasuredIterationResult(iter),
     );
     const latestPassed = latestResults.filter((r) => r === "passed").length;
     const latestTotal = latestResults.filter(
@@ -314,7 +318,10 @@ export function SuiteHeroStats({
           </div>
           <div className="flex flex-wrap items-center gap-4">
             {modelStats.map((model) => (
-              <div key={model.model} className="flex items-center gap-2">
+              <div
+                key={model.key ?? model.model}
+                className="flex items-center gap-2"
+              >
                 <div
                   className="h-2 w-2 rounded-full"
                   style={{

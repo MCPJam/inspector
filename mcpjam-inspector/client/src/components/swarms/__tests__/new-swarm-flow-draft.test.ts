@@ -27,7 +27,7 @@ function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
         serverAttachmentId: null,
         skillSelection: null,
         computerEnvironmentId: null,
-        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
+        modelSelection: { includeClientDefaults: true, explicitTargets: [] },
       },
       customized: false,
     },
@@ -122,7 +122,7 @@ describe("new swarm flow draft", () => {
     // Client defaults: exactly what the stack meant before the slot existed.
     expect(restored?.targetState.stack.modelSelection).toEqual({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 

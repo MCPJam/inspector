@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   ModelsPill,
@@ -80,36 +80,36 @@ describe("modelsPillTriggerLabel", () => {
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: true,
-        explicitModelIds: [],
+        explicitTargets: [],
       })
     ).toBe("models");
     expect(
       modelsPillTriggerLabel(
-        { includeClientDefaults: true, explicitModelIds: [] },
+        { includeClientDefaults: true, explicitTargets: [] },
         { clientDefaultLabel: "gpt-4", modelName: () => "GPT-4" }
       )
     ).toBe("GPT-4");
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: true,
-        explicitModelIds: ["a", "b"],
+        explicitTargets: [{ modelId: "a" }, { modelId: "b" }],
       })
     ).toBe("models +2");
     expect(
       modelsPillTriggerLabel(
-        { includeClientDefaults: true, explicitModelIds: ["a", "b"] },
+        { includeClientDefaults: true, explicitTargets: [{ modelId: "a" }, { modelId: "b" }] },
         { clientDefaultLabel: "gpt-4", modelName: () => "GPT-4" }
       )
     ).toBe("GPT-4 +2");
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: false,
-        explicitModelIds: ["a", "b"],
+        explicitTargets: [{ modelId: "a" }, { modelId: "b" }],
       })
     ).toBe("2 models");
     expect(
       modelsPillTriggerLabel(
-        { includeClientDefaults: false, explicitModelIds: ["google/gemini"] },
+        { includeClientDefaults: false, explicitTargets: [{ modelId: "google/gemini" }] },
         { modelName: () => "Gemini 2.5 Flash" }
       )
     ).toBe("Gemini 2.5 Flash");
@@ -121,7 +121,7 @@ describe("ModelsPill", () => {
     const { unmount } = render(
       <ModelsPill
         projectId="proj-1"
-        value={{ includeClientDefaults: true, explicitModelIds: [] }}
+        value={{ includeClientDefaults: true, explicitTargets: [] }}
         onChange={vi.fn()}
         testId="models"
       />
@@ -131,7 +131,7 @@ describe("ModelsPill", () => {
     render(
       <ModelsPill
         projectId="proj-1"
-        value={{ includeClientDefaults: true, explicitModelIds: [] }}
+        value={{ includeClientDefaults: true, explicitTargets: [] }}
         onChange={vi.fn()}
         clientDefaultLabel="google/gemini-2.5-flash"
         testId="models"
@@ -142,7 +142,7 @@ describe("ModelsPill", () => {
 
   it("checks Client defaults initially and lists catalog models", async () => {
     const user = userEvent.setup();
-    renderPill({ includeClientDefaults: true, explicitModelIds: [] });
+    renderPill({ includeClientDefaults: true, explicitTargets: [] });
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(option("Client defaults")).toHaveAttribute("aria-checked", "true");
     expect(option("Gemini 2.5 Flash")).toHaveAttribute("aria-checked", "false");
@@ -151,7 +151,7 @@ describe("ModelsPill", () => {
   it("disables a model option that would exceed the product cap", async () => {
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       {
         budget: { hostCount: 3, choiceCount: 1, maxTargets: 10 },
       }
@@ -167,7 +167,7 @@ describe("ModelsPill", () => {
   it("disables a model option when the product would exceed 10", async () => {
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: ["m1", "m2"] },
+      { includeClientDefaults: true, explicitTargets: [{ modelId: "m1" }, { modelId: "m2" }] },
       {
         budget: { hostCount: 3, choiceCount: 3, maxTargets: 10 },
       }
@@ -179,7 +179,7 @@ describe("ModelsPill", () => {
   it("replaces the sole model choice at the cap instead of disabling alternatives", async () => {
     const user = userEvent.setup();
     const onChange = renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       {
         budget: { hostCount: 6, choiceCount: 1, maxTargets: 10 },
       }
@@ -190,20 +190,22 @@ describe("ModelsPill", () => {
     await user.click(gemini);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: false,
-      explicitModelIds: ["google/gemini-2.5-flash"],
-      // The picked row's saved selection rides beside the id.
-      explicitModelSelections: {
-        "google/gemini-2.5-flash": expect.objectContaining({
+      // The picked row's saved selection rides on the target.
+      explicitTargets: [
+        {
           modelId: "google/gemini-2.5-flash",
-          source: "hosted",
-        }),
-      },
+          selection: expect.objectContaining({
+            modelId: "google/gemini-2.5-flash",
+            source: "hosted",
+          }),
+        },
+      ],
     });
   });
 
   it("keeps a catalog-disabled model disabled", async () => {
     const user = userEvent.setup();
-    renderPill({ includeClientDefaults: true, explicitModelIds: [] });
+    renderPill({ includeClientDefaults: true, explicitTargets: [] });
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(option("Locked")).toHaveAttribute("aria-disabled", "true");
   });
@@ -212,7 +214,7 @@ describe("ModelsPill", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: ["retired/old-model"],
+      explicitTargets: [{ modelId: "retired/old-model" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     const stale = option("retired/old-model");
@@ -222,7 +224,7 @@ describe("ModelsPill", () => {
     await user.click(stale);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 
@@ -230,7 +232,7 @@ describe("ModelsPill", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: ["locked-model"],
+      explicitTargets: [{ modelId: "locked-model" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     const locked = option("Locked");
@@ -239,28 +241,30 @@ describe("ModelsPill", () => {
     await user.click(locked);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 
   it("single mode replaces the selection", async () => {
     const user = userEvent.setup();
     const onChange = renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       { mode: "single" }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
     await user.click(option("Gemini 2.5 Flash"));
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: false,
-      explicitModelIds: ["google/gemini-2.5-flash"],
-      // The picked row's saved selection rides beside the id.
-      explicitModelSelections: {
-        "google/gemini-2.5-flash": expect.objectContaining({
+      // The picked row's saved selection rides on the target.
+      explicitTargets: [
+        {
           modelId: "google/gemini-2.5-flash",
-          source: "hosted",
-        }),
-      },
+          selection: expect.objectContaining({
+            modelId: "google/gemini-2.5-flash",
+            source: "hosted",
+          }),
+        },
+      ],
     });
   });
 });
@@ -291,8 +295,7 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-4o"],
-      explicitModelSelections: { "openai/gpt-4o": orgSelection },
+      explicitTargets: [{ modelId: "openai/gpt-4o", selection: orgSelection }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
 
@@ -307,11 +310,52 @@ describe("ModelsPill on the one picker", () => {
     await user.click(hostedRow);
     expect(onChange).toHaveBeenLastCalledWith({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-4o"],
-      explicitModelSelections: {
-        "openai/gpt-4o": expect.objectContaining({ source: "hosted" }),
-      },
+      explicitTargets: [
+        {
+          modelId: "openai/gpt-4o",
+          selection: expect.objectContaining({ source: "hosted" }),
+        },
+      ],
     });
+  });
+
+  it("keeps two efforts of the id as two targets when the row is swapped", async () => {
+    mockModels.availableModels = [hosted, orgTwin];
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [
+        {
+          modelId: "openai/gpt-4o",
+          selection: { ...orgSelection, settings: { reasoningEffort: "low" } },
+        },
+        {
+          modelId: "openai/gpt-4o",
+          selection: { ...orgSelection, settings: { reasoningEffort: "high" } },
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Free models" }));
+    await user.click(option(/^GPT-4o$/));
+
+    const last = onChange.mock.calls.at(-1)![0];
+    expect(last.explicitTargets).toEqual([
+      {
+        modelId: "openai/gpt-4o",
+        selection: expect.objectContaining({
+          source: "hosted",
+          settings: { reasoningEffort: "low" },
+        }),
+      },
+      {
+        modelId: "openai/gpt-4o",
+        selection: expect.objectContaining({
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+        }),
+      },
+    ]);
   });
 
   it("reads a legacy id with no selection as the hosted row", async () => {
@@ -319,7 +363,7 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     renderPill({
       includeClientDefaults: false,
-      explicitModelIds: ["openai/gpt-4o"],
+      explicitTargets: [{ modelId: "openai/gpt-4o" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(option(/^GPT-4o$/)).toHaveAttribute("aria-checked", "true");
@@ -331,14 +375,16 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: ["google/gemini-2.5-flash"],
+      explicitTargets: [{ modelId: "google/gemini-2.5-flash" }],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     await user.click(option("Client defaults"));
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({
         includeClientDefaults: false,
-        explicitModelIds: ["google/gemini-2.5-flash"],
+        explicitTargets: [
+          expect.objectContaining({ modelId: "google/gemini-2.5-flash" }),
+        ],
       })
     );
     expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
@@ -361,7 +407,7 @@ describe("ModelsPill on the one picker", () => {
     const user = userEvent.setup();
     const onChange = renderPill({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
     await user.click(screen.getByRole("button", { name: "Models" }));
     const luna = option("GPT-5.6 Luna");
@@ -397,7 +443,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       { harnessTargets: [{ harnessId: "claude-code" }] }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
@@ -421,7 +467,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       // An emulated client runs anything; the Codex cell is skipped at
       // resolve time instead.
       { harnessTargets: [{ harnessId: "codex" }, null] }
@@ -437,7 +483,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     renderPill(
-      { includeClientDefaults: true, explicitModelIds: [] },
+      { includeClientDefaults: true, explicitTargets: [] },
       { harnessTargets: [{ harnessId: "claude-code" }], purpose: "chat" }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
@@ -452,7 +498,7 @@ describe("ModelsPill — harness × model support", () => {
     mockModels.availableModels = [...DEFAULT_MODELS, ...HARNESS_MODELS];
     const user = userEvent.setup();
     const onChange = renderPill(
-      { includeClientDefaults: true, explicitModelIds: ["openai/gpt-5.6-luna"] },
+      { includeClientDefaults: true, explicitTargets: [{ modelId: "openai/gpt-5.6-luna" }] },
       { harnessTargets: [{ harnessId: "claude-code" }] }
     );
     await user.click(screen.getByRole("button", { name: "Models" }));
@@ -462,7 +508,139 @@ describe("ModelsPill — harness × model support", () => {
     await user.click(luna);
     expect(onChange).toHaveBeenCalledWith({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
+  });
+});
+
+describe("ModelsPill — reasoning effort", () => {
+  const GPT5 = {
+    id: "openai/gpt-5",
+    name: "GPT-5",
+    provider: "openai",
+    hosted: true,
+    supportedReasoningEfforts: ["low", "high"],
+  };
+  const BYOK = {
+    id: "gpt-5",
+    name: "GPT-5 (own key)",
+    provider: "openai",
+    hosted: false,
+    supportedReasoningEfforts: undefined,
+  };
+
+  const hostedAt = (effort?: "low" | "high") => ({
+    modelId: "openai/gpt-5",
+    selection: {
+      modelId: "openai/gpt-5",
+      source: "hosted" as const,
+      fallback: { provider: "none" as const, model: "none" as const },
+      ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+    },
+  });
+  const efforts = (value: ModelSelection) =>
+    value.explicitTargets.map((t) => t.selection?.settings?.reasoningEffort);
+  /** Open the pill, then GPT-5's efforts to the side. */
+  async function openEfforts() {
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.click(await screen.findByRole("option", { name: /GPT-5/ }));
+    return within(await screen.findByTestId("model-effort-menu"));
+  }
+
+  it("ticks a second effort of a picked model as its own target", async () => {
+    mockModels.availableModels = [GPT5];
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [hostedAt()],
+    } as ModelSelection);
+    const menu = await openEfforts();
+    expect(
+      menu.getByRole("menuitemcheckbox", { name: "Default" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(menu.getByRole("menuitemcheckbox", { name: "High" }));
+    const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
+    expect(next.explicitTargets.map((t) => t.modelId)).toEqual([
+      "openai/gpt-5",
+      "openai/gpt-5",
+    ]);
+    expect(efforts(next)).toEqual([undefined, "high"]);
+  });
+
+  it("keeps two efforts of one model as two targets, and unticks one alone", async () => {
+    mockModels.availableModels = [GPT5];
+    const onChange = renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [hostedAt("low"), hostedAt("high")],
+    } as ModelSelection);
+    expect(screen.getByRole("button", { name: "Models" })).toHaveTextContent(
+      "2 models",
+    );
+    const menu = await openEfforts();
+    await userEvent.click(menu.getByRole("menuitemcheckbox", { name: "Low" }));
+    const next = onChange.mock.calls.at(-1)![0] as ModelSelection;
+    expect(efforts(next)).toEqual(["high"]);
+  });
+
+  it("offers a Claude Code target no level (its adapter verifies none), but a Codex target its own", async () => {
+    mockModels.availableModels = [
+      { ...GPT5, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"] },
+    ];
+    const value = {
+      includeClientDefaults: false,
+      explicitTargets: [hostedAt()],
+    } as ModelSelection;
+    const { unmount } = render(
+      <ModelsPill
+        projectId="proj-1"
+        value={value}
+        onChange={vi.fn()}
+        mode="multiple"
+        testId="models"
+        harnessTargets={[{ harnessId: "claude-code" }]}
+      />
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.hover(await screen.findByRole("option", { name: /GPT-5/ }));
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
+    unmount();
+    render(
+      <ModelsPill
+        projectId="proj-1"
+        value={value}
+        onChange={vi.fn()}
+        mode="multiple"
+        testId="models"
+        harnessTargets={[{ harnessId: "codex" }]}
+      />
+    );
+    const menu = await openEfforts();
+    expect(
+      menu.getByRole("menuitemcheckbox", { name: "X-High" }),
+    ).toBeInTheDocument();
+    expect(menu.queryByRole("menuitemcheckbox", { name: "Max" })).toBeNull();
+  });
+
+  it("offers no efforts for a model with no known capability", async () => {
+    mockModels.availableModels = [{ ...GPT5, supportedReasoningEfforts: [] }];
+    renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "openai/gpt-5" }],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.hover(await screen.findByRole("option", { name: /GPT-5/ }));
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
+  });
+
+  it("offers no efforts for a bare-id BYOK row (no saveable selection)", async () => {
+    mockModels.availableModels = [
+      { ...BYOK, supportedReasoningEfforts: ["low", "high"] },
+    ];
+    renderPill({
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "gpt-5" }],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    await userEvent.hover(await screen.findByRole("option", { name: /GPT-5/ }));
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
   });
 });

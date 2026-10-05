@@ -7,14 +7,16 @@ import {
 } from "../../services/evals/route-helpers.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   ErrorCode,
   WebRouteError,
   webErrorFromRoute,
-  mapRuntimeError,
 } from "../web/errors.js";
+import { mapWebBoundaryError } from "../web/boundary-error.js";
 import { createEvalCasesInBatches } from "./eval-case-batch.js";
 import {
   selectSuiteEnvironmentId,
@@ -188,7 +190,12 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
         30_000,
         undefined,
         undefined,
-        { serverNames: selection.serverNames },
+        {
+          serverNames: selection.serverNames,
+          // A Cross-App Access server mints its token with MCPJam as the IdP,
+          // and the ID-JAG's `iss` is this issuer (as on the other eval routes).
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        },
       );
       let toolSnapshot;
       try {
@@ -312,6 +319,8 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
       }),
     );
   } catch (error) {
-    return webErrorFromRoute(c, mapRuntimeError(error));
+    // The boundary mapper, so a backend `ConvexError({ code, message })` (a
+    // stale draft's CONFLICT) answers its own status instead of a 500.
+    return webErrorFromRoute(c, mapWebBoundaryError(error));
   }
 }

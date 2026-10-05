@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
   createQueryRequestCache,
   queryFailureTags,
@@ -9,6 +10,7 @@ import posthog from "posthog-js";
 import {
   isAuthorizationRefusal,
   isSessionRevokedError,
+  isUnauthenticatedError,
 } from "./authorization-refusal";
 import {
   describeError,
@@ -30,6 +32,13 @@ export interface ReportOptions {
   extra?: Record<string, unknown>;
   /** Captured from the observed Convex client, never query arguments. */
   queryBackend?: string;
+  /**
+   * Extra Sentry tags, merged under `source` (e.g. `surface`, `page_class` —
+   * what Ask MCPJam's alert rules filter on). Sentry only.
+   */
+  tags?: Record<string, string>;
+  /** Sentry grouping override, for a call site whose stacks are all alike. */
+  fingerprint?: string[];
 }
 
 /**
@@ -86,7 +95,11 @@ export function reportPossiblyOurFailure(
     // Checked here as well as in `reportCaught`, so the documented return value
     // stays honest: without this a refusal would be dropped downstream and
     // still reported as sent.
-    if (isAuthorizationRefusal(error) || isSessionRevokedError(error))
+    if (
+      isAuthorizationRefusal(error) ||
+      isSessionRevokedError(error) ||
+      isUnauthenticatedError(error)
+    )
       return false;
 
     // Prefer a normalized block the SERVER attached. A hosted route classifies
@@ -146,7 +159,12 @@ function toError(error: unknown): Error {
  * a path that is already handling one.
  */
 export function reportCaught(error: unknown, options: ReportOptions): void {
-  if (isAuthorizationRefusal(error) || isSessionRevokedError(error)) return;
+  if (
+    isAuthorizationRefusal(error) ||
+    isSessionRevokedError(error) ||
+    isUnauthenticatedError(error)
+  )
+    return;
 
   const normalized = safeQueryError(toError(error));
   const queryTags = queryFailureTags(normalized.message);
@@ -162,10 +180,21 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       ? queryPageLocation(window.location.href)
       : undefined;
 
+  const recovery = useSessionRefreshStore.getState();
+  const recoveryTags =
+    recovery.recoveryId && Date.now() - recovery.recoveryAt < 300_000
+      ? { auth_recovery_id: recovery.recoveryId }
+      : {};
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source, ...queryTags },
+      tags: {
+        ...(options.tags ?? {}),
+        source: options.source,
+        ...queryTags,
+        ...recoveryTags,
+      },
+      ...(options.fingerprint ? { fingerprint: options.fingerprint } : {}),
       ...(queryTags
         ? {
             extra: {

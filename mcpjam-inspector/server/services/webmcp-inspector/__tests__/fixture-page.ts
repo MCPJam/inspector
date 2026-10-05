@@ -7,9 +7,9 @@
  * origins, which is what the cross-origin-frame case needs.
  *
  * The fixture registers through `document.modelContext` — the current API.
- * (Chromium 151 still aliases `navigator.modelContext` to the same object; the
- * spike asserts that, so the day it stops being true is a test failure and not
- * a mystery.)
+ * (Chromium 151 still aliased `navigator.modelContext` to the same object;
+ * 153 does not define it at all. The spike asserts which, so the day it
+ * changes again is a test failure and not a mystery.)
  *
  * WIDE ON PURPOSE. The routes below exist so the spike MEASURES the platform
  * rather than confirming a guess about it: every navigation shape a WebMCP tool
@@ -135,7 +135,7 @@ const MAIN_HTML = (subOrigin: string) => `<!doctype html><html><body>
 <script>
   const mc = document.modelContext;
   window.__webmcpReady = false;
-  window.__navigatorAliasesDocument = navigator.modelContext === mc;
+  window.__navigatorHasModelContext = "modelContext" in navigator;
 
   // NEGATIVE CONTROL. These are the keys the MCP tool-annotation vocabulary
   // uses WITHOUT the "Hint" suffix. Blink reads \`readOnlyHint\` and

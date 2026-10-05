@@ -1,7 +1,13 @@
 import { useMemo } from "react";
+import { comparisonKey, type RequestedModelSelection } from "@mcpjam/sdk/browser";
 import { compactModelIdTail } from "@/lib/environment-label";
+import {
+  modelIdFromTargetKey,
+  runTargetKey,
+  targetKeyLabels,
+} from "@/lib/eval-target-key";
 import { formatRunId, runEnvironmentRef, runClientIdentity } from "../helpers";
-import { computeIterationResult } from "../pass-criteria";
+import { computeMeasuredIterationResult } from "../pass-criteria";
 import type {
   EvalCase,
   EvalIteration,
@@ -15,6 +21,12 @@ export type CrossHostEnvironment = {
   environmentId: string;
   hostId: string;
   modelId?: string;
+  /**
+   * The saved selection behind `modelId`. Two environments of one host and
+   * model at different efforts are two targets, so the column keys by its
+   * `comparisonKey`.
+   */
+  modelSelection?: RequestedModelSelection | null;
   serverAttachmentId?: string | null;
   skillSelection?: {
     skillIds: string[];
@@ -223,14 +235,17 @@ export function buildCellTrendSeries(
     let passCount = 0;
     let failCount = 0;
     let pendingCount = 0;
+    let infraCount = 0;
     let totalTokens = 0;
     let totalToolCalls = 0;
     const latencySamples: number[] = [];
 
     for (const iter of iters) {
-      const result = computeIterationResult(iter);
+      const result = computeMeasuredIterationResult(iter);
       if (result === "passed") passCount++;
       else if (result === "failed") failCount++;
+      // An infra row measured nothing: in no count.
+      else if (result === "infra_error") infraCount++;
       else pendingCount++;
 
       totalTokens += iter.tokensUsed || 0;
@@ -241,6 +256,7 @@ export function buildCellTrendSeries(
     }
 
     const totalCount = iters.length;
+    const measuredCount = totalCount - infraCount;
 
     return {
       runId: run._id,
@@ -250,11 +266,11 @@ export function buildCellTrendSeries(
         passCount,
         failCount,
         pendingCount,
-        totalCount,
+        measuredCount,
       ),
       passed: passCount,
       failed: failCount,
-      total: totalCount,
+      total: measuredCount,
       latencyMs: median(latencySamples),
       latencyP95Ms: percentile(latencySamples, 95),
       tokens:
@@ -272,10 +288,11 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   const latencySamples: number[] = [];
 
   for (const iter of iterations) {
-    const result = computeIterationResult(iter);
+    const result = computeMeasuredIterationResult(iter);
     if (result === "passed") passCount++;
     else if (result === "failed") failCount++;
-    else pendingCount++;
+    // An infra row measured nothing: in no count, pending included.
+    else if (result !== "infra_error") pendingCount++;
 
     totalTokens += iter.tokensUsed || 0;
 
@@ -408,21 +425,42 @@ function splitLabelFor(
   }
 }
 
+/**
+ * An environment's model column: the `comparisonKey` of its saved selection
+ * (bare model id for a default one), so two environments of one host that
+ * differ only by effort mint two columns. A selection for another model than
+ * `modelId` is stale and ignored.
+ */
+export function envModelKey(env: CrossHostEnvironment): string {
+  if (!env.modelId) return CLIENT_DEFAULT_MODEL_KEY;
+  const selection = env.modelSelection;
+  if (selection && selection.modelId === env.modelId) {
+    return comparisonKey(selection);
+  }
+  return env.modelId;
+}
+
 export function modelKeyForRun(
   run: EvalSuiteRun,
   envById: Map<string, CrossHostEnvironment>,
 ): string {
   // Persisted attribution is the run's frozen column. A later edit to the
   // named environment must not move historical runs into a new model cell
-  // (or recast an inherit run as an override).
+  // (or recast an inherit run as an override). The run's `targetKey` is that
+  // attribution including the selection (bare model id when default).
   if (
     (run.modelSource === "override" || run.modelSource === "case") && run.effectiveModelId) {
-    return run.effectiveModelId;
+    return runTargetKey(run) ?? run.effectiveModelId;
   }
   if (run.modelSource === "client_default") {
     return CLIENT_DEFAULT_MODEL_KEY;
   }
-  if (run.client?.modelId) return run.client.modelId;
+  if (run.client?.modelId) {
+    const key = runTargetKey(run);
+    return key && modelIdFromTargetKey(key) === run.client.modelId
+      ? key
+      : run.client.modelId;
+  }
   // Pre-attribution rows: join the live environment if present.
   const ref = runEnvironmentRef(run);
   const env = ref ? envById.get(ref.environmentId) : undefined;
@@ -430,9 +468,16 @@ export function modelKeyForRun(
   return CLIENT_DEFAULT_MODEL_KEY;
 }
 
-function modelLabelForKey(modelKey: string): string | null {
-  if (modelKey === CLIENT_DEFAULT_MODEL_KEY) return null;
-  return compactModelIdTail(modelKey);
+/**
+ * Column model labels: the model tail, plus only what tells two targets of one
+ * model apart ("· High" / "· Low"). Bare keys with no such sibling read
+ * exactly as before.
+ */
+function modelLabelsForKeys(modelKeys: Iterable<string>): Map<string, string> {
+  return targetKeyLabels(
+    [...modelKeys].filter((key) => key !== CLIENT_DEFAULT_MODEL_KEY),
+    compactModelIdTail,
+  );
 }
 
 export function useCrossHostData(
@@ -538,7 +583,7 @@ export function useCrossHostData(
     for (const env of environments ?? []) {
       if (!env.hostId) continue;
       if (!relevantEnvIds.has(env.environmentId)) continue;
-      const modelKey = env.modelId ?? CLIENT_DEFAULT_MODEL_KEY;
+      const modelKey = envModelKey(env);
       touch(env.hostId, modelKey, {
         envId: env.environmentId,
         historical: false,
@@ -562,6 +607,14 @@ export function useCrossHostData(
         groupKey(clientColumnId(run), modelKeyForRun(run, envById)),
       );
     }
+
+    const modelLabels = modelLabelsForKeys(
+      [...pending.values()].map((group) => group.modelKey),
+    );
+    const modelLabelForKey = (modelKey: string): string | null =>
+      modelKey === CLIENT_DEFAULT_MODEL_KEY
+        ? null
+        : (modelLabels.get(modelKey) ?? compactModelIdTail(modelKey));
 
     const hostColumns: HostColumn[] = [];
     for (const group of pending.values()) {

@@ -128,7 +128,10 @@ vi.mock("@/lib/session-token", () => ({
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ getAccessToken: mockState.getAccessToken }),
 }));
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: () => mockState.convexAuth,
   useQuery: () => undefined,
   useConvex: () => ({ mutation: mockState.convexMutation }),

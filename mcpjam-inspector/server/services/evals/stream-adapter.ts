@@ -46,6 +46,12 @@ export interface FullStreamAdapterContext {
    * rather than tracks it.
    */
   getStepIndex: () => number;
+  /**
+   * The stream's own `error` part, handed over as the typed object the AI SDK
+   * produced (an `APICallError` carries the provider's status). Optional; the
+   * eval infra-error classifier reads its structured fields, never its text.
+   */
+  onError?: (error: unknown) => void;
 }
 
 type FullStream = ReturnType<typeof streamText>["fullStream"];
@@ -102,7 +108,10 @@ export async function consumeFullStreamAsEvalEvents(
           },
         });
         break;
-      // Other chunk types (text-start, text-end, finish, error, raw,
+      case "error":
+        ctx.onError?.(part.error);
+        break;
+      // Other chunk types (text-start, text-end, finish, raw,
       // file, source, …) are not part of the eval event vocabulary —
       // the runner consumes terminal state via `result.response` /
       // `result.totalUsage` / `result.finishReason` after this returns.

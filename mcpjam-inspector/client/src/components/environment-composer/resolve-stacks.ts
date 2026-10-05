@@ -26,10 +26,13 @@ import {
   type SkippedModelCell,
 } from "@/components/environment-composer/environment-stack";
 import type { HarnessModelTarget } from "@/lib/harness-model-locks";
+import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
 import {
-  selectionConfigKey,
-  type ModelSelection as SavedModelSelection,
-} from "@mcpjam/sdk/browser";
+  dedupeModelTargets,
+  modelTarget,
+  modelTargetKey,
+  sameModelTarget,
+} from "@/lib/model-target";
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 import { clientDisplayName } from "@/lib/client-display-name";
 import type {
@@ -141,27 +144,21 @@ function sharedFields(
 }
 
 /**
- * Whether a named row's saved selection is the cell's. With a cell selection
- * the two must agree on the full config (source, connection AND settings).
- * With none, a row that carries settings (an effort or temperature) must not
- * match: reusing it would run the cell with a setting it never asked for,
- * while a plain selection with no settings still describes the same run.
+ * Whether a named row's saved selection is the cell's, by `comparisonKey`
+ * (see `sameModelTarget`): a row whose effort or temperature differs from the
+ * cell's is another target and must not be reused, while a plain selection
+ * with no settings still describes the same run as a bare id. When both sides
+ * store a selection, source and connection must agree too, so an org-key pick
+ * never reuses a row that runs the same id on MCPJam credits. Inherit cells
+ * (no model) only match rows with no model, which `sameOptionalModel` checks.
  */
 function sameSavedSelection(
+  modelId: string | undefined,
   row: SavedModelSelection | undefined,
   cell: SavedModelSelection | undefined,
 ): boolean {
-  if (cell) {
-    return (
-      row !== undefined && selectionConfigKey(row) === selectionConfigKey(cell)
-    );
-  }
-  const settings = row?.settings;
-  return (
-    settings === undefined ||
-    (settings.reasoningEffort === undefined &&
-      settings.temperature === undefined)
-  );
+  if (modelId === undefined) return true;
+  return sameModelTarget(modelTarget(modelId, row), modelTarget(modelId, cell));
 }
 
 /**
@@ -205,7 +202,7 @@ function matchingNamedEnvironment(
     (env.serverSelection === undefined ||
       env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
-    sameSavedSelection(env.modelSelection, modelSelection) &&
+    sameSavedSelection(modelId, env.modelSelection, modelSelection) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
@@ -337,7 +334,7 @@ export async function resolveComposerEnvironments(args: {
   }
   if (
     selectionsByHost.some(
-      ({ selection }) => selection.explicitModelIds.length > 0,
+      ({ selection }) => selection.explicitTargets.length > 0,
     ) &&
     modelMatrixEnabled !== true
   ) {
@@ -383,7 +380,7 @@ export async function resolveComposerEnvironments(args: {
     // Only a client with explicit picks can have a pair to skip, so only those
     // pay for the harness read.
     const harness =
-      loadHostHarness && selection.explicitModelIds.length > 0
+      loadHostHarness && selection.explicitTargets.length > 0
         ? await loadHostHarness(hostId)
         : null;
     const expanded = expandModelChoices(selection, {
@@ -400,11 +397,14 @@ export async function resolveComposerEnvironments(args: {
       const modelSelection = modelSelectionsEnabled
         ? choice.modelSelection
         : undefined;
+      const key = cellKey(hostId, choice.modelId, modelSelection);
+      // Without stored selections two efforts of one model are one cell.
+      if (cells.some((cell) => cell.key === key)) continue;
       cells.push({
         hostId,
         modelId: choice.modelId,
         ...(modelSelection ? { modelSelection } : {}),
-        key: cellKey(hostId, choice.modelId),
+        key,
       });
     }
   }
@@ -598,26 +598,26 @@ export function composerMissingServerGroup(
 }
 
 function normalizeModelSelection(selection: ModelSelection): ModelSelection {
-  const explicitModelIds = [
-    ...new Set(selection.explicitModelIds.filter(Boolean)),
-  ];
-  const explicitModelSelections = Object.fromEntries(
-    explicitModelIds.flatMap((id) => {
-      const saved = selection.explicitModelSelections?.[id];
-      return saved?.modelId === id ? [[id, saved] as const] : [];
-    }),
-  );
   return {
     includeClientDefaults: selection.includeClientDefaults,
-    explicitModelIds,
-    ...(Object.keys(explicitModelSelections).length > 0
-      ? { explicitModelSelections }
-      : {}),
+    explicitTargets: dedupeModelTargets(selection.explicitTargets),
   };
 }
 
-function cellKey(hostId: string, modelId: string | undefined): string {
-  return `${hostId}::${modelId ?? ""}`;
+/**
+ * `${hostId}::${comparisonKey}`: two efforts of one model on one client are
+ * two cells. A cell with no selection keys as its bare id, as before.
+ */
+function cellKey(
+  hostId: string,
+  modelId: string | undefined,
+  modelSelection?: SavedModelSelection,
+): string {
+  return `${hostId}::${
+    modelId === undefined
+      ? ""
+      : modelTargetKey(modelTarget(modelId, modelSelection))
+  }`;
 }
 
 /**

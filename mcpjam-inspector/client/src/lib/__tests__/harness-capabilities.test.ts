@@ -72,15 +72,28 @@ describe("harnessControlState — loop-owned controls", () => {
     }
   });
 
-  it("enforces requireToolApproval on Claude Code and not on Codex", () => {
-    // The note is the thing users read when a control is grayed out, so an
-    // unenforced entry must still explain itself.
+  it("enforces requireToolApproval on Claude Code and Codex", () => {
     expect(harnessControlState("claude-code", "requireToolApproval")).toEqual({
       enforced: true,
     });
-    const codex = harnessControlState("codex", "requireToolApproval");
-    expect(codex.enforced).toBe(false);
-    expect(codex.enforced === false && codex.note.length).toBeGreaterThan(0);
+    expect(harnessControlState("codex", "requireToolApproval")).toEqual({
+      enforced: true,
+    });
+  });
+});
+
+describe("harnessControlState — reasoning effort", () => {
+  it("follows the SDK's verified per-adapter table", () => {
+    expect(harnessControlState("codex", "reasoningEffort")).toEqual({
+      enforced: true,
+    });
+    for (const harness of ["claude-code", "cursor"] as const) {
+      const state = harnessControlState(harness, "reasoningEffort");
+      expect(state.enforced, harness).toBe(false);
+      expect(state.enforced === false && state.note).toMatch(
+        /reasoning effort/,
+      );
+    }
   });
 });
 
@@ -89,6 +102,7 @@ describe("harnessControlState — emulated engine", () => {
     const controls: HarnessGatedControl[] = [
       "modelId",
       "temperature",
+      "reasoningEffort",
       "requireToolApproval",
       "respectToolVisibility",
       "progressiveToolDiscovery",

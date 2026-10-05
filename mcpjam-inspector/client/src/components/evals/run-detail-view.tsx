@@ -27,7 +27,10 @@ import {
   renderOpenAiSubmissionReport,
 } from "@/lib/evals/openai-submission-report";
 import { buildSubmissionCasesFromRun } from "./run-submission";
-import { computeIterationPassed } from "./pass-criteria";
+import {
+  computeIterationPassed,
+  computeMeasuredIterationResult,
+} from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { ImportEvidenceCard } from "./import-evidence-card";
@@ -340,13 +343,13 @@ export function RunIterationsSidebar({
     // grading mode `enforce` was reached from gating evidence (predicates,
     // gates, tool errors) the browser cannot see at all. The matcher survives
     // inside that helper for rows with no stored result; see its docblock.
-    const passed = caseGroupsForSelectedRun.filter((i) =>
-      computeIterationPassed(i),
-    ).length;
-    const failed = caseGroupsForSelectedRun.filter(
-      (i) => !computeIterationPassed(i),
-    ).length;
-    const total = caseGroupsForSelectedRun.length;
+    // An infra row measured nothing: in neither the rate nor its total.
+    const measured = caseGroupsForSelectedRun.filter(
+      (i) => computeMeasuredIterationResult(i) !== "infra_error",
+    );
+    const passed = measured.filter((i) => computeIterationPassed(i)).length;
+    const failed = measured.filter((i) => !computeIterationPassed(i)).length;
+    const total = measured.length;
     const passRate = total > 0 ? passed / total : 0;
     return { passed, failed, total, passRate };
   }, [runForOverview, caseGroupsForSelectedRun]);

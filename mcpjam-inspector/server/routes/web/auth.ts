@@ -45,6 +45,7 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -318,7 +319,8 @@ export const promptsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const promptsListMultiSchema = z.object({
+/** The batch counterpart of `projectServerSchema`: one request, several servers. */
+export const projectServerBatchSchema = z.object({
   projectId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).optional(),
@@ -338,6 +340,12 @@ export const promptsListMultiSchema = z.object({
   // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
   scenarioId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
+});
+
+export const promptsListMultiSchema = projectServerBatchSchema;
+
+export const toolsListMultiSchema = projectServerBatchSchema.extend({
+  modelId: z.string().optional(),
 });
 
 export const promptsGetSchema = projectServerSchema.extend({
@@ -1511,11 +1519,15 @@ export async function createAuthorizedManager(
   let confidentialCimdProviderForOrgResolved = false;
   for (const serverId of uniqueServerIds) {
     const auth = batch.results[serverId];
+    // Both refusals name the server. A caller that batched several servers
+    // (the tools batch route) reads `details.serverId` to leave that one out
+    // and retry the rest, instead of showing one server's refusal on all.
     if (!auth) {
       throw new WebRouteError(
         500,
         ErrorCode.INTERNAL_ERROR,
         `Authorization response is missing result for server "${serverId}"`,
+        { serverId },
       );
     }
     if (!auth.ok) {
@@ -1523,6 +1535,7 @@ export async function createAuthorizedManager(
         auth.status,
         auth.code as ErrorCode,
         auth.message,
+        { serverId, serverName: serverNamesById?.[serverId] ?? null },
       );
     }
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
@@ -2008,11 +2021,21 @@ export async function createAuthorizedManager(
           // builder that didn't thread the issuer (only callers holding the
           // request `Context` can resolve it). Fail loud here rather than
           // connecting tokenless and surfacing a confusing downstream 401.
-          throw new WebRouteError(
+          //
+          // Always MCPJam's own bug, so it is declared ours: the origin it
+          // carries reaches `http.request.failed`, where the MCPJam-fault
+          // monitor alerts on it.
+          const missingIssuer = new WebRouteError(
             500,
             ErrorCode.INTERNAL_ERROR,
             `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`,
           );
+          missingIssuer.origin = reportRouteFailure(
+            "[xaa] connect surface did not pass the issuer",
+            missingIssuer,
+            { source: "web.auth.xaa-issuer-missing", hop: "mcpjam_internal" },
+          ).origin;
+          throw missingIssuer;
         }
         let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
         if (
@@ -2933,6 +2956,18 @@ function blockedEgressRouteError(error: unknown): WebRouteError | undefined {
   return undefined;
 }
 
+/**
+ * The route error for a failure of one dialed MCP server: the egress guard's
+ * refusal first (400, the caller's to change: MJ-020, MJ-021), then
+ * `mapTargetServerError`. `withEphemeralConnection`'s catch and the batch
+ * routes that report one server's failure inside a 200 answer through this
+ * same function, so a server fails the same way inside a batch as on its own
+ * request.
+ */
+export function mapEphemeralServerFailure(error: unknown): WebRouteError {
+  return mapTargetServerError(blockedEgressRouteError(error) ?? error);
+}
+
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
@@ -3017,12 +3052,12 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     //
     // A target the egress guard refused is the caller's to change, not a
     // connection that failed: 400, with the guard's own message
-    // (MJ-020, MJ-021).
+    // (MJ-020, MJ-021). See `mapEphemeralServerFailure`.
     //
     // Hosted, what the response says about the failure is then reduced for
     // every route on this helper (MJ-001) — see `projectRouteFailure`.
     const projected = projectRouteFailure(
-      mapTargetServerError(blockedEgressRouteError(error) ?? error),
+      mapEphemeralServerFailure(error),
       error,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );

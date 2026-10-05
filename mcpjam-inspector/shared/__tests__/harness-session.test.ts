@@ -42,6 +42,7 @@ describe("isHarnessResetDataPart", () => {
       "sandbox-replaced",
       "legacy-cold-resume",
       "resume-failed",
+      "runtime-changed",
     ]) {
       expect(
         isHarnessResetDataPart({ type: "data-harness-reset", data: { reason } }),

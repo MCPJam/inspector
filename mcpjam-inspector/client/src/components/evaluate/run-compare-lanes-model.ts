@@ -12,6 +12,7 @@
  * zero. See {@link RunCompareRow.baselineRunId} for what "honest" costs.
  */
 import { compactModelIdTail } from "@/lib/environment-label";
+import { runTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 import {
   compareRunsBySequence,
   runClientIdentity,
@@ -79,6 +80,8 @@ export type RunCompareLane = {
   key: string;
   /** The lane's newest run — feed it to `RunContextChip` for the visible label. */
   run: EvalSuiteRun;
+  /** `RunContextChip`'s `modelSuffix` for {@link run}: only what differs. */
+  modelSuffix: string;
   /** Screen-reader label only; the visible one is the chip. */
   label: string;
   /** Newest first. */
@@ -129,7 +132,9 @@ export function resolveSuitePassThreshold(
  * every time someone edits it.
  *
  * A legacy or host-backed run has no such pin, so it falls back to
- * `pairingKey` (client::model) and still splits by model.
+ * `pairingKey` (client::target) and still splits by target — the model id,
+ * or for a non-default selection its `targetKey`, so Sonnet at Low and at
+ * High are two lanes.
  */
 export function runCompareLaneKey(run: EvalSuiteRun): string {
   return run.configSnapshot?.environmentRef
@@ -141,17 +146,30 @@ function runModelId(run: EvalSuiteRun): string | null {
   return run.effectiveModelId ?? run.client?.modelId ?? null;
 }
 
-function runModelTail(run: EvalSuiteRun): string | null {
+function runModelTail(run: EvalSuiteRun, modelSuffix = ""): string | null {
   const modelId = runModelId(run);
-  return modelId ? compactModelIdTail(modelId) : null;
+  return modelId ? `${compactModelIdTail(modelId)}${modelSuffix}` : null;
+}
+
+/**
+ * `" · High"` when another run on the page ran the same model with a different
+ * selection; `""` for a lone or default target.
+ */
+function runModelSuffix(
+  run: EvalSuiteRun,
+  siblingKeys: readonly string[],
+): string {
+  const key = runTargetKey(run);
+  return key ? targetKeySuffix(key, siblingKeys) : "";
 }
 
 function laneLabel(
   run: EvalSuiteRun,
   hostNamesById: ReadonlyMap<string, string | null> | undefined,
+  modelSuffix = "",
 ): string {
   const name = runClientIdentity(run, hostNamesById).name;
-  const tail = runModelTail(run);
+  const tail = runModelTail(run, modelSuffix);
   return tail ? `${name} · ${tail}` : name;
 }
 
@@ -302,6 +320,15 @@ export function buildRunCompareLanes({
     else grouped.set(key, [run]);
   }
 
+  const siblingKeys = [
+    ...new Set(
+      all.flatMap((run) => {
+        const key = runTargetKey(run);
+        return key ? [key] : [];
+      }),
+    ),
+  ];
+
   const lanes: RunCompareLane[] = [];
   for (const [key, laneRuns] of grouped) {
     const ordered = [...laneRuns].sort(
@@ -339,7 +366,7 @@ export function buildRunCompareLanes({
         run,
         label: runLabel(run),
         createdAt: run.createdAt,
-        modelTail: runModelTail(run),
+        modelTail: runModelTail(run, runModelSuffix(run, siblingKeys)),
         isCurrentRun: run._id === currentRun._id,
         inCurrentLaunch: currentLaunchIds.has(run._id),
         settled: isSettled(run),
@@ -408,10 +435,12 @@ export function buildRunCompareLanes({
         ? currentRow.run.summary
         : undefined;
 
+    const modelSuffix = runModelSuffix(rows[0].run, siblingKeys);
     lanes.push({
       key,
       run: rows[0].run,
-      label: laneLabel(rows[0].run, hostNamesById),
+      modelSuffix,
+      label: laneLabel(rows[0].run, hostNamesById, modelSuffix),
       rows,
       currentRow,
       // The EXACT fraction, never the rounded percent on screen: a suite whose
