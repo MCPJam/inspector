@@ -17,13 +17,19 @@
  *   id / defaultWorkingDirectory / ports    → native E2B
  *   stop / destroy                          → no-op (control plane owns teardown)
  */
-import { Sandbox, FileNotFoundError, CommandExitError } from "e2b";
+import {
+  Sandbox,
+  FileNotFoundError,
+  CommandExitError,
+  SandboxNotFoundError,
+} from "e2b";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { confineToHome } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
+import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
   /**
@@ -230,6 +236,17 @@ export function createE2BHarnessSandboxProvider(
       apiKey: opts.apiKey,
       timeoutMs: opts.connectTimeoutMs,
       ...(connectSignal ? { signal: connectSignal } : {}),
+    }).catch((error: unknown) => {
+      // TYPED by the vendor SDK: the box is gone (killed on its timeout, or
+      // reaped). Our sandbox layer failed — never the model, never the server
+      // under test — so the eval infra classifier can exclude the trial.
+      if (error instanceof SandboxNotFoundError) {
+        throw new HarnessInfraSetupError(error.message, {
+          source: "sandbox_setup",
+          code: "sandbox_not_found",
+        });
+      }
+      throw error;
     });
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.

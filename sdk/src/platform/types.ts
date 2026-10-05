@@ -3508,6 +3508,24 @@ export interface PlatformEvalIterationUsage {
   [key: string]: unknown;
 }
 
+/** Why MCPJam's infrastructure, not the server under test, failed a trial. */
+export interface PlatformEvalInfraError {
+  /**
+   * `provider_unavailable`, `rate_limited`, `capacity`, `auth`,
+   * `account_limit`, `configuration` or `sandbox`. Typed as a
+   * string so a class added later still reads.
+   */
+  class: string;
+  /** `model`, `sandbox` or `platform`. */
+  layer: string;
+  /** Whether the failure looked transient. Advisory. */
+  retryable: boolean;
+  /** The producer's structured code, when it sent one. */
+  code?: string;
+  /** The upstream HTTP status, when there was one. */
+  httpStatus?: number;
+}
+
 export interface PlatformEvalIteration {
   id: string;
   /**
@@ -3572,6 +3590,15 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * PRESENT when MCPJam's own infrastructure failed this trial — the model
+   * provider (`layer: "model"`), the sandbox, or the platform (an account or
+   * admission limit). Such a trial is `status: "failed"`, measured nothing
+   * about the server, is EXCLUDED from every pass rate and verdict, and its
+   * eval fee is refunded. ABSENT on every other trial, including ones that
+   * failed on the server or the agent.
+   */
+  infraError?: PlatformEvalInfraError;
   /**
    * Per-scorer verdicts for this iteration, in the evaluation contract's
    * shape. `null` when the run predates scoring, or when the stored payload

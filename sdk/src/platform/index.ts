@@ -133,6 +133,7 @@ export type {
   PlatformEvalStepResult,
   PlatformEvalStepsPage,
   PlatformEvalReplayVideoMeta,
+  PlatformEvalInfraError,
   PlatformEvalIteration,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,

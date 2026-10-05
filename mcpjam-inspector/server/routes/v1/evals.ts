@@ -40,6 +40,7 @@ import {
   toScoreProjection,
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
+import { toInfraErrorProjection } from "./eval-infra-error-projection.js";
 import {
   toFrictionSignalsProjection,
   toSuspectedConditionProjection,
@@ -2191,6 +2192,10 @@ function toIterationDto(
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     ...(snapshot.isNegativeTest === true ? { isNegativeTest: true } : {}),
     error: iteration.error ?? null,
+    // OUR infrastructure failed this trial (a provider outage, a sandbox, an
+    // account limit). It measured nothing about the server, and every score
+    // excludes it. OMITTED on every trial without one.
+    ...toInfraErrorProjection(iteration.infraError),
     ...toScoreProjection(iteration.metadata, vocabulary),
     ...toStageProjection(iteration.metadata),
     // Observable patterns in this trial's tool calls — a report beside the

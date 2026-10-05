@@ -6,6 +6,7 @@ import type {
   SuiteGatePolicyV1,
 } from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { TestStep } from "@/shared/steps";
 import type {
   EvalTraceBlobV1,
@@ -695,6 +696,14 @@ export type EvalIteration = {
   execution?: unknown;
   error?: string;
   errorDetails?: string;
+  /**
+   * Set when OUR infrastructure failed this trial (a provider outage, a rate
+   * limit, a bad key, an account limit, a sandbox) — see
+   * `@/shared/eval-infra-error`. Always paired with `status: "failed"`. Pass
+   * rates leave the row out (`computeMeasuredIterationResult`); its label
+   * stays "Failed".
+   */
+  infraError?: EvalInfraError;
   resultSource?: "reported" | "derived";
   externalIterationId?: string;
   // Widened to `unknown` because the backend metadata column now round-trips
@@ -862,6 +871,8 @@ export type EvalRunMetrics = {
     skipped: number;
     /** Completed without a stored verdict; only the browser can grade these. */
     unscored: number;
+    /** OUR infrastructure failed the trial; counted in no verdict bucket. */
+    infraError?: number;
   };
   completedCount: number;
   latencyP50Ms?: number;

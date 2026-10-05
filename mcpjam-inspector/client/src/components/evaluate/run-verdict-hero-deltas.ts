@@ -15,7 +15,7 @@ import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import { runTargetKey, sameRunTarget } from "@/lib/eval-target-key";
 import type { HeroStats } from "./run-verdict-hero-model";
-import { resultCounts } from "./run-results-matrix-model";
+import { measuredResultCounts } from "./run-results-matrix-model";
 
 export type HeroDeltaTone = "progress" | "regression" | "same";
 export type HeroDeltaDirection = "up" | "down" | "same";
@@ -282,14 +282,17 @@ export function buildHeroPairings({
   previousIterations: readonly EvalIteration[] | null;
 }): HeroPairingPass[] {
   return targets.map((target) => {
-    const counts = resultCounts(target.iterations);
+    // Measured counts: an infra row is in neither the pass rate nor its delta.
+    const counts = measuredResultCounts(target.iterations);
     const previousRows = previousRowsFor(
       target,
       previousLaunch,
       previousIterations,
       targets.length,
     );
-    const previousCounts = previousRows ? resultCounts(previousRows) : null;
+    const previousCounts = previousRows
+      ? measuredResultCounts(previousRows)
+      : null;
     const stats = pairingStatsOf(target.iterations);
     const previousStats = previousRows ? pairingStatsOf(previousRows) : null;
     const passRate = pairingPassRate(counts);

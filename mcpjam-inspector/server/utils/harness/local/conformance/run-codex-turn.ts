@@ -250,10 +250,9 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
     sessionRef.s = await agent.createSession({ sessionId: sessionRef.s.sessionId, continueFrom: cont });
     res = await agent.continueStream({
       session: sessionRef.s,
-      toolApprovalContinuations: [{
-        approvalResponse: { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
-        toolCall: { type: "tool-call", toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.input },
-      }],
+      toolApprovalContinuations: [
+        { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
+      ],
     });
     stream = res.fullStream;
   }

@@ -397,3 +397,90 @@ it("leaves the breakdown absent when no turn reported one", async () => {
     totalTokens: 5,
   });
 });
+
+describe("infra evidence reaches the turn outcome untouched", () => {
+  beforeEach(() => {
+    runAssistantTurnMock.mockReset();
+  });
+
+  it("passes the engine event's typed evidence through a failed turn", async () => {
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: "The AI provider is temporarily unavailable.",
+        code: "provider_error",
+        httpStatus: 503,
+        rawText: "{}",
+        promptIndex: 0,
+        stepIndex: 0,
+        phase: "stream",
+        infra: {
+          source: "backend_model",
+          code: "provider_error",
+          httpStatus: 503,
+        },
+      });
+      // The non-OK path: the engine finishes with no new content.
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      errorCode: "provider_error",
+      errorHttpStatus: 503,
+      errorInfra: {
+        source: "backend_model",
+        code: "provider_error",
+        httpStatus: 503,
+      },
+    });
+  });
+
+  it("an engine error with no typed evidence leaves errorInfra unset", async () => {
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: "tool blew up",
+        rawText: "tool blew up",
+        promptIndex: 0,
+        phase: "stream",
+      });
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome.kind).toBe("failed");
+    expect(outcome).not.toHaveProperty("errorInfra");
+  });
+
+  it("a typed setup throw carries its evidence; an untyped one does not", async () => {
+    const { HarnessInfraSetupError } = await import(
+      "../../../utils/harness/harness-provider-error"
+    );
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw new HarnessInfraSetupError("box gone", {
+        source: "sandbox_setup",
+        code: "harness_sandbox_unavailable",
+        httpStatus: 503,
+      });
+    });
+    expect(await driveHostedEvalTurn(baseParams())).toMatchObject({
+      kind: "failed",
+      errorInfra: {
+        source: "sandbox_setup",
+        code: "harness_sandbox_unavailable",
+        httpStatus: 503,
+      },
+    });
+
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("upstream said 503"), { statusCode: 503 });
+    });
+    const untyped = await driveHostedEvalTurn(baseParams());
+    expect(untyped.kind).toBe("failed");
+    expect(untyped).not.toHaveProperty("errorInfra");
+  });
+});
