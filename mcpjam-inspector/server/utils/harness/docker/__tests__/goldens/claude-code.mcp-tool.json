@@ -1,0 +1,433 @@
+{
+  "stream": [
+    {
+      "data": {
+        "workdir": "/home/user/<session-dir>"
+      },
+      "transient": true,
+      "type": "data-harness-session"
+    },
+    {
+      "data": {
+        "engine": "harness",
+        "harness": "claude-code",
+        "promptIndex": 0,
+        "startedAtMs": "<time>",
+        "turnId": "<id-1>",
+        "type": "turn_start"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "id": "<id-2>",
+      "type": "text-start"
+    },
+    {
+      "delta": "Using mcp__delivery_probe__ping.",
+      "id": "<id-2>",
+      "type": "text-delta"
+    },
+    {
+      "id": "<id-2>",
+      "type": "text-end"
+    },
+    {
+      "input": {},
+      "providerExecuted": true,
+      "providerMetadata": {
+        "mcpjam": {
+          "serverId": "delivery_probe"
+        }
+      },
+      "toolCallId": "<id-3>",
+      "toolName": "ping",
+      "type": "tool-input-available"
+    },
+    {
+      "output": [
+        {
+          "text": "PROBE_MCP_OK",
+          "type": "text"
+        }
+      ],
+      "providerExecuted": true,
+      "toolCallId": "<id-3>",
+      "type": "tool-output-available"
+    },
+    {
+      "data": {
+        "promptIndex": 0,
+        "snapshot": {
+          "actualToolCalls": [
+            {
+              "arguments": {},
+              "serverId": "delivery_probe",
+              "toolCallId": "<id-3>",
+              "toolName": "ping"
+            }
+          ],
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "MCPPROBE",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "text": "Using mcp__delivery_probe__ping.",
+                  "type": "text"
+                },
+                {
+                  "input": {},
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "delivery_probe"
+                    }
+                  },
+                  "toolCallId": "<id-3>",
+                  "toolName": "ping",
+                  "type": "tool-call"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "output": {
+                    "type": "json",
+                    "value": [
+                      {
+                        "text": "PROBE_MCP_OK",
+                        "type": "text"
+                      }
+                    ]
+                  },
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "delivery_probe"
+                    }
+                  },
+                  "toolCallId": "<id-3>",
+                  "toolName": "ping",
+                  "type": "tool-result"
+                }
+              ],
+              "role": "tool"
+            }
+          ],
+          "promptIndex": 0,
+          "spans": [
+            {
+              "category": "tool",
+              "endMs": "<time>",
+              "id": "<id-4>",
+              "messageEndIndex": 2,
+              "messageStartIndex": 2,
+              "name": "ping",
+              "promptIndex": 0,
+              "serverId": "delivery_probe",
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0,
+              "toolCallId": "<id-3>",
+              "toolName": "ping"
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-5>",
+              "messageEndIndex": 1,
+              "messageStartIndex": 1,
+              "modelId": "<id-6>",
+              "name": "anthropic/claude-haiku-4.5",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0
+            }
+          ],
+          "traceVersion": 1
+        },
+        "turnId": "<id-1>",
+        "type": "trace_snapshot"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "id": "<id-7>",
+      "type": "text-start"
+    },
+    {
+      "delta": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+      "id": "<id-7>",
+      "type": "text-delta"
+    },
+    {
+      "id": "<id-7>",
+      "type": "text-end"
+    },
+    {
+      "data": {
+        "promptIndex": 0,
+        "snapshot": {
+          "actualToolCalls": [
+            {
+              "arguments": {},
+              "serverId": "delivery_probe",
+              "toolCallId": "<id-3>",
+              "toolName": "ping"
+            }
+          ],
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "MCPPROBE",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "text": "Using mcp__delivery_probe__ping.",
+                  "type": "text"
+                },
+                {
+                  "input": {},
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "delivery_probe"
+                    }
+                  },
+                  "toolCallId": "<id-3>",
+                  "toolName": "ping",
+                  "type": "tool-call"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "output": {
+                    "type": "json",
+                    "value": [
+                      {
+                        "text": "PROBE_MCP_OK",
+                        "type": "text"
+                      }
+                    ]
+                  },
+                  "providerOptions": {
+                    "mcpjam": {
+                      "serverId": "delivery_probe"
+                    }
+                  },
+                  "toolCallId": "<id-3>",
+                  "toolName": "ping",
+                  "type": "tool-result"
+                }
+              ],
+              "role": "tool"
+            },
+            {
+              "content": [
+                {
+                  "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "promptIndex": 0,
+          "spans": [
+            {
+              "category": "tool",
+              "endMs": "<time>",
+              "id": "<id-4>",
+              "messageEndIndex": 2,
+              "messageStartIndex": 2,
+              "name": "ping",
+              "promptIndex": 0,
+              "serverId": "delivery_probe",
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0,
+              "toolCallId": "<id-3>",
+              "toolName": "ping"
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-5>",
+              "messageEndIndex": 1,
+              "messageStartIndex": 1,
+              "modelId": "<id-6>",
+              "name": "anthropic/claude-haiku-4.5",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-8>",
+              "inputTokens": 240,
+              "messageEndIndex": 3,
+              "messageStartIndex": 3,
+              "modelId": "<id-6>",
+              "name": "anthropic/claude-haiku-4.5",
+              "outputTokens": 42,
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 1,
+              "totalTokens": 282
+            }
+          ],
+          "traceVersion": 1,
+          "usage": {
+            "inputTokens": 240,
+            "outputTokens": 42,
+            "totalTokens": 282
+          }
+        },
+        "turnId": "<id-1>",
+        "type": "trace_snapshot"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "finishReason": "stop",
+      "messageMetadata": {
+        "inputTokens": 240,
+        "outputTokens": 42,
+        "totalTokens": 282
+      },
+      "type": "finish"
+    },
+    {
+      "data": {
+        "finishReason": "stop",
+        "promptIndex": 0,
+        "turnId": "<id-1>",
+        "type": "turn_finish",
+        "usage": {
+          "inputTokens": 240,
+          "outputTokens": 42,
+          "totalTokens": 282
+        }
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    }
+  ],
+  "evidence": {
+    "history": [
+      {
+        "content": [
+          {
+            "text": "MCPPROBE",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "Using mcp__delivery_probe__ping.",
+            "type": "text"
+          },
+          {
+            "input": {},
+            "providerOptions": {
+              "mcpjam": {
+                "serverId": "delivery_probe"
+              }
+            },
+            "toolCallId": "<id-3>",
+            "toolName": "ping",
+            "type": "tool-call"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "output": {
+              "type": "json",
+              "value": [
+                {
+                  "text": "PROBE_MCP_OK",
+                  "type": "text"
+                }
+              ]
+            },
+            "providerOptions": {
+              "mcpjam": {
+                "serverId": "delivery_probe"
+              }
+            },
+            "toolCallId": "<id-3>",
+            "toolName": "ping",
+            "type": "tool-result"
+          }
+        ],
+        "role": "tool"
+      },
+      {
+        "content": [
+          {
+            "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+            "type": "text"
+          }
+        ],
+        "role": "assistant"
+      }
+    ],
+    "toolCalls": [
+      {
+        "input": {},
+        "promptIndex": 0,
+        "serverId": "delivery_probe",
+        "stepIndex": 0,
+        "toolCallId": "<id-3>",
+        "toolName": "ping"
+      }
+    ],
+    "toolResults": [
+      {
+        "isError": false,
+        "output": [
+          {
+            "text": "PROBE_MCP_OK",
+            "type": "text"
+          }
+        ],
+        "promptIndex": 0,
+        "serverId": "delivery_probe",
+        "stepIndex": 0,
+        "toolCallId": "<id-3>",
+        "toolName": "ping"
+      }
+    ]
+  }
+}

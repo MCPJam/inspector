@@ -340,8 +340,9 @@ function EvalsTabContent({
       selectedSuite,
       suiteDetails.testCases,
       activeIterations,
+      runsForSelectedSuite,
     );
-  }, [selectedSuite, suiteDetails, activeIterations]);
+  }, [selectedSuite, suiteDetails, activeIterations, runsForSelectedSuite]);
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
     [],

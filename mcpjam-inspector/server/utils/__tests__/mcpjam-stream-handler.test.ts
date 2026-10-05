@@ -3599,6 +3599,59 @@ describe("mcpjam-stream-handler", () => {
       expect((finishChunk as any).totalUsage).toBeUndefined();
     });
 
+    it("drops backend chunks the browser's AI SDK would reject, and reports each type once", async () => {
+      // The 2026-10-05 P1: an AI SDK 7 backend streamed this on every step,
+      // the default branch forwarded it, and the AI SDK 6 browser failed the
+      // whole turn with "Type validation failed".
+      const custom = {
+        type: "custom",
+        kind: "anthropic.message_start",
+        providerMetadata: { anthropic: { id: "msg_1" } },
+      };
+      (global.fetch as any).mockReset();
+      (global.fetch as any) = vi.fn().mockResolvedValue(
+        createSseResponse([
+          { type: "start-step" },
+          custom,
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: "hello" },
+          { type: "text-end", id: "t1" },
+          custom,
+          { type: "finish-step" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      const types = writtenChunks
+        .filter((chunk) => chunk?.type !== "data-trace-event")
+        .map((chunk) => chunk.type);
+      expect(types).not.toContain("custom");
+      expect(types).toEqual(
+        expect.arrayContaining(["start-step", "text-delta", "finish-step"]),
+      );
+
+      const rejected = (logger.systemEvent as any).mock.calls.filter(
+        ([event]: [string]) => event === "chat.stream.chunk_rejected",
+      );
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0][2]).toEqual({
+        chunkType: "custom",
+        fields: ["type", "kind", "providerMetadata"],
+      });
+    });
+
     it("hashes IPv4 and ::ffff:-mapped IPv6 of the same client identically", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
 
