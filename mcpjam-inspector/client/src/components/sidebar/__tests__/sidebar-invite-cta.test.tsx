@@ -27,6 +27,8 @@ vi.mock("@/lib/config", async () => {
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: () => undefined,
+  // Soft reads (billing status, credits, quota, notifications): nothing yet.
+  useQueries: () => ({}),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({

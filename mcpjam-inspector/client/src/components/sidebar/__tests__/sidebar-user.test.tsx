@@ -38,6 +38,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isLoading: false, isAuthenticated: false }),
   useQuery: () => null,
+  // Soft reads answer the same null as `useQuery` above.
+  useQueries: (queries: Record<string, unknown>) =>
+    Object.fromEntries(Object.keys(queries).map((key) => [key, null])),
 }));
 
 vi.mock("@mcpjam/design-system/popover", () => ({
