@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { composeAbortSignals } from "./compose-abort-signals";
 
 export type CheckQueueState = "queued" | "connecting" | undefined;
 type Job = {
@@ -263,7 +264,7 @@ export class ServerCheckQueue {
       job.started = ++this.sequence;
       job.attempt = new AbortController();
       job.requestId = crypto.randomUUID();
-      const attemptSignal = AbortSignal.any([
+      const { signal: attemptSignal, dispose } = composeAbortSignals([
         job.controller.signal,
         job.attempt.signal,
       ]);
@@ -349,6 +350,7 @@ export class ServerCheckQueue {
           },
         )
         .finally(() => {
+          dispose();
           job.promote = undefined;
           this.attempts.delete(attemptSignal);
           this.running--;
