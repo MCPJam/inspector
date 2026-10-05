@@ -13,6 +13,7 @@ vi.mock("../PosthogUtils", () => ({
   isCredentialBearingPath: () => false,
 }));
 
+import { TypeValidationError } from "ai";
 import { reportChatFailure } from "../chat-error-reporting";
 
 beforeEach(() => {
@@ -54,6 +55,50 @@ describe("reportChatFailure", () => {
     expect((error as Error).message).not.toContain("Failed to fetch");
     // The real message is still recoverable for debugging.
     expect(options.extra.rawMessage).toBe("Failed to fetch");
+  });
+
+  it("reports a stream chunk the AI SDK rejected as its own issue, without the chunk's values", () => {
+    // The 2026-10-05 P1, verbatim: mid-stream after a 200, so the catalog
+    // could only call it ambiguous and nothing reached #mcpjam-alerts.
+    const chunk = {
+      type: "custom",
+      kind: "anthropic.message_start",
+      providerMetadata: { anthropic: { id: "msg_1", secret: "model output" } },
+    };
+    const error = new TypeValidationError({
+      value: chunk,
+      cause: new Error("invalid_union"),
+    });
+
+    const sent = reportChatFailure(error, {
+      ok: true,
+      status: 200,
+      requestId: "req_p1",
+    });
+
+    expect(sent).toBe(true);
+    const [reported, options] = reportCaught.mock.calls[0]!;
+    // Not `chat_stream_error`: a new cause there never opens a new issue.
+    expect((reported as Error).message).toBe("chat_stream_protocol_error");
+    expect(options.source).toBe("chat_stream_protocol_error");
+    expect(options.extra).toEqual({
+      chunkType: "custom",
+      fields: ["type", "kind", "providerMetadata"],
+      origin: "mcpjam",
+      requestId: "req_p1",
+    });
+    expect(JSON.stringify(options)).not.toContain("model output");
+  });
+
+  it("does not report a stream protocol error off the capture surfaces", () => {
+    isErrorCaptureSurface.mockReturnValue(false);
+    const error = new TypeValidationError({
+      value: { type: "custom" },
+      cause: new Error("invalid_union"),
+    });
+
+    expect(reportChatFailure(error, { ok: true, status: 200 })).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
   });
 
   it("does not report an unattributable mid-stream failure", () => {
