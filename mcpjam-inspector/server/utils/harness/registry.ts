@@ -12,6 +12,7 @@
  * adapter is a COMPILE error.
  */
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
+import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { createCodexAppServer } from "./codex-appserver/index.js";
@@ -865,7 +866,11 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   parseToolName: parseHarnessToolName,
   createHarness({ modelId, auth, mcpJson, reasoningEffort }) {
     const nativeModel = toClaudeCodeModel(modelId);
-    return createClaudeCodeHarness({
+    // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
+    // provider failure reaches an eval as fields rather than a sentence. A
+    // local session swaps this bootstrap for its verified pack's own
+    // (`withLocalPackBootstrap`), so the local pack bytes are untouched.
+    return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
       ...(nativeModel ? { model: nativeModel } : {}),
       auth,

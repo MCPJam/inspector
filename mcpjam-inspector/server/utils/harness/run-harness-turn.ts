@@ -135,7 +135,17 @@ import {
   resolveWorkingDirectory,
   HOME_ROOT,
 } from "../computers/path-confine.js";
-import { resolveHarnessSandbox } from "./resolve-sandbox.js";
+import {
+  HarnessSandboxResolutionError,
+  resolveHarnessSandbox,
+} from "./resolve-sandbox.js";
+import {
+  HarnessInfraSetupError,
+  codexProviderEvidenceFromNotification,
+  harnessFailureEvidenceOf,
+  harnessFailureMessageOf,
+} from "./harness-provider-error.js";
+import type { InfraFailureEvidence } from "../infra-failure-evidence.js";
 import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
@@ -1014,6 +1024,13 @@ export async function runHarnessTurn(
    * itself rather than a successful one.
    */
   let modelInvoked = false;
+  /**
+   * The last TERMINAL model-call failure an agent runtime reported as typed
+   * data mid-stream (Codex forwards `codexErrorInfo` as a `raw` notification).
+   * Consulted by the turn's catch when the thrown error itself carries no
+   * structured evidence — never derived from the error's text.
+   */
+  let rawProviderEvidence: InfraFailureEvidence | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -2082,6 +2099,18 @@ export async function runHarnessTurn(
           projectId,
           ...(executionScope ? { executionScope } : {}),
           signal: abortSignal,
+        }).catch((error: unknown) => {
+          // TYPED at the producer: the control plane could not hand us a live
+          // box (provision / wake / lookup). Our sandbox layer, never the
+          // model's.
+          if (error instanceof HarnessSandboxResolutionError) {
+            throw new HarnessInfraSetupError(error.message, {
+              source: "sandbox_setup",
+              code: "harness_sandbox_unavailable",
+              httpStatus: error.status,
+            });
+          }
+          throw error;
         });
         box = {
           kind: "computer",
@@ -2160,7 +2189,12 @@ export async function runHarnessTurn(
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!reservation.ok) {
-          throw new Error(reservation.error);
+          // Typed: the box claim is our sandbox layer's concurrency control.
+          throw new HarnessInfraSetupError(reservation.error, {
+            source: "sandbox_setup",
+            code: "harness_box_reservation_failed",
+            httpStatus: reservation.status,
+          });
         }
         // From here until the lease is minted, ANY exit must hand the box back —
         // otherwise the next turn waits out the reservation's TTL for nothing.
@@ -2320,7 +2354,14 @@ export async function runHarnessTurn(
           // Throws propagate to the turn's outer catch; onFinishEngine frees the
           // claimed lane (sessionEstablished still false) and revokes the broker
           // lease (brokerRunId set) if the backend installed before a lost response.
-          throw new Error(broker.error);
+          // Typed: lease installation is OUR platform layer, not the model.
+          // The backend's own code rides along when it sent one (a billing
+          // refusal, a box that is gone), so it is classified as what it is.
+          throw new HarnessInfraSetupError(broker.error, {
+            source: "platform_setup",
+            code: broker.code ?? "harness_broker_unavailable",
+            httpStatus: broker.status,
+          });
         }
         // The lease is recorded, which consumed this turn's claim on the box; the
         // lease's own per-box fence covers the rest of the turn. Releasing now
@@ -3595,6 +3636,13 @@ export async function runHarnessTurn(
             pendingApprovalIds.push(approvalId);
             pausedForApproval = true;
             break;
+          } else if (type === "raw") {
+            // Passthrough of the runtime's own protocol message. Only a typed,
+            // terminal model-call failure is kept.
+            const evidence = codexProviderEvidenceFromNotification(
+              (part as { rawValue?: unknown }).rawValue,
+            );
+            if (evidence) rawProviderEvidence = evidence;
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
             if (typeof fr === "string" && fr)
@@ -3952,7 +4000,12 @@ export async function runHarnessTurn(
         aborted = true;
         return;
       }
-      const errorText = err instanceof Error ? err.message : String(err);
+      // A bridge's typed provider failure is a PLAIN OBJECT (the harness wire
+      // flattens Error instances), so `String(err)` would read
+      // "[object Object]". Its structured fields ride separately below.
+      const errorText = harnessFailureMessageOf(err);
+      const failureEvidence =
+        harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
       // Reporter, not a bare logger.error: the old call captured to Sentry
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
@@ -3995,6 +4048,12 @@ export async function runHarnessTurn(
         // a provider that rejects the request outright still reads as the
         // model's failure rather than ours.
         phase: modelInvoked ? "stream" : "setup",
+        // STRUCTURED evidence, preserved from the producer that knew it: a
+        // typed setup step, a bridge's typed provider failure, or Codex's
+        // terminal `codexErrorInfo`. Absent when the producer had none — the
+        // failure then stays unclassified rather than being guessed from the
+        // sentence above.
+        ...(failureEvidence ? { infra: failureEvidence } : {}),
       });
     } finally {
       stopScopeStepUpBridge();

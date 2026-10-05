@@ -756,3 +756,73 @@ describe("finalizeEvalIteration", () => {
     });
   });
 });
+
+describe("finalizeEvalIteration — infra errors", () => {
+  const infraError = {
+    class: "provider_unavailable" as const,
+    layer: "model" as const,
+    retryable: true,
+    code: "provider_error",
+    httpStatus: 503,
+  };
+
+  test("sends infraError with a failed write, and the row reads failed", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      error: "The AI provider is temporarily unavailable.",
+      infraError,
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args).toMatchObject({
+      status: "failed",
+      result: "failed",
+      infraError,
+    });
+  });
+
+  test("never sends infraError beside any other status", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "completed",
+      infraError,
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args.status).toBe("completed");
+    expect(update?.args).not.toHaveProperty("infraError");
+  });
+
+  test("an ordinary failed write is byte-identical to before (no infraError key)", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      error: "tool blew up",
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args).not.toHaveProperty("infraError");
+  });
+});

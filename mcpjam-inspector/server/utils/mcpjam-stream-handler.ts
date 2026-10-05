@@ -53,6 +53,10 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
+import {
+  httpStatusOrUndefined,
+  type InfraFailureEvidence,
+} from "./infra-failure-evidence.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
@@ -560,6 +564,16 @@ export interface MCPJamEngineErrorEvent {
    * absence as unknown rather than as either answer.
    */
   phase?: "setup" | "stream";
+  /**
+   * STRUCTURED evidence that one of OUR layers failed, stamped by the producer
+   * that knew it (`utils/infra-failure-evidence.ts`): the backend's own
+   * `{code, statusCode}` envelope, a harness bridge's typed provider error, a
+   * typed harness setup step. Absent when the producer had none — a consumer
+   * must then treat the failure as UNCLASSIFIED, never infer it from the
+   * message. Read only by the eval infra-error classifier
+   * (`services/evals/infra-error-classification.ts`).
+   */
+  infra?: InfraFailureEvidence;
   /**
    * Classified form of this failure, including its `origin` — whose fault the
    * turn dying was.
@@ -2076,6 +2090,37 @@ function attachedFailureCode(error: unknown): string | undefined {
 }
 
 /**
+ * Infra evidence from the backend's categorized `{code, statusCode}` envelope.
+ *
+ * The status is the body's `statusCode` — the UPSTREAM provider's, which the
+ * backend copies from the error it categorized — and never the HTTP status of
+ * our own `/stream` response: that one is a bare 500 for every failure the
+ * backend could not categorize, and must not stand in for the provider's.
+ */
+function backendModelEvidence(
+  code: string,
+  statusCode: unknown,
+): InfraFailureEvidence {
+  const httpStatus = httpStatusOrUndefined(statusCode);
+  return {
+    source: "backend_model",
+    code,
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+  };
+}
+
+/** The infra evidence a thrower attached alongside {@link attachedNormalized}. */
+function attachedInfraEvidence(
+  error: unknown,
+): InfraFailureEvidence | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const evidence = (error as { infraEvidence?: unknown }).infraEvidence;
+  return evidence && typeof evidence === "object"
+    ? (evidence as InfraFailureEvidence)
+    : undefined;
+}
+
+/**
  * PR 5b-followup-2: parse a Convex `/stream` non-OK response body as
  * the standard guardrail JSON shape `{ code?, error, details? }`.
  * Falls back to a generic `<status> <text>` message when the body
@@ -2098,6 +2143,7 @@ function parseEngineErrorBody(
   | "gatedBy"
   | "scope"
   | "outstandingHolds"
+  | "infra"
 > {
   try {
     const body = JSON.parse(bodyText) as {
@@ -2106,6 +2152,7 @@ function parseEngineErrorBody(
       details?: string;
       retryAfter?: number;
       isRetryable?: boolean;
+      statusCode?: unknown;
       refusalReason?: string;
       reason?: string;
       gatedBy?: string;
@@ -2140,6 +2187,9 @@ function parseEngineErrorBody(
         ...(typeof body.scope === "string" ? { scope: body.scope } : {}),
         ...(typeof body.outstandingHolds === "number"
           ? { outstandingHolds: body.outstandingHolds }
+          : {}),
+        ...(typeof body.code === "string" && body.code
+          ? { infra: backendModelEvidence(body.code, body.statusCode) }
           : {}),
       };
     }
@@ -2555,6 +2605,17 @@ async function processStream(
           throw Object.assign(new Error(parsed.message), {
             normalized,
             ...(parsed.code ? { failureCode: parsed.code } : {}),
+            // The backend categorizing its own model call, kept STRUCTURED
+            // for site 3's `onEngineError` so an eval can tell a provider 503
+            // from a server failure without reading the sentence.
+            ...(parsed.code
+              ? {
+                  infraEvidence: backendModelEvidence(
+                    parsed.code,
+                    parsed.statusCode,
+                  ),
+                }
+              : {}),
             ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
               ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
               : {}),
@@ -5426,9 +5487,11 @@ export async function runChatEngineLoop(
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
         // Site (3) — outer agentic-loop catch. No structured body,
         // no stepIndex.
+        const loopInfra = attachedInfraEvidence(error);
         safelyEmitEngineError(onEngineError, {
           message: errorText,
           ...(loopFailureCode ? { code: loopFailureCode } : {}),
+          ...(loopInfra ? { infra: loopInfra } : {}),
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,

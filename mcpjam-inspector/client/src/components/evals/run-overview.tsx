@@ -29,7 +29,7 @@ import {
   getLatestRunMetricSource,
 } from "./helpers";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { apiKeyTail, runAgentName } from "@/lib/evals/run-origin";
@@ -722,8 +722,9 @@ export function RunOverview({
                     (iter) => iter.suiteRunId === run._id
                   );
                   // Only count completed iterations - exclude pending/cancelled
+                  // and infra rows, which measured nothing about the server.
                   const iterationResults = runIterations.map((i) =>
-                    computeIterationResult(i)
+                    computeMeasuredIterationResult(i)
                   );
                   const realTimePassed = iterationResults.filter(
                     (r) => r === "passed"
