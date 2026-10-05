@@ -36,6 +36,14 @@ interface MCPJamLimitDialogState {
    */
   staleWaveKeys: ReadonlySet<string>;
   /**
+   * The run keys announced since the last purchase began, while a wave was
+   * stale. A run first seen alone and then with its wave (A, then A with W)
+   * teaches the store W; if the run was announced after the purchase, W is news
+   * that notice already delivered, so W stops being stale. A replay of a run
+   * announced before the purchase is not in this set and leaves W stale.
+   */
+  runKeysSincePurchase: ReadonlySet<string>;
+  /**
    * The organization a wave's notices named, by wave key. A wave whose notices
    * named none has no entry; see
    * {@link MCPJamLimitDialogState.forgetNotifiedWaves}.
@@ -154,6 +162,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
     notifiedKeys: new Set<string>(),
     staleWaveKeys: new Set<string>(),
+    runKeysSincePurchase: new Set<string>(),
     waveOrganizations: {},
     isOpen: false,
     hasPendingLimit: false,
@@ -185,10 +194,26 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           (key) => state.notifiedKeys.has(key) && !state.staleWaveKeys.has(key),
         );
         if (suppressed) {
+          // A run announced since the purchase that turns out to belong to a
+          // stale wave (A, then A with its wave) is that wave's news, already
+          // delivered: the wave is current again, or its next run would open
+          // the dialog a second time. A replay of a run announced before the
+          // purchase is not in the set and leaves the wave stale.
+          const staleWaveKeys =
+            keys.some((key) => state.staleWaveKeys.has(key)) &&
+            keys.some((key) => state.runKeysSincePurchase.has(key))
+              ? new Set(
+                  [...state.staleWaveKeys].filter((key) => !keys.includes(key)),
+                )
+              : state.staleWaveKeys;
           // A replay, every key already known, changes nothing. The views
           // that show a run replay its notice on every Convex push; setting
           // the latch again would undo what a top-up or a daily reset cleared.
-          if (!newKeys.length) return state;
+          if (!newKeys.length) {
+            return staleWaveKeys === state.staleWaveKeys
+              ? state
+              : { staleWaveKeys };
+          }
           // A notice that brings a new key still carries new evidence: a
           // wave's first run may report a shortfall and a later one real
           // exhaustion, so the exhaustion latch follows it.
@@ -209,7 +234,13 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
                 },
               }
             : {};
-          return { notifiedKeys, waveOrganizations, ...latch, ...pending };
+          return {
+            notifiedKeys,
+            staleWaveKeys,
+            waveOrganizations,
+            ...latch,
+            ...pending,
+          };
         }
         // Not suppressed, so this notice speaks for its waves again: one that
         // was stale is announced anew, and its next run is quiet as before.
@@ -218,10 +249,19 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
               [...state.staleWaveKeys].filter((key) => !keys.includes(key)),
             )
           : state.staleWaveKeys;
+        // While a wave is stale, a run announced here is one announced since the
+        // purchase.
+        const runKeysSincePurchase = state.staleWaveKeys.size
+          ? new Set([
+              ...state.runKeysSincePurchase,
+              ...keys.filter((key) => !key.startsWith(WAVE_KEY_PREFIX)),
+            ])
+          : state.runKeysSincePurchase;
         if (state.authStatus === "loading") {
           return {
             notifiedKeys,
             staleWaveKeys,
+            runKeysSincePurchase,
             waveOrganizations,
             hasPendingLimit: true,
             ...latchFor(state, input),
@@ -233,6 +273,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           return {
             notifiedKeys,
             staleWaveKeys,
+            runKeysSincePurchase,
             waveOrganizations,
             hasPendingLimit: false,
             ...latchFor(state, input),
@@ -241,6 +282,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         return {
           notifiedKeys,
           staleWaveKeys,
+          runKeysSincePurchase,
           waveOrganizations,
           hasPendingLimit: false,
           ...latchFor(state, input),
@@ -302,9 +344,16 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
             owner === organizationId
           );
         });
+        // What counts as announced since the purchase starts over with it.
+        const epoch = state.runKeysSincePurchase.size
+          ? { runKeysSincePurchase: new Set<string>() }
+          : {};
         return waves.every((key) => state.staleWaveKeys.has(key))
-          ? {}
-          : { staleWaveKeys: new Set([...state.staleWaveKeys, ...waves]) };
+          ? epoch
+          : {
+              staleWaveKeys: new Set([...state.staleWaveKeys, ...waves]),
+              ...epoch,
+            };
       }),
     close: () =>
       set({

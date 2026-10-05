@@ -16,6 +16,7 @@ beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
     notifiedKeys: new Set<string>(),
     staleWaveKeys: new Set<string>(),
+    runKeysSincePurchase: new Set<string>(),
     waveOrganizations: {},
     authStatus: "loading",
     hasPendingLimit: false,
@@ -789,6 +790,65 @@ describe("one dialog per swarm wave", () => {
     // The wave is announced again: its next run is quiet, as before.
     notify({ runId: "run-d", swarmRunGroupId: "wave-1" });
     expect(store.getState().isOpen).toBe(false);
+  });
+
+  // A retried run's notice can reach the store before its run document supplies
+  // the wave (A), and again with it (A with W). W was stale from the purchase;
+  // A is news, so A's notice already announced the wave, and its next run
+  // stays quiet.
+  it("makes a stale wave current when a run announced since the purchase arrives with it", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    store.getState().close();
+    store.getState().forgetNotifiedWaves();
+
+    notify({ runId: "run-b" });
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().close();
+
+    notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().staleWaveKeys).toEqual(new Set());
+
+    notify({ runId: "run-c", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+  });
+
+  it("leaves a stale wave stale when a run announced before the purchase arrives with it", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({ runId: "run-a" });
+    store.getState().close();
+    notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+    store.getState().close();
+    store.getState().forgetNotifiedWaves();
+
+    // Run A is old news that only now meets its wave: still a replay.
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().staleWaveKeys).toEqual(new Set(["wave:wave-1"]));
+
+    notify({ runId: "run-c", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("starts over at the next purchase: a run announced between two purchases is old news at the second", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const store = useMCPJamLimitDialogStore;
+
+    notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+    store.getState().close();
+    store.getState().forgetNotifiedWaves();
+    notify({ runId: "run-b" });
+    store.getState().close();
+    store.getState().forgetNotifiedWaves();
+
+    notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().staleWaveKeys).toEqual(new Set(["wave:wave-1"]));
   });
 
   // A purchase is for ONE organization. Another organization's wave was
