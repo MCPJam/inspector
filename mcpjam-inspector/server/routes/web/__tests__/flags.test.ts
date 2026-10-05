@@ -6,6 +6,13 @@ const mocks = vi.hoisted(() => ({
   constructPostHog: vi.fn(),
   validateGuestToken: vi.fn(),
   verifyAuthKitToken: vi.fn(),
+  localHarnessAccountEnabled: vi.fn(async (..._args: unknown[]) => false),
+}));
+
+// The account check is its own module's concern (readiness.test.ts); here it
+// only matters what the route does with its answer, or its failure.
+vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  localHarnessAccountEnabled: mocks.localHarnessAccountEnabled,
 }));
 
 vi.mock("posthog-node", () => ({
@@ -162,6 +169,22 @@ describe("GET /api/web/flags", () => {
 
     expect(mocks.verifyAuthKitToken).toHaveBeenCalledWith("access-token");
     expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_1");
+  });
+
+  it("answers a failed local account check as that flag off, not a failed response", async () => {
+    // With a published runtime pack the local check is reached for a member;
+    // a backend hiccup there must not take every other flag down with it.
+    mocks.verifyAuthKitToken.mockResolvedValueOnce({ sub: "user_1" });
+    mocks.getAllFlags.mockResolvedValueOnce({ "some-other-flag": true });
+    mocks.localHarnessAccountEnabled.mockRejectedValue(new Error("backend down"));
+
+    const { response, body } = await getFlags("", {
+      Authorization: "Bearer access-token",
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ flags: LOCAL_HARNESS_FLAGS_OFF });
+    mocks.localHarnessAccountEnabled.mockReset().mockResolvedValue(false);
   });
 
   it("answers an unverified bearer with no values", async () => {

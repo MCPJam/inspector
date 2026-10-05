@@ -240,6 +240,14 @@ updates:
         update-types: [minor, patch]
         exclude-patterns:
           [
+            "typescript",
+            "vitest",
+            "@vitest/*",
+            "@testing-library/jest-dom",
+            "jsdom",
+            "eslint",
+            "eslint-config-next",
+            "es-module-lexer",
             "electron",
             "sharp",
             "@electron/*",
@@ -298,12 +306,69 @@ updates:
             "commander",
             "@modelcontextprotocol/ext-apps",
           ]
+      # Tooling majors carved out of development-major #5544 (2026-10-03),
+      # each a migration of its own; each group's PR is where it lands. They
+      # are dev-only, so only the three development groups exclude them.
+      #
+      # TypeScript 7 (5.9 -> 7.0) drops `baseUrl` (TS5102 in soundcheck and
+      # three inspector tsconfigs), no longer loads @types by default (TS2584
+      # `console` in the @mcpjam/vitest .d.ts build), and ships no JS API, so
+      # tsup and the `npm ci --legacy-peer-deps` jobs lose `typescript`.
+      # slack-app, surface-core, discord-app and mcp-check-fixture are on 7
+      # already. DELETE once every workspace is on TypeScript 7.
+      typescript:
+        applies-to: version-updates
+        patterns: ["typescript"]
+      typescript-security:
+        applies-to: security-updates
+        patterns: ["typescript"]
+      # Vitest 3 -> 5 moves with @vitest/*, jest-dom 7 and jsdom 30: the
+      # inspector's vitest.workspace.ts is no longer read (it needs
+      # `test.projects`), vitest stops being hoisted (design-system: `vitest:
+      # not found`) and jest-dom 7 does not load in the client tests. The
+      # GHSA-82fw-gwwq-j7x9 fix (vitest 4.1.11) arrives via vitest-security.
+      # DELETE once every workspace is on Vitest 5.
+      vitest:
+        applies-to: version-updates
+        patterns: ["vitest", "@vitest/*", "@testing-library/jest-dom", "jsdom"]
+      vitest-security:
+        applies-to: security-updates
+        patterns: ["vitest", "@vitest/*", "@testing-library/jest-dom", "jsdom"]
+      # ESLint 10 + eslint-config-next 16: soundcheck still lints with
+      # .eslintrc.cjs and `next lint`, both gone in those majors, so it needs a
+      # flat-config migration (sdk and the inspector are on ESLint 10 already).
+      # DELETE once soundcheck is on flat config.
+      eslint:
+        applies-to: version-updates
+        patterns: ["eslint", "eslint-config-next"]
+      eslint-security:
+        applies-to: security-updates
+        patterns: ["eslint", "eslint-config-next"]
+      # es-module-lexer is pinned exactly so vite-lexer-safe-minify lexes
+      # chunks the way Vite's bundled copy does; 3.0.2 no longer has the 1.7.0
+      # `of /` bug, so vite-lexer-safe-minify.test.ts fails. Vite 8.3 bundles
+      # ^2.3.2, which is fixed too, so this group's PR is where the guard is
+      # re-pinned or deleted. DELETE this carve-out with that decision.
+      es-module-lexer:
+        applies-to: version-updates
+        patterns: ["es-module-lexer"]
+      es-module-lexer-security:
+        applies-to: security-updates
+        patterns: ["es-module-lexer"]
       development-major:
         applies-to: version-updates
         dependency-type: development
         update-types: [major]
         exclude-patterns:
           [
+            "typescript",
+            "vitest",
+            "@vitest/*",
+            "@testing-library/jest-dom",
+            "jsdom",
+            "eslint",
+            "eslint-config-next",
+            "es-module-lexer",
             "electron",
             "sharp",
             "@electron/*",
@@ -364,6 +429,14 @@ updates:
         dependency-type: development
         exclude-patterns:
           [
+            "typescript",
+            "vitest",
+            "@vitest/*",
+            "@testing-library/jest-dom",
+            "jsdom",
+            "eslint",
+            "eslint-config-next",
+            "es-module-lexer",
             "electron",
             "sharp",
             "@electron/*",

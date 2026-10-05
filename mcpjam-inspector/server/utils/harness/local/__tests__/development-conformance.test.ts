@@ -15,14 +15,36 @@ describe("development conformance evidence", () => {
     vi.stubEnv("ENVIRONMENT", "dev");
     vi.stubEnv("MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION", "dev-run-42");
     vi.stubEnv("NODE_ENV", "production");
-    const manifests = localHarnessManifestsForDevelopment();
+    // Unpublished fixtures, so the rule is tested whatever the shipped table
+    // has recorded since.
+    const unpublished = Object.fromEntries(
+      Object.entries(LOCAL_HARNESS_MANIFEST).map(([id, manifest]) => [
+        id,
+        { ...manifest, lifecycleConformanceVersion: "" },
+      ]),
+    ) as typeof LOCAL_HARNESS_MANIFEST;
+    const manifests = localHarnessManifestsForDevelopment(unpublished);
     expect(manifests["claude-code"].lifecycleConformanceVersion).toBe("dev-run-42");
     expect(manifests.codex.lifecycleConformanceVersion).toBe("dev-run-42");
     expect(manifests.codex.permissionProfileMapping).toEqual(
       LOCAL_HARNESS_MANIFEST.codex.permissionProfileMapping,
     );
-    expect(LOCAL_HARNESS_MANIFEST["claude-code"].lifecycleConformanceVersion).toBe("");
-    expect(LOCAL_HARNESS_MANIFEST.codex.lifecycleConformanceVersion).toBe("");
+  });
+
+  it("never replaces evidence that was recorded for a published pack", () => {
+    vi.stubEnv("ENVIRONMENT", "dev");
+    vi.stubEnv("MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION", "dev-run-42");
+    const mixed = {
+      ...LOCAL_HARNESS_MANIFEST,
+      "claude-code": {
+        ...LOCAL_HARNESS_MANIFEST["claude-code"],
+        lifecycleConformanceVersion: "published-1.0.0-abc",
+      },
+      codex: { ...LOCAL_HARNESS_MANIFEST.codex, lifecycleConformanceVersion: "" },
+    } as typeof LOCAL_HARNESS_MANIFEST;
+    const manifests = localHarnessManifestsForDevelopment(mixed);
+    expect(manifests["claude-code"].lifecycleConformanceVersion).toBe("published-1.0.0-abc");
+    expect(manifests.codex.lifecycleConformanceVersion).toBe("dev-run-42");
   });
 
   it.each(["prod", "test", ""])("ignores override in %s builds", (env) => {

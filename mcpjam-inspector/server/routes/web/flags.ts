@@ -8,6 +8,7 @@ import { checkSessionRevocation } from "../../services/revoked-session-cache.js"
 import { sessionRevokedResponse } from "../../middleware/session-revocation.js";
 import { evaluateClientFeatureFlags } from "../../utils/analytics.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
+import { logger } from "../../utils/logger.js";
 
 /**
  * Values for the PostHog flags the web client reads (MJ-015). The client
@@ -174,8 +175,26 @@ clientFlags.get("/", async (c) => {
     // Each local harness is its own rollout (and its own runtime), so each
     // has its own flag, evaluated server-side from the verified member.
     const member = identity.kind === "id" && identity.member === true;
-    flags["local-harness-enabled"] = member && isLocalHarnessVenue("claude-code") && await localHarnessAccountEnabled(c.req.header("authorization"));
-    flags["local-codex-enabled"] = member && isLocalHarnessVenue("codex") && await localHarnessAccountEnabled(c.req.header("authorization"), undefined, "codex");
+    // A failed account check answers that harness's flag OFF; it never fails
+    // the whole response, which would take every other flag down with it.
+    const localFlag = async (harnessId: "claude-code" | "codex") => {
+      if (!member || !isLocalHarnessVenue(harnessId)) return false;
+      try {
+        return await localHarnessAccountEnabled(
+          c.req.header("authorization"),
+          undefined,
+          harnessId,
+        );
+      } catch (error) {
+        logger.warn("[web/flags] local harness account check failed", {
+          harnessId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    };
+    flags["local-harness-enabled"] = await localFlag("claude-code");
+    flags["local-codex-enabled"] = await localFlag("codex");
   }
   return c.json({ flags });
 });
