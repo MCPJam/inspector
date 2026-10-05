@@ -428,7 +428,10 @@ export async function resolveTurnRuntime(
     // to read out of `extraBodyFields` today.
     const outputCeiling = args.harness ? undefined : args.maxOutputTokens;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection || topLevelEffort || outputCeiling !== undefined
+      args.extraBodyFields ||
+      hostedSelection ||
+      topLevelEffort ||
+      outputCeiling !== undefined
         ? {
             ...(args.extraBodyFields ?? {}),
             ...(outputCeiling !== undefined
