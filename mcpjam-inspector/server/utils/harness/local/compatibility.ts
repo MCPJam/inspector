@@ -220,7 +220,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
 > = {
   "claude-code": {
     harnessId: "claude-code",
-    adapterVersion: "1.0.100",
+    adapterVersion: "1.0.121",
     runtime: {
       source: "managed-bundle",
       bundleName: "claude-code",
