@@ -56,7 +56,7 @@ import {
 
 /** Pinned bytes of the backend-owned copy. Re-pin only on a deliberate re-sync. */
 const RUN_FIXTURE_SHA256 =
-  "76daa1dc5c9e9d7d6db14d320aef60a138205a8896d92216d45454c25c8c95da";
+  "7135025d0bf5235b35f66125d4c12b3f01b41cfff81bdd74ac7f1d8f88cb117a";
 
 type RunCorpus = {
   __generator: {

@@ -6,7 +6,7 @@
     "check": "npm run generate:eval-verdict-run-fixtures -- --check",
     "script": "scripts/generate-eval-verdict-run-aggregation-fixtures.ts",
     "scenarios": "scripts/lib/evalVerdictRunAggregationFixtures.ts",
-    "sourceCommit": "2d8faa8c877a7e8d50a8d99d9a11c16bdca4b4d9",
+    "sourceCommit": "31c8fac7e97787b54a224b83b217a26dc833a4d2",
     "caseCorpus": "tests/convex/fixtures/eval-verdict-policy-parity-fixtures.json",
     "caseCorpusBaselineSha256": "c96d63b3d067e857586151ba23d59dec2df0a565f96f0fbc9a07d513efb00c51",
     "sdkCopy": "sdk/tests/fixtures/eval-verdict-run-aggregation-parity-fixtures.json"
