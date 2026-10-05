@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { NO_READ_ONLY_TOOLS_MESSAGE } from "../../../../shared/eval-generation-errors.js";
+import { ConvexError } from "convex/values";
 import { ErrorCode, WebRouteError } from "../../web/errors.js";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
@@ -216,4 +217,25 @@ it("reports no read-only tools as a validation error", async () => {
   expect(response.status).toBe(400);
   expect(await response.text()).toContain(NO_READ_ONLY_TOOLS_MESSAGE);
   expect(mocks.fetch).not.toHaveBeenCalled();
+});
+
+it("answers a stale draft's CONFLICT refusal as a 409 with its message", async () => {
+  // The backend refuses a stale accept with a ConvexError; mapping it with
+  // the bare runtime mapper turned it into a 500 "Server Error".
+  mocks.mutation.mockRejectedValue(
+    new ConvexError({
+      code: "CONFLICT",
+      message: "Draft changed. Review it again.",
+    }),
+  );
+  const response = await post(
+    JSON.stringify({
+      operation: "accept",
+      draftId: "d",
+      revision: 0,
+      acceptedAdditionIds: [],
+    }),
+  );
+  expect(response.status).toBe(409);
+  expect(await response.text()).toContain("Draft changed. Review it again.");
 });
