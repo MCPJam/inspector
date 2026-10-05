@@ -52,10 +52,14 @@ export async function authoringRequest(
   );
   const data = await response.json();
   if (!response.ok) {
+    // Convex passes `{ error }` through; the inspector's own route answers
+    // `{ code, message }` (a server it could not reach, no read-only tools).
     const message =
       typeof data.error === "string"
         ? data.error
-        : data.error?.message ?? "Case authoring failed.";
+        : (data.error?.message ??
+          (typeof data.message === "string" ? data.message : undefined) ??
+          "Case authoring failed.");
     notifyMCPJamLimitError({ code: data.code, details: data, message });
     throw new AuthoringRequestError(message, response.status);
   }

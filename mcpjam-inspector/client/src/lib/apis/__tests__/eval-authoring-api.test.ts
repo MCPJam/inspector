@@ -30,7 +30,7 @@ describe("authoringRequest", () => {
     authFetchMock.mockReset();
   });
 
-  it("keeps the generic message for the inspector's error envelope", async () => {
+  it("surfaces the message from the inspector's error envelope", async () => {
     // The inspector route answers `{ code, message }`, with no `error` key.
     respond(400, {
       code: "VALIDATION_ERROR",
@@ -39,19 +39,21 @@ describe("authoringRequest", () => {
     await expect(
       authoringRequest({ operation: "status", jobId: "job-1" }),
     ).rejects.toMatchObject({
-      message: "Case authoring failed.",
+      message: "This suite has multiple environments; name the one to use.",
       status: 400,
     });
   });
 
   it("surfaces an error string passed through from Convex", async () => {
     respond(403, {
-      error: "An authorized inspector must capture the tool snapshot.",
+      error:
+        "Generating and importing test cases isn't available in a local MCPJam Inspector. Open this project at https://app.mcpjam.com to continue.",
     });
     await expect(
       authoringRequest({ operation: "status", jobId: "job-1" }),
     ).rejects.toMatchObject({
-      message: "An authorized inspector must capture the tool snapshot.",
+      message:
+        "Generating and importing test cases isn't available in a local MCPJam Inspector. Open this project at https://app.mcpjam.com to continue.",
       status: 403,
     });
   });
