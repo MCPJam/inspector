@@ -1,6 +1,9 @@
-vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: vi.fn(async (harness: string) => harness === "claude-code") }));
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  shouldUseLocalHarness: vi.fn(async (harness: string) => harness === "claude-code"),
+  localHarnessIdOf: (harness: unknown) => (harness === "claude-code" || harness === "codex" ? harness : undefined),
+}));
 
 const {
   prepareChatV2Mock,
@@ -41,6 +44,7 @@ const {
 // Runtime preparation is covered separately; this route must use its fresh
 // server-bound target, not the stale launch credential sent by the renderer.
 vi.mock("../../../utils/harness/local/readiness.js", () => ({
+  LOCAL_HARNESS_DISPLAY_NAMES: { "claude-code": "Claude Code", codex: "Codex" },
   ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
     kind: "local-native", workspaceGrantId: "ws_fresh", runtimeId: "rt_fresh",
     machineId: "machine-fresh", permissionProfile: "workspace-edits",
@@ -579,5 +583,111 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     expect(response.status).toBe(503);
     expect((await response.json()).error).toMatch(/MCPJam-provided models/);
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  describe("reasoning effort", () => {
+    const HOST_SELECTION = {
+      modelId: "anthropic/claude-haiku-4.5",
+      source: "hosted",
+      settings: { reasoningEffort: "medium" },
+      fallback: { provider: "openrouter", model: "none" },
+    };
+
+    const post = (extra: Record<string, unknown> = {}, model = "anthropic/claude-haiku-4.5") =>
+      createApp().request("/api/mcp/chat-v2", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer signed-in-test-token",
+        },
+        body: JSON.stringify({
+          projectId: "project-1",
+          hostId: "host-claude",
+          selectedServers: ["server-1"],
+          selectedServerIds: ["server-id-1"],
+          messages: [{ role: "user", content: "hello" }],
+          model: { id: model, provider: "anthropic", name: "m" },
+          ...extra,
+        }),
+      });
+
+    const withHostSelection = () =>
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          hostId: "host-claude",
+          modelId: "anthropic/claude-haiku-4.5",
+          systemPrompt: "host system",
+          temperature: 0.2,
+          requireToolApproval: false,
+          respectToolVisibility: true,
+          selectedServerIds: ["server-id-1"],
+          harness: "claude-code",
+          modelSelection: HOST_SELECTION,
+        },
+      });
+
+    it("the body's effort reaches the preflight, prepare and the engine", async () => {
+      const response = await post({ reasoningEffort: "high" });
+      expect(response.status).toBe(200);
+      expect(checkHarnessRuntimeAvailableMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" }),
+      );
+      expect(prepareChatV2Mock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" }),
+      );
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" }),
+      );
+    });
+
+    it("the host's saved effort is the default for the same model", async () => {
+      withHostSelection();
+      await post();
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "medium" }),
+      );
+      // …and the body's still wins.
+      handleMCPJamFreeChatModelMock.mockClear();
+      await post({ reasoningEffort: "low" });
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "low" }),
+      );
+    });
+
+    it("the host's saved effort does not follow a different model", async () => {
+      withHostSelection();
+      await post({}, "anthropic/claude-sonnet-4.5");
+      const opts = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect("reasoningEffort" in opts).toBe(false);
+    });
+
+    it("a turn with no effort passes none anywhere", async () => {
+      await post();
+      const opts = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect("reasoningEffort" in opts).toBe(false);
+      expect(checkHarnessRuntimeAvailableMock.mock.calls.at(-1)![0]).not.toHaveProperty(
+        "reasoningEffort",
+      );
+    });
+
+    it("a level that is not an effort is a 400 before any work", async () => {
+      const response = await post({ reasoningEffort: "ultra" });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toMatch(/reasoningEffort must be one of/);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("an unverified harness effort is refused with the preflight's reason", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValue({
+        ok: false,
+        kind: "setting-unsupported",
+        reason: "the Claude Code harness can't apply a reasoning effort yet",
+      });
+      const response = await post({ reasoningEffort: "high" });
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toMatch(/can't apply a reasoning effort/);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
   });
 });

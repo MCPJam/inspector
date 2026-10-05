@@ -41,7 +41,8 @@ let requestCount = 0;
 
 /** Run `send` after the configured upstream latency, if any. */
 function held(send) {
-  held(send);
+  if (latencyMs > 0) setTimeout(send, latencyMs);
+  else send();
 }
 function sse(res, events) {
   const send = () => {

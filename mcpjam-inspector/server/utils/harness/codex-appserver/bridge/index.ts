@@ -26,20 +26,27 @@ import {
 } from "../shared/turn-fingerprint.js";
 import type { StartMessage } from "../codex-appserver-bridge-protocol.js";
 import {
+  parseWorkspaceWriteSandboxPolicy,
+  sandboxPolicyFingerprint,
+  type CodexWorkspaceWriteSandboxPolicy,
+} from "../shared/sandbox-policy.js";
+import {
   spawnAppServerClient,
   type AppServerClient,
 } from "./app-server-client.js";
 import type {
   CodexApprovalPolicy,
   CodexSandboxMode,
+  CodexSandboxPolicy,
   JsonRpcNotification,
   ThreadStartParams,
   ThreadStartResult,
   TurnStartResult,
 } from "./app-server-protocol.js";
 import { createApprovalController } from "./approval-controller.js";
+import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
-import { prepareCodexHome } from "./codex-home.js";
+import { prepareCodexHome, untrustedProjectPathsFor } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
 import { createStreamTranslator } from "./stream-translator.js";
 
@@ -66,26 +73,136 @@ function parseArgs(argv: string[]): Args {
 }
 
 /**
- * Permission mode → Codex's policy and sandbox.
- *
- * `untrusted` is what produces approval requests: Codex auto-approves the
- * commands it knows to be read-only and asks about everything else, which is
- * the closest honest mapping to "reads stay free, side effects are gated".
- * `allow-edits` maps the same way as `allow-reads` deliberately — Codex has no
- * middle policy that gates only writes, and the safe direction when the host
- * asked for approval is to ask more, not less.
+ * Is this bridge supervised on a user's own machine rather than inside a cloud
+ * sandbox? The local supervisor ALWAYS sets `MCPJAM_LOCAL_CONTROL_ROOT` in the
+ * child environment (`session-env.ts`) and a cloud box never has it, so its
+ * presence is the one signal that there is no outer boundary around Codex.
  */
-export function toCodexPermissions(mode: string | undefined): {
+export function isSupervisedLocally(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    typeof env.MCPJAM_LOCAL_CONTROL_ROOT === "string" &&
+    env.MCPJAM_LOCAL_CONTROL_ROOT.length > 0
+  );
+}
+
+export class CodexPermissionRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CodexPermissionRefusedError";
+  }
+}
+
+/**
+ * Permission mode → Codex's policy and sandbox. FAIL CLOSED.
+ *
+ * `untrusted` is what produces approval requests. Measured on 0.149.1
+ * (PROBES.md (c)): it asks about EVERY command — `pwd`, `ls` and `cat`
+ * included — and about every file change (both `apply_patch` forms), so an
+ * attended Codex turn prompts more than an attended Claude Code one, and the
+ * product must not claim reads are free. `allow-edits` maps the same way as
+ * `allow-reads` deliberately — Codex has no middle policy that gates only
+ * writes, and the safe direction when the host asked for approval is to ask
+ * more, not less.
+ *
+ * `allow-all` means nobody is there to approve. In a cloud sandbox the box is
+ * the boundary, so that is `danger-full-access`. On a user's machine it is
+ * legal ONLY with an explicit workspace-write `sandboxPolicy` (the unattended
+ * local arm, `shared/sandbox-policy.ts`): `danger-full-access` under local
+ * supervision would hand an unattended agent the OS user's whole authority,
+ * so it is refused rather than silently granted.
+ *
+ * Anything that is not one of the three framework modes is refused too. The
+ * previous mapping turned an unknown string into `danger-full-access`, which
+ * meant a typo or a future mode name granted the widest access there is.
+ */
+export function toCodexPermissions(
+  mode: string | undefined,
+  options: {
+    sandboxPolicy?: CodexWorkspaceWriteSandboxPolicy | undefined;
+    supervisedLocally?: boolean;
+  } = {},
+): {
   approvalPolicy: CodexApprovalPolicy;
   sandbox: CodexSandboxMode;
+  sandboxPolicy?: CodexSandboxPolicy;
 } {
-  switch (mode) {
+  // Checked here, not trusted: the framework only `JSON.parse`s the start
+  // message, so a policy of any shape (e.g. `dangerFullAccess`) would
+  // otherwise reach `turn/start` as-is.
+  let sandboxPolicy: CodexWorkspaceWriteSandboxPolicy | undefined;
+  if (options.sandboxPolicy !== undefined) {
+    const parsed = parseWorkspaceWriteSandboxPolicy(options.sandboxPolicy);
+    if (parsed === null) {
+      throw new CodexPermissionRefusedError(
+        "Refusing a command-sandbox policy that is not MCPJam's " +
+          "workspace-write policy.",
+      );
+    }
+    if (options.supervisedLocally && parsed.networkAccess) {
+      throw new CodexPermissionRefusedError(
+        "Refusing command network access for a turn on a user's machine.",
+      );
+    }
+    sandboxPolicy = parsed;
+  }
+  switch (mode ?? "allow-all") {
     case "allow-reads":
     case "allow-edits":
-      return { approvalPolicy: "untrusted", sandbox: "workspace-write" };
-    default:
+      return {
+        approvalPolicy: "untrusted",
+        sandbox: "workspace-write",
+        ...(sandboxPolicy ? { sandboxPolicy: { ...sandboxPolicy } } : {}),
+      };
+    case "allow-all":
+      if (sandboxPolicy) {
+        return {
+          approvalPolicy: "never",
+          sandbox: "workspace-write",
+          sandboxPolicy: { ...sandboxPolicy },
+        };
+      }
+      if (options.supervisedLocally) {
+        throw new CodexPermissionRefusedError(
+          "Refusing to start Codex with danger-full-access on a user's " +
+            "machine: an unattended local turn must carry an explicit " +
+            "workspace-write sandbox policy.",
+        );
+      }
       return { approvalPolicy: "never", sandbox: "danger-full-access" };
+    default:
+      throw new CodexPermissionRefusedError(
+        `Unknown permission mode ${JSON.stringify(mode)}; refusing rather ` +
+          `than guessing how much access to grant.`,
+      );
   }
+}
+
+/**
+ * The per-thread config layer: the host's `codexConfig`, plus a disable entry
+ * for every MCP server a system or managed layer declares (`mcp-isolation.ts`)
+ * so MCPJam's relay is the model's only MCP surface. The relay's own entry is
+ * rendered into `CODEX_HOME` and never overridden here.
+ */
+function withThreadConfig(
+  start: StartMessage,
+): { config?: Record<string, unknown> } {
+  const config = threadConfig(start);
+  return Object.keys(config).length > 0 ? { config } : {};
+}
+
+function threadConfig(start: StartMessage): Record<string, unknown> {
+  const config: Record<string, unknown> = { ...(start.codexConfig ?? {}) };
+  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME });
+  if (Object.keys(foreign).length > 0) {
+    const existing =
+      config.mcp_servers && typeof config.mcp_servers === "object"
+        ? (config.mcp_servers as Record<string, unknown>)
+        : {};
+    config.mcp_servers = { ...foreign, ...existing };
+  }
+  return config;
 }
 
 /** Configuration whose change cannot be applied to a live thread. */
@@ -99,6 +216,9 @@ function turnConfigurationFingerprint(start: StartMessage): string {
       tools: start.tools ?? [],
     }),
     permissionMode: start.permissionMode ?? "allow-all",
+    // A changed command sandbox is a changed configuration: a resumed thread
+    // would otherwise keep running under the previous one.
+    sandboxPolicy: sandboxPolicyFingerprint(start.sandboxPolicy),
     webSearch: start.webSearch ?? false,
     model: start.model ?? "",
   });
@@ -186,15 +306,19 @@ async function main(): Promise<void> {
 
     const codexHome = prepareCodexHome({
       codexHome: join(args.sessionDataDir, "codex-home"),
-      // Delivered per session as the adapter's credential environment. The
-      // real lease is injected outside the VM; this is the placeholder that
-      // satisfies Codex's own auth check.
+      // Delivered per session as the adapter's credential environment: the
+      // hosted proxy's `…/openai/v1`, or the local gateway's bare origin. The
+      // real lease is injected outside the process; `CODEX_API_KEY` is the
+      // placeholder (or local capability) that satisfies Codex's auth check.
       baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       apiKeyEnvVar: "CODEX_API_KEY",
       hostToolsEntrypoint: join(args.bootstrapDir, "host-tools-mcp.mjs"),
       relayUrl: relay.url,
       relayCredential: relay.credential,
       webSearch: start.webSearch ?? false,
+      // Keeps the folder's own `.codex/config.toml` (MCP servers, hooks, exec
+      // policies) out: see `untrustedProjectPathsFor`.
+      untrustedProjectPaths: untrustedProjectPathsFor(args.workdir),
     });
 
     client = spawnAppServerClient({
@@ -212,6 +336,13 @@ async function main(): Promise<void> {
       ],
       cwd: args.workdir,
       env: { ...process.env, CODEX_HOME: codexHome },
+      // Codex's own diagnostics, forwarded to the bridge's stderr — which the
+      // host already tails into a bridge startup error and its logs. Without
+      // this a Codex that failed to start (a sandbox it could not initialise,
+      // a config it rejected) surfaced only as an opaque exit code.
+      onStderrLine: (line) => {
+        process.stderr.write(`[codex] ${line}\n`);
+      },
     });
 
     /*
@@ -262,6 +393,16 @@ async function main(): Promise<void> {
       await relay?.close();
     },
     async onStart(start, turn) {
+      // Decided FIRST, before anything starts: a turn whose permissions are
+      // refused must not spawn a Codex process at all.
+      const { approvalPolicy, sandbox, sandboxPolicy } = toCodexPermissions(
+        start.permissionMode,
+        {
+          sandboxPolicy: start.sandboxPolicy,
+          supervisedLocally: isSupervisedLocally(),
+        },
+      );
+
       // The catalog has to exist BEFORE Codex starts: it reads the MCP server's
       // tools once, at startup.
       catalog = buildHostToolCatalog(start.tools ?? []);
@@ -288,9 +429,6 @@ async function main(): Promise<void> {
       });
       runtime.onServerRequest((request) => approvals.handle(request));
 
-      const { approvalPolicy, sandbox } = toCodexPermissions(
-        start.permissionMode,
-      );
       const fingerprint = turnConfigurationFingerprint(start);
       const mustRestart =
         start.restartThread === true ||
@@ -309,7 +447,7 @@ async function main(): Promise<void> {
         ...(start.instructions
           ? { developerInstructions: start.instructions }
           : {}),
-        ...(start.codexConfig ? { config: start.codexConfig } : {}),
+        ...withThreadConfig(start),
         serviceName: "mcpjam-inspector",
       };
 
@@ -342,6 +480,9 @@ async function main(): Promise<void> {
         input: [{ type: "text", text: start.prompt }],
         ...(start.model ? { model: start.model } : {}),
         ...(start.reasoningEffort ? { effort: start.reasoningEffort } : {}),
+        // Explicit, every turn it applies to. The schema's own workspace-write
+        // default leaves /tmp writable; see `shared/sandbox-policy.ts`.
+        ...(sandboxPolicy ? { sandboxPolicy } : {}),
         summary: "detailed",
         ...(start.responseFormat?.type === "json" && start.responseFormat.schema
           ? { outputSchema: start.responseFormat.schema }

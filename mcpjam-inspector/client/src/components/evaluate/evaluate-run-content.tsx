@@ -20,6 +20,10 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
 import { compactModelIdTail } from "@/lib/environment-label";
+import {
+  runTargetKey,
+  targetKeySuffix,
+} from "@/lib/eval-target-key";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
@@ -54,6 +58,8 @@ import {
 } from "./run-verdict-hero-deltas";
 import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
+import { useRunErrorBreakdownToast } from "./run-error-breakdown";
+import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -103,7 +109,10 @@ export function SingleRunContent({
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
   // decision to read, and asking anyway spends a request per poll to be told so.
-  const active = decisionSummaryEnabled && isTerminalEvalRunStatus(run.status);
+  const active =
+    Boolean(projectId) &&
+    decisionSummaryEnabled &&
+    isTerminalEvalRunStatus(run.status);
 
   const detail = useEvalRunDecisionDetail({
     projectId,
@@ -134,6 +143,9 @@ export function SingleRunContent({
     // Identity and label stay separate: the twin lookup keys on the run's
     // own effective model, so a fallback label must not leak into the key.
     const modelId = run.effectiveModelId ?? "";
+    // The run's target (`targetKey`, the bare model id when default) is the
+    // twin key, so the previous Sonnet·Low run is not Sonnet·High's baseline.
+    const targetKey = run.effectiveModelId ? runTargetKey(run) : undefined;
     const modelLabel = run.effectiveModelId ?? "Client default";
     return buildHeroPairings({
       targets: [
@@ -142,7 +154,10 @@ export function SingleRunContent({
           run,
           client: runClientIdentity(run, names).name,
           modelId,
-          model: compactModelIdTail(modelLabel),
+          ...(targetKey ? { targetKey } : {}),
+          model: `${compactModelIdTail(modelLabel)}${
+            targetKey ? targetKeySuffix(targetKey, [targetKey]) : ""
+          }`,
           iterations,
         },
       ],
@@ -187,6 +202,33 @@ export function SingleRunContent({
     run,
     enabled: active,
   });
+
+  // Terminal runs only, and only once the decision read settled: the toast
+  // fires once per run, so it must not fire on the partial picture a running
+  // run or an in-flight read would give it.
+  const errorBreakdown = useMemo(
+    () =>
+      isTerminalEvalRunStatus(run.status) &&
+      (!active ||
+        (!["disabled", "loading"].includes(detail.status) &&
+          !["disabled", "loading"].includes(chains.status)))
+        ? buildRunErrorBreakdown({
+            iterations,
+            diagnostics: detail.diagnostics,
+            chains: chains.chains,
+          })
+        : null,
+    [
+      active,
+      run.status,
+      detail.status,
+      iterations,
+      detail.diagnostics,
+      chains.chains,
+      chains.status,
+    ],
+  );
+  useRunErrorBreakdownToast(String(run._id), errorBreakdown);
 
   const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
   const descriptionExperiment = useEvalDescriptionExperiment({

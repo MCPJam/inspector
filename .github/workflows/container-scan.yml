@@ -1,0 +1,145 @@
+name: Container Scan
+
+# Vulnerability-scans the three Docker images this repo ships to Railway (the
+# hosted inspector, the Slack bot, the Discord bot; soundcheck deploys via
+# Railpack with no Dockerfile). Each image is built from the same Dockerfile
+# and build context Railway uses — cold, with no build args — then scanned
+# with Trivy for OS-package and bundled-dependency CVEs.
+#
+# Findings are uploaded as SARIF so they land in GitHub code scanning (one
+# category per image) with dated, attributable history. Both the report and
+# the failure gate consider only findings with a fix available: an alert
+# nobody can act on (no patched version exists) can only age past its SLA.
+# A scheduled run failing on a new fixable CRITICAL in a base image is the
+# signal to bump that base (e.g. NODE_VERSION in the inspector Dockerfile).
+on:
+  pull_request:
+    branches:
+      - main
+    # The images' vulnerability surface is the base images (Dockerfiles) and
+    # the installed dependency set (lockfile) — not application source, which
+    # dependency-audit and Snyk already gate on every PR. Scanning on source
+    # changes would add three image builds to every PR for no new signal.
+    paths:
+      - "mcpjam-inspector/Dockerfile"
+      - "slack-app/Dockerfile"
+      - "discord-app/Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/container-scan.yml"
+  # Code scanning opens and closes default-branch alerts from default-branch
+  # analyses only; without this, an alert fixed by a merged PR stays open
+  # until the next scheduled run.
+  push:
+    branches: [main]
+    paths:
+      - "mcpjam-inspector/Dockerfile"
+      - "slack-app/Dockerfile"
+      - "discord-app/Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/container-scan.yml"
+  schedule:
+    # Weekly, independent of code changes: new CVEs are published against the
+    # base images we already ship, so the scan needs a recorded cadence of its
+    # own rather than only running when a Dockerfile happens to change.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  # For the scheduled-failure issue below.
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Only PR runs supersede each other. schedule and workflow_dispatch share
+  # the refs/heads/main group, and a manual dispatch cancelling an in-flight
+  # Monday run would leave a silent gap in the weekly record.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    name: Scan ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: inspector-web
+            dockerfile: mcpjam-inspector/Dockerfile
+          - image: slack-app
+            dockerfile: slack-app/Dockerfile
+          - image: discord-app
+            dockerfile: discord-app/Dockerfile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # The build context includes the whole checkout; keep the token out
+          # of .git/config so it cannot leak into a layer.
+          persist-credentials: false
+
+      # No registry push and no build args: the VITE_*/Sentry args are all
+      # optional at build time, and the scan needs the image contents, not a
+      # configured deployment.
+      - name: Build image
+        run: docker build -f "${{ matrix.dockerfile }}" -t "local/${{ matrix.image }}:scan" .
+
+      # ignore-unfixed on the report too: every SARIF result becomes an
+      # SLA-tracked code-scanning alert, and only findings with a patched
+      # version to move to are actionable within one.
+      - name: Scan image (report)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: local/${{ matrix.image }}:scan
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          # Without this, trivy-action drops the severity filter for SARIF
+          # output and reports every level.
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          exit-code: "0"
+
+      # Fork PRs run with a read-only token that cannot write security events;
+      # they still build, scan, and hit the CRITICAL gate below.
+      - name: Upload results to code scanning
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: container-${{ matrix.image }}
+
+      # Fixable CRITICALs fail the job. skip-setup-trivy reuses the binary the
+      # report step installed; the vulnerability DB comes from the action's
+      # shared cache.
+      - name: Fail on fixable CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: local/${{ matrix.image }}:scan
+          format: table
+          severity: CRITICAL
+          # Secret scanning is on by default and ignore-unfixed does not apply
+          # to it; a CRITICAL secret would fail this gate against its stated
+          # policy. Secrets still surface via the report step above.
+          scanners: vuln
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+      # GitHub emails scheduled-run failures only to whoever last edited the
+      # cron line; a red Monday run nobody else hears about is detection
+      # without a response. PR runs already surface through the PR itself.
+      - name: Open an issue on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Scheduled container scan failed: ${{ matrix.image }}" \
+            --body "The weekly Trivy scan of the ${{ matrix.image }} image failed — likely a new fixable CRITICAL in a base image (bump NODE_VERSION or the relevant base tag), or a broken build. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

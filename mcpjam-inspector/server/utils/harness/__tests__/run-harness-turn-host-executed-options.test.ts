@@ -30,6 +30,9 @@ const harnessState = vi.hoisted(() => ({
     Record<string, unknown> & { type?: string }
   >,
   finalText: "done",
+  continuations: [] as any[],
+  create: vi.fn(),
+  stream: vi.fn(),
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -42,22 +45,27 @@ const agentConstruction = vi.hoisted(() => ({
   last: undefined as Record<string, unknown> | undefined,
 }));
 
+/** The adapter's `toNativeModel` answer (Cursor-style adapters map none). */
+const toNativeModel = vi.hoisted(() =>
+  vi.fn((_modelId: string): string | undefined => "gpt-5")
+);
+
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     constructor(options: Record<string, unknown>) {
       agentConstruction.last = options;
     }
-    createSession = vi.fn(async () => harnessState.session);
-    stream = vi.fn(async () => ({
+    createSession = vi.fn(async () => { harnessState.create(); return harnessState.session; });
+    stream = vi.fn(async () => { harnessState.stream(); return ({
       fullStream: (async function* () {
         for (const part of harnessState.streamParts) {
           yield part;
         }
       })(),
       text: Promise.resolve(harnessState.finalText),
-    }));
+    }); });
   },
-  collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
+  collectHarnessAgentToolApprovalContinuations: vi.fn(() => harnessState.continuations),
 }));
 
 vi.mock("../registry.js", () => ({
@@ -79,6 +87,7 @@ vi.mock("../registry.js", () => ({
     // host-executed tools MCPJam builds itself.
     mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
+    toNativeModel,
     createHarness: vi.fn(() => ({ harnessId: "codex" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
@@ -148,6 +157,8 @@ vi.mock("../harness-model-broker.js", () => ({
 import { runHarnessTurn } from "../run-harness-turn";
 import { mcpToolOptionsFor } from "../../mcp-tool-options.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
+import { getHarnessAdapter } from "../registry.js";
+import { HOSTED_APPROVAL_SANDBOX_POLICY } from "../codex-appserver/hosted-sandbox-policy.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -187,6 +198,9 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     projectSpy.mockClear();
+    harnessState.continuations = [];
+    harnessState.create.mockClear();
+    harnessState.stream.mockClear();
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -231,6 +245,9 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
     expect(forwardedToolOptions()?.includeAppOnly).toBe(false);
 
     projectSpy.mockClear();
+    harnessState.continuations = [];
+    harnessState.create.mockClear();
+    harnessState.stream.mockClear();
     await runHarnessTurn(
       baseOptions({ respectToolVisibility: true }) as never,
       "none"
@@ -362,6 +379,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
         "list_projects",
       ]);
       expect(agentConstruction.last).not.toHaveProperty("toolApproval");
+      expect(agentConstruction.last?.tools ?? {}).not.toHaveProperty("bash");
     });
 
     it("hands a workspace tool that pauses to a runtime that can pause on it, gated (MJ-008)", async () => {
@@ -408,6 +426,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
         baseOptions({
           requireToolApproval: true,
           selectedServers: [],
+          sourceType: "direct",
           builtInTools: { bash: { needsApproval: true } },
         }) as never,
         "none",
@@ -415,6 +434,109 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
 
       expect(agentConstruction.last).toBeDefined();
       expect(agentConstruction.last).not.toHaveProperty("toolApproval");
+      expect(agentConstruction.last?.tools ?? {}).not.toHaveProperty("bash");
     });
+  });
+
+  describe("the native model", () => {
+    afterEach(() => {
+      toNativeModel.mockReset();
+      toNativeModel.mockImplementation(() => "gpt-5");
+      agentConstruction.last = undefined;
+    });
+
+    it("hands the adapter's native model to HarnessAgent", async () => {
+      // The AI SDK adapters stopped reading a construction-time `model`
+      // setting, so the agent is the only place the selected model reaches
+      // the runtime. Without it Codex runs its own default model and Claude
+      // Code its CLI default, under the selected model's name.
+      await runHarnessTurn(baseOptions() as never, "none");
+      expect(toNativeModel).toHaveBeenCalledWith("openai/gpt-5");
+      expect(agentConstruction.last?.model).toBe("gpt-5");
+    });
+
+    it("passes no model when the adapter maps none", async () => {
+      // Cursor's `toNativeModel` answers undefined: Cursor Auto picks on the
+      // customer's account, so the agent must not carry a model at all.
+      toNativeModel.mockImplementation(() => undefined);
+      await runHarnessTurn(baseOptions() as never, "none");
+      expect(agentConstruction.last).toBeDefined();
+      expect(agentConstruction.last).not.toHaveProperty("model");
+    });
+  });
+});
+
+it("refuses hosted approval resumes with no paused state instead of replaying a prompt", async () => {
+  harnessState.continuations = [{ type: "tool-approval-response", approvalId: "old", approved: true }];
+  harnessState.create.mockClear(); harnessState.stream.mockClear();
+  const result = await runHarnessTurn(baseOptions({ sourceType: "direct", chatSessionId: "chat", selectedServers: [] }) as never, "ui");
+  expect(await result.response!.text()).toContain("pending action will not run");
+  expect(harnessState.create).not.toHaveBeenCalled();
+  expect(harnessState.stream).not.toHaveBeenCalled();
+  harnessState.continuations = [];
+});
+
+describe("the hosted command sandbox under Tool Approval", () => {
+  const CODEX_LIKE = {
+    supportsNativeToolApproval: true,
+    supportsHostExecutedToolApproval: true,
+    supportsMcpToolApproval: false,
+    acceptsSandboxPolicy: true,
+  };
+  const createHarnessArgs = () => {
+    const adapter = vi.mocked(getHarnessAdapter).mock.results.at(-1)!.value;
+    return vi.mocked(adapter.createHarness).mock.calls.at(-1)?.[0] as
+      | Record<string, unknown>
+      | undefined;
+  };
+
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    vi.mocked(getHarnessAdapter).mockClear();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    adapterCapabilities.value = {
+      supportsNativeToolApproval: false,
+      supportsHostExecutedToolApproval: false,
+      supportsMcpToolApproval: false,
+    };
+  });
+
+  // Measured on the `mcpjam-computer` template: under Codex's default
+  // workspace-write sandbox an APPROVED `curl` could not resolve a host while
+  // the same command with approval off returned 200. The box is the boundary,
+  // so approving must grant what off grants.
+  it("opens the sandbox to the box when the turn pauses for approval", async () => {
+    adapterCapabilities.value = CODEX_LIKE;
+    await runHarnessTurn(
+      baseOptions({ requireToolApproval: true, sourceType: "direct" }) as never,
+      "none",
+    );
+    expect(createHarnessArgs()?.sandboxPolicy).toEqual(
+      HOSTED_APPROVAL_SANDBOX_POLICY,
+    );
+    expect(HOSTED_APPROVAL_SANDBOX_POLICY).toMatchObject({
+      networkAccess: true,
+      writableRoots: ["/"],
+    });
+  });
+
+  it("sets no policy with approval off (full access in the box, as before)", async () => {
+    adapterCapabilities.value = CODEX_LIKE;
+    await runHarnessTurn(
+      baseOptions({ requireToolApproval: false, sourceType: "direct" }) as never,
+      "none",
+    );
+    expect(createHarnessArgs()).not.toHaveProperty("sandboxPolicy");
+  });
+
+  it("never hands a policy to a runtime that cannot apply one", async () => {
+    adapterCapabilities.value = { ...CODEX_LIKE, acceptsSandboxPolicy: false };
+    await runHarnessTurn(
+      baseOptions({ requireToolApproval: true, sourceType: "direct" }) as never,
+      "none",
+    );
+    expect(createHarnessArgs()).not.toHaveProperty("sandboxPolicy");
   });
 });

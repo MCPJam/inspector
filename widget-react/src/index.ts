@@ -94,6 +94,8 @@ export type {
   WidgetMount,
   CspMountId,
   CspApplicationIntent,
+  CspClientContext,
+  CspSubtypePolicy,
   CspViolation,
   UiLogEvent,
   // chrome injection

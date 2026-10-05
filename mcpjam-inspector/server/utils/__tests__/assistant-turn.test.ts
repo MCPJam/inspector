@@ -545,6 +545,15 @@ describe("runAssistantTurn", () => {
         expect(runHarnessTurnMock).not.toHaveBeenCalled();
       });
 
+      it("refuses the top-level effort a hosted runtime carries in extraBodyFields", async () => {
+        global.fetch = vi.fn();
+        runHarnessTurnMock.mockClear();
+        await expect(
+          withEffort({ extraBodyFields: { reasoningEffort: "high" } })
+        ).rejects.toThrow(/reasoning effort/);
+        expect(runHarnessTurnMock).not.toHaveBeenCalled();
+      });
+
       it("control: the same turn with no effort reaches the harness", async () => {
         global.fetch = vi.fn();
         runHarnessTurnMock.mockClear();

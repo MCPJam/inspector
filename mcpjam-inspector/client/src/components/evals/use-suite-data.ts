@@ -6,7 +6,13 @@ import {
   computeIterationSummary,
   getTemplateKey,
 } from "./helpers";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
+import {
+  iterationTargetKey,
+  modelEffortTargetKey,
+  targetKeyLabel,
+  targetKeySuffix,
+} from "@/lib/eval-target-key";
 import type { RunMetricsByRun } from "./run-metrics";
 import {
   EvalCase,
@@ -115,9 +121,10 @@ export function useSuiteData(
         const runIterations = allIterations.filter(
           (iter) => iter.suiteRunId === run._id,
         );
-        // Only count completed iterations - exclude pending/cancelled
+        // Only count completed iterations - exclude pending/cancelled, and
+        // infra rows, which measured nothing about the server.
         const iterationResults = runIterations.map((i) =>
-          computeIterationResult(i),
+          computeMeasuredIterationResult(i),
         );
         const realTimePassed = iterationResults.filter(
           (r) => r === "passed",
@@ -188,11 +195,14 @@ export function useSuiteData(
     >();
 
     activeIterations.forEach((iteration) => {
-      const model = iteration.testCaseSnapshot?.model || "Unknown";
+      // Keyed by TARGET (`targetKey`; the bare model id when default), so two
+      // efforts of one model are two entries.
+      const model = iterationTargetKey(iteration) || "Unknown";
       const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
 
-      // Only count terminal pass/fail iterations - exclude pending/cancelled.
-      const result = computeIterationResult(iteration);
+      // Only count terminal pass/fail iterations - exclude pending/cancelled
+      // and infra rows.
+      const result = computeMeasuredIterationResult(iteration);
       if (
         result !== "passed" &&
         result !== "failed" &&
@@ -215,8 +225,15 @@ export function useSuiteData(
       }
     });
 
-    const data = Array.from(modelMap.entries()).map(([_model, stats]) => ({
-      model: stats.modelName,
+    const targetKeys = [...modelMap.keys()];
+    const data = Array.from(modelMap.entries()).map(([key, stats]) => ({
+      key,
+      // Only what differs: "model · Low" / "model · High" beside each other,
+      // the bare model name otherwise (exactly as before).
+      model:
+        key === "Unknown"
+          ? stats.modelName
+          : `${stats.modelName}${targetKeySuffix(key, targetKeys)}`,
       passRate:
         stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
       passed: stats.passed,
@@ -516,7 +533,10 @@ export function useSuiteDataFromMetrics(
         const failed = row.failed + row.timedOut;
         const total = row.passed + failed;
         if (total === 0) continue;
-        const stats = modelMap.get(row.model) ?? {
+        // Rollup rows are per model × effective effort; an effort-less row
+        // keys as the bare model id, exactly as before.
+        const key = modelEffortTargetKey(row.model, row.reasoningEffort);
+        const stats = modelMap.get(key) ?? {
           passed: 0,
           failed: 0,
           total: 0,
@@ -524,12 +544,14 @@ export function useSuiteDataFromMetrics(
         stats.passed += row.passed;
         stats.failed += failed;
         stats.total += total;
-        modelMap.set(row.model, stats);
+        modelMap.set(key, stats);
       }
     }
+    const targetKeys = [...modelMap.keys()];
     return Array.from(modelMap.entries())
-      .map(([model, stats]) => ({
-        model,
+      .map(([key, stats]) => ({
+        key,
+        model: targetKeyLabel(key, targetKeys, (modelId) => modelId),
         passRate:
           stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
         passed: stats.passed,

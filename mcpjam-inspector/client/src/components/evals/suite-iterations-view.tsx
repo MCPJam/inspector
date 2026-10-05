@@ -52,6 +52,7 @@ import {
   compareRunsBySequence,
   evalSuitePinsSandboxImage,
   generationEnvironmentChoices,
+  generationEnvironmentId,
   getLatestRunMetricSource,
   getRunMetricSource,
   runEnvironmentRef,
@@ -171,6 +172,7 @@ import {
   type EvalExportCaseInput,
   type EvalExportDraftInput,
 } from "@/lib/evals/eval-export";
+import { sameRunTarget } from "@/lib/eval-target-key";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
@@ -1022,7 +1024,7 @@ export function SuiteIterationsView({
           run.status === "completed" &&
           (!suiteDetailOverview ||
             (run.namedHostId === selectedRunDetails.namedHostId &&
-              run.effectiveModelId === selectedRunDetails.effectiveModelId &&
+              sameRunTarget(run, selectedRunDetails) &&
               (!selectedRunDetails.runGroupId ||
                 run.runGroupId !== selectedRunDetails.runGroupId))) &&
           compareRunsBySequence(run, selectedRunDetails) < 0,
@@ -1874,6 +1876,7 @@ export function SuiteIterationsView({
           projectId={projectId}
           suiteId={suite._id}
           environmentChoices={generationEnvironmentChoices(suite)}
+          environmentId={generationEnvironmentId(suite)}
         />
       )}
       {/* Header */}

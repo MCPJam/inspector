@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
   endOrganizationDeletion,
@@ -251,7 +252,10 @@ function mockUnseenOnboardingState() {
   localStorage.removeItem("mcp-first-run-server-choice-state");
 }
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: (ref: string, ...args: unknown[]) => {
     const result = mockUseQuery(ref, ...args);
@@ -1111,10 +1115,11 @@ describe("App hosted OAuth callback handling", () => {
       ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(bundleCalls.length).toBeGreaterThan(0);
-    for (const [, bundleArgs] of bundleCalls) {
-      expect(bundleArgs).toBe("skip");
-    }
+    // The bundle is a soft read (useSoftQuery), and a skipped soft read sends
+    // no request at all. So "skipped" here means the unvalidated org never
+    // reached the bundle. The tests below pin that it does subscribe once the
+    // org is valid.
+    expect(bundleCalls).toEqual([]);
   });
 
   it("skips billing queries while a project org id is still unvalidated", () => {
@@ -1141,10 +1146,11 @@ describe("App hosted OAuth callback handling", () => {
       ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(bundleCalls.length).toBeGreaterThan(0);
-    for (const [, bundleArgs] of bundleCalls) {
-      expect(bundleArgs).toBe("skip");
-    }
+    // The bundle is a soft read (useSoftQuery), and a skipped soft read sends
+    // no request at all. So "skipped" here means the unvalidated org never
+    // reached the bundle. The tests below pin that it does subscribe once the
+    // org is valid.
+    expect(bundleCalls).toEqual([]);
   });
 
   it("skips project billing and clears stale synced selection when the active project is missing", async () => {
@@ -4080,6 +4086,24 @@ describe("App hosted OAuth callback handling", () => {
       }),
       { suppressErrorToast: true, suppressSuccessToast: true },
     );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_server_selected",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+      },
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_started",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+      },
+    );
     expect(
       JSON.parse(
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
@@ -4104,6 +4128,25 @@ describe("App hosted OAuth callback handling", () => {
         "Failed to connect to MCP server",
       );
     });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_failed",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+        failure_stage: "handshake",
+      },
+    );
+    const firstRunPayloads = mockTrack.mock.calls
+      .filter(([event]) => String(event).startsWith("first_run_onboarding_"))
+      .map(([, props]) => props);
+    expect(JSON.stringify(firstRunPayloads)).not.toContain(
+      "Connection refused",
+    );
+    expect(JSON.stringify(firstRunPayloads)).not.toContain(
+      "https://mcp.example.com/mcp",
+    );
   });
 
   it("preserves quoted arguments in a first-run stdio command", async () => {
@@ -4136,6 +4179,15 @@ describe("App hosted OAuth callback handling", () => {
         { suppressErrorToast: true, suppressSuccessToast: true },
       );
     });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_started",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "stdio",
+        authentication: "auto",
+      },
+    );
   });
 
   it("keeps the Excalidraw demo in onboarding while it connects", async () => {
@@ -4223,6 +4275,17 @@ describe("App hosted OAuth callback handling", () => {
         connectedToolCount: 6,
       }),
     );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_succeeded",
+      {
+        location: "first_run_onboarding",
+        server_kind: "demo",
+        transport: "http",
+        authentication: "none",
+        success_stage: "tools_loaded",
+        tool_count: 6,
+      },
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
 
@@ -4244,6 +4307,16 @@ describe("App hosted OAuth callback handling", () => {
         status: "completed",
         playgroundPromptPending: true,
       }),
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_playground_opened",
+      {
+        location: "first_run_onboarding",
+        server_kind: "demo",
+        transport: "http",
+        authentication: "none",
+        tool_count: 6,
+      },
     );
   });
 
@@ -4347,6 +4420,16 @@ describe("App hosted OAuth callback handling", () => {
         connectedToolCount: null,
       }),
     );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_succeeded",
+      {
+        location: "first_run_onboarding",
+        server_kind: "personal",
+        transport: "http",
+        authentication: "auto",
+        success_stage: "handshake_only",
+      },
+    );
   });
 
   it("cancels first-run connection progress without completing onboarding", async () => {
@@ -4375,6 +4458,16 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(appState.handleRuntimeDisconnect).toHaveBeenCalledWith(
       "Excalidraw (App)",
+    );
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_cancelled",
+      {
+        location: "first_run_onboarding",
+        server_kind: "demo",
+        transport: "http",
+        authentication: "none",
+        cancel_stage: "connecting",
+      },
     );
     expect(
       screen.getByRole("heading", { name: "Connect to your MCP server" }),
@@ -4521,6 +4614,13 @@ describe("App hosted OAuth callback handling", () => {
         localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
       ),
     ).toEqual({ status: "dismissed" });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_setup_later_clicked",
+      {
+        location: "first_run_onboarding",
+        screen: "server_choice",
+      },
+    );
   });
 
   it("does not let the legacy remote seen flag hide server choice", async () => {
@@ -5430,5 +5530,53 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+  });
+
+  // `projectServerConfig:getConfig` is skipped for a local UUID (CONVEX-HQ,
+  // Kestral PLB-47). A skipped query reads as undefined, so the loading flag
+  // must use the same guard or `clientConfigSyncPending` never clears.
+  describe("project server config loading signal", () => {
+    function renderSyncPending(
+      sharedProjectId: string,
+      projectServerConfig: unknown,
+    ) {
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        projects: {
+          ws_local: { id: "ws_local", name: "Default", sharedProjectId },
+        },
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projectServerConfig:getConfig") {
+          return projectServerConfig;
+        }
+        return undefined;
+      });
+      render(<App />);
+      return vi.mocked(useApiContext).mock.calls.at(-1)?.[0]
+        .clientConfigSyncPending;
+    }
+
+    it("does not hold client config sync for a local UUID project id", () => {
+      expect(
+        renderSyncPending("c10f759d-0262-4805-b599-0aa7fa1c1cc1", undefined),
+      ).toBe(false);
+    });
+
+    it("holds it while a Convex project's config is unresolved", () => {
+      expect(renderSyncPending("jh7abc123def456ghi789jk", undefined)).toBe(
+        true,
+      );
+    });
+
+    it("releases it once that config answers", () => {
+      expect(
+        renderSyncPending("jh7abc123def456ghi789jk", {
+          serverIds: [],
+          overrides: {},
+        }),
+      ).toBe(false);
+    });
   });
 });

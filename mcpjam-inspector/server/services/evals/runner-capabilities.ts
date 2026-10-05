@@ -60,5 +60,23 @@ export function runnerCapabilities(
   ];
 }
 
+/**
+ * The harnesses THIS runner will execute on the member's machine for a launch
+ * that asks for the local venue: one `local-harness:<id>` per harness.
+ *
+ * The backend stamps a target local only for a harness the runner declares
+ * here (a runner that declares none is read as one that predates the
+ * declaration, for which the local venue means Claude Code alone). So a launch
+ * declares exactly the harnesses it has checked it can run — machine, rollout
+ * and authorization — and a Codex host is never stamped local for a runner
+ * that would not run it there, nor a Claude Code host for one that can run
+ * only Codex. Sorted and de-duplicated so the list hashes stably.
+ */
+export function localHarnessCapabilities(
+  harnessIds: readonly string[] | undefined,
+): string[] {
+  return [...new Set(harnessIds ?? [])].sort().map((id) => `local-harness:${id}`);
+}
+
 /** @deprecated Use {@link runnerCapabilities}, which reads the flag at call time. */
 export const RUNNER_CAPABILITIES = [HARNESS_EXECUTION] as const;

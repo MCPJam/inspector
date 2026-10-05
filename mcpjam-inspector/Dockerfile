@@ -1,5 +1,12 @@
-# Use specific Node.js version to match local/CI runtimes and dependency engines
-ARG NODE_VERSION=24.14.0
+# Use specific Node.js version to match local/CI runtimes and dependency engines.
+# 24.21 runs ahead of CI's 24.14 deliberately: its bundled npm carries the
+# node-tar fix for CVE-2026-59873, and the Container Scan workflow's gate
+# verifies the Debian layer on every change. Build-time apt/npm upgrades are NOT
+# the way to fix base-image CVEs here — Railway caches that layer while CI
+# rebuilds cold, so the scanned image silently drifts from the deployed one.
+# When the weekly Container Scan fails on a fixable CRITICAL from the base,
+# bump this pin.
+ARG NODE_VERSION=24.21.0
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
 # against glibc and will not launch on musl. Widget-probe rendering (synthetic

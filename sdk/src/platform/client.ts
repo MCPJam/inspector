@@ -17,6 +17,10 @@ import type {
   PlatformSessionBrowserOpened,
   PlatformBrowserToolPolicy,
 } from "./types.js";
+import type {
+  ModelReasoningEffort,
+  ModelSelection,
+} from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
@@ -1280,6 +1284,8 @@ export class PlatformApiClient {
       serverIds?: string[];
       systemPrompt?: string;
       temperature?: number;
+      /** First turn only; pinned to the session. Excludes `temperature`. */
+      reasoningEffort?: ModelReasoningEffort;
       maxSteps?: number;
       toolMode?: PlatformToolMode;
       allowedServerIds?: string[];
@@ -1320,6 +1326,9 @@ export class PlatformApiClient {
             : {}),
           ...(params.temperature !== undefined
             ? { temperature: params.temperature }
+            : {}),
+          ...(params.reasoningEffort !== undefined
+            ? { reasoningEffort: params.reasoningEffort }
             : {}),
           ...(params.maxSteps !== undefined
             ? { maxSteps: params.maxSteps }
@@ -2824,6 +2833,8 @@ export class PlatformApiClient {
       scope?: "all" | "failed";
       enable?: boolean;
       model?: string;
+      /** The judge's selection for this run (effort included); names `model`. */
+      modelSelection?: ModelSelection;
       threshold?: number;
     },
     options?: RequestOptions
@@ -2839,6 +2850,9 @@ export class PlatformApiClient {
           ...(params.force === true ? { force: true } : {}),
           ...(params.enable !== undefined ? { enable: params.enable } : {}),
           ...(params.model !== undefined ? { model: params.model } : {}),
+          ...(params.modelSelection !== undefined
+            ? { modelSelection: params.modelSelection }
+            : {}),
           ...(params.threshold !== undefined
             ? { threshold: params.threshold }
             : {}),

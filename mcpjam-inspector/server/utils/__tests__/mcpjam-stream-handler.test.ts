@@ -3426,7 +3426,11 @@ describe("mcpjam-stream-handler", () => {
     describe("step limit", () => {
       const runAtStep = async (
         existingSteps: number,
-        opts: { maxSteps: number; extraBodyFields?: Record<string, unknown> },
+        opts: {
+          maxSteps: number;
+          extraBodyFields?: Record<string, unknown>;
+          reasoningEffort?: "high";
+        },
       ) => {
         const messages = [
           { role: "user", content: "go" },
@@ -3467,6 +3471,27 @@ describe("mcpjam-stream-handler", () => {
         expect(bodies).toHaveLength(2);
         expect(bodies[0].toolChoice).toBeUndefined();
         expect(bodies[1].toolChoice).toBe("none");
+      });
+
+      it("sends the turn's reasoning effort as the top-level body field on every step", async () => {
+        (global.fetch as any).mockClear();
+        await runAtStep(4, {
+          maxSteps: 6,
+          reasoningEffort: "high",
+          extraBodyFields: { providerKey: "anthropic" },
+        } as never);
+        const bodies = sentBodies();
+        expect(bodies.length).toBeGreaterThan(0);
+        for (const body of bodies) {
+          expect(body.reasoningEffort).toBe("high");
+          expect(body.providerKey).toBe("anthropic");
+        }
+      });
+
+      it("sends no reasoningEffort field when the turn has none", async () => {
+        (global.fetch as any).mockClear();
+        await runAtStep(5, { maxSteps: 6 });
+        expect("reasoningEffort" in sentBodies()[0]).toBe(false);
       });
 
       it("lets a caller's own toolChoice win on the last step", async () => {

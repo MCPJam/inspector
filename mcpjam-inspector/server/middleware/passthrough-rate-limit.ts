@@ -205,11 +205,20 @@ function bearerKey(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 32);
 }
 
+const TOO_MANY_MESSAGE = "Too many requests. Slow down and retry.";
+
 function tooMany(c: Context, retryAfterMs: number) {
+  // `requestLogContextMiddleware` reads the code and message off
+  // `webErrorMeta` for a RETURNED response.
+  c.set("webErrorMeta", {
+    status: 429,
+    code: ErrorCode.RATE_LIMITED,
+    message: TOO_MANY_MESSAGE,
+  });
   return c.json(
     {
       code: ErrorCode.RATE_LIMITED,
-      message: "Too many requests. Slow down and retry.",
+      message: TOO_MANY_MESSAGE,
     },
     429,
     {

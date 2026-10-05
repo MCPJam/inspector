@@ -7,7 +7,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { Tool } from "@modelcontextprotocol/client";
-import { listTools } from "@/lib/apis/mcp-tools-api";
+import {
+  listToolsForServers,
+  type ListToolsForServersResult,
+} from "@/lib/apis/mcp-tools-api";
 import {
   getApiContextRevision,
   subscribeApiContext,
@@ -44,6 +47,10 @@ export interface AggregatedToolsState {
  *   - resolve clicks to a `(serverId, toolName)` tuple, avoiding the
  *     last-seen-wins collision behavior baked into `ToolServerMap`.
  */
+function failureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Failed to fetch tools";
+}
+
 export function useAggregatedTools(
   serverNames: string[],
   options: { unavailableServerNames?: ReadonlyArray<string> } = {}
@@ -125,20 +132,32 @@ export function useAggregatedTools(
       return;
     }
 
-    const results = await Promise.all(
-      fetchableNames.map(async (serverId) => {
-        try {
-          const data = await listTools({ serverId, refresh: forceRefresh });
-          return { serverId, tools: data.tools ?? [], error: null as null };
-        } catch (err) {
-          const message =
-            err instanceof Error ? err.message : "Failed to fetch tools";
-          return { serverId, tools: [], error: message };
-        }
-      })
-    );
+    // One request for the whole set (PLB-158): the hosted passthrough limiter
+    // counts requests, and a per-server fan-out met it on large workspaces.
+    let batch: ListToolsForServersResult;
+    try {
+      batch = await listToolsForServers(fetchableNames, {
+        refresh: forceRefresh,
+      });
+    } catch (err) {
+      batch = {
+        results: {},
+        errors: Object.fromEntries(
+          fetchableNames.map((serverId) => [serverId, err]),
+        ),
+      };
+    }
 
     if (token !== fetchTokenRef.current) return;
+
+    const results = fetchableNames.map((serverId) => ({
+      serverId,
+      tools: batch.results[serverId]?.tools ?? [],
+      error:
+        serverId in batch.errors
+          ? failureMessage(batch.errors[serverId])
+          : null,
+    }));
 
     setToolsByServer(() => {
       const next: Record<string, Tool[]> = {};

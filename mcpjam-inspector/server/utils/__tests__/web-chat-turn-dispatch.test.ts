@@ -68,6 +68,7 @@ function args(
   },
   /** `null` = a non-harness host. */
   harness: "claude-code" | null = "claude-code",
+  prepareExtra: Record<string, unknown> = {},
 ) {
   const c = {
     req: {
@@ -84,6 +85,7 @@ function args(
       selectedServerIds: [],
       modelDefinition: { name: "m", ...modelDefinition } as never,
       uiMessages: [],
+      ...prepareExtra,
     },
     persist: {
       chatSessionId: undefined,
@@ -196,5 +198,174 @@ describe("streamWebChatTurn model dispatch", () => {
     expect(handlers.hostedOrg).not.toHaveBeenCalled();
     expect(handlers.localOrg).not.toHaveBeenCalled();
     expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+  });
+
+  describe("the saved selection decides the rail (routingSelection)", () => {
+    const none = { provider: "none", model: "none" } as const;
+
+    it("a STORED legacy selection keeps a hosted id off MCPJam credits", async () => {
+      await streamWebChatTurn(
+        args({ id: "openai/gpt-5-nano", provider: "openai" }, null, {
+          routingSelection: { source: "legacy", modelId: "openai/gpt-5-nano" },
+        }) as never,
+      );
+      expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+    });
+
+    it("an org selection takes the org path and is forwarded to the resolve", async () => {
+      const config = await import("../org-model-config.js");
+      vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({
+        ok: true,
+        key: "ollama",
+      });
+      vi.mocked(config.isLocalRuntimeEligible).mockReturnValueOnce(true);
+      vi.mocked(config.resolveOrgProviderRuntime).mockResolvedValueOnce({
+        runtimeLocation: "cloud",
+        providerKey: "ollama",
+      });
+      const org = {
+        modelId: "ollama/llama3",
+        source: "org" as const,
+        connectionRef: { kind: "orgProvider" as const, id: "orgprov_1" },
+        fallback: none,
+      };
+      await streamWebChatTurn(
+        args({ id: "ollama/llama3", provider: "ollama" }, null, {
+          routingSelection: org,
+        }) as never,
+      );
+      expect(config.resolveOrgProviderRuntime).toHaveBeenLastCalledWith(
+        "p1",
+        "ollama",
+        "ollama/llama3",
+        expect.anything(),
+        expect.objectContaining({ modelSelection: org }),
+      );
+      expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+    });
+
+    it("a hosted selection takes MCPJam /stream even where the hosted list would not", async () => {
+      await streamWebChatTurn(
+        args({ id: "vendor/brand-new", provider: "openai" }, null, {
+          routingSelection: {
+            modelId: "vendor/brand-new",
+            source: "hosted",
+            fallback: none,
+          },
+        }) as never,
+      );
+      expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+      expect(handlers.hostedOrg).not.toHaveBeenCalled();
+    });
+
+    it("no selection: the hosted-list check decides, unchanged", async () => {
+      await streamWebChatTurn(
+        args({ id: "openai/gpt-5-nano", provider: "openai" }, null) as never,
+      );
+      expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("reasoning effort", () => {
+    it("MCPJam path: forwards the effort to the hosted engine and to prepare", async () => {
+      const orchestration = await import("../chat-v2-orchestration.js");
+      vi.mocked(orchestration.prepareChatV2).mockClear();
+      await streamWebChatTurn(
+        args({ id: "openai/gpt-5-nano", provider: "openai" }, null, {
+          reasoningEffort: "high",
+        }) as never,
+      );
+      const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.reasoningEffort).toBe("high");
+      expect(
+        vi.mocked(orchestration.prepareChatV2).mock.calls[0]?.[0],
+      ).toMatchObject({ reasoningEffort: "high" });
+    });
+
+    it("no effort leaves the handler options without the field", async () => {
+      await streamWebChatTurn(
+        args({ id: "openai/gpt-5-nano", provider: "openai" }, null) as never,
+      );
+      const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect("reasoningEffort" in opts).toBe(false);
+    });
+
+    it("org cloud: forwards the effort to the hosted org handler", async () => {
+      await streamWebChatTurn(
+        args({ id: "gpt-4.1-mini-custom", provider: "openai" }, null, {
+          reasoningEffort: "low",
+        }) as never,
+      );
+      const opts = handlers.hostedOrg.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.reasoningEffort).toBe("low");
+    });
+
+    async function localOrg(
+      providerKey: string,
+      model: { id: string; provider: string },
+      prepareExtra: Record<string, unknown>,
+    ) {
+      const config = await import("../org-model-config.js");
+      vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({
+        ok: true,
+        key: providerKey,
+      } as never);
+      vi.mocked(config.isLocalRuntimeEligible).mockReturnValueOnce(true);
+      vi.mocked(config.resolveOrgProviderRuntime).mockResolvedValueOnce({
+        runtimeLocation: "local",
+        provider: { providerKey, baseUrl: "http://x", modelIds: [model.id] },
+      } as never);
+      return streamWebChatTurn(
+        args({ ...model, hosted: false }, null, prepareExtra) as never,
+      );
+    }
+
+    it("org local: applies the effort as provider options", async () => {
+      await localOrg(
+        "openai",
+        { id: "gpt-5.1", provider: "openai" },
+        { reasoningEffort: "high" },
+      );
+      const opts = handlers.localOrg.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.providerOptions).toEqual({
+        openai: { reasoningEffort: "high" },
+      });
+    });
+
+    it("org local: refuses a provider with no effort control before any spend", async () => {
+      await expect(
+        localOrg(
+          "ollama",
+          { id: "llama3", provider: "ollama" },
+          { reasoningEffort: "high" },
+        ),
+      ).rejects.toThrow(/reasoning effort "high" is not supported/);
+      expect(handlers.localOrg).not.toHaveBeenCalled();
+    });
+
+    it("org local: an explicit temperature with an effort stays refused", async () => {
+      await expect(
+        localOrg(
+          "openai",
+          { id: "gpt-5.1", provider: "openai" },
+          { reasoningEffort: "high", explicitTemperature: 0.7 },
+        ),
+      ).rejects.toThrow(/cannot both be applied/);
+      expect(handlers.localOrg).not.toHaveBeenCalled();
+    });
   });
 });

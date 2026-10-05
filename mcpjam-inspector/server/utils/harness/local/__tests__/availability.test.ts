@@ -1,7 +1,22 @@
 import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+// These tests are about the gates, against a fixture bundle they build and
+// digest themselves. A RELEASED pack record would replace that fixture's
+// digest with the published pack's (`manifestWithExpectedBundleDigest`), and
+// the fixture would then resolve as the wrong runtime. The released table is
+// release data, covered by the release gate, not by these tests.
+vi.mock("../pack-digests.generated.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../pack-digests.generated.js")>();
+  return {
+    ...real,
+    PACK_RECORDS: Object.fromEntries(
+      Object.keys(real.PACK_RECORDS).map((harnessId) => [harnessId, {}]),
+    ),
+  };
+});
 import {
   LOCAL_HARNESS_MANIFEST,
   type LocalHarnessCompatibility,
@@ -323,24 +338,44 @@ describe("a fully authorized turn", () => {
 });
 
 describe("codex", () => {
-  it("cannot reach a native launch plan, consent or not", async () => {
-    const codexManifests = {
-      ...manifests,
-      codex: {
-        ...LOCAL_HARNESS_MANIFEST.codex,
-        lifecycleConformanceVersion: "conformance-test",
-      } as LocalHarnessCompatibility,
-    };
+  const codexManifests = () => ({
+    ...manifests,
+    codex: {
+      ...LOCAL_HARNESS_MANIFEST.codex,
+      lifecycleConformanceVersion: "conformance-test",
+    } as LocalHarnessCompatibility,
+  });
+
+  it("cannot reach an unrestricted native launch plan, consent or not", async () => {
     const t = target({ harnessId: "codex", permissionProfile: "unrestricted" });
     const { token } = await grantLocalHarnessConsent(binding(t));
-    await expect(
-      query({
-        target: t,
-        grantToken: token,
-        manifests: codexManifests,
-        installedAdapterVersion: LOCAL_HARNESS_MANIFEST.codex.adapterVersion,
-      }),
-    ).resolves.toMatchObject({ status: "native-not-eligible" });
+    const result = await query({
+      target: t,
+      grantToken: token,
+      manifests: codexManifests(),
+      installedAdapterVersion: LOCAL_HARNESS_MANIFEST.codex.adapterVersion,
+    });
+    expect(result.available).toBe(false);
+    expect(result).toMatchObject({
+      status: expect.stringMatching(
+        /native-not-eligible|permission-profile-not-supported/,
+      ),
+    });
+  });
+
+  it("is refused on an architecture its evidence does not cover", async () => {
+    const t = target({ harnessId: "codex", permissionProfile: "workspace-edits" });
+    const { token } = await grantLocalHarnessConsent(binding(t));
+    const result = await query({
+      target: t,
+      grantToken: token,
+      manifests: {
+        ...codexManifests(),
+        codex: { ...codexManifests().codex, nativeTargets: [] },
+      },
+      installedAdapterVersion: LOCAL_HARNESS_MANIFEST.codex.adapterVersion,
+    });
+    expect(result).toMatchObject({ available: false, status: "native-not-eligible" });
   });
 });
 

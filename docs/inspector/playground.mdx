@@ -122,6 +122,8 @@ Higher-priced models are greyed out in the picker for guests, with a "Sign in to
 
 Send one prompt to up to 3 models simultaneously. Open the model picker, toggle **Multiple models** on, and select the models you want to compare. Each model's response — including tool calls and rendered widgets — appears in its own column.
 
+The reasoning effort chip stays visible in compare mode. The chip in the chat input controls the lead card's effort; each card also has its own chip so you can set a different effort per card. Two cards of the same model at different effort levels are treated as two separate columns — for example, Sonnet at Low and Sonnet at High run side by side as distinct targets.
+
 <Note>
   The **Multiple models** toggle is hidden when the active session is shared
   with the project (project-visible). Enabling it on a shared session would
@@ -370,6 +372,13 @@ Local Browser (`browser_*`) and WebMCP page tools follow the chat’s Tool Appro
 Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, read-only UI actions, and tools an MCP App provided. Everything in between follows the switch, including web search — its query is your text leaving for a third party, and the call spends credits.
 
 Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
+
+When a **local harness** (Claude Code or Codex) is active, turning Tool Approval off requires a separate **Run without asking?** confirmation before the first send. The dialog names the harness and explains that it will run commands and change files on your computer without asking first. Consent is scoped to your signed-in account, this machine, the current project, and the harness — it is not shared across projects or machines.
+
+- **Cancel** restores Tool Approval to On and keeps your draft intact.
+- Once confirmed, MCPJam answers native approval requests on your behalf. The runtime stays in ask mode — toggling the switch does not decide any approval that was already waiting; your explicit answer still controls it.
+- Host-executed tools marked as always requiring approval continue to pause regardless of the toggle.
+- Forgetting the local authorization clears the Off consent; the confirmation dialog reappears the next time you turn it off.
 
 **Message history**
 Press **Up** in the composer to recall your last sent message. Press **Up** again to step further back through your previous messages, and **Down** to walk forward. Past the newest entry, **Down** returns the draft you had started before the walk began.

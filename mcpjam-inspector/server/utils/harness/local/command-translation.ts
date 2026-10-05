@@ -20,8 +20,8 @@
  *
  * ── Why a closed grammar is enough ────────────────────────────────────────
  * The grammar is small and finite because the framework and adapters are
- * pinned exactly (`@ai-sdk/harness@1.0.96`,
- * `@ai-sdk/harness-claude-code@1.0.100`, `@ai-sdk/harness-codex@1.0.98`) and
+ * pinned exactly (`@ai-sdk/harness@1.0.117`,
+ * `@ai-sdk/harness-claude-code@1.0.121`, `@ai-sdk/harness-codex@1.0.119`) and
  * every command they emit is a literal in their own source, not model- or
  * repo-derived text. The shapes are enumerated in `ADAPTER_COMMAND_SHAPES`
  * below. An adapter upgrade that changes one of them fails CLOSED — the
@@ -167,6 +167,15 @@ export interface CommandTranslationContext {
    * function, awaited everywhere, has no such seam.
    */
   confine: (path: string) => Promise<string>;
+  /**
+   * Confine a path to the session's OWN state directory — never the granted
+   * workspace. Required for operands that hold runtime state (Codex's bridge
+   * and session-data directories: rollouts, `CODEX_HOME`, the relay
+   * credential), which must not land in the user's checkout even though the
+   * workspace is a writable root for everything else. Defaults to `confine`
+   * where a provider supplies no narrower check.
+   */
+  confineToSessionState?: (path: string) => Promise<string>;
 }
 
 /**
@@ -202,11 +211,16 @@ export const ADAPTER_COMMAND_SHAPES: Readonly<
     "mkdir -p '<workDir>' '<bridgeStateDir>'",
     "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir '<bridgeStateDir>'",
   ],
+  // MCPJam's app-server adapter (`codex-appserver/`), the only Codex adapter
+  // that runs locally. The exec adapter's `--cli-shim-dir` launch is not a
+  // local shape and is refused.
   codex: [
     "pnpm install --frozen-lockfile --store-dir .pnpm-store",
-    "mkdir -p '<workDir>' '<bridgeStateDir>'",
+    "node node_modules/@openai/codex/bin/codex.js --version",
+    "mkdir -p '<workDir>' '<bridgeStateDir>' '<sessionDataDir>'",
     "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir " +
-      "'<bridgeStateDir>' --cli-shim-dir '<cliShimDir>'",
+      "'<bridgeStateDir>' --session-data-dir '<sessionDataDir>' --bootstrap-dir " +
+      "'<bootstrapDir>'",
   ],
 };
 
@@ -546,8 +560,10 @@ function matchBootstrapInstall(
     };
   }
   if (
-    ctx.harnessId === "claude-code" &&
-    command === "./node_modules/.bin/claude --version"
+    (ctx.harnessId === "claude-code" &&
+      command === "./node_modules/.bin/claude --version") ||
+    (ctx.harnessId === "codex" &&
+      command === "node node_modules/@openai/codex/bin/codex.js --version")
   ) {
     return {
       kind: "noop",
@@ -570,12 +586,18 @@ async function matchBridgeLaunch(
   // The EXACT flag vector each pinned adapter emits, in order. Matching a
   // subset, a permutation, or another harness's flags would let an adapter
   // change slip through as a valid launch — the opposite of the fail-closed
-  // behaviour this module promises. Codex carries `--cli-shim-dir`; Claude
-  // Code does not.
+  // behaviour this module promises. The Codex (app-server) bridge also names
+  // its session-data directory and the bootstrap directory it loads Codex
+  // from.
   const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> =
     {
       "claude-code": ["--workdir", "--bridge-state-dir"],
-      codex: ["--workdir", "--bridge-state-dir", "--cli-shim-dir"],
+      codex: [
+        "--workdir",
+        "--bridge-state-dir",
+        "--session-data-dir",
+        "--bootstrap-dir",
+      ],
     };
   const flags = expected[ctx.harnessId];
 
@@ -612,6 +634,31 @@ async function matchBridgeLaunch(
       );
     }
     assertPlainPathOperand(value, command);
+    if (flag === "--bootstrap-dir") {
+      // Exactly the adapter's bootstrap directory, remapped onto the verified
+      // bundle: the bridge loads Codex, its MCP entrypoint and `ws` from here,
+      // so it must be the digest-covered tree and nothing else.
+      if (
+        posix.normalize(value) !== posix.normalize(ctx.adapterBootstrapDir)
+      ) {
+        throw new CommandTranslationError(
+          `--bootstrap-dir names ${JSON.stringify(value)}, but the only ` +
+            `bootstrap this session may load is its managed bundle`,
+          command,
+        );
+      }
+      args.push(flag, remapBootstrapPath(value, ctx));
+      continue;
+    }
+    if (
+      ctx.harnessId === "codex" &&
+      (flag === "--bridge-state-dir" || flag === "--session-data-dir")
+    ) {
+      // Runtime state (rollouts, CODEX_HOME, the relay credential) stays in
+      // the session's own directory, never in the user's checkout.
+      args.push(flag, await (ctx.confineToSessionState ?? ctx.confine)(value));
+      continue;
+    }
     args.push(flag, await ctx.confine(value));
   }
   assertArgvAllowed(args);

@@ -1,10 +1,12 @@
 import type { JudgeRubric } from "@mcpjam/sdk/contract";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
   SuiteGatePolicyV1,
 } from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { TestStep } from "@/shared/steps";
 import type {
   EvalTraceBlobV1,
@@ -205,7 +207,12 @@ export type EvalSuiteConfigTest = {
   title: string;
   query: string;
   /** Persisted cases use models; singular fields support older snapshots. */
-  models?: Array<{ model: string; provider: string }>;
+  models?: Array<{
+    model: string;
+    provider: string;
+    /** The entry's saved selection (two entries of one model differ here). */
+    selection?: RequestedModelSelection;
+  }>;
   provider?: string;
   model?: string;
   runs: number;
@@ -468,6 +475,14 @@ export type EvalCase = {
   models: Array<{
     model: string;
     provider: string;
+    /**
+     * The entry's saved selection. Two entries may share a model when their
+     * selections differ (Sonnet at Low and at High); read the model as
+     * `selection?.modelId ?? model`.
+     */
+    selection?: RequestedModelSelection;
+    /** Set when a conversion (bare-id save, backfill) chose the selection. */
+    selectionOrigin?: "backfill";
   }>;
   runs: number;
   expectedToolCalls: Array<{
@@ -567,6 +582,8 @@ export type EvalIteration = {
     query: string;
     provider: string;
     model: string;
+    /** The case entry's selection, copied at precreate (non-default only). */
+    selection?: RequestedModelSelection;
     runs?: number;
     expectedToolCalls: Array<{
       toolName: string;
@@ -605,6 +622,12 @@ export type EvalIteration = {
     probeConfig?: import("@/shared/probe-config").ProbeConfig;
   };
   suiteRunId?: string;
+  /**
+   * `comparisonKey` of the selection this iteration ran with: the bare model
+   * id for a default selection. Absent on older backends — read it through
+   * `iterationTargetKey` (`lib/eval-target-key`).
+   */
+  targetKey?: string | null;
   /** How the iteration was triggered, stamped at creation by the backend.
    *  Absent on legacy rows → readers fall back to the `suiteRunId` heuristic. */
   trigger?: "quick" | "suite" | "replay";
@@ -673,6 +696,14 @@ export type EvalIteration = {
   execution?: unknown;
   error?: string;
   errorDetails?: string;
+  /**
+   * Set when OUR infrastructure failed this trial (a provider outage, a rate
+   * limit, a bad key, an account limit, a sandbox) — see
+   * `@/shared/eval-infra-error`. Always paired with `status: "failed"`. Pass
+   * rates leave the row out (`computeMeasuredIterationResult`); its label
+   * stays "Failed".
+   */
+  infraError?: EvalInfraError;
   resultSource?: "reported" | "derived";
   externalIterationId?: string;
   // Widened to `unknown` because the backend metadata column now round-trips
@@ -688,7 +719,6 @@ export type EvalIteration = {
 export type CompareModelOverride = {
   systemPrompt?: string;
   temperature?: string;
-  providerFlagsJson?: string;
 };
 
 export type EditorMode = "config" | "run";
@@ -841,6 +871,8 @@ export type EvalRunMetrics = {
     skipped: number;
     /** Completed without a stored verdict; only the browser can grade these. */
     unscored: number;
+    /** OUR infrastructure failed the trial; counted in no verdict bucket. */
+    infraError?: number;
   };
   completedCount: number;
   latencyP50Ms?: number;
@@ -852,12 +884,24 @@ export type EvalRunMetrics = {
   costUsd?: number;
   costedIterations: number;
   hasRunnerReportedCost: boolean;
+  /**
+   * One entry per (model × effective reasoning effort), first-seen order. The
+   * optional fields are absent on rollups written before they existed and
+   * when not measured.
+   */
   models: Array<{
     model: string;
     total: number;
     passed: number;
     failed: number;
     timedOut: number;
+    /** The effort the entry's iterations ran at; absent: ran with none. */
+    reasoningEffort?: string;
+    /** Summed priced cost; absent when none of the entry's iterations was priced. */
+    costUsd?: number;
+    costedIterations?: number;
+    /** Summed reasoning tokens; absent when no iteration reported any. */
+    reasoningTokens?: number;
   }>;
 };
 
@@ -1146,6 +1190,13 @@ export type EvalSuiteRun = {
    * Absent on pre-attribution rows — fall back to the env join.
    */
   effectiveModelId?: string;
+  /**
+   * `comparisonKey` of the run's effective selection — what result views key
+   * columns, lanes and baselines by. Equals `effectiveModelId` for a default
+   * selection; absent (or null) on older backends. Read it through
+   * `runTargetKey` (`lib/eval-target-key`).
+   */
+  targetKey?: string | null;
   /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
   client?: RunClientDescriptor;
   modelSource?: "client_default" | "override" | "case";

@@ -26,6 +26,8 @@ import type { PlatformSessionBrowserOperationResult } from "./types.js";
  * product catalog unchanged.
  */
 import { z } from "zod";
+import { stableStringifyJson } from "../widget-runtime/json-utils.js";
+import { comparisonKey } from "../host-config/reasoning-effort.js";
 import { opaqueIdSchema } from "../contract/identity.js";
 import {
   GATE_WAIVER_MAX_REASON_LENGTH,
@@ -44,6 +46,13 @@ import {
   suiteGatePolicySchema,
 } from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
+import {
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_SOURCES,
+  type ModelReasoningEffort,
+  type ModelSelection,
+} from "../host-config/model-selection.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
@@ -3129,19 +3138,61 @@ interface ComposedRunEnvironment {
 export function expandComposeModelChoices(stack: {
   model?: string;
   models?: string[];
+  modelSelection?: ModelSelection;
+  modelSelections?: ModelSelection[];
   includeClientDefault?: boolean;
-}): Array<{ modelId: string | undefined }> {
+}): Array<{ modelId: string | undefined; selection?: ModelSelection }> {
+  // A selection IS a model choice (its `modelId`) that also says whose
+  // credentials serve it and at what effort. Each distinct selection is one
+  // cell, keyed by its `comparisonKey`: two efforts of one model are two
+  // cells (Sonnet at Low and at High), the same selection given twice — or
+  // spelled with its keys in another order — is one.
+  const selectionsByKey = new Map<string, ModelSelection>();
+  const selectionsByModel = new Map<string, ModelSelection[]>();
+  for (const selection of [
+    ...(stack.modelSelections ?? []),
+    ...(stack.modelSelection ? [stack.modelSelection] : []),
+  ]) {
+    const id = selection.modelId.trim();
+    // Stored with the trimmed id, so the cell carries the id the map is keyed by.
+    const normalized: ModelSelection = { ...selection, modelId: id };
+    const key = comparisonKey(normalized);
+    const seen = selectionsByKey.get(key);
+    if (seen) {
+      // Same target, different spelling of what is not identity (fallback):
+      // picking one silently would run a cell nobody asked for.
+      if (stableStringifyJson(seen) !== stableStringifyJson(normalized)) {
+        throw operationInputError(
+          `Two model selections for "${id}" name the same target but differ in their fallback. Give one selection per target.`
+        );
+      }
+      continue;
+    }
+    selectionsByKey.set(key, normalized);
+    const forModel = selectionsByModel.get(id);
+    if (forModel) forModel.push(normalized);
+    else selectionsByModel.set(id, [normalized]);
+  }
   const explicit = [
     ...new Set([
       ...(stack.models ?? []),
       ...(stack.model ? [stack.model] : []),
+      ...selectionsByModel.keys(),
     ]),
   ];
   const includeDefault =
     explicit.length === 0 ? true : stack.includeClientDefault === true;
-  const choices: Array<{ modelId: string | undefined }> = [];
+  const choices: Array<{ modelId: string | undefined; selection?: ModelSelection }> =
+    [];
   if (includeDefault) choices.push({ modelId: undefined });
-  for (const modelId of explicit) choices.push({ modelId });
+  for (const modelId of explicit) {
+    const selections = selectionsByModel.get(modelId.trim());
+    if (selections) {
+      for (const selection of selections) choices.push({ modelId, selection });
+    } else {
+      choices.push({ modelId });
+    }
+  }
   return choices;
 }
 
@@ -3203,6 +3254,8 @@ async function composeRunEnvironment(
     hostServers?: boolean;
     model?: string;
     models?: string[];
+    modelSelection?: ModelSelection;
+    modelSelections?: ModelSelection[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
     computer?: string;
@@ -3252,7 +3305,13 @@ async function composeRunEnvironment(
     const body = await resolveComposeStack(
       client,
       project,
-      { ...pinned, model: choice.modelId },
+      {
+        ...pinned,
+        model: choice.modelId,
+        // The cell's own selection: `modelSelection`/`modelSelections` name the
+        // whole axis, and each cell carries only the one for its model.
+        modelSelection: choice.selection,
+      },
       signal
     );
     const ensured = await client.ensureAdhocEnvironment(
@@ -3353,6 +3412,7 @@ async function probeComposeCapabilities(
 ): Promise<{
   ephemeralLaunch: boolean;
   modelOverrides: boolean;
+  modelSelections: boolean;
   secretGrants: boolean;
 }> {
   try {
@@ -3363,12 +3423,14 @@ async function probeComposeCapabilities(
     return {
       ephemeralLaunch: capabilities.ephemeralEnvironmentLaunch === true,
       modelOverrides: capabilities.modelOverrides === true,
+      modelSelections: capabilities.modelSelections === true,
       secretGrants: capabilities.secretGrants === true,
     };
   } catch {
     return {
       ephemeralLaunch: false,
       modelOverrides: false,
+      modelSelections: false,
       secretGrants: false,
     };
   }
@@ -3390,6 +3452,9 @@ function composeLaunchPolicy(input: {
   /** Explicit model ids were named (an inherit-only compose names none). */
   explicitModels: boolean;
   modelOverridesOk: boolean;
+  /** A saved model selection (source / connection / effort) was named. */
+  explicitSelections?: boolean;
+  modelSelectionsOk?: boolean;
   /** A credential grant was named on the stack. */
   explicitSecrets: boolean;
   secretGrantsOk: boolean;
@@ -3404,6 +3469,13 @@ function composeLaunchPolicy(input: {
     // the three agree with the web composer, which already refuses.
     throw operationInputError(
       "This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --compose-model / compose.models."
+    );
+  }
+  if (input.explicitSelections && !input.modelSelectionsOk) {
+    // Same skew guard as the model axis: an unknown `modelSelection` arg dies in
+    // a backend validator that names nothing.
+    throw operationInputError(
+      "This MCPJam deployment does not support saved model selections (and so reasoning effort) on composed stacks. Upgrade the platform, or omit --compose-model-selection / compose.modelSelections."
     );
   }
   if (input.explicitSecrets && !input.secretGrantsOk) {
@@ -3664,6 +3736,187 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
  * until someone hits it.
  */
 /**
+ * A saved model choice: whose credentials serve the model, and the settings
+ * (`reasoningEffort`, `temperature`) it runs with.
+ *
+ * STRICT on purpose. A non-strict zod object silently drops an unknown key, and
+ * this shape must never carry a secret: a stray `apiKey` is refused here (and
+ * again by the API) instead of being quietly discarded. Validation of the
+ * values themselves (canonical id, connection kind, ranges) is the API's, which
+ * answers with the offending path; the CLI never parses this schema.
+ */
+const modelSelectionInput = z
+  .object({
+    modelId: z
+      .string()
+      .trim()
+      .min(1)
+      .describe('Canonical "provider/model" id, e.g. "openai/gpt-5".'),
+    source: z
+      .enum(MODEL_SELECTION_SOURCES)
+      .describe(
+        "Whose credentials pay for and serve the call: `hosted` (MCPJam), `org` (an organization provider) or `local` (a provider on the user's own machine)."
+      ),
+    connectionRef: z
+      .union([
+        z
+          .object({ kind: z.literal("orgProvider"), id: z.string().min(1) })
+          .strict(),
+        z
+          .object({
+            kind: z.literal("localProvider"),
+            providerKey: z.string().min(1),
+            customProviderName: z.string().min(1).optional(),
+          })
+          .strict(),
+      ])
+      .optional()
+      .describe(
+        "Required for `org` (orgProvider) and `local` (localProvider); absent for `hosted`."
+      ),
+    nativeModelId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Deployment or native id where it is not derivable from `modelId` (Azure deployment name, Bedrock inference profile)."
+      ),
+    settings: z
+      .object({
+        reasoningEffort: z
+          .enum(MODEL_REASONING_EFFORTS)
+          .optional()
+          .describe(
+            "Reasoning effort. Which levels a model accepts is `supportedReasoningEfforts` on list_models; an effort the route cannot apply is refused, never dropped. An effort replaces the sampling temperature."
+          ),
+        temperature: z.number().finite().min(0).max(2).optional(),
+      })
+      .strict()
+      .optional(),
+    fallback: z
+      .object({
+        provider: z.enum(MODEL_SELECTION_FALLBACK_PROVIDERS),
+        model: z.literal("none"),
+      })
+      .strict()
+      .describe(
+        'What may serve the call if the resolved rail fails. `{ provider: "none", model: "none" }` makes a would-be fallback a refusal.'
+      ),
+  })
+  .strict()
+  .describe(
+    "A saved model choice. A full selection only: the effort lives in `settings.reasoningEffort`."
+  );
+
+const reasoningEffortShorthandInput = z
+  .enum(MODEL_REASONING_EFFORTS)
+  .nullable()
+  .optional()
+  .describe(
+    "Shorthand that sets `settings.reasoningEffort` on the model selection this target ALREADY has (null removes the effort). Refused when there is no saved selection to edit — send `modelSelection` instead. Cannot be combined with `modelSelection`."
+  );
+
+/**
+ * Apply the `reasoningEffort` shorthand to a saved selection.
+ *
+ * The shorthand edits, it never invents: a selection carries `source` and a
+ * connection that only the caller knows, so building one from an effort alone
+ * would mean guessing whose credentials pay. No selection to edit is a refusal
+ * that names the field to send instead.
+ */
+function selectionWithReasoningEffort(
+  existing: unknown,
+  effort: ModelReasoningEffort | null,
+  subject: string
+): ModelSelection {
+  if (
+    existing === undefined ||
+    existing === null ||
+    typeof existing !== "object" ||
+    typeof (existing as { modelId?: unknown }).modelId !== "string"
+  ) {
+    throw operationInputError(
+      `${subject} has no saved model selection, so \`reasoningEffort\` has nothing to edit. Send \`modelSelection\` (a full selection: modelId, source, fallback and settings.reasoningEffort) instead.`
+    );
+  }
+  // A STORED legacy selection (`source: "legacy"`, "own key only") names no
+  // source or connection to keep, and carries no settings: an effort cannot be
+  // edited onto it. Choosing whose credentials pay is the caller's to say.
+  if ((existing as { source?: unknown }).source === "legacy") {
+    throw operationInputError(
+      `${subject} has a legacy model selection (own key only, no settings), so \`reasoningEffort\` has nothing to edit. Send \`modelSelection\` (a full selection: modelId, source, fallback and settings.reasoningEffort) instead.`
+    );
+  }
+  const selection = existing as ModelSelection;
+  const { reasoningEffort: _previous, ...otherSettings } =
+    selection.settings ?? {};
+  const settings: NonNullable<ModelSelection["settings"]> =
+    effort === null
+      ? otherSettings
+      : { ...otherSettings, reasoningEffort: effort };
+  const { settings: _settings, ...rest } = selection;
+  return Object.keys(settings).length > 0 ? { ...rest, settings } : rest;
+}
+
+/** `reasoningEffort` and `modelSelection` are two spellings of one edit. */
+function refuseSelectionAndShorthand(
+  input: { modelSelection?: unknown; reasoningEffort?: unknown },
+  where = ""
+): void {
+  if (
+    input.modelSelection !== undefined &&
+    input.reasoningEffort !== undefined
+  ) {
+    throw operationInputError(
+      `Provide either ${where}\`modelSelection\` (a whole selection) or \`reasoningEffort\` (edits the existing one), not both.`
+    );
+  }
+}
+
+/**
+ * A selection must be FOR the model it sits beside. The API refuses a mismatch
+ * too; checking here gives the CLI (which never parses the schema) the same
+ * sentence before any write.
+ */
+function refuseSelectionForOtherModel(
+  modelId: string | undefined,
+  selection: { modelId: string } | null | undefined,
+  field: string
+): void {
+  if (
+    modelId !== undefined &&
+    selection &&
+    selection.modelId !== modelId.trim()
+  ) {
+    throw operationInputError(
+      `\`${field}.modelId\` ("${selection.modelId}") must match the model you named ("${modelId.trim()}"): a saved selection belongs to one model.`
+    );
+  }
+}
+
+/**
+ * The deployment must accept a saved selection on an environment. An older one
+ * rejects the unknown arg with a validator error that names nothing, so ask
+ * first and say what to do.
+ */
+async function assertEnvironmentModelSelectionsSupported(
+  client: PlatformApiClient,
+  projectId: string,
+  signal: AbortSignal | undefined
+): Promise<void> {
+  const capabilities = await probeComposeCapabilities(
+    client,
+    projectId,
+    signal
+  );
+  if (!capabilities.modelSelections) {
+    throw operationInputError(
+      "This MCPJam deployment does not support saved model selections (and so reasoning effort) on environments. Upgrade the platform, or omit modelSelection."
+    );
+  }
+}
+
+/**
  * The ONE skill-selection schema. Every surface that accepts a pinned skill
  * selection — `create_project_environment`, `update_project_environment`,
  * `ensure_adhoc_environment`, and the run ops' `compose` field — parses
@@ -3829,6 +4082,18 @@ const composeRunTargetInput = z
       .optional()
       .describe(
         "Explicit model overrides. Each id mints one override cell. Combined with `includeClientDefault` this is the model axis. Replaces the client default unless `includeClientDefault` is true."
+      ),
+    modelSelection: modelSelectionInput
+      .optional()
+      .describe(
+        "Singular alias for `modelSelections`: a saved model choice (source, connection, `settings.reasoningEffort`) for one explicit model cell."
+      ),
+    modelSelections: z
+      .array(modelSelectionInput)
+      .min(1)
+      .optional()
+      .describe(
+        "Explicit model cells that also say whose credentials serve the model and at what reasoning effort. Each distinct selection mints one cell for its `modelId` (add plain `models` for cells that need neither); several selections may share a model to compare efforts (e.g. one at `low`, one at `high`)."
       ),
     includeClientDefault: z
       .boolean()
@@ -4252,6 +4517,10 @@ export const runEvalSuiteOperation: PlatformOperation<
           (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
+        explicitSelections: composeChoices.some(
+          (choice) => choice.selection !== undefined
+        ),
+        modelSelectionsOk: capabilities.modelSelections,
         explicitSecrets: input.compose.secrets !== undefined,
         secretGrantsOk: capabilities.secretGrants,
         ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
@@ -4790,6 +5059,10 @@ export const runEvalCaseOperation: PlatformOperation<
           (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
+        explicitSelections: composeChoices.some(
+          (choice) => choice.selection !== undefined
+        ),
+        modelSelectionsOk: capabilities.modelSelections,
         explicitSecrets: input.compose.secrets !== undefined,
         secretGrantsOk: capabilities.secretGrants,
       });
@@ -5213,6 +5486,12 @@ const publicCheckOverrideSchema = z
 const caseModelSchema = z.object({
   model: z.string().trim().min(1),
   provider: z.string().trim().min(1).optional(),
+  selection: modelSelectionInput
+    .nullable()
+    .optional()
+    .describe(
+      "Saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model`. On an update, an entry that omits it KEEPS the case's existing selection for that model; null drops it."
+    ),
 });
 
 // Per-case editable fields, shared by create and update. All optional so a
@@ -5612,6 +5891,13 @@ const updateEvalSuiteInput = z
         model: z.string().trim().min(1).optional(),
         systemPrompt: z.string().optional(),
         temperature: z.number().optional(),
+        modelSelection: modelSelectionInput
+          .nullable()
+          .optional()
+          .describe(
+            "Saved model choice for the suite (source, connection, `settings.reasoningEffort`). Must be FOR `model` when both are sent; sent alone it pins its own model. null clears it. A bare `model` change drops a selection saved for a different model."
+          ),
+        reasoningEffort: reasoningEffortShorthandInput,
       })
       .optional()
       .describe("Suite execution config; unspecified fields are preserved."),
@@ -5785,7 +6071,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature, plus modelSelection or the reasoningEffort shorthand for a saved model choice and its effort), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -5841,11 +6127,44 @@ export const updateEvalSuiteOperation: PlatformOperation<
       if (!plan.ok) throw operationInputError(plan.message);
     }
     const body: Record<string, unknown> = {};
+    let executionConfig = input.executionConfig;
+    if (executionConfig) {
+      const { reasoningEffort, ...rest } = executionConfig;
+      refuseSelectionAndShorthand(
+        { modelSelection: rest.modelSelection, reasoningEffort },
+        "`executionConfig.`"
+      );
+      refuseSelectionForOtherModel(
+        rest.model,
+        rest.modelSelection,
+        "executionConfig.modelSelection"
+      );
+      if (reasoningEffort !== undefined) {
+        if (rest.model !== undefined) {
+          throw operationInputError(
+            "`executionConfig.reasoningEffort` edits the effort on the suite's CURRENT selection, so it cannot be sent with a new `model`: a new model needs a new selection. Send `executionConfig.modelSelection`."
+          );
+        }
+        const detail = await client.getEvalSuite(
+          { projectId: project.id, suiteId: suite.id },
+          { signal }
+        );
+        executionConfig = {
+          ...rest,
+          modelSelection: selectionWithReasoningEffort(
+            detail.executionConfig?.modelSelection,
+            reasoningEffort,
+            `Suite ${suite.name ?? suite.id}`
+          ),
+        };
+      } else {
+        executionConfig = rest;
+      }
+    }
     for (const key of [
       "name",
       "description",
       "environment",
-      "executionConfig",
       "hosts",
       "settings",
       "expectedRevisionNumber",
@@ -5855,6 +6174,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }
+    if (executionConfig !== undefined) body.executionConfig = executionConfig;
     return client.updateEvalSuite(
       { projectId: project.id, suiteId: suite.id, body },
       { signal }
@@ -9057,6 +9377,12 @@ const sendChatMessageInput = z.object({
     .max(2)
     .optional()
     .describe("First turn only — pinned to the session and reused thereafter."),
+  reasoningEffort: z
+    .enum(MODEL_REASONING_EFFORTS)
+    .optional()
+    .describe(
+      "First turn only — pinned to the session and reused thereafter. Reasoning effort for the model (which levels a model accepts is `supportedReasoningEfforts` on list_models); wins over the effort a `hostId`'s saved selection carries. Applied or refused by the rail the model runs on, never dropped. Replaces the sampling temperature, so it cannot be sent with `temperature`."
+    ),
   maxSteps: z
     .number()
     .int()
@@ -9139,6 +9465,11 @@ export const sendChatMessageOperation: PlatformOperation<
   ),
   inputSchema: sendChatMessageInput,
   async execute(input, { client, signal, onScopeResolved }) {
+    if (input.reasoningEffort !== undefined && input.temperature !== undefined) {
+      throw operationInputError(
+        "Provide either `reasoningEffort` or `temperature`, not both: a reasoning effort replaces the sampling temperature."
+      );
+    }
     const projectSelector = input.project?.trim();
     // A continuation takes its project from the session — resolving one here
     // would make an unnecessary call and let a caller name a project the
@@ -9169,6 +9500,9 @@ export const sendChatMessageOperation: PlatformOperation<
         ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
         ...(input.temperature !== undefined
           ? { temperature: input.temperature }
+          : {}),
+        ...(input.reasoningEffort !== undefined
+          ? { reasoningEffort: input.reasoningEffort }
           : {}),
         ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
         ...(input.toolMode ? { toolMode: input.toolMode } : {}),
@@ -9969,6 +10303,12 @@ const clientFieldSet = z
       .describe(
         "Model the client pins. Value only — there is no null, and a blank string is refused."
       ),
+    modelSelection: modelSelectionInput
+      .nullable()
+      .optional()
+      .describe(
+        "Saved model choice (source, connection, `settings.reasoningEffort`). Must be FOR `modelId` when both are sent; sent alone it pins its own model. null clears the selection and keeps the bare `modelId`."
+      ),
     systemPrompt: z
       .string()
       .nullable()
@@ -10107,6 +10447,7 @@ const updateClientInput = z
       .describe(
         "Named fields to change, applied over the client's current config inside the write transaction."
       ),
+    reasoningEffort: reasoningEffortShorthandInput,
   })
   // Mirrors the route's 400s exactly, so an agent is refused by the schema with
   // the same sentence the route would have used rather than discovering the
@@ -10123,16 +10464,20 @@ const updateClientInput = z
     if (
       value.config === undefined &&
       value.set === undefined &&
-      value.name === undefined
+      value.name === undefined &&
+      value.reasoningEffort === undefined
     ) {
       ctx.addIssue({
         code: "custom",
-        message: "Provide at least one of `name`, `config`, or `set` to edit.",
+        message:
+          "Provide at least one of `name`, `config`, `set` or `reasoningEffort` to edit.",
       });
       return;
     }
     if (
-      (value.config !== undefined || value.set !== undefined) &&
+      (value.config !== undefined ||
+        value.set !== undefined ||
+        value.reasoningEffort !== undefined) &&
       value.expectedConfigId === undefined
     ) {
       ctx.addIssue({
@@ -10160,7 +10505,7 @@ export const updateClientOperation: PlatformOperation<
   name: "update_client",
   title: "Update an MCPJam client",
   description:
-    "Edit a client's display name and/or its config. Use `set` to change named fields (absent keeps, null resets or clears); `config` replaces the whole config. Requires `expectedConfigId` for a config edit and `expectedName` for a rename — call get_client first, echo those values back, and on a conflict re-read and retry. An edit that resolves to byte-identical settings writes nothing.",
+    "Edit a client's display name and/or its config. Use `set` to change named fields (absent keeps, null resets or clears); `config` replaces the whole config. `reasoningEffort` edits the effort on the client's existing model selection (refused when it has none — send `set.modelSelection`). Requires `expectedConfigId` for a config edit and `expectedName` for a rename — call get_client first, echo those values back, and on a conflict re-read and retry. An edit that resolves to byte-identical settings writes nothing.",
   readOnly: false,
   // OVERWRITE, so `destructive` — the taxonomy is "removes or invalidates
   // something that existed", and replacing a live setting does exactly that.
@@ -10188,6 +10533,42 @@ export const updateClientOperation: PlatformOperation<
     }
     if (input.config !== undefined) body.config = input.config;
     if (input.set !== undefined) body.set = input.set;
+    refuseSelectionForOtherModel(
+      input.set?.modelId,
+      input.set?.modelSelection,
+      "set.modelSelection"
+    );
+    if (input.reasoningEffort !== undefined) {
+      if (input.config !== undefined) {
+        throw operationInputError(
+          "`reasoningEffort` edits the saved selection through `set`; it cannot be combined with a whole `config` replacement. Put the effort inside the config's modelSelection instead."
+        );
+      }
+      refuseSelectionAndShorthand(
+        {
+          modelSelection: input.set?.modelSelection,
+          reasoningEffort: input.reasoningEffort,
+        },
+        "`set.`"
+      );
+      if (input.set?.modelId !== undefined) {
+        throw operationInputError(
+          "`reasoningEffort` edits the effort on the client's CURRENT selection, so it cannot be sent with a new `set.modelId`: a new model needs a new selection. Send `set.modelSelection`."
+        );
+      }
+      // Read the current config to find the selection to edit. The write is
+      // still guarded by `expectedConfigId`, so an edit landing between the
+      // read and the write is refused rather than overwritten.
+      const current = await resolveClient(client, project, input.client, signal);
+      body.set = {
+        ...(input.set ?? {}),
+        modelSelection: selectionWithReasoningEffort(
+          current.config.modelSelection,
+          input.reasoningEffort,
+          `Client ${current.name}`
+        ),
+      };
+    }
     return client.updateClient(
       { projectId: project.id, client: input.client, body },
       { signal }
@@ -11015,6 +11396,11 @@ const createEnvironmentInput = z.object({
     .describe(
       'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4.5").'
     ),
+  modelSelection: modelSelectionInput
+    .optional()
+    .describe(
+      "Saved model choice behind `modelId`: source, connection and `settings.reasoningEffort`. Must be FOR `modelId` when both are given; sent alone it pins its own model."
+    ),
   skillSelection: skillSelectionInput.optional(),
   secretSelection: secretSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
@@ -11045,6 +11431,18 @@ export const createEnvironmentOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
+    refuseSelectionForOtherModel(
+      input.modelId,
+      input.modelSelection,
+      "modelSelection"
+    );
+    if (input.modelSelection !== undefined) {
+      await assertEnvironmentModelSelectionsSupported(
+        client,
+        project.id,
+        signal
+      );
+    }
     return client.createEnvironment(
       {
         projectId: project.id,
@@ -11057,7 +11455,14 @@ export const createEnvironmentOperation: PlatformOperation<
           ...(input.serverAttachmentId !== undefined
             ? { serverAttachmentId: input.serverAttachmentId }
             : {}),
-          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
+          ...(input.modelId !== undefined
+            ? { modelId: input.modelId }
+            : input.modelSelection !== undefined
+            ? { modelId: input.modelSelection.modelId }
+            : {}),
+          ...(input.modelSelection !== undefined
+            ? { modelSelection: input.modelSelection }
+            : {}),
           ...(input.skillSelection !== undefined
             ? { skillSelection: input.skillSelection }
             : {}),
@@ -11127,6 +11532,11 @@ const composeStackFields = {
     .optional()
     .describe(
       "Model to run instead of the host's pinned one. Stored verbatim — pass exactly the id the provider request should carry."
+    ),
+  modelSelection: modelSelectionInput
+    .optional()
+    .describe(
+      "Saved model choice behind `model` (source, connection, `settings.reasoningEffort`). Must be FOR `model` when both are given; sent alone it pins its own model. Composed stacks with different efforts are different environments."
     ),
   computer: z
     .string()
@@ -11354,6 +11764,7 @@ async function resolveComposeStack(
     host: string;
     serverGroup?: string;
     model?: string;
+    modelSelection?: ModelSelection;
     computer?: string;
     skills?: PlatformEnvironmentSkillSelection;
     secrets?: PlatformEnvironmentSecretSelection;
@@ -11361,6 +11772,7 @@ async function resolveComposeStack(
   },
   signal: AbortSignal | undefined
 ): Promise<PlatformAdhocEnvironmentBody> {
+  refuseSelectionForOtherModel(stack.model, stack.modelSelection, "modelSelection");
   const host = await resolveHost(client, project, stack.host, signal);
   const image = stack.computer
     ? await resolveImage(client, project, stack.computer, signal)
@@ -11368,7 +11780,14 @@ async function resolveComposeStack(
   return {
     hostId: host.id,
     ...(stack.serverGroup ? { serverAttachmentId: stack.serverGroup } : {}),
-    ...(stack.model ? { modelId: stack.model } : {}),
+    // A selection sent alone pins its own model, so the bare id and the
+    // selection cannot disagree on the wire.
+    ...(stack.model
+      ? { modelId: stack.model }
+      : stack.modelSelection
+      ? { modelId: stack.modelSelection.modelId }
+      : {}),
+    ...(stack.modelSelection ? { modelSelection: stack.modelSelection } : {}),
     ...(image ? { sandboxImageId: image.id } : {}),
     ...(stack.skills ? { skillSelection: stack.skills } : {}),
     // The CREDENTIAL axis. Every other field here is a pointer; this one is a
@@ -11413,6 +11832,13 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
       signal
     );
     const body = await resolveComposeStack(client, project, stack, signal);
+    if (body.modelSelection !== undefined) {
+      await assertEnvironmentModelSelectionsSupported(
+        client,
+        project.id,
+        signal
+      );
+    }
     const ensured = await client.ensureAdhocEnvironment(
       { projectId: project.id, body },
       { signal }
@@ -11542,6 +11968,13 @@ const updateEnvironmentInput = z
       .describe(
         "New model override, or null to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
       ),
+    modelSelection: modelSelectionInput
+      .nullable()
+      .optional()
+      .describe(
+        "New saved model choice behind the override (source, connection, `settings.reasoningEffort`), or null to clear it (the bare `modelId` stays). Must be FOR the model named. Omit to leave unchanged."
+      ),
+    reasoningEffort: reasoningEffortShorthandInput,
     skillSelection: skillSelectionInput
       .nullable()
       .optional()
@@ -11577,13 +12010,15 @@ const updateEnvironmentInput = z
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
       value.modelId !== undefined ||
+      value.modelSelection !== undefined ||
+      value.reasoningEffort !== undefined ||
       value.skillSelection !== undefined ||
       value.secretSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `modelSelection`, `reasoningEffort`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
@@ -11595,7 +12030,7 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, modelSelection, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId to clear them. `reasoningEffort` edits the effort on the environment's existing model selection (refused when it has none — send `modelSelection`). Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: updateEnvironmentInput,
@@ -11621,6 +12056,66 @@ export const updateEnvironmentOperation: PlatformOperation<
     if (input.serverAttachmentId !== undefined)
       body.serverAttachmentId = input.serverAttachmentId;
     if (input.modelId !== undefined) body.modelId = input.modelId;
+    refuseSelectionAndShorthand(input);
+    refuseSelectionForOtherModel(
+      input.modelId ?? undefined,
+      input.modelSelection,
+      "modelSelection"
+    );
+    if (input.modelSelection !== undefined) {
+      // A value replaces, null clears. A selection sent alone pins its model.
+      body.modelSelection = input.modelSelection;
+      if (input.modelSelection !== null && input.modelId === undefined) {
+        body.modelId = input.modelSelection.modelId;
+      }
+    } else if (input.reasoningEffort !== undefined) {
+      // The effort edits the selection saved for the model the environment
+      // pins now. Beside a DIFFERENT model it would be written onto the old
+      // model's selection and refused as a mismatch (or dropped); say so up
+      // front and ask for the whole selection.
+      if (
+        input.modelId !== undefined &&
+        environment.modelSelection !== undefined &&
+        (input.modelId === null ||
+          environment.modelSelection.modelId !== input.modelId.trim())
+      ) {
+        throw operationInputError(
+          input.modelId === null
+            ? "`reasoningEffort` edits the existing model selection, but `modelId: null` clears the model override it belongs to. Drop one of them, or send `modelSelection` to set the model and its effort together."
+            : "`reasoningEffort` edits the existing model selection, which is for a different model than `modelId`. Send `modelSelection` (modelId, source, fallback and settings.reasoningEffort) to change the model and its effort together."
+        );
+      }
+      // EDITS the environment's existing selection. The row was read above
+      // (a `resolveEnvironmentSelector` result), so no extra request.
+      body.modelSelection = selectionWithReasoningEffort(
+        environment.modelSelection,
+        input.reasoningEffort,
+        `Environment ${environment.name ?? environment.id}`
+      );
+    } else if (
+      typeof input.modelId === "string" &&
+      environment.modelSelection !== undefined &&
+      environment.modelSelection.modelId !== input.modelId.trim()
+    ) {
+      // A bare model change must not keep a selection saved for the OLD model:
+      // the bare id and the selection would disagree and the write would be
+      // refused. The selection belonged to the old model, so it goes with it.
+      body.modelSelection = null;
+    } else if (
+      input.modelId === null &&
+      environment.modelSelection !== undefined
+    ) {
+      // Clearing the model override must not leave a selection saved for it:
+      // the selection names a model the environment no longer pins.
+      body.modelSelection = null;
+    }
+    if (body.modelSelection !== undefined && body.modelSelection !== null) {
+      await assertEnvironmentModelSelectionsSupported(
+        client,
+        project.id,
+        signal
+      );
+    }
     if (input.skillSelection !== undefined)
       body.skillSelection = input.skillSelection;
     if (input.secretSelection !== undefined)
