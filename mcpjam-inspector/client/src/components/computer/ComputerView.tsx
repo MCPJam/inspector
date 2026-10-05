@@ -27,6 +27,7 @@ import {
 } from "@/hooks/useProjectComputer";
 import { useSandboxImages, useResetComputer } from "@/hooks/useSandboxImages";
 import { SandboxImagesDrawer } from "./SandboxImagesDrawer";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { toTerminalWsBase } from "@/lib/computer-terminal-connection";
 import {
   getBillingErrorMessage,
@@ -44,7 +45,9 @@ import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
  * project, per user): see its status, open a live terminal, or delete it.
- * Gated behind the `computers-enabled` PostHog flag by its route.
+ * Gated behind the `computers-enabled` PostHog flag by its route. Choosing a
+ * custom image (the image row's Change and its drawer) additionally takes
+ * `sandbox-images-enabled`; the image label and Reset are the computer's own.
  */
 export function ComputerView({
   projectId,
@@ -90,9 +93,14 @@ export function ComputerView({
   const [resetting, setResetting] = useState(false);
 
   const resetComputer = useResetComputer();
-  const environments = useSandboxImages(effectiveProjectId);
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const attachedEnvironmentId = status?.environmentId ?? null;
   const hasCustomImage = attachedEnvironmentId != null;
+  // The list feeds the drawer and names an attached image. With images off
+  // and nothing attached, nothing reads it — skip the project-wide query.
+  const environments = useSandboxImages(
+    sandboxImagesEnabled || hasCustomImage ? effectiveProjectId : null,
+  );
   const attachedEnvName = hasCustomImage
     ? (environments?.find((e) => e.environmentId === attachedEnvironmentId)
         ?.name ?? null)
@@ -665,13 +673,15 @@ export function ComputerView({
             )}
           </span>
           <span className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setEnvDrawerOpen(true)}
-            >
-              Change
-            </Button>
+            {sandboxImagesEnabled ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setEnvDrawerOpen(true)}
+              >
+                Change
+              </Button>
+            ) : null}
             {hasComputer ? (
               confirmingReset ? (
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
@@ -718,7 +728,7 @@ export function ComputerView({
         </div>
       ) : null}
 
-      {effectiveProjectId ? (
+      {effectiveProjectId && sandboxImagesEnabled ? (
         <SandboxImagesDrawer
           open={envDrawerOpen}
           onOpenChange={setEnvDrawerOpen}

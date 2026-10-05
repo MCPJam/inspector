@@ -60,6 +60,9 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
 }));
 
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => true,
+}));
 vi.mock("../SandboxImagesDrawer", () => ({
   SandboxImagesDrawer: ({ open }: { open: boolean }) =>
     open ? <div data-testid="env-drawer" /> : null,

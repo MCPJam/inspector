@@ -226,6 +226,7 @@ export async function resolveComposerEnvironments(args: {
   liveEnvironments: ProjectEnvironmentView[];
   ensureAdhocEnvironments: EnsureAdhocEnvironmentsFn;
   skillsEnabled: boolean;
+  /** The image-pin ("computers") slot's flag: `sandbox-images-enabled`. */
   computersEnabled: boolean;
   /** Fan-out cap this surface enforces. */
   max: number;

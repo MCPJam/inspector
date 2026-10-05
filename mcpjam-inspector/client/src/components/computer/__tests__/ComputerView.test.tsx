@@ -34,8 +34,19 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 let mockEnvironments: Array<{ environmentId: string; name: string }> = [];
 const resetComputer = vi.fn(async () => ({ reset: true }));
 vi.mock("@/hooks/useSandboxImages", () => ({
-  useSandboxImages: () => mockEnvironments,
+  useSandboxImages: (projectId: string | null) => {
+    sandboxImagesQueryArg = projectId;
+    return mockEnvironments;
+  },
   useResetComputer: () => resetComputer,
+}));
+
+// Choosing a custom image rides `sandbox-images-enabled`, split from the
+// computers flag that gates this whole tab. On unless a test turns it off.
+let mockSandboxImagesEnabled = true;
+let sandboxImagesQueryArg: string | null | undefined;
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => mockSandboxImagesEnabled,
 }));
 
 // The drawer calls its own Convex hooks; stub it (its own tests cover it).
@@ -79,6 +90,8 @@ afterEach(() => {
   statusQueryArg = undefined;
   mockUsage = undefined;
   mockEnvironments = [];
+  mockSandboxImagesEnabled = true;
+  sandboxImagesQueryArg = undefined;
   mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
   window.localStorage.clear();
 });
@@ -416,6 +429,43 @@ describe("ComputerView image strip", () => {
     expect(
       (getByText("Reset", { selector: "button" }) as HTMLButtonElement).disabled
     ).toBe(true);
+  });
+
+  /**
+   * `computers-enabled` widens to everyone with a cloud client while custom
+   * images stay internal. The row still says which image the computer runs
+   * and keeps Reset — that is the computer's own action — but nothing here
+   * may open the image chooser.
+   */
+  it("hides Change and the drawer when sandbox images are off, keeping Reset", () => {
+    mockSandboxImagesEnabled = false;
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByText, queryByTestId } = render(
+      <ComputerView projectId="p1" isSignedInMember />
+    );
+    expect(getByText("Base image")).toBeTruthy();
+    expect(queryByText("Change")).toBeNull();
+    expect(queryByTestId("env-drawer")).toBeNull();
+    expect(getByText("Reset", { selector: "button" })).toBeTruthy();
+    // Nothing attached and nothing to choose: the image list is never read.
+    expect(sandboxImagesQueryArg).toBeNull();
+  });
+
+  it("still names an attached image when sandbox images are off", () => {
+    mockSandboxImagesEnabled = false;
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "env1",
+    };
+    mockEnvironments = [{ environmentId: "env1", name: "ml-toolkit" }];
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isSignedInMember />
+    );
+    expect(getByText("ml-toolkit")).toBeTruthy();
+    expect(queryByText("Change")).toBeNull();
+    expect(sandboxImagesQueryArg).toBe("p1");
   });
 });
 
