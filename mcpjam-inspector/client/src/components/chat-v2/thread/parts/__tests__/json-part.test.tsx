@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { mcpCallToolResultToModelOutput } from "@mcpjam/sdk/browser";
 import { JsonPart } from "../json-part";
 
 const mockJsonEditor = vi.fn(({ value, height, maxHeight }: any) => (
@@ -100,6 +101,26 @@ describe("JsonPart", () => {
       "4 images were omitted because image size or count limits were exceeded."
     );
     expect(screen.getAllByRole("img")).toHaveLength(16);
+  });
+
+  it("warns when the total image bytes limit omits a persisted image", async () => {
+    const value = mcpCallToolResultToModelOutput(
+      {
+        content: Array.from({ length: 2 }, () => ({
+          type: "image" as const,
+          data: "aGVsbG8=",
+          mimeType: "image/png",
+        })),
+      },
+      { maxTotalImageBytes: 7 }
+    );
+
+    render(<JsonPart label="Result" value={value} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 image was omitted because image size or count limits were exceeded."
+    );
+    expect(screen.getAllByRole("img")).toHaveLength(1);
   });
 
   it("warns when every persisted image was omitted", async () => {

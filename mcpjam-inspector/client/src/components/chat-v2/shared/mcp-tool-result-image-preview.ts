@@ -89,7 +89,7 @@ function countImagesOmittedForLimits(value: unknown): number {
       part.type === "text" &&
       typeof part.text === "string" &&
       part.text.startsWith("[image omitted:") &&
-      part.text.includes(" exceeds ")
+      (part.text.includes(" exceeds ") || part.text.includes(" exceed "))
   ).length;
 }
 
