@@ -2066,19 +2066,6 @@ export function NewSwarmCreateFlow({
     return out;
   }, [allEnvironments, envListForPayload, hostNameById]);
 
-  const environmentLabels = useMemo(
-    () =>
-      environmentIds.map(
-        (environmentId) =>
-          // `slice(0, 8)` stays for a row that isn't in the map AT ALL, a
-          // different failure from a row that merely has no name, which
-          // `environmentLabel` covers with the client name.
-          environmentRowsById.get(environmentId)?.label ??
-          environmentId.slice(0, 8),
-      ),
-    [environmentIds, environmentRowsById],
-  );
-
   const groundingEnvironmentId =
     environmentIds[0] ?? targetState.environmentIds[0] ?? null;
 
@@ -2147,7 +2134,6 @@ export function NewSwarmCreateFlow({
             iterationsByPersona={iterationsByPersona}
             onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
-            environmentLabels={environmentLabels}
             environmentIds={environmentIds}
             environmentRowsById={environmentRowsById}
             hostNameById={hostNameById}
