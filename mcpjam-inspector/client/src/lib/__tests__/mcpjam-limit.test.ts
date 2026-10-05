@@ -607,6 +607,16 @@ describe("one dialog per swarm wave", () => {
       message: EXHAUSTED,
       surface: "swarm",
     });
+  const shortfall = (keys: {
+    runId?: string;
+    swarmRunGroupId?: string;
+    organizationId?: string;
+  }) =>
+    notifyMCPJamLimitError({
+      ...keys,
+      message: INSUFFICIENT_BODY,
+      surface: "swarm",
+    });
 
   it("opens once for A, then A with its wave, then B in the same wave", () => {
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
@@ -622,9 +632,14 @@ describe("one dialog per swarm wave", () => {
 
     notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
     expect(store.getState().isOpen).toBe(false);
-    expect(store.getState().notifiedKeys).toEqual(
-      new Set(["run:run-a", "wave:wave-1", "run:run-b"]),
-    );
+    // What each run reported is recorded beside its id; see the attempts below.
+    expect(
+      new Set(
+        [...store.getState().notifiedKeys].filter(
+          (key) => !key.startsWith("evidence:"),
+        ),
+      ),
+    ).toEqual(new Set(["run:run-a", "wave:wave-1", "run:run-b"]));
   });
 
   it("opens again for a different wave", () => {
@@ -663,17 +678,6 @@ describe("one dialog per swarm wave", () => {
   // that credits remain and a cheaper request would fit after the wallet is
   // empty.
   describe("a dialog that is already open", () => {
-    const shortfall = (keys: {
-      runId: string;
-      swarmRunGroupId: string;
-      organizationId?: string;
-    }) =>
-      notifyMCPJamLimitError({
-        ...keys,
-        message: INSUFFICIENT_BODY,
-        surface: "swarm",
-      });
-
     it("follows a sibling's real exhaustion after it opened on a shortfall", () => {
       useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
       const store = useMCPJamLimitDialogStore;
@@ -799,6 +803,93 @@ describe("one dialog per swarm wave", () => {
         period: "daily",
         shortfall: null,
       });
+    });
+  });
+
+  // A run's attempts all carry its id, and the run views notify once per attempt
+  // on every Convex push. One target can be refused on a shortfall and a later
+  // one on an empty wallet: the second is new evidence, not a replay of the
+  // first. The same attempt reported again still is one.
+  describe("the attempts of one run", () => {
+    const run = { runId: "run-a", swarmRunGroupId: "wave-1" };
+
+    it("follows a later attempt's real exhaustion after a shortfall", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall(run);
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        shortfall: { creditsRemaining: 23, creditsRequired: 30 },
+        outOfCreditsHit: false,
+      });
+
+      notify(run);
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        period: "daily",
+        shortfall: null,
+        outOfCreditsHit: true,
+      });
+    });
+
+    it("follows a later attempt's shortfall after exhaustion", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify(run);
+      expect(store.getState().outOfCreditsHit).toBe(true);
+
+      shortfall(run);
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        period: null,
+        shortfall: { creditsRemaining: 23, creditsRequired: 30 },
+        outOfCreditsHit: false,
+      });
+    });
+
+    it("still locks the models for a later attempt when the user closed the dialog", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall(run);
+      store.getState().close();
+
+      notify(run);
+      expect(store.getState()).toMatchObject({
+        isOpen: false,
+        outOfCreditsHit: true,
+      });
+    });
+
+    it("tells apart attempts of a run with no wave", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall({ runId: "run-a" });
+      notify({ runId: "run-a" });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        shortfall: null,
+        outOfCreditsHit: true,
+      });
+    });
+
+    it("treats the attempts reported again as replays", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall(run);
+      notify(run);
+      // A top-up clears the latch; Convex then replays both attempts.
+      store.getState().clearOutOfCreditsHit();
+      const before = store.getState();
+
+      shortfall(run);
+      notify(run);
+      expect(store.getState()).toBe(before);
+      expect(store.getState().outOfCreditsHit).toBe(false);
     });
   });
 

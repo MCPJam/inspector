@@ -440,6 +440,53 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
   });
 
+  // A run's attempts share its id. One target refused on a shortfall and a later
+  // one on an empty wallet: the second has to reach the store, or the dialog
+  // keeps saying credits remain and the models stay unlocked.
+  it("hears an empty wallet from a later attempt after an earlier attempt's shortfall", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const otherChatSessionId = swarmAttemptChatSessionId(
+      "run-1",
+      { hostId: "host-1", environmentId: "env-2" },
+      0,
+    );
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      SUMMARY_ENV_1,
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 2 };
+    attempts = [
+      {
+        ...attempt,
+        chatSessionId: CHAT_SESSION_ID,
+        errorCode: "user_rate_limit",
+        errorMessage:
+          'Backend stream error: 429 {"code":"user_rate_limit","limitKind":"total","refusalReason":"insufficient_for_request","creditsRemaining":23,"creditsRequired":30,"error":"This request needs about 30 MCPJam credits; your organization has 23 left today."}',
+      },
+      {
+        ...attempt,
+        chatSessionId: otherChatSessionId,
+        targetId: "environment:env-2",
+        errorCode: "user_rate_limit",
+        errorMessage:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      },
+    ];
+    sessionRows = [
+      { ...sessionRow },
+      { ...sessionRow, id: "s-2", chatSessionId: otherChatSessionId },
+    ];
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+
+    expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
+      isOpen: true,
+      shortfall: null,
+      outOfCreditsHit: true,
+    });
+  });
+
   it("counts several held sessions and reads a hold stored under its structured reason", async () => {
     const otherChatSessionId = swarmAttemptChatSessionId(
       "run-1",

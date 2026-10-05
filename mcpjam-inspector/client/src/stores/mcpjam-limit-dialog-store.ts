@@ -26,7 +26,7 @@ export interface MCPJamLimitNotifyInput {
 }
 
 interface MCPJamLimitDialogState {
-  /** Every run and wave key a notice has carried; see {@link dedupeKeys}. */
+  /** Every run, evidence and wave key a notice has carried; see {@link dedupeKeys}. */
   notifiedKeys: ReadonlySet<string>;
   /**
    * Wave keys recorded before the last purchase began; see
@@ -88,11 +88,27 @@ interface MCPJamLimitDialogState {
  * so its wave dedupes the dialog alongside each run: without it a 15-run wave
  * opened the dialog once per run. Prefixed so a run id and a wave id can never
  * collide.
+ *
+ * A run's attempts all carry its id, so the id alone cannot tell a replay from
+ * another attempt reporting something else (one target refused on a shortfall,
+ * a later one on an empty wallet). What the run reported is part of its
+ * identity: the same run saying the same thing again is a replay, and saying
+ * something new is evidence.
  */
 const WAVE_KEY_PREFIX = "wave:";
 
+const evidenceKey = (runId: string, input: MCPJamLimitNotifyInput): string => {
+  const { shortfall, period } = input;
+  const reported = shortfall
+    ? `short:${shortfall.creditsRemaining}/${shortfall.creditsRequired}`
+    : `out:${period ?? ""}`;
+  return `evidence:${runId}:${reported}`;
+};
+
 const dedupeKeys = (input: MCPJamLimitNotifyInput): string[] => [
-  ...(input.runId ? [`run:${input.runId}`] : []),
+  ...(input.runId
+    ? [`run:${input.runId}`, evidenceKey(input.runId, input)]
+    : []),
   ...(input.swarmRunGroupId
     ? [`${WAVE_KEY_PREFIX}${input.swarmRunGroupId}`]
     : []),
