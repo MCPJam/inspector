@@ -6290,19 +6290,31 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
       launchContext: readLaunchContext(c),
     });
 
-    detachPreparedEvalRun({
-      prepared,
-      convexAuthToken: token,
-      logPrefix: "[v1 evals.rerun]",
-      logContext: { route: "/api/v1 eval-runs rerun", sourceRunId: runId },
-      cleanup: async () => {
-        try {
-          await prepared.cleanup();
-        } finally {
-          releaseSlotOnce();
-        }
-      },
-    });
+    if (prepared.deduped) {
+      // A keyed retry of this rerun, whatever the run's status: the first
+      // request already started it, and a second execution would repeat its
+      // model calls and tool effects. A run whose worker died is recovered by
+      // the stale-run watchdog (or a resume), never by a retry here.
+      try {
+        await prepared.cleanup();
+      } finally {
+        releaseSlotOnce();
+      }
+    } else {
+      detachPreparedEvalRun({
+        prepared,
+        convexAuthToken: token,
+        logPrefix: "[v1 evals.rerun]",
+        logContext: { route: "/api/v1 eval-runs rerun", sourceRunId: runId },
+        cleanup: async () => {
+          try {
+            await prepared.cleanup();
+          } finally {
+            releaseSlotOnce();
+          }
+        },
+      });
+    }
 
     return v1Resource(
       c,

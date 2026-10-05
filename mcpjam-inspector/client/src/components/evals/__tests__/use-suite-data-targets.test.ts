@@ -125,3 +125,34 @@ describe("Performance by Model keys by target", () => {
     expect(fromMetrics).toEqual([SONNET, "openai/gpt-5"]);
   });
 });
+
+describe("legacy aggregates exclude infrastructure failures", () => {
+  // Persisted as failed + failed; `infraError` is what says it measured nothing.
+  const outage = {
+    result: "failed",
+    status: "failed",
+    infraError: {
+      class: "provider_unavailable",
+      layer: "model",
+      retryable: true,
+    },
+  } as Partial<EvalIteration>;
+  const rows = [
+    iteration("a"),
+    iteration("b", { result: "failed" }),
+    iteration("c", outage),
+    iteration("d", outage),
+  ];
+
+  it("leaves infra rows out of the trend point and the per-model rate", () => {
+    const { result } = renderHook(() =>
+      useSuiteData(suite, [], [], rows, [run], null),
+    );
+    expect(result.current.runTrendData).toEqual([
+      expect.objectContaining({ passRate: 50, passed: 1, total: 2 }),
+    ]);
+    expect(result.current.modelStats).toEqual([
+      expect.objectContaining({ passRate: 50, passed: 1, failed: 1, total: 2 }),
+    ]);
+  });
+});

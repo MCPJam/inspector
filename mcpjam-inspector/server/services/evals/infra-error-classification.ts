@@ -74,6 +74,10 @@ const CODE_TABLE: Readonly<Record<string, TableRow>> = {
   mcpjam_rate_limit: { class: "rate_limited", layer: "model", retryable: true },
   provider_rate_limit: { class: "rate_limited", layer: "model", retryable: true },
   mcpjam_api_error: { class: "auth", layer: "model", retryable: false },
+  // This deployment has no system key that can serve the hosted rail: ours,
+  // and permanent until someone configures it. Its 5xx must not read as an
+  // outage worth retrying.
+  mcpjam_config_error: { class: "configuration", retryable: false },
   invalid_model: { class: "configuration", retryable: false },
   model_retired: { class: "configuration", retryable: false },
   // Admission, not execution: no automatic retry in v1.

@@ -232,6 +232,35 @@ describe("eval rerun routes", () => {
       expect(execute).toHaveBeenCalledTimes(1);
     });
 
+    it("a keyed retry of a rerun still running returns it and never executes it again", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      const execute = vi.fn().mockResolvedValue(undefined);
+      prepareSuiteReplayMock.mockResolvedValue({
+        suiteId: SUITE_ID,
+        runId: RERUN_ID,
+        sourceRunId: RUN_ID,
+        serverIds: ["s_alpha"],
+        recorder: { finalize: vi.fn() },
+        execute,
+        cleanup,
+        deduped: true,
+        status: "running",
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/rerun`,
+        { scope: "failed_cases", idempotencyKey: "retry-1" },
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        runId: RERUN_ID,
+        status: "running",
+        deduped: true,
+      });
+      expect(cleanup).toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+    });
+
     it("refuses a source run with no stored server configuration", async () => {
       prepareSuiteReplayMock.mockRejectedValue(
         new Error("This run does not have stored replay config"),

@@ -7,7 +7,7 @@ import {
   getTemplateKey,
   isSubsetRerunRun,
 } from "./helpers";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import {
   iterationTargetKey,
   modelEffortTargetKey,
@@ -125,9 +125,10 @@ export function useSuiteData(
         const runIterations = allIterations.filter(
           (iter) => iter.suiteRunId === run._id,
         );
-        // Only count completed iterations - exclude pending/cancelled
+        // Only count completed iterations - exclude pending/cancelled, and
+        // trials OUR infrastructure failed (they measured nothing).
         const iterationResults = runIterations.map((i) =>
-          computeIterationResult(i),
+          computeMeasuredIterationResult(i),
         );
         const realTimePassed = iterationResults.filter(
           (r) => r === "passed",
@@ -203,8 +204,9 @@ export function useSuiteData(
       const model = iterationTargetKey(iteration) || "Unknown";
       const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
 
-      // Only count terminal pass/fail iterations - exclude pending/cancelled.
-      const result = computeIterationResult(iteration);
+      // Only count terminal pass/fail iterations - exclude pending/cancelled
+      // and infrastructure failures.
+      const result = computeMeasuredIterationResult(iteration);
       if (
         result !== "passed" &&
         result !== "failed" &&

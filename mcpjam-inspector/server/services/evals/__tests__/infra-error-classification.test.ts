@@ -12,6 +12,7 @@ describe("classifyEvalInfraError — the code table", () => {
     ["mcpjam_rate_limit", 429, "rate_limited", true],
     ["provider_rate_limit", 429, "rate_limited", true],
     ["mcpjam_api_error", 401, "auth", false],
+    ["mcpjam_config_error", 500, "configuration", false],
     ["invalid_model", 404, "configuration", false],
     ["model_retired", 410, "configuration", false],
     ["at_capacity", 503, "capacity", true],
