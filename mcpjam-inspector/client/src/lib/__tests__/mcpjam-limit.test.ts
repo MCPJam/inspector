@@ -16,8 +16,7 @@ beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
     notifiedKeys: new Set<string>(),
     staleWaveKeys: new Set<string>(),
-    runKeysAtPurchase: new Set<string>(),
-    purchaseScopes: new Set<string>(),
+    runKeysAtPurchase: {},
     waveOrganizations: {},
     authStatus: "loading",
     hasPendingLimit: false,
@@ -1180,6 +1179,106 @@ describe("one dialog per swarm wave", () => {
         organizationId: "org-c",
       });
       expect(store.getState().staleWaveKeys).toEqual(new Set(["wave:wave-x"]));
+    });
+
+    it("is not made old by another organization's later purchase", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      // Organization A buys, and run X (A's) is announced after that.
+      store.getState().forgetNotifiedWaves("org-a");
+      notify({ runId: "run-x", organizationId: "org-a" });
+      store.getState().close();
+
+      // Organization B buys later. X is older than B's purchase, not than A's.
+      store.getState().forgetNotifiedWaves("org-b");
+
+      notify({
+        runId: "run-x",
+        swarmRunGroupId: "wave-x",
+        organizationId: "org-a",
+      });
+      expect(store.getState().staleWaveKeys).toEqual(new Set());
+      notify({
+        runId: "run-y",
+        swarmRunGroupId: "wave-x",
+        organizationId: "org-a",
+      });
+      expect(store.getState().isOpen).toBe(false);
+    });
+  });
+
+  // A run's notice that arrives again with a wave it did not carry before (A,
+  // then A with W) is the same report, not a new one: only a new run, or a run
+  // saying something new, is news about the balance.
+  describe("a run that only supplies its wave", () => {
+    it("does not lock again the models a top-up unlocked", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-a" });
+      expect(store.getState().outOfCreditsHit).toBe(true);
+      store.getState().close();
+      // The top-up lands and the balance refresh clears the latch.
+      store.getState().clearOutOfCreditsHit();
+
+      notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      expect(store.getState().outOfCreditsHit).toBe(false);
+      expect(store.getState().isOpen).toBe(false);
+    });
+
+    it("does not put an older report back over a newer one", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall({ runId: "run-a" });
+      notify({ runId: "run-b" });
+      expect(store.getState()).toMatchObject({
+        shortfall: null,
+        period: "daily",
+        outOfCreditsHit: true,
+      });
+
+      // Run A's old report arrives again, with its wave.
+      shortfall({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        shortfall: null,
+        period: "daily",
+        outOfCreditsHit: true,
+      });
+    });
+
+    it("still teaches an open dialog its organization", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-a" });
+      expect(store.getState().organizationId).toBeNull();
+
+      notify({
+        runId: "run-a",
+        swarmRunGroupId: "wave-1",
+        organizationId: "org-a",
+      });
+      expect(store.getState().organizationId).toBe("org-a");
+    });
+
+    it("still teaches a held notice its organization", () => {
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-a" });
+      notify({
+        runId: "run-a",
+        swarmRunGroupId: "wave-1",
+        organizationId: "org-a",
+      });
+
+      store.getState().setAuthStatus("signedIn");
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        organizationId: "org-a",
+      });
     });
   });
 

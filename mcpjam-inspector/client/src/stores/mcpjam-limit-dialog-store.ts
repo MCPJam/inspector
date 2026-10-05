@@ -36,19 +36,17 @@ interface MCPJamLimitDialogState {
    */
   staleWaveKeys: ReadonlySet<string>;
   /**
-   * The run keys known when the last purchase began. A run first seen alone and
-   * then with its wave (A, then A with W) teaches the store W, and W is as old
-   * as A: a run announced after the purchase delivered W's news already, so W is
-   * current; one announced before it leaves W stale (or makes it stale, when W
-   * was unknown at the purchase), and the next run in W is news.
+   * The run keys known when each scope last bought, by scope: an organization,
+   * or {@link ANY_ORGANIZATION} for a purchase that named none. A run first seen
+   * alone and then with its wave (A, then A with W) teaches the store W, and W
+   * is as old as A: a run announced after the purchase delivered W's news
+   * already, so W is current; one announced before it leaves W stale (or makes
+   * it stale, when W was unknown at the purchase), and the next run in W is
+   * news. Each scope keeps its own boundary: a run announced after one
+   * organization bought is not older than that purchase because another
+   * organization bought later.
    */
-  runKeysAtPurchase: ReadonlySet<string>;
-  /**
-   * The organizations that have bought since the store started, or
-   * {@link ANY_ORGANIZATION} for a purchase that named none; a wave learned
-   * later is old news only for a purchase that covers its organization.
-   */
-  purchaseScopes: ReadonlySet<string>;
+  runKeysAtPurchase: Readonly<Record<string, ReadonlySet<string>>>;
   /**
    * The organization a wave's notices named, by wave key. A wave whose notices
    * named none has no entry; see
@@ -129,17 +127,22 @@ const dedupeKeys = (input: MCPJamLimitNotifyInput): string[] => [
 const ANY_ORGANIZATION = "*";
 
 /**
- * Whether a purchase made so far covers a notice's organization. A notice that
- * names none cannot be told apart and is treated as the purchaser's, as a wave
- * that named none is when a purchase begins.
+ * Whether a run was announced before a purchase that covers the organization.
+ * A notice that names no organization cannot be told apart and is treated as
+ * the purchaser's, as a wave that named none is when a purchase begins.
  */
-const purchaseCovers = (
-  scopes: ReadonlySet<string>,
+const predatesPurchase = (
+  snapshots: Readonly<Record<string, ReadonlySet<string>>>,
+  runKey: string,
   organizationId: string | undefined,
 ): boolean =>
-  scopes.has(ANY_ORGANIZATION) ||
-  organizationId === undefined ||
-  scopes.has(organizationId);
+  Object.entries(snapshots).some(
+    ([scope, runKeys]) =>
+      runKeys.has(runKey) &&
+      (scope === ANY_ORGANIZATION ||
+        organizationId === undefined ||
+        scope === organizationId),
+  );
 
 /**
  * The wave's organization once a notice has named it; the first one named
@@ -205,10 +208,12 @@ const latchFor = (
 // reopened: a wave's first run may report a shortfall (the dialog says credits
 // remain and suggests a cheaper request) and a later one real exhaustion. A
 // dialog that has an organization keeps it, one that had none learns it, and
-// one for another organization is left alone, as its latch is.
+// one for another organization is left alone, as its latch is. A notice that
+// brings no new report (`withEvidence` false) only teaches the organization.
 const refreshOpenDialog = (
   state: Pick<MCPJamLimitDialogState, "isOpen" | "organizationId">,
   input: MCPJamLimitNotifyInput,
+  withEvidence: boolean,
 ) => {
   if (!state.isOpen) return {};
   if (
@@ -220,8 +225,29 @@ const refreshOpenDialog = (
   }
   return {
     organizationId: state.organizationId ?? input.organizationId ?? null,
-    period: input.period ?? null,
-    shortfall: input.shortfall ?? null,
+    ...(withEvidence
+      ? { period: input.period ?? null, shortfall: input.shortfall ?? null }
+      : {}),
+  };
+};
+
+// A notice held for auth keeps the NEWEST report, whichever it is: an older
+// exhaustion would re-set at sign-in a latch that a later shortfall just
+// cleared, and an older shortfall would clear one a later exhaustion just set.
+// Either way it learns the organization and surface it lacked, or the dialog
+// would open for no organization. A notice with no new report leaves the held
+// one's evidence as it is.
+const heldWith = (
+  held: MCPJamLimitNotifyInput | null,
+  input: MCPJamLimitNotifyInput,
+  withEvidence: boolean,
+): MCPJamLimitNotifyInput => {
+  const base = withEvidence || !held ? input : held;
+  return {
+    ...base,
+    organizationId:
+      base.organizationId ?? input.organizationId ?? held?.organizationId,
+    surface: base.surface ?? input.surface ?? held?.surface,
   };
 };
 
@@ -229,8 +255,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
     notifiedKeys: new Set<string>(),
     staleWaveKeys: new Set<string>(),
-    runKeysAtPurchase: new Set<string>(),
-    purchaseScopes: new Set<string>(),
+    runKeysAtPurchase: {},
     waveOrganizations: {},
     isOpen: false,
     hasPendingLimit: false,
@@ -275,16 +300,19 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           const runIsKnown =
             runKey !== undefined && state.notifiedKeys.has(runKey);
           const runPredatesPurchase =
-            runIsKnown && state.runKeysAtPurchase.has(runKey);
+            runIsKnown &&
+            predatesPurchase(
+              state.runKeysAtPurchase,
+              runKey,
+              input.organizationId,
+            );
           const waveIsCurrent =
             runIsKnown &&
             !runPredatesPurchase &&
             keys.some((key) => state.staleWaveKeys.has(key));
-          const wavesLearnedStale =
-            runPredatesPurchase &&
-            purchaseCovers(state.purchaseScopes, input.organizationId)
-              ? newKeys.filter((key) => key.startsWith(WAVE_KEY_PREFIX))
-              : [];
+          const wavesLearnedStale = runPredatesPurchase
+            ? newKeys.filter((key) => key.startsWith(WAVE_KEY_PREFIX))
+            : [];
           const staleWaveKeys =
             waveIsCurrent || wavesLearnedStale.length
               ? new Set([
@@ -302,25 +330,21 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
               ? state
               : { staleWaveKeys };
           }
-          // A notice that brings a new key still carries new evidence: a
-          // wave's first run may report a shortfall and a later one real
-          // exhaustion, so the exhaustion latch follows it, and so does a
-          // dialog that is already open.
-          const latch = latchFor(state, input, true);
-          // A notice held for auth keeps the NEWEST evidence, whichever it is:
-          // an older exhaustion would re-set at sign-in a latch that a later
-          // shortfall just cleared, and an older shortfall would clear one a
-          // later exhaustion just set. It keeps the held notice's organization
-          // and surface when the newer one does not know them, or the dialog
-          // would open for no organization.
-          const held = state.pendingInput;
+          // A new run, or a run reporting something new, still carries new
+          // evidence: a wave's first run may report a shortfall and a later one
+          // real exhaustion, so the exhaustion latch follows it, and so does a
+          // dialog that is already open or a notice held for auth. A notice
+          // whose only new key is its wave (A, then A with W) is the same report
+          // again: a top-up that cleared the latch is not undone when the run
+          // document supplies the wave late, and an older report does not
+          // replace a newer one. It still teaches the organization it names.
+          const withEvidence = newKeys.some(
+            (key) => !key.startsWith(WAVE_KEY_PREFIX),
+          );
+          const latch = withEvidence ? latchFor(state, input, true) : {};
           const pending = state.hasPendingLimit
             ? {
-                pendingInput: {
-                  ...input,
-                  organizationId: input.organizationId ?? held?.organizationId,
-                  surface: input.surface ?? held?.surface,
-                },
+                pendingInput: heldWith(state.pendingInput, input, withEvidence),
               }
             : {};
           return {
@@ -329,7 +353,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
             waveOrganizations,
             ...latch,
             ...pending,
-            ...refreshOpenDialog(state, input),
+            ...refreshOpenDialog(state, input, withEvidence),
           };
         }
         // Not suppressed, so this notice speaks for its waves again: one that
@@ -427,17 +451,16 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           ...(waves.every((key) => state.staleWaveKeys.has(key))
             ? {}
             : { staleWaveKeys: new Set([...state.staleWaveKeys, ...waves]) }),
-          // What counts as announced before the purchase starts over with it, and
-          // so does whose purchase it was.
-          runKeysAtPurchase: new Set(
-            [...state.notifiedKeys].filter((key) =>
-              key.startsWith(RUN_KEY_PREFIX),
+          // What counts as announced before this scope's purchase starts over
+          // with it; the other scopes keep the boundary of their own purchase.
+          runKeysAtPurchase: {
+            ...state.runKeysAtPurchase,
+            [organizationId ?? ANY_ORGANIZATION]: new Set(
+              [...state.notifiedKeys].filter((key) =>
+                key.startsWith(RUN_KEY_PREFIX),
+              ),
             ),
-          ),
-          purchaseScopes: new Set([
-            ...state.purchaseScopes,
-            organizationId ?? ANY_ORGANIZATION,
-          ]),
+          },
         };
       }),
     close: () =>
