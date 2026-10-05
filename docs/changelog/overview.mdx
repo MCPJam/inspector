@@ -9,6 +9,50 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-05 (3.13.0)
+
+#### Added
+
+- **Reasoning effort chip in Playground chat** — A reasoning effort chip appears beside the model picker in the chat input. The chip is a slider popover labelled **Effort \<Level\>** with a Faster ↔ Smarter track, one stop per supported level, and a **Default** caption under the provider's default level. Picking Default sends no effort. The chip shows the short level name (for example, **Med**). The choice is remembered per model, defaults from a selected host's saved effort, and is restored when a chat is reopened. While an effort is set, the temperature slider is disabled and temperature is omitted from the request. The chip is hidden when the model's capability is unknown and is never offered for a harness turn.
+
+- **Reasoning effort in saved configs** — The host Agent tab, the environment composer's model chips, the eval target matrix, and the eval and journey judge pickers now show the effort control beside the model. The effort is written on the saved model selection and kept on a model change only when the new model lists it. A harness that has not verified an effort shows it greyed with the reason; a bare-id BYOK row where the saved id cannot carry an effort shows it disabled with a tooltip; a level no longer in the catalog is badged **no longer supported**. A small badge beside the model says who pays (**MCPJam credits** or **Your key · \<connection\>**).
+
+- **Reasoning effort in eval UIs** — The suite run matrix and suite client settings seed one cell per target (model × effort) instead of folding efforts of one model into one cell. Each model chip has **Add another effort**, and two efforts of one model save as two environments. Labels add only what differs (for example, **Sonnet 4.5 · Low** / **· High**). The run review lists each environment's effort, and a case's Setup Run sheet on an environment suite shows the environment's effort read-only.
+
+- **Codex reasoning effort** — Codex hosts can now run at a reasoning effort. Both Codex transports apply `low`, `medium`, `high`, and `xhigh` through their own runtime option, so a Codex turn at an effort runs instead of being refused. An effort sent with the turn applies immediately; a host's saved effort takes part once the backend returns the host's `modelSelection`.
+
+- **Local Claude Code and Codex runtime packs** — Local Claude Code and local Codex can now install and run on your computer. The Inspector ships with the published, signed 1.0.0 runtime packs and their recorded conformance evidence (Claude Code on macOS, Linux, and Windows; Codex on macOS arm64 and Linux x64), still limited to the accounts in each rollout.
+
+- **Usage and cost by effort** — The organization usage card groups requests by model × reasoning effort (for example, **claude-sonnet-4-5 · High**, **Default** when none was sent) with a Reasoning tokens tile. Eval run metrics show effort, cost, and reasoning tokens per target.
+
+#### Changed
+
+- **Evals compare by effort** — Results compare by effort, temperature, source, and connection, not just by model id. The evals tab keys columns, baselines, deltas, the case timeline, lanes, filters, and Performance by Model by the full target key, always naming a set effort (**Sonnet 5.5 · High**, even alone) and otherwise only what differs. Past runs show their effort everywhere: the run header, run chips, the verdict hero, findings rows, and the swarm run page columns.
+
+- **Harness model picker shows only compatible models** — A Codex or Claude Code client's model picker, in the Playground and the client editor, now lists only models that the harness can run. An unrunnable saved model falls back to the client's own model. The Playground also stops saving a placeholder model over your selection before it has loaded.
+
+#### Fixed
+
+- **Ask MCPJam works again on local installs** — Turns in the Ask MCPJam panel on npx, Docker, the desktop app, and source checkouts no longer fail with "INSPECTOR_SERVICE_TOKEN is not set". The agent's turns and its web searches now run on your own sign-in, with no server token to configure.
+
+- **Local Claude Code model calls now complete** — The local model gateway signs the request path the MCPJam broker actually verifies, fixing "Invalid proof of possession" errors that rejected every local broker request. Approval requests from local and cloud harness runs now carry their tool call id, so the Approve / Deny row renders correctly.
+
+- **Denying a harness tool approval no longer re-sends the decision** — The denied call is now closed in the chat instead of failing with "The local session for this approval is no longer available".
+
+- **Harness chats that pause for tool approval are now saved to history** — A harness chat that pauses for a tool approval is saved to chat history, so a reload no longer finds it missing and the "This reply couldn't be saved" notice no longer appears.
+
+- **Reopening your own Codex or Claude Code chat keeps "This machine"** — Only another member's chat is treated as somebody else's turn; reloading your own chat link no longer switches away from the local machine.
+
+- **Renaming a server keeps its stored credentials** — Renaming a server now updates the same saved server instead of deleting and re-creating it, so its stored client secret, OAuth tokens, and app views are preserved.
+
+- **Credential refusal card shows the correct message** — When MCPJam refuses to send a server's saved credentials, the server card now shows the same "re-enter your credentials" message as the toast instead of a misleading "Forbidden (403): you lack permission".
+
+- **Hosted Connect answers within 45 seconds** — A hung MCP server now fails the check with "The MCP server did not respond in time" (424 `TIMEOUT`) before the Connect button gives up, instead of running on for minutes after the user was told it timed out.
+
+- **Upstream MCP server HTTP errors reported as 424** — An HTTP error from the user's MCP server (a 404 at the wrong endpoint path, a 405, the server's own 500) is now reported as a 424 `UPSTREAM_HTTP_ERROR` that names the status, instead of a masked hosted 500.
+
+- **Browser connections no longer get stuck on browsers without `AbortSignal.any`** — Server connections that previously got stuck on browsers without `AbortSignal.any` now complete correctly while preserving cancellation, timeouts, and connection queue priority.
+
 ### 2026-10-04
 
 #### Changed
