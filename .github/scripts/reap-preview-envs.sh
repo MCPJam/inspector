@@ -149,30 +149,38 @@ if [ ! -s "$PREVIEWS_FILE" ]; then
   exit 0
 fi
 
-# Read the whole WorkOS redirect URI list once before trusting any "already
-# clean" answer from it. The per-env check below relies on that list being
-# complete; until 2026-09-25 it silently read only the newest 100 rows. The
-# count also lands in the summary, so a dry run shows whether paging works.
+# Scheduled sweeps report the full WorkOS list count to diagnose pagination.
+# Targeted closes rely on the strict per-preview check below, which also reads
+# every page. Avoid a global dependency for previews that never had a URL.
 WORKOS_REDIRECTS="not checked (no STAGING_WORKOS_API_KEY)"
-if [ -n "${STAGING_WORKOS_API_KEY:-}" ]; then
+if [ -n "$TARGET_ENVIRONMENT" ]; then
+  WORKOS_REDIRECTS="checked per preview when it has a domain"
+elif [ -n "${STAGING_WORKOS_API_KEY:-}" ]; then
   if ! WORKOS_REDIRECTS=$("$SCRIPT_DIR/workos-cleanup.sh" --count redirect_uris); then
     echo "::error::Couldn't read the full WorkOS redirect URI list; reaping nothing" >&2
     exit 1
   fi
 fi
 
-if ! OPEN_INSPECTOR=$(list_open_prs "$INSPECTOR_REPO" "$GITHUB_TOKEN"); then
-  echo "::error::Could not list open PRs in ${INSPECTOR_REPO}; reaping nothing" >&2
-  exit 1
+OPEN_INSPECTOR=""
+if [ -z "$TARGET_ENVIRONMENT" ]; then
+  if ! OPEN_INSPECTOR=$(list_open_prs "$INSPECTOR_REPO" "$GITHUB_TOKEN"); then
+    echo "::error::Could not list open PRs in ${INSPECTOR_REPO}; reaping nothing" >&2
+    exit 1
+  fi
 fi
 BACKEND_OK=0
 OPEN_BACKEND=""
 if [ -n "$BACKEND_REPO" ] && [ -n "$BACKEND_GITHUB_TOKEN" ]; then
-  if OPEN_BACKEND=$(list_open_prs "$BACKEND_REPO" "$BACKEND_GITHUB_TOKEN"); then
+  if [ -n "$TARGET_ENVIRONMENT" ]; then
+    # A targeted close does its authoritative GET below. It must not depend
+    # on a repository-wide PR listing (especially one in the other repo).
+    BACKEND_OK=1
+  elif OPEN_BACKEND=$(list_open_prs "$BACKEND_REPO" "$BACKEND_GITHUB_TOKEN"); then
     BACKEND_OK=1
   fi
 fi
-if [ "$BACKEND_OK" -eq 0 ]; then
+if [ "$BACKEND_OK" -eq 0 ] && { [ -z "$TARGET_ENVIRONMENT" ] || [[ "$TARGET_ENVIRONMENT" == pr-be-* ]]; }; then
   echo "::warning::Backend PRs can't be read; leaving every pr-be-* environment alone" >&2
 fi
 

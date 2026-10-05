@@ -50,6 +50,13 @@ jobs:
         with:
           github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           script: |
+            // The Railway cleanup may have kept a PR that reopened while
+            // this job waited. Recheck before tearing down its backend too.
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pr.state !== "closed") return;
             const [owner, repo] = process.env.BACKEND_REPO.split("/");
             await github.rest.repos.createDispatchEvent({
               owner,

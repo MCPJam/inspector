@@ -15,7 +15,7 @@ function run(script, args = [], extra = {}) {
 const args = process.argv.slice(2);
 const payload = JSON.parse(args.includes('--data') ? args[args.indexOf('--data') + 1] : '{}');
 const url = args.at(-1);
-const preview = (name) => ({node:{id:name,name,serviceInstances:{edges:[{node:{domains:{serviceDomains:[{domain:name+'.up.railway.app'}],customDomains:[]}}}]}}});
+const preview = (name) => ({node:{id:name,name,serviceInstances:{edges:[{node:{domains:{serviceDomains:process.env.NO_DOMAIN === '1' ? [] : [{domain:name+'.up.railway.app'}],customDomains:[]}}}]}}});
 let body;
 if (args.includes('--data')) {
   if (payload.query.includes('mutation D')) body = {data:{environmentDelete:process.env.DELETE_OK !== '0'}};
@@ -25,10 +25,10 @@ if (args.includes('--data')) {
 } else {
   body = url.includes('state=open') ? [] : {state:process.env.PR_STATE || 'closed',closed_at:'2020-01-01T00:00:00Z'};
   require('node:fs').writeFileSync(args[args.indexOf('-o')+1],JSON.stringify(body));
-  process.stdout.write(process.env.PR_HTTP || '200');
+  process.stdout.write(url.includes('state=open') && url.includes('test/inspector/') ? (process.env.INSPECTOR_LIST_HTTP || process.env.PR_HTTP || '200') : (process.env.PR_HTTP || '200'));
 }
 `);
-  executable('workos-cleanup.sh', '#!/bin/bash\nif [ "$1" = --count ]; then echo 10; exit 0; fi\nexit "${WORKOS_FAIL:-0}"\n');
+  executable('workos-cleanup.sh', '#!/bin/bash\nif [ "$1" = --count ]; then echo 10; exit "${WORKOS_COUNT_FAIL:-0}"; fi\nexit "${WORKOS_FAIL:-0}"\n');
   executable('railway-retry.sh', '#!/bin/bash\nprintf "%s\\n" "$*" >> "$DELETE_LOG"\n"$@"\n');
   const log = join(dir, 'deletes');
   try {
@@ -110,4 +110,52 @@ test('scheduled reconciliation keeps its deletion cap', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.deletes.trim().split('\n').length, 1);
   assert.match(r.stdout, /deferred 2/);
+});
+
+test('a preview without a URL can be deleted during a WorkOS outage', () => {
+  const r = run('reap-preview-envs.sh', [], {
+    TARGET_ENVIRONMENT:'pr-1',NO_DOMAIN:'1',WORKOS_COUNT_FAIL:'1',WORKOS_FAIL:'1',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.deletes, /delete pr-1\n/);
+});
+test('targeted backend cleanup does not depend on listing inspector PRs', () => {
+  const r = run('reap-preview-envs.sh', [], {
+    TARGET_ENVIRONMENT:'pr-be-3',INSPECTOR_LIST_HTTP:'403',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.deletes, /delete pr-be-3\n/);
+});
+
+async function dispatchFor(state) {
+  const workflow = readFileSync(new URL('../workflows/preview-close.yml', import.meta.url), 'utf8');
+  const source = workflow.split('          script: |\n')[1]
+    .split('\n').map(line => line.replace(/^            /, '')).join('\n');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const dispatches = [];
+  const github = {rest:{
+    pulls:{get:async () => {
+      if (state === 'error') throw new Error('GitHub unavailable');
+      return {data:{state}};
+    }},
+    repos:{createDispatchEvent:async payload => dispatches.push(payload)},
+  }};
+  await new AsyncFunction('github', 'context', 'process', source)(
+    github,
+    {repo:{owner:'test',repo:'inspector'},payload:{pull_request:{number:1,head:{ref:'feature'}}}},
+    {env:{BACKEND_REPO:'test/backend'}},
+  );
+  return dispatches;
+}
+test('a reopened PR cannot dispatch backend teardown', async () => {
+  assert.deepEqual(await dispatchFor('open'), []);
+});
+test('a failed PR recheck cannot dispatch backend teardown', async () => {
+  await assert.rejects(dispatchFor('error'), /GitHub unavailable/);
+});
+test('a still-closed PR dispatches its backend cleanup', async () => {
+  assert.deepEqual(await dispatchFor('closed'), [{
+    owner:'test',repo:'backend',event_type:'inspector_preview_cleanup',
+    client_payload:{branch:'feature',inspector_pr_number:1},
+  }]);
 });
