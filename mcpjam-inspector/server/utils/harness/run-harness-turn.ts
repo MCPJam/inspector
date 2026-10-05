@@ -158,7 +158,20 @@ import {
   resolveWorkingDirectory,
   HOME_ROOT,
 } from "../computers/path-confine.js";
-import { resolveHarnessSandbox } from "./resolve-sandbox.js";
+import {
+  HarnessSandboxResolutionError,
+  resolveHarnessSandbox,
+} from "./resolve-sandbox.js";
+import {
+  HarnessInfraSetupError,
+  codexProviderEvidenceFromNotification,
+  harnessFailureEvidenceOf,
+  harnessFailureMessageOf,
+} from "./harness-provider-error.js";
+import type {
+  InfraFailureEvidence,
+  ModelEndpointOwnership,
+} from "../infra-failure-evidence.js";
 import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
@@ -1040,6 +1053,19 @@ export async function runHarnessTurn(
   /** The turn's cloud sandbox provider (bootstrap-observed), once built — so a
    *  FAILED turn can still report whether its runtime install failed. */
   let bakeObservedSandbox: unknown = null;
+  /**
+   * The last TERMINAL model-call failure an agent runtime reported as typed
+   * data mid-stream (Codex forwards `codexErrorInfo` as a `raw` notification).
+   * Consulted by the turn's catch when the thrown error itself carries no
+   * structured evidence — never derived from the error's text.
+   */
+  let rawProviderEvidence: InfraFailureEvidence | undefined;
+  /**
+   * Whose model endpoint the agent runtime called, once its auth is decided:
+   * MCPJam's model proxy (broker lease, local loopback gateway), or the
+   * customer's own account with a first-party provider (external account).
+   */
+  let modelEndpoint: ModelEndpointOwnership | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -2028,7 +2054,7 @@ export async function runHarnessTurn(
           approvalContinuation = {
             generation,
             approvalIds: approvalContinuations.map((continuation) =>
-              String(continuation.approvalResponse.approvalId),
+              String(continuation.approvalId),
             ),
           };
         }
@@ -2108,6 +2134,18 @@ export async function runHarnessTurn(
           projectId,
           ...(executionScope ? { executionScope } : {}),
           signal: abortSignal,
+        }).catch((error: unknown) => {
+          // TYPED at the producer: the control plane could not hand us a live
+          // box (provision / wake / lookup). Our sandbox layer, never the
+          // model's.
+          if (error instanceof HarnessSandboxResolutionError) {
+            throw new HarnessInfraSetupError(error.message, {
+              source: "sandbox_setup",
+              code: "harness_sandbox_unavailable",
+              httpStatus: error.status,
+            });
+          }
+          throw error;
         });
         box = {
           kind: "computer",
@@ -2186,7 +2224,12 @@ export async function runHarnessTurn(
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!reservation.ok) {
-          throw new Error(reservation.error);
+          // Typed: the box claim is our sandbox layer's concurrency control.
+          throw new HarnessInfraSetupError(reservation.error, {
+            source: "sandbox_setup",
+            code: "harness_box_reservation_failed",
+            httpStatus: reservation.status,
+          });
         }
         // From here until the lease is minted, ANY exit must hand the box back —
         // otherwise the next turn waits out the reservation's TTL for nothing.
@@ -2315,7 +2358,9 @@ export async function runHarnessTurn(
         // than by the child. What the child gets here is that gateway's URL and
         // a per-session capability that means nothing anywhere else.
         auth = localPrepared.auth;
+        modelEndpoint = "platform";
       } else if (externalAccountAuth) {
+        modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
         // skipped rather than made conditional inside it. `brokerRunId` stays
         // unset, which is what keeps teardown from issuing a revoke for a lease
@@ -2349,7 +2394,14 @@ export async function runHarnessTurn(
           // Throws propagate to the turn's outer catch; onFinishEngine frees the
           // claimed lane (sessionEstablished still false) and revokes the broker
           // lease (brokerRunId set) if the backend installed before a lost response.
-          throw new Error(broker.error);
+          // Typed: lease installation is OUR platform layer, not the model.
+          // The backend's own code rides along when it sent one (a billing
+          // refusal, a box that is gone), so it is classified as what it is.
+          throw new HarnessInfraSetupError(broker.error, {
+            source: "platform_setup",
+            code: broker.code ?? "harness_broker_unavailable",
+            httpStatus: broker.status,
+          });
         }
         // The lease is recorded, which consumed this turn's claim on the box; the
         // lease's own per-box fence covers the rest of the turn. Releasing now
@@ -2357,6 +2409,7 @@ export async function runHarnessTurn(
         clearReservationHeartbeat();
         reservationHeld = false;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+        modelEndpoint = "platform";
       }
       tBroker = Date.now();
 
@@ -2365,10 +2418,16 @@ export async function runHarnessTurn(
       // uses the same one).
       // (permissionMode was computed above, before the runtime fingerprint.)
 
-      // The adapter maps the host modelId to the harness's native model and
-      // constructs it (for Claude Code: the gateway `creator/model` id becomes a
-      // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
-      // do zero inference). Returns the HarnessAgent boundary type directly.
+      // The adapter maps the host modelId to the harness's native model (for
+      // Claude Code: the gateway `creator/model` id becomes a CLI-native alias
+      // `sonnet|opus|haiku`; the raw gateway id makes the CLI do zero
+      // inference). That model rides on `HarnessAgent` below, not on
+      // `createHarness`: the AI SDK adapters removed their deprecated
+      // construction-time `model` setting (harness 1.0.108), so a model handed
+      // only to the adapter would silently run the runtime's default model.
+      const nativeModel = harnessAdapter.toNativeModel?.(modelId);
+
+      // `createHarness` returns the HarnessAgent boundary type directly.
       //
       // Narrowed on the delivery MECHANISM rather than called through the
       // union: a `session-config` adapter's `createHarness` REQUIRES `mcpJson`
@@ -2402,7 +2461,7 @@ export async function runHarnessTurn(
         if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
           harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
             logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
-          }, new Set(approvalContinuations.map(continuation => continuation.approvalResponse.approvalId)));
+          }, new Set(approvalContinuations.map(continuation => continuation.approvalId)));
         }
       }
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
@@ -2487,6 +2546,7 @@ export async function runHarnessTurn(
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
+        ...(nativeModel ? { model: nativeModel } : {}),
         ...(localPrepared
           ? { sandboxConfig: { workDir: localPrepared.sandboxWorkDir } }
           : {}),
@@ -2817,7 +2877,7 @@ export async function runHarnessTurn(
         throw new Error("The session for this approval is no longer available; the pending action will not run. Start a new turn.");
       }
       for (const continuation of approvalContinuations) {
-        logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalResponse.approvalId, approvalDecision: "user" });
+        logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalId, approvalDecision: "user" });
       }
       let session: Awaited<ReturnType<typeof agent.createSession>>;
       if (resumeFromApproval && resumable) {
@@ -2989,9 +3049,20 @@ export async function runHarnessTurn(
         // or trips the duplicate-decision guard. `streamText` closes denied
         // calls the same way for the emulated engine.
         if (resumeFromApproval) {
+          // A continuation is the bare approval response; the call it answers
+          // is named by the earlier `tool-approval-request` part.
+          const toolCallIdByApprovalId = new Map<string, string>();
+          for (const message of messages) {
+            if (message.role !== "assistant" || typeof message.content === "string") continue;
+            for (const part of message.content) {
+              if (part.type === "tool-approval-request") {
+                toolCallIdByApprovalId.set(part.approvalId, part.toolCallId);
+              }
+            }
+          }
           for (const continuation of approvalContinuations) {
-            const toolCallId = continuation.toolCall?.toolCallId;
-            if (continuation.approvalResponse?.approved === false && toolCallId) {
+            const toolCallId = toolCallIdByApprovalId.get(continuation.approvalId);
+            if (continuation.approved === false && toolCallId) {
               emitToolOutputDenied(writer, { toolCallId });
             }
           }
@@ -3624,6 +3695,13 @@ export async function runHarnessTurn(
             pendingApprovalIds.push(approvalId);
             pausedForApproval = true;
             break;
+          } else if (type === "raw") {
+            // Passthrough of the runtime's own protocol message. Only a typed,
+            // terminal model-call failure is kept.
+            const evidence = codexProviderEvidenceFromNotification(
+              (part as { rawValue?: unknown }).rawValue,
+            );
+            if (evidence) rawProviderEvidence = evidence;
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
             if (typeof fr === "string" && fr)
@@ -3992,7 +4070,16 @@ export async function runHarnessTurn(
         aborted = true;
         return;
       }
-      const errorText = err instanceof Error ? err.message : String(err);
+      // A bridge's typed provider failure is a PLAIN OBJECT (the harness wire
+      // flattens Error instances), so `String(err)` would read
+      // "[object Object]". Its structured fields ride separately below.
+      const errorText = harnessFailureMessageOf(err);
+      const typedEvidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+      // A runtime's provider failure says whose endpoint it came from.
+      const failureEvidence =
+        typedEvidence?.source === "harness_runtime" && modelEndpoint
+          ? { ...typedEvidence, endpoint: modelEndpoint }
+          : typedEvidence;
       // Reporter, not a bare logger.error: the old call captured to Sentry
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
@@ -4043,6 +4130,12 @@ export async function runHarnessTurn(
         // a provider that rejects the request outright still reads as the
         // model's failure rather than ours.
         phase: modelInvoked ? "stream" : "setup",
+        // STRUCTURED evidence, preserved from the producer that knew it: a
+        // typed setup step, a bridge's typed provider failure, or Codex's
+        // terminal `codexErrorInfo`. Absent when the producer had none — the
+        // failure then stays unclassified rather than being guessed from the
+        // sentence above.
+        ...(failureEvidence ? { infra: failureEvidence } : {}),
       });
     } finally {
       stopScopeStepUpBridge();

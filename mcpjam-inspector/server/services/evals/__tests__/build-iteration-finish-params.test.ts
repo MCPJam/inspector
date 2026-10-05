@@ -813,3 +813,26 @@ describe("buildIterationFinishParams — timeout attribution", () => {
     expect(build({ iterationMetadataBase: { timeout } }).metadata).toMatchObject({ timeout });
   });
 });
+
+describe("buildIterationFinishParams — infra errors", () => {
+  const infraError = {
+    class: "rate_limited" as const,
+    layer: "model" as const,
+    retryable: true,
+    code: "mcpjam_rate_limit",
+    httpStatus: 429,
+  };
+
+  test("an infra row never reports a pass and carries its marker", () => {
+    const params = build({ status: "failed", infraError });
+    expect(params.passed).toBe(false);
+    expect(params.infraError).toEqual(infraError);
+    expect(params.status).toBe("failed");
+  });
+
+  test("a row without one is unchanged", () => {
+    const params = build();
+    expect(params.passed).toBe(true);
+    expect(params).not.toHaveProperty("infraError");
+  });
+});

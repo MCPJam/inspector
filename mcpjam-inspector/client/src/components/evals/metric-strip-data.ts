@@ -1,4 +1,4 @@
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import {
   computeIterationSummary,
   iterationLatencyP50,
@@ -211,11 +211,14 @@ function batchPassCounts(iterations: EvalIteration[]): {
   failed: number;
   total: number;
 } {
-  const total = iterations.length;
+  let total = 0;
   let passed = 0;
   let failed = 0;
   for (const iteration of iterations) {
-    const result = computeIterationResult(iteration);
+    const result = computeMeasuredIterationResult(iteration);
+    // An infra row measured nothing: in neither the rate nor its total.
+    if (result === "infra_error") continue;
+    total += 1;
     if (result === "passed") passed += 1;
     else if (result === "failed") failed += 1;
   }

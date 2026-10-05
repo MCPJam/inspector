@@ -123,10 +123,13 @@ describe("preseedAdapterSkills", () => {
     });
     const before = commands.length;
     // Exactly how `writeClaudeCodeSkills` invokes the library (messages don't
-    // affect the projected hash; `trailingNewline: true` does).
+    // affect the projected hash; `trailingNewline: true` does). The adapter
+    // splits the root as `$HOME` + `.claude/skills`; the pre-seed splits
+    // `skillsBase` at its last segment, and both must land on ROOT.
     const result = await writeSkills({
       sandbox: asLibSandbox(session),
-      rootDir: ROOT,
+      homePath: "/home/user",
+      skillsDir: ".claude/skills",
       skills: PAYLOAD,
       invalidSkillNameMessage: ({ name }) =>
         `Invalid Claude Code skill name: ${name}`,
@@ -152,7 +155,8 @@ describe("preseedAdapterSkills", () => {
     // Exactly how `writeCodexSkills` invokes the library.
     const result = await writeSkills({
       sandbox: asLibSandbox(session),
-      rootDir: codexRoot,
+      homePath: "/home/user",
+      skillsDir: ".agents/skills",
       skills: PAYLOAD,
       invalidSkillNameMessage: ({ name }) => `Invalid Codex skill name: ${name}`,
       invalidSkillFilePathMessage: ({ skillName, filePath }) =>
@@ -262,7 +266,8 @@ describe("handOffLegacySkillDirs", () => {
     expect(files.get(`${ROOT}/find-skills/SKILL.md`)).toContain("body A");
     const result = await writeSkills({
       sandbox: asLibSandbox(session),
-      rootDir: ROOT,
+      homePath: "/home/user",
+      skillsDir: ".claude/skills",
       skills: PAYLOAD,
       trailingNewline: true,
     });

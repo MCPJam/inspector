@@ -12,6 +12,7 @@
  * adapter is a COMPILE error.
  */
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
+import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { createCodexAppServer } from "./codex-appserver/index.js";
@@ -863,11 +864,15 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("claude-code"),
   supportsModel: supportsModelFor("claude-code"),
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, mcpJson, reasoningEffort }) {
-    const nativeModel = toClaudeCodeModel(modelId);
-    return createClaudeCodeHarness({
+  // No `model` here: the adapter no longer reads one at construction. The
+  // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
+  createHarness({ auth, mcpJson, reasoningEffort }) {
+    // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
+    // provider failure reaches an eval as fields rather than a sentence. A
+    // local session swaps this bootstrap for its verified pack's own
+    // (`withLocalPackBootstrap`), so the local pack bytes are untouched.
+    return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
-      ...(nativeModel ? { model: nativeModel } : {}),
       auth,
       // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
       // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects

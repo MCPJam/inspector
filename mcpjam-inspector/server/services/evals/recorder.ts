@@ -1,4 +1,5 @@
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
 import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import type { ConvexHttpClient } from "convex/browser";
@@ -170,6 +171,8 @@ export type SuiteRunRecorder = {
     startedAt?: number;
     error?: string;
     errorDetails?: string;
+    /** OUR infrastructure failed this trial; only with `status: "failed"`. */
+    infraError?: EvalInfraError;
     resultSource?: "reported" | "derived";
     // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
     // nested `predicates: PredicateResult[]` rows. Persisted to
