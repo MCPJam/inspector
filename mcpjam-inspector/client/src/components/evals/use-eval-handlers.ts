@@ -769,9 +769,10 @@ export function useEvalHandlers({
 
       // Environment suites launch through the server's authoritative
       // resolution (P0.1): the browser never knows the environment's closed
-      // server set, so the legacy server-readiness gates below are skipped —
-      // the server returns a readable auth/connection error for the exact
-      // resolved set instead.
+      // server set, so the legacy server-readiness gates below are skipped.
+      // Locally the run route still executes on this inspector's connection
+      // pool, so those servers are connected from the environment resolution
+      // further down; hosted routes connect them and refuse unreachable ones.
       const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
 
       // Effective servers = flat env.servers ∪ resolved servers across all
@@ -854,6 +855,30 @@ export function useEvalHandlers({
               kind: "suite",
             }),
           );
+          return;
+        }
+      }
+
+      if (
+        isEnvironmentSuite &&
+        projectId &&
+        !isHostedMode() &&
+        ensureServersReady != null
+      ) {
+        const blocked = await ensureLocalEnvironmentServers({
+          convex,
+          projectId,
+          environmentIds: suite.environmentIds ?? [],
+          ensureServersReady,
+        });
+        if (blocked) {
+          const message = formatEnsureServersReadyError(
+            blocked,
+            "run this suite",
+            projectServers,
+          );
+          if (options?.stayOnPage) throw new Error(message);
+          toast.error(message);
           return;
         }
       }
@@ -1190,6 +1215,7 @@ export function useEvalHandlers({
       latestRunBySuiteId,
       connectedServerNames,
       ensureServersReady,
+      convex,
       getAccessToken,
       projectId,
       projectServers,
