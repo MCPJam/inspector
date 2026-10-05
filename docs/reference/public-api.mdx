@@ -619,6 +619,8 @@ curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/it
   -H "Authorization: Bearer $MCPJAM_API_KEY"
 ```
 
+When reading iterations, a trial MCPJam's own infrastructure failed carries an `infraError` field (absent on every ordinary trial). That trial is recorded as `status: "failed"` + `result: "failed"` but is **excluded from every pass rate and verdict** — it measured nothing about your server and its eval fee is refunded. `infraError.class` names the kind of failure (`provider_unavailable`, `rate_limited`, `auth`, `account_limit`, `capacity`, `configuration`, or `sandbox`); treat unknown values as an infrastructure failure of an unnamed kind.
+
 The decision summary composes steps 2 and 4 into one versioned object so every
 client reads a run the same way. Four things to know before gating on it:
 
