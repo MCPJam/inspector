@@ -52,6 +52,19 @@ export function getConfiguredInspectorServiceToken(): string | null {
 }
 
 /**
+ * The outbound service-token header, or none when this Inspector has no token.
+ *
+ * A self-hosted Inspector (npx, Docker, desktop, source) never has one and
+ * calls the backend on the user's own sign-in. Sending the header empty told
+ * the backend nothing and read, in logs and traces, like a hosted server with
+ * a broken secret.
+ */
+export function inspectorServiceTokenHeaders(): Record<string, string> {
+  const token = getConfiguredInspectorServiceToken();
+  return token ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: token } : {};
+}
+
+/**
  * Constant-time equality over SHA-256 digests of both sides.
  *
  * Digesting first is not belt-and-braces: `timingSafeEqual` throws on a length

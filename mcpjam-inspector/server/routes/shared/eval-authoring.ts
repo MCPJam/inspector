@@ -10,6 +10,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import { logger } from "../../utils/logger.js";
+import { inspectorServiceTokenHeaders } from "../../middleware/internal-service-auth.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   ErrorCode,
@@ -230,8 +231,7 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
-            "x-inspector-service-token":
-              process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+            ...inspectorServiceTokenHeaders(),
           },
           body: JSON.stringify({
             ...source,

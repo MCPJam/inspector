@@ -188,3 +188,78 @@ it("answers a stale draft's CONFLICT refusal as a 409 with its message", async (
   expect(response.status).toBe(409);
   expect(await response.text()).toContain("Draft changed. Review it again.");
 });
+
+// MCPJam/inspector#5904: a self-hosted Inspector has no INSPECTOR_SERVICE_TOKEN
+// and authors on the user's own sign-in.
+describe("authoring from a self-hosted Inspector", () => {
+  const postLocal = (body: unknown) =>
+    app.request("/local", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(body as object),
+        convexAuthToken: "user-session",
+      }),
+    });
+  const upstreamHeaders = () =>
+    new Headers(mocks.fetch.mock.calls[0]?.[1]?.headers as HeadersInit);
+
+  it("starts a job on the user's session and sends no service-token header", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    mocks.fetch.mockResolvedValue(
+      Response.json(
+        { version: 1, jobId: "job", status: "pending" },
+        { status: 202 },
+      ),
+    );
+    const response = await postLocal(start);
+    vi.unstubAllEnvs();
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ jobId: "job" });
+    expect(mocks.fetch.mock.calls[0]?.[0]).toBe(
+      "https://backend.test/eval-authoring/v1/jobs",
+    );
+    expect(upstreamHeaders().get("authorization")).toBe("Bearer user-session");
+    expect(upstreamHeaders().has("x-inspector-service-token")).toBe(false);
+  });
+
+  it("still presents the service token when this Inspector has one", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "  svc_hosted_token\n");
+    mocks.fetch.mockResolvedValue(
+      Response.json(
+        { version: 1, jobId: "job", status: "pending" },
+        { status: 202 },
+      ),
+    );
+    await post(JSON.stringify(start));
+    vi.unstubAllEnvs();
+    expect(upstreamHeaders().get("x-inspector-service-token")).toBe(
+      "svc_hosted_token",
+    );
+  });
+
+  it.each([
+    [
+      403,
+      "credential_not_allowed",
+      "Sign in to MCPJam in the Inspector to author cases.",
+    ],
+    [400, "invalid_tool_snapshot", "The tool snapshot is malformed."],
+  ])(
+    "passes a %i %s refusal through with its message",
+    async (status, code, error) => {
+      mocks.fetch.mockResolvedValue(Response.json({ code, error }, { status }));
+      const response = await postLocal(start);
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ code, error });
+    },
+  );
+
+  it("refuses before any upstream work when the user is not signed in", async () => {
+    const response = await app.request("/local", {
+      method: "POST",
+      body: JSON.stringify(start),
+    });
+    expect(response.status).toBe(401);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+});

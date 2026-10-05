@@ -248,6 +248,7 @@ import {
   recordEvalIterationRead,
 } from "../../services/eval-trace-access-audit.js";
 import { logger } from "../../utils/logger.js";
+import { inspectorServiceTokenHeaders } from "../../middleware/internal-service-auth.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import {
   translateConvexWriteError as translateConvexError,
@@ -10279,7 +10280,7 @@ async function startAuthoringJobAndAwait(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${args.token}`,
-        "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+        ...inspectorServiceTokenHeaders(),
       },
       body: JSON.stringify({
         version: 1,
