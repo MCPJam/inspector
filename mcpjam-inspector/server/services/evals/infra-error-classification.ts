@@ -15,9 +15,11 @@
  *  3. Our backend's codes are an allowlist, read before any status: `/stream`
  *     answers what it could not categorize with `unknown_error` + 500, and its
  *     own response status never stands in for the provider's.
- *  4. The harness model proxy answers its own refusals (lease caps, its own
- *     failures) with {@link HARNESS_PROXY_REFUSAL_STATUS}; a lease budget is a
- *     turn budget, so it counts like a turn timeout.
+ *  4. The harness model proxy answers its own terminal refusals (lease budget
+ *     and call caps, spend, its own failures) with
+ *     {@link HARNESS_PROXY_REFUSAL_STATUS}; a lease budget is a turn budget, so
+ *     it counts like a turn timeout. Its transient in-flight cap keeps a 429,
+ *     which is our own throttle and may classify as `rate_limited`.
  *
  * A turn timeout never reaches this: the runner records it as measured first.
  */
