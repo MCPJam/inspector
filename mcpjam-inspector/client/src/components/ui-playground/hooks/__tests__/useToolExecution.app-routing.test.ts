@@ -217,7 +217,13 @@ describe("useToolExecution app-tool routing", () => {
     expect(result.current.pendingExecution?.result).toBe(rawResult);
     expect(result.current.pendingExecution?.modelOutput).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 

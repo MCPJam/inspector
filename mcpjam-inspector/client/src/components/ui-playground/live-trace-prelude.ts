@@ -1,8 +1,5 @@
-import type {
-  LanguageModelV2ToolResultOutput,
-  JSONValue,
-} from "@ai-sdk/provider";
-import type { ModelMessage } from "ai";
+import type { ToolResultOutput } from "@ai-sdk/provider-utils";
+import type { JSONValue, ModelMessage } from "ai";
 import type {
   LiveChatTraceEnvelope,
   LiveChatTraceEvent,
@@ -53,7 +50,7 @@ function toTraceJsonValue(value: unknown): JSONValue {
 function toMcpImageModelOutput(
   result: unknown,
   options: PreludeTraceOptions
-): LanguageModelV2ToolResultOutput | undefined {
+): ToolResultOutput | undefined {
   try {
     return mcpCallToolResultToModelOutput(
       result as Parameters<typeof mcpCallToolResultToModelOutput>[0],
@@ -67,7 +64,7 @@ function toMcpImageModelOutput(
 function toTraceToolResultOutput(
   execution: PreludeTraceExecution,
   options: PreludeTraceOptions = {}
-): LanguageModelV2ToolResultOutput {
+): ToolResultOutput {
   if (execution.state === "output-error") {
     return {
       type: "error-text",
@@ -76,7 +73,7 @@ function toTraceToolResultOutput(
   }
 
   if (execution.modelOutput) {
-    return execution.modelOutput as LanguageModelV2ToolResultOutput;
+    return execution.modelOutput as ToolResultOutput;
   }
 
   const modelOutput = toMcpImageModelOutput(execution.result, options);
