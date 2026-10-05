@@ -974,9 +974,6 @@ export const startSuiteRunWithRecorder = async ({
   let suiteDefaultPredicates:
     | import("@/shared/eval-matching").Predicate[]
     | undefined;
-  // The live suite, when read here; the can-it-fail lint below needs its
-  // judge setting.
-  let liveSuite: unknown;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -987,7 +984,6 @@ export const startSuiteRunWithRecorder = async ({
       const suite = await convexClient.query("testSuites:getTestSuite" as any, {
         suiteId,
       });
-      liveSuite = suite;
       const defaults = (suite as { defaultPredicates?: unknown } | undefined)
         ?.defaultPredicates;
       suiteDefaultPredicates =
@@ -1014,24 +1010,15 @@ export const startSuiteRunWithRecorder = async ({
     });
 
   // Cases whose effective checks all pass on an empty answer, recorded on the
-  // run for run insights. Never changes grading; never fails the start. A run
-  // that froze its defaults has not read the suite yet; without it the lint
-  // records nothing.
-  if (Array.isArray(snapshotDefaults)) {
-    try {
-      liveSuite = await convexClient.query("testSuites:getTestSuite" as any, {
-        suiteId,
-      });
-    } catch {
-      liveSuite = undefined;
-    }
-  }
-  await recordRunVacuousCases(
+  // run for run insights against the judge this run froze. Fire-and-forget:
+  // it never changes grading and never holds or fails the start.
+  void recordRunVacuousCases(
     convexClient,
     runId,
     testCases,
     resolvePredicatesForCase,
-    liveSuite,
+    (response?.configSnapshot as { judgeConfig?: unknown } | undefined)
+      ?.judgeConfig,
   );
 
   // Build config from test cases for backward compatibility

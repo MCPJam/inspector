@@ -103,7 +103,7 @@ describe("authoring commit", () => {
 
   it("returns the can-it-fail warning on a committed case without blocking it", async () => {
     // The suite's only default check passes on an empty answer, and the
-    // committed draft expects no tool call: it can never fail.
+    // committed draft expects no tool call: it passes on an empty answer.
     mocks.query.mockImplementation(async (name: string) =>
       name === "testSuites:getTestSuite"
         ? { defaultPredicates: [{ type: "noToolErrors" }] }

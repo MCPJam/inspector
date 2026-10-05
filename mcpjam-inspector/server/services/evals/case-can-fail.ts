@@ -34,7 +34,7 @@ import { logger } from "../../utils/logger.js";
  */
 export const CASE_PASSES_WITH_EMPTY_ANSWER = "case_passes_with_empty_answer";
 export const CASE_PASSES_WITH_EMPTY_ANSWER_MESSAGE =
-  "This case passes when the agent does nothing: every gating check passes on an empty answer, so it can never fail. Add an expected tool call or a check an empty answer fails (for example a response check).";
+  "This case passes even when the agent does nothing, so it cannot catch an agent that skips the task. Add an expected tool call or a check an empty answer fails (for example a response check).";
 
 export interface CaseAuthoringWarning {
   code: string;
@@ -113,8 +113,7 @@ export function goalCompletionJudgeRoleOf(
   )?.judgeConfig?.goalCompletion;
   const caseSlot = (
     testCase.judgeConfigOverride as
-      | { goalCompletion?: { enabled?: unknown } }
-      | undefined
+      { goalCompletion?: { enabled?: unknown } } | undefined
   )?.goalCompletion;
   const enabled =
     typeof caseSlot?.enabled === "boolean"
@@ -177,6 +176,30 @@ export function checkStoredCaseCanFail(
 }
 
 /**
+ * The case fields a write must touch for its can-it-fail verdict to change,
+ * in the Convex mutation's spelling. A write touching none of them (a rename)
+ * needs no suite read to answer.
+ */
+const CASE_CAN_FAIL_INPUT_FIELDS = [
+  "steps",
+  "query",
+  "expectedToolCalls",
+  "isNegativeTest",
+  "predicates",
+  "successPredicates",
+  "suppressedSuiteStandardCheckIds",
+  "judgeConfigOverride",
+  "promptTurns",
+] as const;
+
+/** Whether a case write's args touch anything the verdict reads. */
+export function touchesCaseCanFailInputs(
+  args: Record<string, unknown>,
+): boolean {
+  return CASE_CAN_FAIL_INPUT_FIELDS.some((field) => args[field] !== undefined);
+}
+
+/**
  * The authoring warnings for one case write, or none. Best effort by
  * contract: a case that cannot be read as a runner would read it gets no
  * warning rather than a failed save, and so does a case whose suite could not
@@ -196,7 +219,10 @@ export function caseAuthoringWarnings(
           },
         ]
       : [];
-  } catch {
+  } catch (error) {
+    logger.warn("[evals] Could not check whether a case can fail", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 }
@@ -228,30 +254,30 @@ export function withCaseAuthoringWarnings<
 }
 
 /**
- * At run start, record which of the run's cases can never fail, so run
- * insights can name them (`testSuites:recordRunVacuousCases`). The run grades
- * exactly as it would without this; a failure to record is logged, never
- * raised — a missing lint must not cost a run.
+ * At run start, record which of the run's cases pass even when the agent does
+ * nothing, so run insights can name them (`testSuites:recordRunVacuousCases`).
+ * The run grades exactly as it would without this; a failure to record is
+ * logged, never raised — a missing lint must not cost a run.
  *
  * `resolvePredicates` is the run's own resolver (the recorder's
- * `resolvePredicatesForCase`), so the verdict reads the suite defaults this
- * run froze. `suite` supplies the judge setting; without it the judge's role
- * is unknown, and nothing is recorded rather than guessed.
+ * `resolvePredicatesForCase`) and `frozenJudgeConfig` the judge the run froze
+ * (`configSnapshot.judgeConfig` on the start response), so the verdict reads
+ * what this run grades with rather than the live suite.
  */
 export async function recordRunVacuousCases(
   convexClient: { mutation: (name: any, args: any) => Promise<unknown> },
   runId: string,
   testCases: ReadonlyArray<Record<string, any>>,
   resolvePredicates: (tc: Record<string, any>) => Predicate[] | undefined,
-  suite: unknown,
+  frozenJudgeConfig: unknown,
 ): Promise<string[]> {
-  if (!suite) return [];
+  const judgeSource = { judgeConfig: frozenJudgeConfig };
   const vacuousCaseIds: string[] = [];
   for (const tc of testCases) {
     const testCaseId = tc?._id ?? tc?.testCaseId;
     if (typeof testCaseId !== "string") continue;
     try {
-      const result = checkStoredCaseCanFail(tc, suite, {
+      const result = checkStoredCaseCanFail(tc, judgeSource, {
         effectivePredicates: resolvePredicates(tc) ?? [],
       });
       if (result.vacuous) vacuousCaseIds.push(testCaseId);

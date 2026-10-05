@@ -342,7 +342,7 @@ describe("buildTraceRepairVerificationOverrides", () => {
       steps: candidate.steps,
       expectedToolCalls: candidate.expectedToolCalls,
       isNegativeTest: false,
-      predicates: candidate.predicates,
+      // The resolved list, which outranks the case's envelope.
       successPredicates: [{ type: "responseContains", needle: "ticket" }],
       runs: 1,
       // Removals are sent as removals, never left to fall back to the
@@ -360,7 +360,6 @@ describe("buildTraceRepairVerificationOverrides", () => {
       effectivePredicates: [],
     });
     expect(overrides.successPredicates).toEqual([]);
-    expect(overrides).not.toHaveProperty("predicates");
   });
 
   it("rewords the first prompt for a paraphrase run", () => {

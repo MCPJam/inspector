@@ -5442,7 +5442,7 @@ describe("v1 eval-edit — case can-it-fail warnings", () => {
     });
   });
 
-  it("saves a case with only noToolErrors and warns that it can never fail", async () => {
+  it("saves a case with only noToolErrors and warns that it passes on an empty answer", async () => {
     const res = await request("POST", CASES_URL, {
       title: "vacuous",
       steps: [{ id: "s1", kind: "prompt", prompt: "Summarize my tickets." }],
@@ -5453,15 +5453,30 @@ describe("v1 eval-edit — case can-it-fail warnings", () => {
     expect(body.warnings).toEqual([VACUOUS_WARNING]);
   });
 
-  it("warns on an update that leaves the case unable to fail", async () => {
+  it("warns on an update to the steps that leaves an empty answer passing", async () => {
+    const res = await request(
+      "PATCH",
+      `${CASES_URL}/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`,
+      { steps: [{ id: "s1", kind: "prompt", prompt: "Summarize." }] },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.warnings).toEqual([VACUOUS_WARNING]);
+  });
+
+  it("reads no suite for a rename, and says nothing", async () => {
     const res = await request(
       "PATCH",
       `${CASES_URL}/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`,
       { title: "still vacuous" },
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.warnings).toEqual([VACUOUS_WARNING]);
+    expect(((await res.json()) as any).warnings).toBeUndefined();
+    expect(
+      convexQueryMock.mock.calls.filter(
+        ([name]) => name === "testSuites:getTestSuite",
+      ),
+    ).toHaveLength(0);
   });
 
   it("warns per created entry in a batch, and only on the vacuous one", async () => {

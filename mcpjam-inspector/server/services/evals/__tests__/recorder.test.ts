@@ -327,7 +327,7 @@ describe("startSuiteRunWithRecorder", () => {
     expect(result.config.environment).toEqual(snapshotEnvironment);
   });
 
-  it("records at start which cases pass on an empty answer, judged by the suite", async () => {
+  it("records at start which cases pass on an empty answer, judged by the frozen judge", async () => {
     const start = {
       runId: "run-1",
       testCases: [
@@ -346,11 +346,21 @@ describe("startSuiteRunWithRecorder", () => {
         },
       ],
     };
-    const startWith = async (suite: Record<string, unknown>) => {
+    const suite = { defaultPredicates: [{ type: "noToolErrors" }] };
+    const startWith = async (judgeConfig?: Record<string, unknown>) => {
       const mutation = vi.fn(async (name: string) =>
-        name === "testSuites:startTestSuiteRun" ? start : undefined,
+        name === "testSuites:startTestSuiteRun"
+          ? {
+              ...start,
+              ...(judgeConfig ? { configSnapshot: { judgeConfig } } : {}),
+            }
+          : undefined,
       );
-      const query = vi.fn(async () => suite);
+      // The live suite supplies the default checks; never the judge.
+      const query = vi.fn(async () => ({
+        ...suite,
+        judgeConfig: { goalCompletion: { enabled: true, role: "required" } },
+      }));
       await startSuiteRunWithRecorder({
         convexClient: {
           mutation,
@@ -364,21 +374,20 @@ describe("startSuiteRunWithRecorder", () => {
       );
     };
 
-    // The suite's only default check passes when the agent does nothing.
+    // The suite's only default check passes when the agent does nothing, and
+    // the run froze an advisory judge.
     expect(
-      await startWith({ defaultPredicates: [{ type: "noToolErrors" }] }),
+      await startWith({ goalCompletion: { enabled: true, role: "advisory" } }),
     ).toEqual([
       [
         "testSuites:recordRunVacuousCases",
         { runId: "run-1", testCaseIds: ["tc-vacuous"] },
       ],
     ]);
-    // A required judge grades every case: none is recorded.
+    // The run froze a required judge, which grades every case: none is
+    // recorded.
     expect(
-      await startWith({
-        defaultPredicates: [{ type: "noToolErrors" }],
-        judgeConfig: { goalCompletion: { enabled: true, role: "required" } },
-      }),
+      await startWith({ goalCompletion: { enabled: true, role: "required" } }),
     ).toEqual([]);
   });
 

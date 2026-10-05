@@ -9,7 +9,7 @@ import {
 const vacuousWarning = {
   code: "case_passes_with_empty_answer",
   message:
-    "This case passes when the agent does nothing: every gating check passes on an empty answer, so it can never fail. Add an expected tool call or a check an empty answer fails (for example a response check).",
+    "This case passes even when the agent does nothing, so it cannot catch an agent that skips the task. Add an expected tool call or a check an empty answer fails (for example a response check).",
 };
 
 function fakeOp(result: unknown) {

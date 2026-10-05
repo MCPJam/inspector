@@ -2279,8 +2279,8 @@ export interface PlatformEvalCaseBase {
   /**
    * Authoring notes on a create or update response — never on a read. They
    * block nothing: the case was saved. `case_passes_with_empty_answer` means
-   * every gating check passes when the agent does nothing, so the case can
-   * never fail.
+   * every gating check passes even when the agent does nothing, so the case
+   * cannot catch an agent that skips the task.
    */
   warnings?: PlatformEvalCaseWarning[];
 }

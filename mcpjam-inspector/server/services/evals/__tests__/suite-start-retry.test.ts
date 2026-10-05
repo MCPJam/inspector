@@ -119,7 +119,13 @@ describe("suite launch conflict recovery", () => {
     );
     await vi.runAllTimersAsync();
     await runs;
-    expect(mutation).toHaveBeenCalledTimes(10);
+    // Start calls only: these bare cases pass on an empty answer, so each run
+    // also records them once (`testSuites:recordRunVacuousCases`).
+    expect(
+      mutation.mock.calls.filter(
+        ([name]) => name === "testSuites:startTestSuiteRun",
+      ),
+    ).toHaveLength(10);
     expect(action).toHaveBeenCalledTimes(5);
     expect(new Set(action.mock.calls.map(([, args]) => args.runId)).size).toBe(
       5,

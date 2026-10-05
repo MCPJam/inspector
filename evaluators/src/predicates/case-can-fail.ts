@@ -3,9 +3,9 @@
  *
  * A case whose only gating checks are things like `noToolErrors` passes when
  * the agent does NOTHING: no calls means no errors, and an empty answer
- * violates no ceiling. Such a case can never report a regression, so it is
- * worth a warning when it is authored and a refusal when trace repair rewrites
- * a case into one.
+ * violates no ceiling. Such a case cannot catch an agent that skips the task,
+ * so it is worth a warning when it is authored and a refusal when trace repair
+ * rewrites a case into one.
  *
  * The method is to grade the case against the answer it should never accept:
  * an EMPTY transcript — no calls, no results, empty final text, zero usage —
@@ -43,7 +43,7 @@ import type {
  * Kinds an empty transcript cannot feed. Their verdict on it says nothing
  * about what an agent could get away with, so they count as "can't tell".
  */
-export const CASE_CAN_FAIL_UNFED_KINDS = [
+const CASE_CAN_FAIL_UNFED_KINDS = [
   // Render observations exist only where a headless browser rendered a view.
   "widgetRendered",
   "widgetRenderLatencyUnder",

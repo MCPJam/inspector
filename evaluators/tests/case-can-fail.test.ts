@@ -1,9 +1,8 @@
+import { checkCaseCanFail, evaluatePredicates } from "../src/index";
 import {
   buildEmptyAnswerTranscript,
-  checkCaseCanFail,
-  evaluatePredicates,
   REQUIRED_GOAL_COMPLETION_JUDGE_LABEL,
-} from "../src/index";
+} from "../src/predicates/case-can-fail";
 import type { Predicate } from "../src/predicates/types";
 
 describe("checkCaseCanFail", () => {

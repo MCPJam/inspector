@@ -201,17 +201,11 @@ describe("per-case verdict-policy fields", () => {
 
       expect(res.status).toBe(200);
       expect(patchedCase().title).toBe("Renamed");
-      // The policy gate never reads the suite for an edit without policy
-      // fields. The only suite read is the post-write authoring check (the
-      // can-it-fail warning), which runs AFTER the update landed.
-      const writeOrder = convexMutationMock.mock.invocationCallOrder[0];
-      expect(writeOrder).toBeDefined();
-      convexQueryMock.mock.calls.forEach((call, index) => {
-        if (call[0] !== "testSuites:getTestSuite") return;
-        expect(convexQueryMock.mock.invocationCallOrder[index]).toBeGreaterThan(
-          writeOrder!,
-        );
-      });
+      expect(
+        convexQueryMock.mock.calls.filter(
+          (c) => c[0] === "testSuites:getTestSuite",
+        ),
+      ).toHaveLength(0);
     });
   });
 

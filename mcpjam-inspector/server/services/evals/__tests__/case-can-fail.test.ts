@@ -168,7 +168,7 @@ describe("goalCompletionJudgeRoleOf", () => {
 });
 
 describe("caseAuthoringWarnings", () => {
-  it("warns with the mirrored code and message on a case that can never fail", () => {
+  it("warns with the mirrored code and message on a case an empty answer passes", () => {
     expect(
       caseAuthoringWarnings({ steps: [prompt()] }, suiteWithDefaults),
     ).toEqual([
@@ -248,7 +248,7 @@ describe("recordRunVacuousCases", () => {
     expect(mutation).not.toHaveBeenCalled();
   });
 
-  it("does not guess when the judge setting is unknown or gating", async () => {
+  it("reads the judge the run froze: a required one leaves nothing to record", async () => {
     const mutation = vi.fn();
     const cases = [{ _id: "tc", steps: [prompt()] }];
     expect(
@@ -257,19 +257,20 @@ describe("recordRunVacuousCases", () => {
         "run-1",
         cases,
         () => [],
-        undefined,
+        requiredJudgeSuite.judgeConfig,
       ),
     ).toEqual([]);
+    expect(mutation).not.toHaveBeenCalled();
+    // No frozen judge is the default one: enabled and advisory.
     expect(
       await recordRunVacuousCases(
         { mutation },
         "run-1",
         cases,
         () => [],
-        requiredJudgeSuite,
+        undefined,
       ),
-    ).toEqual([]);
-    expect(mutation).not.toHaveBeenCalled();
+    ).toEqual(["tc"]);
   });
 
   it("never fails the run start when the backend refuses", async () => {

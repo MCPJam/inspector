@@ -317,8 +317,9 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
       duplicatePolicy: "block",
       cases: [item],
     });
-    // A committed case that can never fail is saved, and said so in its
-    // `warnings`. Best effort: an unreadable suite costs only the warning.
+    // A committed case that passes on an empty answer is saved, and said so
+    // in its `warnings`. Best effort: an unreadable suite costs only the
+    // warning.
     const suite = await convex
       .query("testSuites:getTestSuite" as any, { suiteId: request.suiteId })
       .catch(() => null);

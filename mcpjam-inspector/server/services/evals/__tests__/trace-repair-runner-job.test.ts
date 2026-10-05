@@ -349,7 +349,6 @@ describe("runTraceRepairJob candidate verification", () => {
   // The rewrite dropped every expected call: nothing left can fail.
   const vacuousPack = {
     session: { candidateRevisionId: "rev-cand" },
-    candidateSnapshotHash: "hash-cand",
     candidateSnapshot: {
       query: "hello",
       steps: [promptStep("hello")],
@@ -468,7 +467,7 @@ describe("runTraceRepairJob candidate verification", () => {
     expect(runEvalMock).toHaveBeenCalledTimes(1);
   });
 
-  it("verifies the candidate's own steps, checks and rubric, and attests it", async () => {
+  it("verifies the candidate's own steps, checks and rubric", async () => {
     const lifecycle = sessionLifecycle();
     const candidateSteps = [
       promptStep("Find the greeting tool and greet Ada."),
@@ -491,7 +490,6 @@ describe("runTraceRepairJob candidate verification", () => {
       suite: { defaultPredicates: [{ type: "noToolErrors" }] },
       verificationPack: {
         session: { candidateRevisionId: "rev-cand" },
-        candidateSnapshotHash: "hash-cand",
         candidateSnapshot: {
           query: "Find the greeting tool and greet Ada.",
           steps: candidateSteps,
@@ -538,7 +536,6 @@ describe("runTraceRepairJob candidate verification", () => {
       expectedToolCalls: [{ toolName: "greet", arguments: { name: "Ada" } }],
       expectedOutput: "",
       matchOptions: {},
-      predicates: candidatePredicates,
       // Suite default + the candidate's extension, resolved as live grading.
       successPredicates: [
         { type: "noToolErrors" },
@@ -547,13 +544,17 @@ describe("runTraceRepairJob candidate verification", () => {
       runs: 1,
     });
 
+    // The envelope is not sent: the resolved list above outranks it.
+    expect(overrides).not.toHaveProperty("predicates");
+    // The backend reads what ran off the iteration itself; the runner sends
+    // nothing a backend of any version would refuse.
     const record = mutation.mock.calls.find(
       ([name]) => name === "testSuites:recordRefinementVerificationRun",
     );
-    expect(record?.[1]).toMatchObject({
+    expect(record?.[1]).toEqual({
       sessionId: "sess-1",
-      candidateRevisionId: "rev-cand",
-      candidateSnapshotHash: "hash-cand",
+      label: "same-model-1",
+      iterationId: "ver-it-1",
     });
     expect(
       called(mutation, "testSuites:recordTraceRepairCandidateRejection"),
@@ -561,6 +562,75 @@ describe("runTraceRepairJob candidate verification", () => {
     expect(called(mutation, "testSuites:promoteRefinementCandidate")).toBe(
       true,
     );
+  });
+
+  it("verifies a candidate the can-it-fail check cannot read (fails open)", async () => {
+    const lifecycle = sessionLifecycle();
+    const candidateSnapshot = {
+      ...vacuousPack.candidateSnapshot,
+      // Read only by the check (for the judge opt-out); it throws there.
+      get judgeConfigOverride(): unknown {
+        throw new Error("unreadable");
+      },
+    };
+    const { convexClient, mutation } = createConvexStubs({
+      refinementSessionImpl: lifecycle.impl,
+      suite: { defaultPredicates: [{ type: "noToolErrors" }] },
+      verificationPack: { ...vacuousPack, candidateSnapshot },
+    });
+    recordingMutations(mutation, lifecycle);
+
+    await runTraceRepairJob({
+      convexClient,
+      convexAuthToken: "tok",
+      jobId: "job-1",
+    });
+
+    expect(
+      called(mutation, "testSuites:recordTraceRepairCandidateRejection"),
+    ).toBe(false);
+    expect(runEvalMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not count a refused promotion as promoted", async () => {
+    const lifecycle = sessionLifecycle();
+    const { convexClient, mutation } = createConvexStubs({
+      refinementSessionImpl: lifecycle.impl,
+      suite: {
+        defaultPredicates: [{ type: "noToolErrors" }],
+        judgeConfig: { goalCompletion: { enabled: true, role: "required" } },
+      },
+      verificationPack: vacuousPack,
+    });
+    mutation.mockImplementation(async (mn: string) => {
+      if (mn === "testSuites:requestTraceRepairCandidate") {
+        return { sessionId: "sess-1" };
+      }
+      if (mn === "testSuites:recordRefinementVerificationRun") {
+        lifecycle.markVerified();
+      }
+      if (mn === "testSuites:promoteRefinementCandidate") {
+        return {
+          success: false,
+          reason: "the case was edited after this repair started",
+        };
+      }
+      return {};
+    });
+
+    await runTraceRepairJob({
+      convexClient,
+      convexAuthToken: "tok",
+      jobId: "job-1",
+    });
+
+    expect(called(mutation, "testSuites:promoteRefinementCandidate")).toBe(
+      true,
+    );
+    expect(
+      called(mutation, "traceRepair:syncTraceRepairJobConfigAfterPromote"),
+    ).toBe(false);
+    expect(executeReplayMock).not.toHaveBeenCalled();
   });
 
   it("never verifies the stored case when the pack names no candidate", async () => {

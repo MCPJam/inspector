@@ -316,7 +316,8 @@ function withFirstPrompt(steps: TestStep[], prompt: string): TestStep[] {
  * old case under the new name. So an absent rubric is `""`, absent match
  * options are `{}`, a candidate without `steps` runs the turns its own legacy
  * fields describe, and the checks are the exact resolved list
- * (`successPredicates` outranks every other source).
+ * (`successPredicates` outranks every other source, the case's envelope
+ * included).
  *
  * @internal exported for unit tests
  */
@@ -357,7 +358,6 @@ export function buildTraceRepairVerificationOverrides(args: {
         : withFirstPrompt(steps, args.query),
     advancedConfig: candidate.advancedConfig ?? {},
     matchOptions: candidate.matchOptions ?? {},
-    ...(candidate.predicates ? { predicates: candidate.predicates } : {}),
     successPredicates: args.effectivePredicates,
     runs: 1,
   } as NonNullable<RunTestCaseRequest["testCaseOverrides"]>;
@@ -756,15 +756,6 @@ export async function runTraceRepairJob(
             attemptSigs.push("");
             continue;
           }
-          // What the runner attests on every verification run it records, so
-          // promotion is tied to THIS candidate (absent on an older backend).
-          const candidateAttestation =
-            typeof pack?.candidateSnapshotHash === "string"
-              ? {
-                  candidateRevisionId: sess.candidateRevisionId as string,
-                  candidateSnapshotHash: pack.candidateSnapshotHash as string,
-                }
-              : {};
           const candidatePredicates = resolveTraceRepairCandidatePredicates(
             candSnap,
             testCases.find(
@@ -774,13 +765,26 @@ export async function runTraceRepairJob(
             suite,
           );
 
-          // A rewrite that passes on an empty answer can never fail: refuse it
-          // the way the generation guardrails refuse a candidate, instead of
-          // verifying (and promoting) a case that cannot regress.
-          const canFail = checkStoredCaseCanFail(candSnap, suite, {
-            effectivePredicates: candidatePredicates,
-          });
-          if (canFail.vacuous) {
+          // A rewrite that passes on an empty answer cannot catch an agent
+          // that skips the task: refuse it the way the generation guardrails
+          // refuse a candidate, instead of verifying (and promoting) it. The
+          // check fails open — a candidate it cannot read is verified as usual.
+          let canFail: ReturnType<typeof checkStoredCaseCanFail> | undefined;
+          try {
+            canFail = checkStoredCaseCanFail(candSnap, suite, {
+              effectivePredicates: candidatePredicates,
+            });
+          } catch (error) {
+            logger.warn(
+              "[trace-repair] Could not check whether candidate can fail",
+              {
+                jobId,
+                sessionId,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
+          if (canFail?.vacuous) {
             try {
               await convexClient.mutation(
                 "testSuites:recordTraceRepairCandidateRejection" as any,
@@ -885,7 +889,6 @@ export async function runTraceRepairJob(
                   sessionId,
                   label: step.label,
                   iterationId,
-                  ...candidateAttestation,
                 },
               );
             } finally {
@@ -906,18 +909,28 @@ export async function runTraceRepairJob(
           }
 
           if (quickOutcome === "improved_test") {
-            await convexClient.mutation(
+            const promotion = (await convexClient.mutation(
               "testSuites:promoteRefinementCandidate" as any,
               {
                 sessionId,
               },
-            );
-            await convexClient.mutation(
-              "traceRepair:syncTraceRepairJobConfigAfterPromote" as any,
-              { jobId, leaseOwner },
-            );
-            promoted = true;
-            break;
+            )) as { success?: boolean; reason?: string } | null | undefined;
+            // A refusal (the verification did not run this candidate, or the
+            // case was edited meanwhile) settles the session; this attempt
+            // simply did not promote.
+            if (promotion?.success !== false) {
+              await convexClient.mutation(
+                "traceRepair:syncTraceRepairJobConfigAfterPromote" as any,
+                { jobId, leaseOwner },
+              );
+              promoted = true;
+              break;
+            }
+            logger.info("[trace-repair] Promotion refused", {
+              jobId,
+              sessionId,
+              reason: promotion.reason,
+            });
           }
 
           const sFinal = await convexClient.query(

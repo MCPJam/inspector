@@ -194,6 +194,7 @@ import {
 import { shouldSkipExecution } from "../shared/evals.js";
 import {
   caseAuthoringWarnings,
+  touchesCaseCanFailInputs,
   withCaseAuthoringWarnings,
   type CaseAuthoringWarning,
 } from "../../services/evals/case-can-fail.js";
@@ -9400,7 +9401,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     String(committed.testCaseId),
     "authorized",
   );
-  // A case that can never fail is saved, and said so — never refused.
+  // A case an empty answer passes is saved, and said so — never refused.
   return caseResource(c, created, 201, caseAuthoringWarnings(created, suite));
 });
 
@@ -9516,7 +9517,7 @@ evals.post(
     } catch (error) {
       throw translateConvexWriteError(error);
     }
-    // A case that can never fail is saved, and said so in its own entry.
+    // A case an empty answer passes is saved, and said so in its own entry.
     result = withCaseAuthoringWarnings(result, items, suite);
 
     // Committed entries are summaries, not full case DTOs. Reading back 100
@@ -9596,6 +9597,15 @@ evals.patch(
       existingProbeConfig: existing.probeConfig,
       vocabulary: vocabularyOf(c),
     });
+    // Whether the edited case can fail turns on the suite's default checks
+    // and judge — read alongside the write, and only when the edit touches
+    // what that verdict reads, so a rename pays no extra round trip. Best
+    // effort: an unreadable suite costs the warning, never the update.
+    const suiteForWarnings = touchesCaseCanFailInputs(args)
+      ? createConvexReadClient(token)
+          .query("testSuites:getTestSuite" as any, { suiteId })
+          .catch(() => null)
+      : Promise.resolve(null);
     const { convexClient } = createConvexClients(token);
     let updated: CaseDoc | null | undefined;
     try {
@@ -9624,16 +9634,11 @@ evals.patch(
         "authorized",
       );
     }
-    // The suite's default checks decide whether the edited case can fail.
-    // Best effort: an unreadable suite costs the warning, never the update.
-    const suiteForWarnings = await createConvexReadClient(token)
-      .query("testSuites:getTestSuite" as any, { suiteId })
-      .catch(() => null);
     return caseResource(
       c,
       updated,
       200,
-      caseAuthoringWarnings(updated, suiteForWarnings),
+      caseAuthoringWarnings(updated, await suiteForWarnings),
     );
   },
 );
