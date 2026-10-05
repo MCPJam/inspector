@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CaseRunSetup } from "../case-workspace/case-run-setup";
 // The harness × model picker locks read each host's config; these tests have
@@ -12,6 +12,9 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: () => null,
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+vi.mock("@/hooks/use-project-environment-capability", () => ({
+  useModelSelectionsSupported: () => true,
+}));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (select: any) => select({ themeMode: "light" }),
 }));
@@ -101,28 +104,91 @@ it("shows the suite-style controls and preserves provider-qualified model select
 });
 
 describe("Case run setup reasoning effort", () => {
-  it("shows the environment's effort read-only and offers no effort control", () => {
+  const GPT5 = {
+    id: "openai/gpt-5",
+    name: "GPT-5",
+    provider: "openai",
+    hosted: true,
+    supportedReasoningEfforts: ["low", "high"],
+  } as never;
+  const selection = (reasoningEffort?: string) =>
+    ({
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+      ...(reasoningEffort ? { settings: { reasoningEffort } } : {}),
+    }) as never;
+  const efforts = (picks: Array<{ selection?: any }>) =>
+    picks.map((pick) => pick.selection?.settings?.reasoningEffort);
+
+  async function openEfforts(trigger: HTMLElement) {
+    await userEvent.click(trigger);
+    await userEvent.click(
+      await screen.findByRole("option", { name: /GPT-5/ }),
+    );
+    return within(await screen.findByTestId("model-effort-menu"));
+  }
+
+  it("starts a plain pick at the suite environment's effort and changes it", async () => {
+    const onPicksChange = vi.fn();
     render(
       <CaseRunSetup
         {...props}
-        models={["openai/gpt-5"]}
-        availableModels={[
-          {
-            id: "gpt-5",
-            name: "GPT-5",
-            provider: "openai",
-            supportedReasoningEfforts: ["low", "high"],
-          } as never,
-        ]}
-        environmentEffort={(modelId) =>
-          modelId === "gpt-5" ? "high" : undefined
+        models={["openai/openai/gpt-5"]}
+        availableModels={[GPT5]}
+        environmentSelection={(modelId) =>
+          modelId === "openai/gpt-5" ? selection("high") : undefined
         }
+        onPicksChange={onPicksChange}
       />,
     );
-    expect(screen.getByTestId("case-run-environment-effort")).toHaveTextContent(
-      "gpt-5: High effort",
+    const menu = await openEfforts(screen.getByText("High").closest("button")!);
+    expect(menu.getByRole("menuitemradio", { name: "High" })).toHaveAttribute(
+      "aria-checked",
+      "true",
     );
-    expect(screen.queryByTestId("effort-control-trigger")).toBeNull();
+    await userEvent.click(menu.getByRole("menuitemradio", { name: "Low" }));
+    const picks = onPicksChange.mock.calls.at(-1)![0];
+    expect(picks.map((pick: any) => pick.modelValue)).toEqual([
+      "openai/openai/gpt-5",
+    ]);
+    expect(efforts(picks)).toEqual(["low"]);
+  });
+
+  it("adds the same model at another effort, so it runs at both", async () => {
+    const onPicksChange = vi.fn();
+    const key = "openai/openai/gpt-5\u0000low-key";
+    render(
+      <CaseRunSetup
+        {...props}
+        models={[key]}
+        selections={{ [key]: selection("low") }}
+        availableModels={[GPT5]}
+        onPicksChange={onPicksChange}
+      />,
+    );
+    const menu = await openEfforts(
+      screen.getByRole("button", { name: "Add model" }),
+    );
+    expect(menu.getByRole("menuitemradio", { name: "Low" })).toBeDisabled();
+    await userEvent.click(menu.getByRole("menuitemradio", { name: "High" }));
+    const picks = onPicksChange.mock.calls.at(-1)![0];
+    expect(picks.map((pick: any) => pick.modelValue)).toEqual([
+      "openai/openai/gpt-5",
+      "openai/openai/gpt-5",
+    ]);
+    expect(efforts(picks)).toEqual(["low", "high"]);
+  });
+
+  it("offers no effort control where the sheet writes plain model values", () => {
+    render(
+      <CaseRunSetup
+        {...props}
+        models={["openai/openai/gpt-5"]}
+        availableModels={[GPT5]}
+      />,
+    );
+    expect(screen.queryByText("High")).toBeNull();
+    expect(screen.queryByTestId("model-effort-menu")).toBeNull();
   });
 });
-
