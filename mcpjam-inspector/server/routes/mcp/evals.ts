@@ -62,6 +62,8 @@ const ReplayRunRequestSchema = z.object({
   // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
   // and the gate it produced could never fail.
   passCriteria: passCriteriaSchema.optional(),
+  /** `"failed_cases"` reruns only the cases that did not pass. */
+  scope: z.literal("failed_cases").optional(),
 });
 
 const TraceRepairStartSchema = z.discriminatedUnion("scope", [
@@ -249,7 +251,7 @@ evals.post("/replay-run", async (c) => {
       );
     }
 
-    const { runId, convexAuthToken, modelApiKeys, notes, passCriteria } =
+    const { runId, convexAuthToken, modelApiKeys, notes, passCriteria, scope } =
       validationResult.data;
 
     const convexClient = createConvexClient(convexAuthToken);
@@ -261,6 +263,7 @@ evals.post("/replay-run", async (c) => {
         modelApiKeys,
         notes,
         passCriteria,
+        ...(scope ? { scope } : {}),
       });
       return c.json(result);
     } catch (err) {

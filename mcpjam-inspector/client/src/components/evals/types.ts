@@ -1126,6 +1126,14 @@ export type EvalSuiteRun = {
     apiKeyId?: string | null;
   };
   replayedFromRunId?: string;
+  /**
+   * Set when this run re-ran a SUBSET of `rerunOfRunId`: only the cases that
+   * did not pass there. Its pass rate is biased by that selection, so it is
+   * never a suite's latest run, a trend point, a baseline, or part of a suite
+   * aggregate — see `isSubsetRerunRun`.
+   */
+  rerunOfRunId?: string;
+  rerunScope?: "failed_cases";
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;
   hasServerReplayConfig?: boolean;
