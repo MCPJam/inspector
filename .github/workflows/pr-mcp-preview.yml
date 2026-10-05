@@ -26,6 +26,10 @@ on:
       - closed
     paths:
       - "mcp/**"
+      # Workspace packages mcp builds against (mcp -> design-system, sdk; sdk -> evaluators)
+      - "design-system/**"
+      - "sdk/**"
+      - "evaluators/**"
       - ".github/workflows/pr-mcp-preview.yml"
 
 permissions:
