@@ -176,7 +176,10 @@ describe("setup execution budget", () => {
     });
     await Promise.all(
       Array.from({ length: 9 }, () =>
-        gate.create_project.execute!({}, { toolCallId: "c", messages: [] }),
+        gate.create_project.execute!(
+          {},
+          { toolCallId: "c", messages: [], context: {} },
+        ),
       ),
     );
     expect(execute).toHaveBeenCalledTimes(8);
@@ -200,7 +203,10 @@ describe("setup execution budget", () => {
       signal: new AbortController().signal,
     });
     await expect(
-      gate.create_project.execute!({}, { toolCallId: "c", messages: [] }),
+      gate.create_project.execute!(
+        {},
+        { toolCallId: "c", messages: [], context: {} },
+      ),
     ).rejects.toThrow();
     expect(s.writeCallsDispatched).toBe(1);
   });
@@ -288,7 +294,7 @@ describe("setup turn integration", () => {
       expect(Object.keys(args.tools!)).toEqual(["create_project"]);
       await args.tools!.create_project.execute!(
         {},
-        { toolCallId: "c", messages: [] },
+        { toolCallId: "c", messages: [], context: {} },
       );
       throw new Error("connection lost after write");
     });

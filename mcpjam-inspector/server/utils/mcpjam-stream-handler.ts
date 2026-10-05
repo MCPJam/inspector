@@ -36,6 +36,7 @@ import {
   describeAsSlug,
   describeError,
   isNormalizedError,
+  readModelOutputImage,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -186,11 +187,7 @@ function isModelVisibleImageOutput(value: unknown): boolean {
         partRecord.text.startsWith("[embedded image resource omitted:")
       );
     }
-    return (
-      (partRecord.type === "media" || partRecord.type === "image-data") &&
-      typeof partRecord.mediaType === "string" &&
-      partRecord.mediaType.startsWith("image/")
-    );
+    return readModelOutputImage(partRecord) !== undefined;
   });
 }
 
