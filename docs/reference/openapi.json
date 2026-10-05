@@ -21517,7 +21517,7 @@
         "properties": {
           "class": {
             "type": "string",
-            "description": "`provider_unavailable`, `rate_limited`, `capacity`, `auth`, `account_limit`, `configuration`, `sandbox` or `worker_lost`. Read unknown values as an infrastructure failure of an unnamed kind."
+            "description": "`provider_unavailable`, `rate_limited`, `capacity`, `auth`, `account_limit`, `configuration` or `sandbox`. Read unknown values as an infrastructure failure of an unnamed kind."
           },
           "layer": {
             "type": "string",

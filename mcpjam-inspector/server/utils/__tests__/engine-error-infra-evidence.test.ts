@@ -66,6 +66,13 @@ vi.mock("@sentry/node", () => ({
   captureMessage: vi.fn(),
 }));
 
+/** As the runner classifies a `/stream` failure: on MCPJam's own keys. */
+function classifyOnPlatform(infra: MCPJamEngineErrorEvent["infra"]) {
+  return infra
+    ? classifyEvalInfraError({ ...infra, endpoint: "platform" })
+    : undefined;
+}
+
 function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -140,7 +147,7 @@ describe("infra evidence on a non-OK /stream response", () => {
       source: "backend_model",
       code: "unknown_error",
     });
-    expect(classifyEvalInfraError(event!.infra)).toBeUndefined();
+    expect(classifyOnPlatform(event!.infra)).toBeUndefined();
   });
 
   it("a categorized provider failure carries the UPSTREAM status from the body", async () => {
@@ -161,7 +168,7 @@ describe("infra evidence on a non-OK /stream response", () => {
       code: "provider_error",
       httpStatus: 503,
     });
-    expect(classifyEvalInfraError(event!.infra)).toMatchObject({
+    expect(classifyOnPlatform(event!.infra)).toMatchObject({
       class: "provider_unavailable",
       layer: "model",
     });
@@ -183,7 +190,7 @@ describe("infra evidence on a non-OK /stream response", () => {
       source: "backend_model",
       code: "provider_overloaded",
     });
-    expect(classifyEvalInfraError(event!.infra)).toBeUndefined();
+    expect(classifyOnPlatform(event!.infra)).toBeUndefined();
   });
 
   it("agent_turn_limit is the platform's admission cap, not a timeout", async () => {
@@ -200,7 +207,7 @@ describe("infra evidence on a non-OK /stream response", () => {
         429,
       ),
     );
-    expect(classifyEvalInfraError(event!.infra)).toEqual({
+    expect(classifyOnPlatform(event!.infra)).toEqual({
       class: "account_limit",
       layer: "platform",
       retryable: false,
@@ -252,7 +259,7 @@ describe("infra evidence on a mid-stream error chunk", () => {
       code: "mcpjam_rate_limit",
       httpStatus: 429,
     });
-    expect(classifyEvalInfraError(events[0]!.infra)).toMatchObject({
+    expect(classifyOnPlatform(events[0]!.infra)).toMatchObject({
       class: "rate_limited",
     });
   });

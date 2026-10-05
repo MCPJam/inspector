@@ -3446,7 +3446,7 @@ export interface PlatformEvalIterationUsage {
 export interface PlatformEvalInfraError {
   /**
    * `provider_unavailable`, `rate_limited`, `capacity`, `auth`,
-   * `account_limit`, `configuration`, `sandbox` or `worker_lost`. Typed as a
+   * `account_limit`, `configuration` or `sandbox`. Typed as a
    * string so a class added later still reads.
    */
   class: string;

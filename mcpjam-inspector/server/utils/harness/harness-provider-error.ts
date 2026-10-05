@@ -1,23 +1,10 @@
 /**
- * STRUCTURED failure evidence for a harness turn, preserved from the producer
- * that actually knew it (see `../infra-failure-evidence.ts`).
- *
- * A harness turn dies in one of three of OUR layers — the model provider the
- * in-sandbox agent called, the sandbox it ran in, or the platform plumbing
- * between them (box reservation, credential broker) — or for a reason that
- * says something about the customer's server.
- *
- * Both bridges run inside the sandbox and talk to the host over the harness
- * wire, whose error part is `error: unknown` and whose bridge serializer
- * flattens an `Error` to `{name, message, stack}`. So the hosted Claude Code
- * bridge (`claude-code-typed-errors.ts`) sends a PLAIN OBJECT of the
- * {@link HarnessProviderErrorWire} shape instead of a string; Codex already
- * forwards its typed `codexErrorInfo` as a `raw` notification, read with
- * {@link codexProviderEvidenceFromNotification}. A producer with no structured
- * evidence sends what it always sent, and the failure stays unclassified —
- * the gap is left visible, not papered over by reading stderr or model text.
- *
- * Kept free of Node and server imports: pure data shaping, unit-testable.
+ * Producer-typed failure evidence for a harness turn
+ * (`../infra-failure-evidence.ts`). The bridges run in the sandbox behind a
+ * wire whose error part is `error: unknown`, so the hosted Claude Code bridge
+ * sends a {@link HarnessProviderErrorWire} object (`claude-code-typed-errors.ts`)
+ * and Codex's typed `codexErrorInfo` is read off its `raw` notifications.
+ * Anything else carries no evidence and stays unclassified. Pure data shaping.
  */
 import {
   httpStatusOrUndefined,

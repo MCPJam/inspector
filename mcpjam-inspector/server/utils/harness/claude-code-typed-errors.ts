@@ -1,34 +1,18 @@
 /**
- * HOSTED Claude Code: typed terminal errors (eval infra-error classification).
+ * HOSTED Claude Code: typed terminal errors for the eval infra classifier.
  *
- * The bridge already SEES the structured facts a model-provider failure
- * carries — `api_retry.error_status` (the upstream HTTP status Claude Code is
- * retrying) and the SDK's typed assistant `error` category (`rate_limit`,
- * `server_error`, `authentication_failed`, `billing_error`, …) — and then
- * throws them away: `emitTerminalError` sends a bare sentence, which the
- * harness wire carries as `error: unknown` and the host can only read as
- * prose. An eval then scores a provider 529 against the customer's server.
+ * The bridge sees a model-call failure's structured facts — `api_retry`'s
+ * upstream `error_status` and the SDK's assistant `error` category — but sends
+ * only a sentence. This patch keeps the last model-call evidence on the turn's
+ * stream state (cleared whenever a call succeeds again) and sends a plain
+ * `HarnessProviderError` object (`harness-provider-error.ts`) when, and only
+ * when, such evidence exists.
  *
- * This patch keeps the last model-call evidence on the turn's own stream
- * state, clears it whenever the model call SUCCEEDS again (so a recovered
- * retry cannot label a later, unrelated failure), and sends a plain
- * `HarnessProviderError` object instead of the sentence when — and only when —
- * structured evidence exists (`harness-provider-error.ts`). No evidence: the
- * bridge sends exactly what it sent before.
- *
- * WHY A SEPARATE MODULE, applied only by the registry's hosted adapter:
- * `claude-code-bootstrap.ts` and the bridge bytes it emits are LOCAL RUNTIME
- * PACK inputs (`scripts/check-local-harness-inputs.mjs`). Editing them would
- * force re-publishing the signed local packs before any release. A local
- * session never runs this recipe anyway — `withLocalPackBootstrap` replaces
- * `getBootstrap` with the verified pack's own — so the hosted (E2B) recipe is
- * the only one that changes.
- *
- * NOT all-or-nothing-throws like the bootstrap patches: a missing anchor
- * leaves the bridge untyped (failures stay unclassified, the safe direction)
- * and `registry.test.ts` asserts the PINNED bridge takes the patch, so a
- * version bump that moves an anchor fails CI loudly instead of breaking every
- * hosted turn.
+ * Applied only by the registry's hosted adapter: the shared bootstrap is a
+ * local runtime pack input (`scripts/check-local-harness-inputs.mjs`), and a
+ * local session swaps in its pack's own bootstrap. A moved anchor leaves the
+ * bridge untyped (the safe direction); `registry.test.ts` pins that the pinned
+ * bridge takes the patch.
  */
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";

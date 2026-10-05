@@ -145,7 +145,10 @@ import {
   harnessFailureEvidenceOf,
   harnessFailureMessageOf,
 } from "./harness-provider-error.js";
-import type { InfraFailureEvidence } from "../infra-failure-evidence.js";
+import type {
+  InfraFailureEvidence,
+  ModelEndpointOwnership,
+} from "../infra-failure-evidence.js";
 import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
@@ -1031,6 +1034,12 @@ export async function runHarnessTurn(
    * structured evidence — never derived from the error's text.
    */
   let rawProviderEvidence: InfraFailureEvidence | undefined;
+  /**
+   * Whose model endpoint the agent runtime called, once its auth is decided:
+   * MCPJam's model proxy (broker lease, local loopback gateway), or the
+   * customer's own account with a first-party provider (external account).
+   */
+  let modelEndpoint: ModelEndpointOwnership | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -2320,7 +2329,9 @@ export async function runHarnessTurn(
         // than by the child. What the child gets here is that gateway's URL and
         // a per-session capability that means nothing anywhere else.
         auth = localPrepared.auth;
+        modelEndpoint = "platform";
       } else if (externalAccountAuth) {
+        modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
         // skipped rather than made conditional inside it. `brokerRunId` stays
         // unset, which is what keeps teardown from issuing a revoke for a lease
@@ -2369,6 +2380,7 @@ export async function runHarnessTurn(
         clearReservationHeartbeat();
         reservationHeld = false;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+        modelEndpoint = "platform";
       }
       tBroker = Date.now();
 
@@ -4004,8 +4016,12 @@ export async function runHarnessTurn(
       // flattens Error instances), so `String(err)` would read
       // "[object Object]". Its structured fields ride separately below.
       const errorText = harnessFailureMessageOf(err);
+      const typedEvidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+      // A runtime's provider failure says whose endpoint it came from.
       const failureEvidence =
-        harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+        typedEvidence?.source === "harness_runtime" && modelEndpoint
+          ? { ...typedEvidence, endpoint: modelEndpoint }
+          : typedEvidence;
       // Reporter, not a bare logger.error: the old call captured to Sentry
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only

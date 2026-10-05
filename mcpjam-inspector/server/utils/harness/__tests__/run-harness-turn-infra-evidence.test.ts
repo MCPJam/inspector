@@ -216,6 +216,8 @@ describe("runHarnessTurn — structured failure evidence", () => {
         source: "harness_runtime",
         code: "claude_code_server_error",
         httpStatus: 529,
+        // The broker lease: MCPJam's own model proxy.
+        endpoint: "platform",
       },
     });
     expect(classifyEvalInfraError(event!.infra)).toMatchObject({

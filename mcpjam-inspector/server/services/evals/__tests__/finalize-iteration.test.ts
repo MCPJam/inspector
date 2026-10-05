@@ -808,6 +808,56 @@ describe("finalizeEvalIteration — infra errors", () => {
     expect(update?.args).not.toHaveProperty("infraError");
   });
 
+  test("retries once without infraError when the backend predates the field", async () => {
+    // Deploy skew: an older backend rejects the unknown argument by name.
+    const calls: Array<Record<string, unknown>> = [];
+    const client = {
+      query: vi.fn(async () => ({ status: "running" })),
+      action: vi.fn(async (ref: string, args: Record<string, unknown>) => {
+        if (ref !== "testSuites:updateTestIteration") return undefined;
+        calls.push(args);
+        if ("infraError" in args) {
+          throw new Error(
+            "ArgumentValidationError: Object contains extra field `infraError` that is not in the validator.",
+          );
+        }
+        return undefined;
+      }),
+    } as unknown as ConvexHttpClient;
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      infraError,
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ status: "failed", result: "failed" });
+    expect(calls[1]).not.toHaveProperty("infraError");
+  });
+
+  test("any other write failure is not retried", async () => {
+    const { client, calls } = makeClient({
+      updateThrows: new Error("Server Error"),
+    });
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      infraError,
+    });
+    expect(
+      calls.filter((call) => call.ref === "testSuites:updateTestIteration"),
+    ).toHaveLength(1);
+  });
+
   test("an ordinary failed write is byte-identical to before (no infraError key)", async () => {
     const { client, calls } = makeClient({});
     await finalizeEvalIteration({

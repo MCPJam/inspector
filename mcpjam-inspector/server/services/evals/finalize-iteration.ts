@@ -1117,6 +1117,34 @@ export type FinalizeEvalIterationParams = {
 };
 
 /**
+ * The terminal `updateTestIteration` write. A backend that predates
+ * `infraError` rejects the unknown argument by name (deploy skew): the row is
+ * then written once more without it — counted as it was before the field
+ * existed — rather than left `running` for the stale sweep.
+ */
+async function writeIterationResult(
+  convexClient: ConvexHttpClient,
+  args: Record<string, unknown> & { iterationId: string },
+): Promise<void> {
+  try {
+    await convexClient.action("testSuites:updateTestIteration" as any, args);
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    if (args.infraError === undefined || !message.includes("infraError")) {
+      throw caught;
+    }
+    logger.warn("[evals] backend rejected infraError; writing without it", {
+      iterationId: args.iterationId,
+    });
+    const { infraError: _infraError, ...withoutInfraError } = args;
+    await convexClient.action(
+      "testSuites:updateTestIteration" as any,
+      withoutInfraError,
+    );
+  }
+}
+
+/**
  * Shared finalize step for both the multi-iteration suite-run recorder
  * (`SuiteRunRecorder.finishIteration`) and the quick-run direct path
  * (where `runId === null`). Owns:
@@ -1324,7 +1352,7 @@ export async function finalizeEvalIteration(
   let iterationGoneOrCancelled = false;
   const usagePayload = buildIterationUsagePayload(usage);
   try {
-    await convexClient.action("testSuites:updateTestIteration" as any, {
+    await writeIterationResult(convexClient, {
       iterationId,
       status: iterationStatus === "completed" ? "completed" : iterationStatus,
       result,

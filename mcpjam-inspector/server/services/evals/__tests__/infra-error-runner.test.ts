@@ -67,6 +67,7 @@ import {
   codexProviderEvidenceFromNotification,
   harnessFailureEvidenceOf,
 } from "../../../utils/harness/harness-provider-error";
+import { HARNESS_PROXY_REFUSAL_STATUS } from "../infra-error-classification";
 
 type Turn = (opts: any) => Promise<unknown>;
 
@@ -99,6 +100,7 @@ async function runSuite(
   runs: number,
   model: string,
   budgets = defaultEvalExecutionBudgets(),
+  provider = "openai",
 ) {
   const rows = Array.from({ length: runs }, (_, index) => ({
     _id: `iter-${index + 1}`,
@@ -148,7 +150,7 @@ async function runSuite(
           // `gpt-5-mini` is MCPJam-provided: the HOSTED runner, through
           // `/stream`. `gpt-4-turbo` runs LOCALLY on the caller's key.
           model,
-          provider: "openai",
+          provider,
           runs,
           testCaseId: "case-1",
           expectedToolCalls: [],
@@ -312,7 +314,8 @@ describe("hosted runner — agent-runtime producers", () => {
       failingTurn({
         message: wire.message,
         phase: "stream",
-        infra: harnessFailureEvidenceOf(wire),
+        // `runHarnessTurn` stamps the endpoint: a broker lease is ours.
+        infra: { ...harnessFailureEvidenceOf(wire)!, endpoint: "platform" },
       }),
     ]);
     expect(rows[0]).toMatchObject({
@@ -340,7 +343,11 @@ describe("hosted runner — agent-runtime producers", () => {
       },
     });
     const { rows } = await runHosted([
-      failingTurn({ message: "exceeded retry limit", phase: "stream", infra }),
+      failingTurn({
+        message: "exceeded retry limit",
+        phase: "stream",
+        infra: { ...infra!, endpoint: "platform" },
+      }),
     ]);
     expect(rows[0]).toMatchObject({
       status: "failed",
@@ -350,6 +357,22 @@ describe("hosted runner — agent-runtime producers", () => {
         httpStatus: 429,
       },
     });
+  });
+
+  it("a lease cap the model proxy refused is measured, like a turn timeout", async () => {
+    const { rows } = await runHosted([
+      failingTurn({
+        message: "API Error: 409 Lease budget_exhausted",
+        phase: "stream",
+        infra: {
+          source: "harness_runtime",
+          endpoint: "platform",
+          httpStatus: HARNESS_PROXY_REFUSAL_STATUS,
+        },
+      }),
+    ]);
+    expect(rows[0]).toMatchObject({ status: "completed", passed: false });
+    expect(rows[0]).not.toHaveProperty("infraError");
   });
 
   it("a typed sandbox setup failure is excluded as a sandbox failure", async () => {
@@ -432,6 +455,23 @@ describe("local runner — the provider's own typed answer", () => {
       status: "failed",
       infraError: { class: "auth", layer: "model", retryable: false },
     });
+  });
+
+  it("a customer-controlled endpoint's 503 is a measured failure, never infra", async () => {
+    // Ollama (or a `custom:` provider) is the customer's own server: it can
+    // answer 503 on exactly the cases it would fail.
+    streamTextMock.mockReturnValueOnce(
+      streamThatFailedWith({
+        name: "AI_APICallError",
+        message: "Service Unavailable",
+        statusCode: 503,
+        isRetryable: true,
+      }),
+    );
+    const { rows } = await runSuite(1, "llama3", undefined, "ollama");
+    expect(rows[0]).toMatchObject({ passed: false });
+    expect(rows[0]!.status).not.toBe("failed");
+    expect(rows[0]).not.toHaveProperty("infraError");
   });
 
   it("a request the provider rejected (400) is still a measured failure", async () => {

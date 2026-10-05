@@ -49,7 +49,11 @@ import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
-import type { InfraFailureEvidence } from "../utils/infra-failure-evidence.js";
+import {
+  byokEndpointOwnership,
+  type InfraFailureEvidence,
+  type ModelEndpointOwnership,
+} from "../utils/infra-failure-evidence.js";
 import {
   buildLocalStepHandlers,
   buildHostedStepHandlers,
@@ -791,19 +795,28 @@ export type EvalIterationOutcome = {
 
 /**
  * Did OUR infrastructure fail this iteration? Classifies the failed turn's
- * STRUCTURED evidence only (`evals/infra-error-classification.ts`).
- *
- * Nothing for an iteration with no error, and nothing for a TIMEOUT (a turn or
- * iteration clock fired): a budget is the user's ceiling, so a trial that ran
- * out of clock stays a measured failure whatever else it carries.
+ * structured evidence (`evals/infra-error-classification.ts`), stamping a
+ * model-call failure with who owns the endpoint this iteration called. Never
+ * for a timeout: a budget is the user's ceiling.
  */
-export function resolveIterationInfraError(result: {
-  iterationError?: string;
-  timeout?: unknown;
-  errorInfra?: InfraFailureEvidence;
-}): EvalInfraError | undefined {
+export function resolveIterationInfraError(
+  result: {
+    iterationError?: string;
+    timeout?: unknown;
+    errorInfra?: InfraFailureEvidence;
+  },
+  modelEndpoint: ModelEndpointOwnership,
+): EvalInfraError | undefined {
   if (!result.iterationError || result.timeout) return undefined;
-  return classifyEvalInfraError(result.errorInfra);
+  const evidence = result.errorInfra;
+  return classifyEvalInfraError(
+    evidence &&
+      !evidence.endpoint &&
+      (evidence.source === "backend_model" ||
+        evidence.source === "provider_call")
+      ? { ...evidence, endpoint: modelEndpoint }
+      : evidence,
+  );
 }
 
 /**
@@ -5656,11 +5669,16 @@ const runLocalIteration = async ({
     // only; a pinned setup failure is the server's, never infra.
     const localInfraError = acc.pinnedSetupFailure
       ? undefined
-      : resolveIterationInfraError({
-          iterationError: acc.iterationError,
-          timeout: acc.timeout,
-          errorInfra: acc.stepErrorEvidence,
-        });
+      : resolveIterationInfraError(
+          {
+            iterationError: acc.iterationError,
+            timeout: acc.timeout,
+            errorInfra: acc.stepErrorEvidence,
+          },
+          // A direct call on the caller's own key: ours to exclude only when
+          // it reached a first-party hosted provider.
+          byokEndpointOwnership(modelDefinition.provider),
+        );
     const finishParams = buildIterationFinishParams({
       iterationId,
       // The layer that failed, when this driver could tell — the local twin of
@@ -5948,11 +5966,14 @@ const runLocalIteration = async ({
     // carries `infraError`, which is what excludes and refunds it.
     const failInfraError =
       failStatus === "failed"
-        ? resolveIterationInfraError({
-            iterationError: errorMessage ?? acc.iterationError,
-            timeout: iterationMetadataBase.timeout,
-            errorInfra: acc.stepErrorEvidence,
-          })
+        ? resolveIterationInfraError(
+            {
+              iterationError: errorMessage ?? acc.iterationError,
+              timeout: iterationMetadataBase.timeout,
+              errorInfra: acc.stepErrorEvidence,
+            },
+            byokEndpointOwnership(modelDefinition.provider),
+          )
         : undefined;
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
@@ -7182,7 +7203,18 @@ const runHostedIterationWithBrowser = async (
   // failure of the server under test is never re-labelled as infra.
   const infraError = pinnedSetupFailure
     ? undefined
-    : resolveIterationInfraError(result);
+    : resolveIterationInfraError(
+        result,
+        // `/stream` runs on MCPJam's own keys; `/stream/org` on the org's
+        // connection, ours to exclude only for a first-party hosted provider.
+        endpointPath === "/stream/org"
+          ? byokEndpointOwnership(
+              typeof extraBodyFields?.providerKey === "string"
+                ? extraBodyFields.providerKey
+                : undefined,
+            )
+          : "platform",
+      );
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
   hostedStepScriptedFailures = buildStepScriptedCheckFailures(stepState);

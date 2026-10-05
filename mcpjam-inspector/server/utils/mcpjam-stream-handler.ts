@@ -565,13 +565,9 @@ export interface MCPJamEngineErrorEvent {
    */
   phase?: "setup" | "stream";
   /**
-   * STRUCTURED evidence that one of OUR layers failed, stamped by the producer
-   * that knew it (`utils/infra-failure-evidence.ts`): the backend's own
-   * `{code, statusCode}` envelope, a harness bridge's typed provider error, a
-   * typed harness setup step. Absent when the producer had none — a consumer
-   * must then treat the failure as UNCLASSIFIED, never infer it from the
-   * message. Read only by the eval infra-error classifier
-   * (`services/evals/infra-error-classification.ts`).
+   * Producer-typed evidence that one of OUR layers failed
+   * (`utils/infra-failure-evidence.ts`); absent ⇒ unclassified. Read only by
+   * the eval infra-error classifier.
    */
   infra?: InfraFailureEvidence;
   /**
