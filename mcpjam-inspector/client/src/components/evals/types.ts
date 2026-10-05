@@ -641,16 +641,15 @@ export type EvalIteration = {
   /**
    * PR-4 R6: present on iterations whose transcript was written via the
    * unified chatSessions path (eval→chatSessions writer flag on).
-   * Trace-repair candidate selection considers iterations with either
-   * `blob` or `chatSessionId` as trace-bearing — both source paths feed
-   * the source-aware `getTestIterationBlob` action.
+   * An iteration with either `blob` or `chatSessionId` is trace-bearing —
+   * both source paths feed the source-aware `getTestIterationBlob` action.
    */
   chatSessionId?: string;
   /**
    * PR-4 R6: set when the inspector's fanout-failure fallback flipped
-   * the iteration to legacy-only reads. Doesn't change trace-repair
-   * eligibility — readers still get a usable transcript via
-   * `getTestIterationBlob` regardless of which source feeds it.
+   * the iteration to legacy-only reads. Readers still get a usable
+   * transcript via `getTestIterationBlob` regardless of which source
+   * feeds it.
    */
   preferLegacyBlob?: boolean;
   /**
@@ -1145,8 +1144,6 @@ export type EvalSuiteRun = {
    */
   rerunOfRunId?: string;
   rerunScope?: "failed_cases";
-  /** Set when this run was created by the Auto fix suite replay step. */
-  traceRepairJobId?: string;
   hasServerReplayConfig?: boolean;
   externalRunId?: string;
   framework?: string;
@@ -1506,70 +1503,6 @@ export type EvalRunDiff = {
       estimatedCostUsd: EvalRunNumericDiff;
     };
   }>;
-};
-
-export type EvalRefinementSession = {
-  _id: string;
-  status: "pending_candidate" | "ready" | "verifying" | "completed" | "failed";
-  outcome?: "improved_test" | "still_ambiguous" | "server_likely";
-  failureSignature?: string;
-  testWeaknessHypothesis?: string;
-  serverHypothesis?: string;
-  confidenceChecklist?: string[];
-  candidateParaphraseQuery?: string;
-  verificationRuns: Array<{
-    label: string;
-    iterationId?: string;
-    provider: string;
-    model: string;
-    query: string;
-    passed: boolean;
-    failureSignature?: string;
-  }>;
-  attributionSummary?: string;
-  promotedAt?: number;
-  updatedAt: number;
-  baseSnapshot?: {
-    caseKey?: string;
-    title: string;
-    query: string;
-    runs: number;
-    models: Array<{ model: string; provider: string }>;
-    expectedToolCalls: Array<{
-      toolName: string;
-      arguments: Record<string, any>;
-    }>;
-    isNegativeTest?: boolean;
-    scenario?: string;
-    expectedOutput?: string;
-    advancedConfig?: Record<string, unknown>;
-  };
-  candidateSnapshot?: {
-    caseKey?: string;
-    title: string;
-    query: string;
-    runs: number;
-    models: Array<{ model: string; provider: string }>;
-    expectedToolCalls: Array<{
-      toolName: string;
-      arguments: Record<string, any>;
-    }>;
-    isNegativeTest?: boolean;
-    scenario?: string;
-    expectedOutput?: string;
-    advancedConfig?: Record<string, unknown>;
-  };
-};
-
-export type EvalRunRefinementCase = {
-  sourceIterationId: string;
-  testCaseId?: string;
-  caseKey: string;
-  title: string;
-  query: string;
-  failureSignature?: string;
-  failureStreak: number;
-  session: EvalRefinementSession | null;
 };
 
 export type EvalSuiteOverviewEntry = {
