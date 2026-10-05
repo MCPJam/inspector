@@ -232,4 +232,44 @@ describe("mcp replay route", () => {
       expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
     });
   });
+
+  // E3: the scope is forwarded as a rerun of the source run, only when set.
+  describe("the failed-cases scope", () => {
+    async function replay(body: Record<string, unknown>): Promise<Response> {
+      return createApp().request("/api/mcp/evals/replay-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "source-run",
+          convexAuthToken: "token-123",
+          ...body,
+        }),
+      });
+    }
+
+    it("forwards the scope as a rerun of the source run", async () => {
+      const response = await replay({ scope: "failed_cases" });
+
+      expect(response.status).toBe(200);
+      expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          replayedFromRunId: "source-run",
+          rerunOfRunId: "source-run",
+          rerunScope: "failed_cases",
+        }),
+      );
+    });
+
+    it("sends no rerun args on an unscoped replay", async () => {
+      const response = await replay({});
+
+      expect(response.status).toBe(200);
+      const args = startSuiteRunWithRecorderMock.mock.calls[0]![0] as Record<
+        string,
+        unknown
+      >;
+      expect(args).not.toHaveProperty("rerunOfRunId");
+      expect(args).not.toHaveProperty("rerunScope");
+    });
+  });
 });

@@ -22,6 +22,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
+  assertValidEvalVerdictTrialStatistics,
+  evalVerdictTrialStatistics,
+  type EvalVerdictDecision,
+} from "@mcpjam/sdk/contract";
+import {
   toRunVerdictProjection,
   toSuiteVerdictPolicyDto,
 } from "../eval-verdict-projection.js";
@@ -82,7 +87,36 @@ describe("toRunVerdictProjection", () => {
     ).toEqual({
       verdictPolicyVersion: 2,
       verdictSummary: acceptedDecision,
+      trialStatistics: evalVerdictTrialStatistics(
+        acceptedDecision as unknown as EvalVerdictDecision,
+      ),
     });
+  });
+
+  it("projects trial statistics beside the decision, never inside it", () => {
+    const projected = toRunVerdictProjection({
+      verdictPolicyVersion: 2,
+      verdictSummary: acceptedDecision,
+    });
+    const decision = projected.verdictSummary as EvalVerdictDecision;
+    // REPORT ONLY: the published decision is byte-for-byte the stored one —
+    // a shipped client parses it as closed and would refuse an extra field.
+    expect(JSON.stringify(decision)).toBe(JSON.stringify(acceptedDecision));
+    expect(JSON.stringify(decision)).not.toContain("passAtK");
+    // One row per case aggregate, k = n, and exactly what its counts produce.
+    expect(() =>
+      assertValidEvalVerdictTrialStatistics(
+        projected.trialStatistics,
+        decision,
+      ),
+    ).not.toThrow();
+    const statistics = projected.trialStatistics as ReturnType<
+      typeof evalVerdictTrialStatistics
+    >;
+    expect(statistics.unit).toBe("caseVariant");
+    expect(statistics.cases.map((row) => row.k)).toEqual(
+      decision.cases.map((row) => row.eligibleTrials),
+    );
   });
 
   it("keeps the version when the stored decision does not validate", () => {

@@ -12,8 +12,10 @@
 import type {
   CompareGateInput,
   DeterministicScoreRegression,
+  EvalVerdictTrialStatistics,
   GateInput,
   GatePolicy,
+  ProportionSample,
 } from "@mcpjam/sdk";
 import type {
   PlatformEvalIteration,
@@ -182,8 +184,76 @@ export function iterationWeightingEqualFrom(
   return true;
 }
 
+/** Where a comparison's pass-rate sample came from. */
+export type CompareSampleBasis = "eligibleTrials" | "legacySummary";
+
+export type CompareSample = {
+  basis: CompareSampleBasis;
+  base: ProportionSample;
+  compare: ProportionSample;
+};
+
+/**
+ * The sample each side of the pass-rate comparison is sized by.
+ *
+ * `summary.total` is not one unit: it counts iterations for a hosted legacy
+ * run, variant-collapsed cases for an SDK legacy run, and case variants for a
+ * per-case-graded run. A Newcombe interval over it weighs the same evidence as
+ * 3 observations on one surface and 15 on another. So when BOTH sides carry
+ * per-case-graded trial statistics, the sample is their ELIGIBLE TRIALS — one
+ * unit everywhere, with infrastructure failures and evaluator errors already
+ * out of it. Otherwise BOTH sides fall back to the legacy summary: never one
+ * of each, which would set a trial count against a case count.
+ */
+export function compareSampleFrom(compare: PlatformRunCompare): CompareSample {
+  const baseStatistics = compare.baseRun.trialStatistics;
+  const compareStatistics = compare.compareRun.trialStatistics;
+  if (baseStatistics !== undefined && compareStatistics !== undefined) {
+    return {
+      basis: "eligibleTrials",
+      base: {
+        total: baseStatistics.eligibleTrials,
+        passed: baseStatistics.passedTrials,
+      },
+      compare: {
+        total: compareStatistics.eligibleTrials,
+        passed: compareStatistics.passedTrials,
+      },
+    };
+  }
+  const legacy = (
+    summary: PlatformRunCompare["baseRun"]["summary"]
+  ): ProportionSample => ({
+    total: summary?.total ?? 0,
+    passed: summary?.passed ?? 0,
+  });
+  return {
+    basis: "legacySummary",
+    base: legacy(compare.baseRun.summary),
+    compare: legacy(compare.compareRun.summary),
+  };
+}
+
+/**
+ * The report-only trial statistics `eval compare` prints beside its gate
+ * report: which sample sized the comparison, and each side's per-case pass@k,
+ * pass^k and Wilson interval rows (`null` for a side that carries none — a
+ * legacy run, or a deployment predating the field). Never gated on.
+ */
+export function compareTrialStatisticsFrom(compare: PlatformRunCompare): {
+  sample: CompareSample;
+  base: EvalVerdictTrialStatistics | null;
+  compare: EvalVerdictTrialStatistics | null;
+} {
+  return {
+    sample: compareSampleFrom(compare),
+    base: compare.baseRun.trialStatistics ?? null,
+    compare: compare.compareRun.trialStatistics ?? null,
+  };
+}
+
 function sideFromRun(
-  summary: PlatformRunCompare["baseRun"]["summary"],
+  sample: ProportionSample,
   integrity: "valid" | "invalid" | null,
   e2eP95Ms: number | undefined,
   cost: {
@@ -199,10 +269,7 @@ function sideFromRun(
       : {}),
   };
   return {
-    iterations: {
-      total: summary?.total ?? 0,
-      passed: summary?.passed ?? 0,
-    },
+    iterations: { total: sample.total, passed: sample.passed },
     ...(integrity ? { scoreIntegrity: integrity } : {}),
     ...(Object.keys(totals).length > 0 ? { totals } : {}),
   };
@@ -221,6 +288,7 @@ export function compareGateInputFrom(
   latency: { baseP95Ms?: number; compareP95Ms?: number } = {}
 ): CompareGateInput {
   const cases = compare.cases;
+  const sample = compareSampleFrom(compare);
   return {
     // Cost comes STRAIGHT OFF the wire, unlike p95: the compare DTO already
     // carries whole-run cost with its coverage, so no iteration fetch is
@@ -228,7 +296,7 @@ export function compareGateInputFrom(
     // the gate refuses on a partial sum — a run we priced less of would
     // otherwise read as the cheaper run.
     base: sideFromRun(
-      compare.baseRun.summary,
+      sample.base,
       compare.scoreContract.base.scoreIntegrity,
       latency.baseP95Ms,
       {
@@ -241,7 +309,7 @@ export function compareGateInputFrom(
       }
     ),
     compare: sideFromRun(
-      compare.compareRun.summary,
+      sample.compare,
       compare.scoreContract.compare.scoreIntegrity,
       latency.compareP95Ms,
       {

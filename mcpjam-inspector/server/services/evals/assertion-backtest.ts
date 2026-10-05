@@ -4,10 +4,13 @@ import {
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "./score-definitions.js";
 import { buildHostedScoreContract } from "./score-rows.js";
+import {
+  storedTraceVerdict,
+  type StoredTraceVerdictInputs,
+} from "./stored-trace-verdict.js";
 import { evaluateToolCalls, resolveMatchOptions } from "@mcpjam/sdk/matchers";
 import {
-  buildIterationTranscript,
-  evaluatePredicates,
+  extractFinalAssistantMessage,
   predicateSchema,
   type Predicate,
 } from "@mcpjam/sdk/predicates";
@@ -46,6 +49,7 @@ type EvidenceRow = {
     arguments: Record<string, unknown>;
   }>;
   isNegativeTest?: boolean;
+  query?: string;
   results?: unknown;
   evaluationConfig?: unknown;
   evidence?: {
@@ -78,9 +82,14 @@ function originalResults(row: EvidenceRow): ScoreResult[] {
       })
     : [];
 }
-function rulesFor(
-  row: EvidenceRow,
-  draft: EvalBacktestDraft,
+/**
+ * The case-level rules a draft grades one iteration by: the draft list alone,
+ * the frozen rules followed by it, or the frozen rules alone. `null` when the
+ * frozen rules are needed and unreadable.
+ */
+export function draftAssertionRules(
+  row: Pick<EvidenceRow, "predicates">,
+  draft: Pick<EvalBacktestDraft, "assertions">,
 ): Predicate[] | null {
   if (draft.assertions.mode === "replace") return draft.assertions.list;
   const original = Array.isArray(row.predicates)
@@ -100,12 +109,29 @@ function rulesFor(
     ? [...rules, ...draft.assertions.list]
     : rules;
 }
+
+/** The recorded iteration, as the live verdict boundary's inputs. */
+function storedTraceInputs(
+  row: EvidenceRow,
+  matchOptions?: StoredTraceVerdictInputs["matchOptions"],
+): StoredTraceVerdictInputs {
+  return {
+    ...(row.query !== undefined ? { query: row.query } : {}),
+    expectedToolCalls: row.expectedToolCalls ?? [],
+    actualToolCalls: row.actualToolCalls ?? [],
+    isNegativeTest: row.isNegativeTest === true,
+    ...(matchOptions ? { matchOptions } : {}),
+    messages: row.evidence?.messages ?? [],
+    spans: row.evidence?.spans ?? [],
+  };
+}
+
 /** One context from frozen evidence, shared by every draft assertion on this iteration. */
 export function backtestIteration(
   row: EvidenceRow,
   draft: EvalBacktestDraft,
 ): EvalBacktestDifference[] {
-  const rules = rulesFor(row, draft);
+  const rules = draftAssertionRules(row, draft);
   const stored = originalResults(row);
   if (!rules)
     return [
@@ -128,11 +154,17 @@ export function backtestIteration(
       : !Array.isArray(row.actualToolCalls)
       ? "Tool call capture is unavailable"
       : undefined;
-  const transcript = buildIterationTranscript({
-    toolCalls: row.actualToolCalls ?? [],
-    trace: { messages: evidence?.messages ?? [] },
-  });
-  const evaluated = missing ? [] : evaluatePredicates(transcript, rules);
+  const finalAssistantMessage = extractFinalAssistantMessage(
+    evidence?.messages ?? [],
+  );
+  // Through the live verdict boundary, not the evaluators one by one: a
+  // preview reports for each check exactly the row a run grading this
+  // transcript would record. Case-level rows come first, in rule order.
+  const evaluated = missing
+    ? []
+    : storedTraceVerdict(storedTraceInputs(row), {
+        effectivePredicates: rules,
+      }).predicateResults.slice(0, rules.length);
   const definitions =
     record(row.evaluationConfig) &&
     Array.isArray(row.evaluationConfig.definitions)
@@ -174,7 +206,7 @@ export function backtestIteration(
         : (rule.type.startsWith("response") ||
             rule.type === "finalAssistantMessageNonEmpty" ||
             rule.type === "noEndingQuestion") &&
-          transcript.finalAssistantMessage === undefined
+          finalAssistantMessage === undefined
         ? "Final assistant text was not captured"
         : undefined);
     const next =
@@ -358,10 +390,11 @@ function toolCallDifference(
  * arguments definition is never reported as removed by a draft that changes
  * the match options it depends on.
  *
- * The projection is the runner's; its INPUT is not quite. The evidence page
- * carries the frozen expectations and the actual calls flattened across turns,
- * with no turn boundaries, so the extras cap (`maxExtraToolCalls`) applies to
- * the whole run here where the runner applies it per turn. On a multi-turn
+ * The matcher verdict is the runner's too (`buildEvalIterationVerdict`); its
+ * INPUT is not quite. The evidence page carries the frozen expectations and
+ * the actual calls flattened across turns, with no turn boundaries, so the
+ * case is graded as one turn and the extras cap (`maxExtraToolCalls`) applies
+ * to the whole run here where the runner applies it per turn. On a multi-turn
  * case with a cap the two can disagree about selection.
  */
 function hostedToolCallDifferences(
@@ -385,20 +418,24 @@ function hostedToolCallDifferences(
       toolCallDifference(row, context, id, { unavailable }),
     );
   }
-  const expected = row.expectedToolCalls ?? [];
-  const result = evaluateToolCalls(expected, row.actualToolCalls ?? [], {
-    ...matchOptions,
-    isNegativeTest: row.isNegativeTest,
-  });
+  // The runner's matcher verdict — `buildEvalIterationVerdict`'s, skill-call
+  // exemption and all — rather than the raw SDK matcher it wraps.
+  const { evaluation } = storedTraceVerdict(
+    storedTraceInputs(
+      row,
+      matchOptions as StoredTraceVerdictInputs["matchOptions"],
+    ),
+  );
   const contract = buildHostedScoreContract({
     // Declared from the frozen case's expected calls, as the runner declares
     // it; `hostedToolScorersDeclared` has already required some.
     evaluation: {
-      passed: result.passed,
-      expectedToolCalls: expected,
-      missing: result.missing,
-      unexpected: result.extra,
-      argumentMismatches: result.argumentMismatches,
+      passed: evaluation.passed,
+      expectedToolCalls: evaluation.expectedToolCalls,
+      missing: evaluation.missing,
+      unexpected: evaluation.unexpected,
+      argumentMismatches: evaluation.argumentMismatches,
+      promptSummaries: evaluation.promptSummaries,
     },
     matchOptions: matchOptions as unknown as Record<string, unknown>,
     ...(row.isNegativeTest ? { isNegativeTest: true } : {}),
@@ -418,7 +455,11 @@ function hostedToolCallDifferences(
   });
 }
 
-/** The SDK's single `tool-match` scorer, which the split does not touch. */
+/**
+ * The SDK's single `tool-match` scorer, which the split does not touch. Its
+ * live grader is the SDK's `evaluateToolCalls` — an SDK run never passes
+ * through the hosted verdict boundary — so that is what grades it here too.
+ */
 function sdkToolMatchDifferences(
   row: EvidenceRow,
   draftMatchOptions: NonNullable<EvalBacktestDraft["matchOptions"]>,

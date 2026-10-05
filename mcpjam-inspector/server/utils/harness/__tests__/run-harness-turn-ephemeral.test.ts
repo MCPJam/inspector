@@ -322,6 +322,51 @@ describe("runHarnessTurn — reserve, then start the baseline-preserving broker 
     expect(result.aborted).toBe(false);
   });
 
+  it("a box killed on its vendor timeout surfaces as a typed SANDBOX failure", async () => {
+    // The backend's broker start woke the box and E2B answered 404: the box is
+    // gone. That is the sandbox layer failing — not the platform's network, and
+    // never something to retry into the same box.
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      error: "The sandbox no longer exists.",
+      code: "sandbox_not_found",
+    });
+    const onEngineError = vi.fn();
+
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never,
+      "none"
+    );
+
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onEngineError.mock.calls[0]![0]).toMatchObject({
+      phase: "setup",
+      infraLayer: "sandbox",
+      code: "sandbox_not_found",
+      httpStatus: 404,
+      isRetryable: false,
+    });
+    // Still compensated like any failed broker start.
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects with the box's own vendor lifecycle when the binding carries one", async () => {
+    const vendorLifecycle = {
+      onTimeout: "kill" as const,
+      timeoutSeconds: 2700,
+    };
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: { ...BINDING, vendorLifecycle },
+      }) as never,
+      "none"
+    );
+    expect(createE2BHarnessSandboxProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ vendorLifecycle })
+    );
+  });
+
   it("refuses to prepare a box another run is already preparing", async () => {
     vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
       ok: false,

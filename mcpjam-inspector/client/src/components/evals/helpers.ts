@@ -11,7 +11,10 @@ import {
   SuiteAggregate,
   TagGroupAggregate,
 } from "./types";
-import { computeIterationResult } from "./pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -575,7 +578,9 @@ export function aggregateSuite(
   // Backend already filters iterations by suite, so we use them directly
   const totals = iterations.reduce(
     (acc, it) => {
-      const result = computeIterationResult(it);
+      // Measured result: an infra row is counted in no bucket (see
+      // `computeMeasuredIterationResult`), matching the backend's rates.
+      const result = computeMeasuredIterationResult(it);
       if (result === "pending") {
         acc.pending += 1;
       } else if (result === "passed") {
@@ -676,7 +681,7 @@ export function aggregateSuite(
       });
     }
     const entry = byCaseMap.get(id)!;
-    const result = computeIterationResult(it);
+    const result = computeMeasuredIterationResult(it);
     if (result === "pending") {
       // do not count pending/running
     } else if (result === "passed") {
@@ -1338,11 +1343,26 @@ export function compareRunsBySequence(
   return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
-/** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
+/**
+ * A run that re-ran only the cases that did not pass in an earlier run (E3).
+ * Its pass rate is biased by that selection, so it is never a suite's latest
+ * run, a point on its trend, or a baseline. Mirrors the backend's
+ * `isSubsetRerunRun` (`convex/lib/evalRerun.ts`): keyed on the subset scope,
+ * not on lineage alone.
+ */
+export function isSubsetRerunRun(
+  run: { rerunScope?: string } | null | undefined,
+): boolean {
+  return run?.rerunScope === "failed_cases";
+}
+
+/** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). Subset reruns never count. */
 export function pickLatestCompletedRun(
   runs: EvalSuiteRun[],
 ): EvalSuiteRun | null {
-  const completed = runs.filter((r) => r.status === "completed");
+  const completed = runs.filter(
+    (r) => r.status === "completed" && !isSubsetRerunRun(r),
+  );
   if (completed.length === 0) {
     return null;
   }

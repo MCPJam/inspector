@@ -1,4 +1,5 @@
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
@@ -11,6 +12,7 @@ import type {
   RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
+import { isLeaseLostError, leaseTokenArg } from "./run-lease.js";
 import { uploadVideoBlob } from "../../utils/mcp-app-widget-capture.js";
 import { evalSnapshotUploadTarget } from "../../utils/snapshot-upload-target.js";
 import type { UsageTotals } from "./types.js";
@@ -650,6 +652,12 @@ export function buildIterationFinishParams(args: {
   startedAt: number;
   error?: string;
   errorDetails?: string;
+  /**
+   * OUR infrastructure failed this trial (`@/shared/eval-infra-error`). Only
+   * ever set with `status: "failed"`; forces the verdict to not-passed, and the
+   * backend then excludes the row from every rate and refunds its unit fee.
+   */
+  infraError?: EvalInfraError;
   /** Case-level + per-turn predicate results; persisted to metadata.predicates. */
   predicateResults?: unknown[];
   /** Fail-fast skipped steps (PR6); persisted to metadata.skippedSteps. */
@@ -946,7 +954,10 @@ export function buildIterationFinishParams(args: {
 
   return {
     iterationId,
-    passed: effectivePassed,
+    // An infra row has no verdict to report: it is stored `failed` +
+    // `failed` and excluded by every reader, never counted as a pass.
+    passed: args.infraError ? false : effectivePassed,
+    ...(args.infraError ? { infraError: args.infraError } : {}),
     toolsCalled: evaluation.toolsCalled,
     usage,
     messages,
@@ -1090,6 +1101,8 @@ export type FinalizeEvalIterationParams = {
   startedAt?: number;
   error?: string;
   errorDetails?: string;
+  /** OUR infrastructure failed this trial; sent only with `status: "failed"`. */
+  infraError?: EvalInfraError;
   resultSource?: "reported" | "derived";
   // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
   // nested `predicates: PredicateResult[]` rows. Persisted to
@@ -1154,6 +1167,7 @@ export async function finalizeEvalIteration(
     startedAt,
     error,
     errorDetails,
+    infraError,
     resultSource,
     metadata,
     onRunDeleted,
@@ -1313,6 +1327,8 @@ export async function finalizeEvalIteration(
   try {
     await convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId,
+      // E4.2: fenced on the backend; `{}` when the run is unleased.
+      ...leaseTokenArg(iterationId),
       status: iterationStatus === "completed" ? "completed" : iterationStatus,
       result,
       actualToolCalls: sanitizeForConvexTransport(toolsCalled),
@@ -1385,6 +1401,9 @@ export async function finalizeEvalIteration(
         : {}),
       error,
       errorDetails,
+      // Paired with `status: "failed"` by construction; an older backend that
+      // does not know the arg never receives it (sent only when set).
+      ...(infraError && iterationStatus === "failed" ? { infraError } : {}),
       resultSource,
       // Merge user-provided metadata with token usage breakdown, then
       // sanitize: metadata can carry nested predicate rows whose
@@ -1399,8 +1418,14 @@ export async function finalizeEvalIteration(
     const errorMessage =
       caught instanceof Error ? caught.message : String(caught);
 
-    // Check if run was deleted/not found or iteration was cancelled.
-    if (
+    if (isLeaseLostError(caught)) {
+      // E4.2: another worker owns this row now (or the run was handed back).
+      // Its outcome is theirs to write; ours is discarded, not retried.
+      iterationGoneOrCancelled = true;
+      logger.info("[evals] iteration result discarded: lease lost", {
+        iterationId,
+      });
+    } else if (
       errorMessage.includes("not found") ||
       errorMessage.includes("unauthorized") ||
       errorMessage.includes("cancelled")

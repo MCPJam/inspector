@@ -1409,6 +1409,10 @@ async function runJourneyFanOut(
                     harnessSandboxBinding: {
                       sandboxRowId: attemptSandbox.sandboxRowId,
                       ...attemptSandbox.binding,
+                      // The box's own vendor window, for the harness connect.
+                      ...(attemptSandbox.vendorLifecycle
+                        ? { vendorLifecycle: attemptSandbox.vendorLifecycle }
+                        : {}),
                     },
                   }
                 : {}),

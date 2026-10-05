@@ -45,6 +45,7 @@ vi.mock("e2b", () => ({
 }));
 
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
+import { HARNESS_TEMPLATE_PNPM_VERSION } from "../harness-bake.js";
 
 beforeEach(() => {
   sandboxState.run.mockReset();
@@ -97,6 +98,18 @@ describe("the pnpm guard", () => {
     await expect(provider().createSession()).resolves.toMatchObject({
       id: "sbx_1",
     });
+  });
+
+  it("installs the template's pinned pnpm, never whatever is current", async () => {
+    // A custom image or an old template has no pnpm, and the fallback used to
+    // be a bare `npm install -g pnpm` — which is how pnpm 11 reached hosted
+    // turns. The fallback is the same exact version the template bakes.
+    await provider().createSession();
+    const command = sandboxState.run.mock.calls[0]?.[0] as string;
+    expect(command).toBe(
+      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`
+    );
+    expect(command).toMatch(/pnpm@\d+\.\d+\.\d+$/);
   });
 });
 
@@ -263,5 +276,96 @@ describe("exec result normalization", () => {
       stdout: "out",
       stderr: "err",
     });
+  });
+});
+
+describe("vendor lifecycle on connect", () => {
+  // `Sandbox.connect` ARMS a window on the box. An ephemeral box was created
+  // with a per-scope kill window, and an SDK default must never replace it.
+  it("arms the box's own server-resolved window", async () => {
+    await createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      vendorLifecycle: { onTimeout: "kill", timeoutSeconds: 2700 },
+    }).createSession();
+    expect(sandboxState.connect).toHaveBeenCalledWith(
+      "sbx_1",
+      expect.objectContaining({ timeoutMs: 2_700_000 }),
+    );
+  });
+
+  it("caps the window at the box's ceiling", async () => {
+    const deadlineAt = Date.now() + 10 * 60_000;
+    await createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      vendorLifecycle: { onTimeout: "kill", timeoutSeconds: 1800, deadlineAt },
+    }).createSession();
+    const timeoutMs = sandboxState.connect.mock.calls[0][1].timeoutMs;
+    expect(timeoutMs).toBeLessThanOrEqual(10 * 60_000);
+    expect(timeoutMs).toBeGreaterThan(9 * 60_000);
+  });
+
+  it("refuses a box at its ceiling, typed, without connecting", async () => {
+    const { SandboxUnavailableError } = await import(
+      "../../computers/sandbox-lifecycle.js"
+    );
+    const err = await createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      vendorLifecycle: {
+        onTimeout: "kill",
+        timeoutSeconds: 1800,
+        deadlineAt: Date.now() + 60_000,
+      },
+    })
+      .createSession()
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SandboxUnavailableError);
+    expect(err).toMatchObject({ code: "sandbox_expiring", phase: "connect" });
+    expect(sandboxState.connect).not.toHaveBeenCalled();
+  });
+
+  it("no lifecycle ⇒ the historical connect (no window of its own)", async () => {
+    await provider().createSession();
+    expect(sandboxState.connect.mock.calls[0][1].timeoutMs).toBeUndefined();
+  });
+
+  it("a box E2B already destroyed (404) surfaces as a typed SANDBOX failure", async () => {
+    const { SandboxUnavailableError } = await import(
+      "../../computers/sandbox-lifecycle.js"
+    );
+    const { harnessFailureEvidenceOf } = await import(
+      "../harness-provider-error.js"
+    );
+    const notFound = Object.assign(
+      new Error("Paused sandbox sbx_1 not found"),
+      { name: "SandboxNotFoundError" },
+    );
+    sandboxState.connect.mockImplementationOnce(() => {
+      throw notFound;
+    });
+
+    const err = await provider()
+      .createSession()
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SandboxUnavailableError);
+    expect(err).toMatchObject({
+      code: "sandbox_not_found",
+      httpStatus: 404,
+      phase: "connect",
+      sandboxId: "sbx_1",
+    });
+    // Classifiable from structured fields alone.
+    expect(harnessFailureEvidenceOf(err)).toEqual({
+      layer: "sandbox",
+      code: "sandbox_not_found",
+      httpStatus: 404,
+      isRetryable: false,
+    });
+  });
+
+  it("any other connect failure passes through untouched", async () => {
+    sandboxState.connect.mockImplementationOnce(() => {
+      throw new Error("socket hang up");
+    });
+    await expect(provider().createSession()).rejects.toThrow("socket hang up");
   });
 });

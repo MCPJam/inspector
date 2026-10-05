@@ -995,6 +995,30 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     );
   });
 
+  it("hands the harness the box's server-resolved vendor lifecycle (never the bash path)", async () => {
+    // So the harness's `Sandbox.connect` re-arms the box's own 75-minute KILL
+    // window rather than the SDK default.
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: true,
+      value: {
+        sandboxId: "sbx_1",
+        sandboxRowId: "row_1",
+        workdir: "/home/user",
+        vendorLifecycle: { onTimeout: "kill", timeoutSeconds: 4500 },
+      },
+    }));
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ harness: "claude-code" }));
+
+    expect(turnOptions().harnessSandboxBinding).toEqual({
+      sandboxRowId: "row_1",
+      sandboxId: "sbx_1",
+      runtimeKind: "terminal",
+      workdir: "/home/user",
+      vendorLifecycle: { onTimeout: "kill", timeoutSeconds: 4500 },
+    });
+  });
+
   it("gives two sessions of a harness target two DISTINCT boxes", async () => {
     personaDrivesOneTurn();
     await startJourneyRun(baseOpts({ harness: "claude-code" }, 2));

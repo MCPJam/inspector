@@ -561,6 +561,16 @@ export interface MCPJamEngineErrorEvent {
    */
   phase?: "setup" | "stream";
   /**
+   * Which of OUR layers a TYPED producer says failed: `model` (a provider
+   * failure our backend categorized, or a harness bridge's typed provider
+   * error), `sandbox` or `platform` (a typed harness setup step — sandbox
+   * resolve/wake, box reservation, credential-broker lease). Absent when the
+   * producer had no structured evidence; a consumer must then treat the
+   * failure as UNCLASSIFIED, never infer a layer from the message. Read by the
+   * eval infra-error classifier (`services/evals/infra-error-classification.ts`).
+   */
+  infraLayer?: "model" | "sandbox" | "platform";
+  /**
    * Classified form of this failure, including its `origin` — whose fault the
    * turn dying was.
    *
@@ -1995,6 +2005,7 @@ export function parseStreamErrorChunkText(errorText: string): {
   message: string;
   code?: string;
   statusCode?: number;
+  isRetryable?: boolean;
   details?: string;
 } {
   try {
@@ -2002,6 +2013,7 @@ export function parseStreamErrorChunkText(errorText: string): {
       code?: unknown;
       message?: unknown;
       statusCode?: unknown;
+      isRetryable?: unknown;
       details?: unknown;
     };
     if (body && typeof body === "object") {
@@ -2015,6 +2027,9 @@ export function parseStreamErrorChunkText(errorText: string): {
         ...(typeof body.statusCode === "number"
           ? { statusCode: body.statusCode }
           : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
+          : {}),
         ...(typeof body.details === "string" ? { details: body.details } : {}),
       };
     }
@@ -2022,6 +2037,29 @@ export function parseStreamErrorChunkText(errorText: string): {
     // Not JSON — fall through to the raw text.
   }
   return { message: errorText };
+}
+
+/**
+ * The structured envelope a mid-stream backend error chunk carried, attached
+ * to the Error thrown for it so the outer catch (site 3) can still report it.
+ * Only {@link parseStreamErrorChunkText}'s fields — never re-read from text.
+ */
+function attachedStreamChunkEvidence(error: unknown):
+  | { statusCode?: number; isRetryable?: boolean }
+  | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const evidence = (error as { streamChunkEvidence?: unknown })
+    .streamChunkEvidence;
+  if (!evidence || typeof evidence !== "object") return undefined;
+  const record = evidence as { statusCode?: unknown; isRetryable?: unknown };
+  return {
+    ...(typeof record.statusCode === "number"
+      ? { statusCode: record.statusCode }
+      : {}),
+    ...(typeof record.isRetryable === "boolean"
+      ? { isRetryable: record.isRetryable }
+      : {}),
+  };
 }
 
 /**
@@ -2105,6 +2143,7 @@ function parseEngineErrorBody(
       error?: string;
       details?: string;
       retryAfter?: number;
+      retryAfterMs?: number;
       isRetryable?: boolean;
       refusalReason?: string;
       reason?: string;
@@ -2121,10 +2160,15 @@ function parseEngineErrorBody(
           : `Backend stream error: ${status} ${bodyText}`,
         ...(body.code ? { code: body.code } : {}),
         ...(body.details ? { details: body.details } : {}),
+        // Both spellings are ms: `retryAfter` (guardrail envelope) and
+        // `retryAfterMs` (`agent_turn_limit`'s admission refusal).
         ...(typeof body.retryAfter === "number" &&
         Number.isFinite(body.retryAfter)
           ? { retryAfterMs: body.retryAfter }
-          : {}),
+          : typeof body.retryAfterMs === "number" &&
+              Number.isFinite(body.retryAfterMs)
+            ? { retryAfterMs: body.retryAfterMs }
+            : {}),
         ...(typeof body.isRetryable === "boolean"
           ? { isRetryable: body.isRetryable }
           : {}),
@@ -2554,6 +2598,26 @@ async function processStream(
           );
           throw Object.assign(new Error(parsed.message), {
             normalized,
+            // The backend's categorized envelope — upstream status and its
+            // own retryability verdict — kept STRUCTURED for site 3's
+            // `onEngineError`, so an eval can tell a provider 503 from a
+            // server failure without reading the sentence.
+            // Only when the chunk actually parsed as the categorized
+            // envelope: a non-JSON chunk is no evidence of anything.
+            ...(parsed.code !== undefined ||
+            parsed.statusCode !== undefined ||
+            parsed.isRetryable !== undefined
+              ? {
+                  streamChunkEvidence: {
+                    ...(parsed.statusCode !== undefined
+                      ? { statusCode: parsed.statusCode }
+                      : {}),
+                    ...(parsed.isRetryable !== undefined
+                      ? { isRetryable: parsed.isRetryable }
+                      : {}),
+                  },
+                }
+              : {}),
             ...(parsed.code ? { failureCode: parsed.code } : {}),
             ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
               ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
@@ -3884,6 +3948,10 @@ async function processOneStep(ctx: StepContext): Promise<{
       ...(parsed.code ? { code: parsed.code } : {}),
       ...(parsed.details ? { details: parsed.details } : {}),
       httpStatus: res.status,
+      // Our own `/stream` answered: the model leg's boundary, with the
+      // backend's categorized code. The eval classifier's code table may
+      // re-assign the layer (an admission cap is `platform`).
+      infraLayer: "model",
       rawText: errorText,
       promptIndex: traceTurn.promptIndex,
       stepIndex,
@@ -5426,9 +5494,23 @@ export async function runChatEngineLoop(
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
         // Site (3) — outer agentic-loop catch. No structured body,
         // no stepIndex.
+        const chunkEvidence = attachedStreamChunkEvidence(error);
         safelyEmitEngineError(onEngineError, {
           message: errorText,
           ...(loopFailureCode ? { code: loopFailureCode } : {}),
+          // A backend error CHUNK is our backend categorizing its own model
+          // call: the model layer, with the upstream status it reported.
+          ...(chunkEvidence
+            ? {
+                infraLayer: "model" as const,
+                ...(chunkEvidence.statusCode !== undefined
+                  ? { httpStatus: chunkEvidence.statusCode }
+                  : {}),
+                ...(chunkEvidence.isRetryable !== undefined
+                  ? { isRetryable: chunkEvidence.isRetryable }
+                  : {}),
+              }
+            : {}),
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,

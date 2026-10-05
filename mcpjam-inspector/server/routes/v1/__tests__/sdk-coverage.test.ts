@@ -281,6 +281,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getEvalRunDecisionSummary",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/rerun-preview":
+    "getEvalRunRerunPreview",
+  "post /projects/{projectId}/eval-runs/{runId}/rerun": "rerunEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/gate-waivers":
     "createGateWaiver",
   "get /projects/{projectId}/eval-runs/{runId}/gate-waivers": "getGateWaiver",
@@ -405,6 +408,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/eval-runs/{runId}/insights":
     "requestEvalRunInsights",
   "post /projects/{projectId}/eval-runs/{runId}/backtest": "backtestEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/regrade": "regradeEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/judge/backtest":
     "backtestEvalRunJudge",
   "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",

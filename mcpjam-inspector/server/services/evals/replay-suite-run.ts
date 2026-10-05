@@ -25,6 +25,7 @@ import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -35,7 +36,60 @@ export type ExecuteSuiteReplayFromRunParams = {
   notes?: string;
   passCriteria?: { minimumPassRate: number };
   useCurrentSuiteConfig?: boolean;
+  /**
+   * E3 — replay only part of the source run. `"failed_cases"` reruns the
+   * cases with a trial that did not complete and pass; the BACKEND picks them
+   * and stamps the new run `rerunOfRunId` + `rerunScope`. Absent replays the
+   * whole run, exactly as before.
+   */
+  scope?: SuiteReplayScope;
 };
+
+/** The subset a replay can be narrowed to. */
+export type SuiteReplayScope = "failed_cases";
+
+/**
+ * The backend's subset-rerun refusals, as readable route errors. Each one is
+ * raised before any run row exists, and each names something the caller can
+ * act on, so none of them should surface as an opaque 500. Null for anything
+ * else, so a real fault stays a fault.
+ */
+const RERUN_REFUSALS: Record<
+  string,
+  { status: number; code: ErrorCode; fallback: string }
+> = {
+  RERUN_NOTHING_TO_RERUN: {
+    status: 409,
+    code: ErrorCode.CONFLICT,
+    fallback: "Every case in that run passed, so there is nothing to rerun.",
+  },
+  RERUN_SOURCE_NOT_TERMINAL: {
+    status: 409,
+    code: ErrorCode.CONFLICT,
+    fallback: "The run to rerun is still in progress.",
+  },
+  RERUN_SOURCE_SUITE_MISMATCH: {
+    status: 400,
+    code: ErrorCode.VALIDATION_ERROR,
+    fallback: "The run to rerun belongs to a different suite.",
+  },
+};
+
+export function rerunRefusalError(error: unknown): WebRouteError | null {
+  const data = (error as { data?: unknown } | null)?.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const record = data as { code?: unknown; message?: unknown };
+  const code = typeof record.code === "string" ? record.code : undefined;
+  const refusal = code ? RERUN_REFUSALS[code] : undefined;
+  if (!code || !refusal) return null;
+  const message =
+    typeof record.message === "string" && record.message.trim()
+      ? record.message
+      : refusal.fallback;
+  return new WebRouteError(refusal.status, refusal.code, message, {
+    reason: code,
+  });
+}
 
 export type ExecuteSuiteReplayFromRunResult = {
   success: true;
@@ -70,6 +124,7 @@ export async function prepareSuiteReplayFromRun(
     notes,
     passCriteria,
     useCurrentSuiteConfig,
+    scope,
   } = params;
 
   const convexHttpUrl = requireConvexHttpUrl();
@@ -134,6 +189,9 @@ export async function prepareSuiteReplayFromRun(
       passCriteria,
       serverIds: replayServerIds,
       replayedFromRunId: sourceRunId,
+      // Only when a scope was asked for: an unscoped replay sends exactly the
+      // args it always sent, so an older backend keeps accepting it.
+      ...(scope ? { rerunOfRunId: sourceRunId, rerunScope: scope } : {}),
       runtimeVenue,
       ...(replayLocalHarness ? { localHarnessIds: [replayLocalHarness] } : {}),
       useCurrentSuiteConfig,

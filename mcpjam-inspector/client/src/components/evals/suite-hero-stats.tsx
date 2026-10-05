@@ -7,7 +7,8 @@ import {
 } from "@/components/ui/chart";
 import { Button } from "@mcpjam/design-system/button";
 import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
+import { isSubsetRerunRun } from "./helpers";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
 interface SuiteHeroStatsProps {
@@ -55,7 +56,7 @@ export function SuiteHeroStats({
     );
 
     const results = activeIterations.map((iter) =>
-      computeIterationResult(iter),
+      computeMeasuredIterationResult(iter),
     );
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter((r) => r === "failed").length;
@@ -65,12 +66,15 @@ export function SuiteHeroStats({
 
     const accuracy = Math.round((passed / total) * 100);
 
-    // Latest run info
-    const latestRun = [...runs].sort((a, b) => {
-      const aTime = a.completedAt ?? a.createdAt ?? 0;
-      const bTime = b.completedAt ?? b.createdAt ?? 0;
-      return bTime - aTime;
-    })[0];
+    // Latest run info. A subset rerun (E3) re-ran only what failed, so it is
+    // never the "latest run" these numbers describe.
+    const latestRun = runs
+      .filter((run) => !isSubsetRerunRun(run))
+      .sort((a, b) => {
+        const aTime = a.completedAt ?? a.createdAt ?? 0;
+        const bTime = b.completedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      })[0];
 
     const latestRunTime = latestRun?.completedAt ?? latestRun?.createdAt;
     const latestRunAgo = latestRunTime ? formatTimeAgo(latestRunTime) : null;
@@ -80,7 +84,7 @@ export function SuiteHeroStats({
       (iter) => iter.suiteRunId === latestRun?._id,
     );
     const latestResults = latestRunIterations.map((iter) =>
-      computeIterationResult(iter),
+      computeMeasuredIterationResult(iter),
     );
     const latestPassed = latestResults.filter((r) => r === "passed").length;
     const latestTotal = latestResults.filter(

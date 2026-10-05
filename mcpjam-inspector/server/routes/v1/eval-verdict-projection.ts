@@ -20,12 +20,20 @@
  *
  * Fields are OMITTED rather than nulled, so a suite-wide run's DTO is
  * byte-identical to what it was before the per-case policy existed.
+ *
+ * `trialStatistics` rides beside a projected summary and never without one:
+ * pass@k, pass^k (k = the case's eligible trials) and a Wilson interval per
+ * case × execution variant, derived from the VALIDATED decision's own counts
+ * by the same SDK function the backend mirrors bit for bit. REPORT ONLY — it
+ * is not part of the decision (whose shape every shipped client parses as
+ * closed) and it never moves a verdict.
  */
 
 import { z } from "zod";
 import {
   evalSuiteFileValiditySchema,
   evalVerdictDecisionSchema,
+  evalVerdictTrialStatistics,
   isEvalVerdictPolicyV2,
   EVAL_VERDICT_POLICY_VERSION,
 } from "@mcpjam/sdk/contract";
@@ -65,7 +73,12 @@ export function toRunVerdictProjection(run: {
   const summary = evalVerdictDecisionSchema.safeParse(run.verdictSummary);
   return {
     verdictPolicyVersion: EVAL_VERDICT_POLICY_VERSION,
-    ...(summary.success ? { verdictSummary: summary.data } : {}),
+    ...(summary.success
+      ? {
+          verdictSummary: summary.data,
+          trialStatistics: evalVerdictTrialStatistics(summary.data),
+        }
+      : {}),
     ...(typeof run.verdictPolicyIntegrityError === "string" &&
     run.verdictPolicyIntegrityError.length > 0
       ? { verdictPolicyIntegrityError: run.verdictPolicyIntegrityError }

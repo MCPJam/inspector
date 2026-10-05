@@ -22,6 +22,7 @@ import {
   isComputersDataPlaneConfigured,
 } from "../computers/control-plane-client.js";
 import type { ExecutionScope } from "../execution-scope.js";
+import type { SandboxVendorLifecycle } from "../computers/sandbox-lifecycle.js";
 
 /** Resolution failure carrying an HTTP-ish status for the caller to surface. */
 export class HarnessSandboxResolutionError extends Error {
@@ -60,6 +61,12 @@ export interface TrustedHarnessSandboxBinding {
   sandboxId: string;
   /** Working directory the session's Shell is rooted at. */
   workdir?: string;
+  /**
+   * The box's server-resolved vendor lifecycle, from the provision response.
+   * The harness's `Sandbox.connect` arms THIS window (capped by its ceiling)
+   * rather than the SDK default. Absent ⇒ an older backend: connect as before.
+   */
+  vendorLifecycle?: SandboxVendorLifecycle;
 }
 
 export async function resolveHarnessSandbox(args: {

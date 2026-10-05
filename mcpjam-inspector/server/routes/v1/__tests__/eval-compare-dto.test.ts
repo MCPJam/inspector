@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { evalVerdictTrialStatistics } from "@mcpjam/sdk/contract";
 import {
   toRunCompareDto,
   type RunCompareBaseline,
@@ -429,5 +430,58 @@ describe("toRunCompareDto — the narrowing nobody else asserts", () => {
     });
     expect(projected.compareRun.id).toBe("run_parity_compare");
     expect(projected.compareRun.result).toBe("failed");
+  });
+});
+
+describe("toRunCompareDto — trial statistics", () => {
+  // Report-only per-case statistics the backend attaches to a v2 run side.
+  // Built with the SDK twin of the backend function, so a block that
+  // validates here is one the backend produces bit for bit.
+  const statistics = evalVerdictTrialStatistics({
+    cases: [
+      {
+        caseId: "c_one",
+        eligibleTrials: 5,
+        passedTrials: 3,
+      },
+      {
+        caseId: "c_two",
+        executionVariant: { model: "m", provider: "p" },
+        eligibleTrials: 0,
+        passedTrials: 0,
+      },
+    ] as never,
+  });
+
+  function withStatistics(value: unknown): Record<string, any> {
+    const diff = structuredClone(fixture.expectedDiff) as Record<string, any>;
+    diff.compareRun.trialStatistics = value;
+    return toRunCompareDto(diff, BASELINE) as Record<string, any>;
+  }
+
+  it("passes a valid block through, and omits an absent one", () => {
+    const projected = withStatistics(statistics);
+    expect(projected.compareRun.trialStatistics).toEqual(statistics);
+    expect(projected.compareRun.trialStatistics.eligibleTrials).toBe(5);
+    // The legacy fixture side carries none, and none is invented for it.
+    expect(projected.baseRun).not.toHaveProperty("trialStatistics");
+  });
+
+  it("drops a block that is not what its own counts produce", () => {
+    const tampered = structuredClone(statistics);
+    tampered.cases[0]!.passHatK = 0.3;
+    expect(withStatistics(tampered).compareRun).not.toHaveProperty(
+      "trialStatistics",
+    );
+  });
+
+  it("drops a block carrying a field the contract does not name", () => {
+    const widened = { ...structuredClone(statistics), traceBlobIds: ["x"] };
+    expect(withStatistics(widened).compareRun).not.toHaveProperty(
+      "trialStatistics",
+    );
+    expect(withStatistics("nope").compareRun).not.toHaveProperty(
+      "trialStatistics",
+    );
   });
 });

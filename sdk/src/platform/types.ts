@@ -129,6 +129,7 @@ import type {
   EvalTrialFrictionSignals,
   SuspectedConditionVerdict,
   EvalVerdictDecision,
+  EvalVerdictTrialStatistics,
   FailureCategory,
   StageResultRow,
   SuiteGatePolicyV1,
@@ -1135,6 +1136,18 @@ export interface PlatformEvalRun {
    */
   verdictSummary?: EvalVerdictDecision;
   /**
+   * REPORT-ONLY statistics over `verdictSummary`, one row per case ×
+   * execution variant (the same rows as `verdictSummary.cases`): unbiased
+   * pass@k and pass^k taken at k = the row's eligible trials (`k` is on every
+   * row; `null` when it has none), a 95% Wilson interval on its pass rate, and
+   * the pooled eligible/passed trials a run-over-run comparison is sized by.
+   *
+   * Derived from the decision's own counts, so infrastructure failures and
+   * evaluator errors are already excluded. Present exactly when
+   * `verdictSummary` is; it never decides or moves a verdict.
+   */
+  trialStatistics?: EvalVerdictTrialStatistics;
+  /**
    * Why a policy-2 run could not be decided from its own evidence (a missing
    * or malformed policy snapshot, mixed evaluator configs). Accompanies an
    * `"inconclusive"` result; it is never a task failure.
@@ -1562,6 +1575,59 @@ export interface PlatformEvalRunEnvironment {
   id: string;
   name: string | null;
   revision: number | null;
+}
+
+/**
+ * What a rerun narrows the source run to. `failed_cases`: every case with a
+ * trial that is not completed and passed (cancelled and skipped trials do not
+ * count). The platform selects the cases, never the caller.
+ */
+export type PlatformEvalRunRerunScope = "failed_cases";
+
+/** `200` response of `GET /projects/{p}/eval-runs/{r}/rerun-preview`. */
+export interface PlatformEvalRunRerunPreview {
+  runId: string;
+  suiteId: string;
+  scope: PlatformEvalRunRerunScope;
+  sourceStatus: string;
+  /** `false` while the source run is still executing or grading. */
+  sourceTerminal: boolean;
+  totalCaseCount: number;
+  selectedCaseCount: number;
+  selectedCaseIds: string[];
+  /**
+   * Qualifying TRIALS by the most specific reason: `failed`, `infra_error`,
+   * `timed_out`, `execution_failed`, `setup_failed`, `pending`.
+   */
+  reasons: Record<string, number>;
+  /** Trials that did not qualify: `passed`, `cancelled`, `skipped`. */
+  excluded: Record<string, number>;
+  /** The source finished and at least one case qualifies. */
+  rerunnable: boolean;
+}
+
+/** `POST /projects/{p}/eval-runs/{r}/rerun` body. */
+export interface PlatformEvalRunRerunBody {
+  scope: PlatformEvalRunRerunScope;
+  notes?: string;
+  idempotencyKey?: string;
+}
+
+/**
+ * `202` response of `POST /projects/{p}/eval-runs/{r}/rerun`. The new run is a
+ * SUBSET of its source, so its pass rate is never the suite's latest run, a
+ * trend point, or a baseline.
+ */
+export interface PlatformEvalRunRerunCreated {
+  runId: string;
+  suiteId: string;
+  status: string;
+  deduped?: boolean;
+  rerunOfRunId: string;
+  rerunScope: PlatformEvalRunRerunScope;
+  selectedCaseCount: number;
+  servers?: Array<{ id: string; name?: string }>;
+  environment?: PlatformEvalRunEnvironment | null;
 }
 
 /** `202` response of `POST /projects/{p}/eval-runs`. */
@@ -2276,6 +2342,13 @@ export interface PlatformEvalCaseBase {
   source?: CaseSource;
   createdAt: number | null;
   updatedAt: number | null;
+  /**
+   * Authoring notes on a create or update response — never on a read. They
+   * block nothing: the case was saved. `case_passes_with_empty_answer` means
+   * every gating check passes when the agent does nothing, so the case can
+   * never fail.
+   */
+  warnings?: PlatformEvalCaseWarning[];
 }
 
 /** A case as vocabulary 1 (no header) returns it. */
@@ -2616,6 +2689,14 @@ export interface PlatformRunCompareSide {
   client?: { name: string };
   effectiveModelId?: string;
   modelSource?: "client_default" | "override" | "case";
+  /**
+   * This side's report-only trial statistics (see
+   * `PlatformEvalRun.trialStatistics`). A comparison sizes its sample from
+   * `eligibleTrials` / `passedTrials` when BOTH sides carry this block, and
+   * from `summary` on both sides otherwise — never one of each. ABSENT for a
+   * legacy run and on a deployment predating the field.
+   */
+  trialStatistics?: EvalVerdictTrialStatistics;
 }
 
 /**
@@ -3442,6 +3523,24 @@ export interface PlatformEvalIterationUsage {
   [key: string]: unknown;
 }
 
+/** Why MCPJam's infrastructure, not the server under test, failed a trial. */
+export interface PlatformEvalInfraError {
+  /**
+   * `provider_unavailable`, `rate_limited`, `capacity`, `auth`,
+   * `account_limit`, `configuration`, `sandbox` or `worker_lost`. Typed as a
+   * string so a class added later still reads.
+   */
+  class: string;
+  /** `model`, `sandbox` or `platform`. */
+  layer: string;
+  /** Whether waiting could fix it (MCPJam may retry such a trial in place). */
+  retryable: boolean;
+  /** The producer's structured code, when it sent one. */
+  code?: string;
+  /** The upstream HTTP status, when there was one. */
+  httpStatus?: number;
+}
+
 export interface PlatformEvalIteration {
   id: string;
   /**
@@ -3506,6 +3605,15 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * PRESENT when MCPJam's own infrastructure failed this trial — the model
+   * provider (`layer: "model"`), the sandbox, or the platform (a lost
+   * worker). Such a trial is `status: "failed"`, measured nothing about the
+   * server, is EXCLUDED from every pass rate and verdict, and its fees are
+   * refunded. ABSENT on every other trial, including ones that failed on the
+   * server or the agent.
+   */
+  infraError?: PlatformEvalInfraError;
   /**
    * Per-scorer verdicts for this iteration, in the evaluation contract's
    * shape. `null` when the run predates scoring, or when the stored payload

@@ -104,3 +104,48 @@ it("uses the shared grading rubric and bound continuation for judge previews", a
   );
   expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toEqual(request);
 });
+
+it("re-grades through the regrade route and stays off every agent surface", async () => {
+  const { ALL_OPERATIONS, regradeEvalRunOperation } = await import(
+    "../../src/platform/index.js"
+  );
+  const fetch = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ schemaVersion: 1, modelUse: "none" }), {
+        status: 200,
+      })
+  );
+  const client = new PlatformApiClient({
+    baseUrl: "https://example.com/api/v1",
+    getAuth: () => "token",
+    fetch: fetch as typeof globalThis.fetch,
+  });
+  await client.regradeEvalRun({ projectId: "project", runId: "run" });
+  expect(String(fetch.mock.calls[0][0])).toContain(
+    "/projects/project/eval-runs/run/regrade"
+  );
+  // No draft ⇒ the frozen assertions; no flag ⇒ persisted.
+  expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toEqual({});
+  const assertions = { mode: "replace" as const, list: [] };
+  await client.regradeEvalRun({
+    projectId: "project",
+    runId: "run",
+    assertions,
+    dryRun: true,
+  });
+  expect(JSON.parse(fetch.mock.calls[1][1]!.body as string)).toEqual({
+    assertions,
+    dryRun: true,
+  });
+  // A verdict-rewriting write: never advertised to an agent surface.
+  expect(
+    ALL_OPERATIONS.some((operation) => operation.name === "regrade_eval_run")
+  ).toBe(false);
+  expect(
+    regradeEvalRunOperation.inputSchema.safeParse({
+      project: "p",
+      runId: "r",
+      matchOptions: { argumentMatching: "ignore" },
+    }).success
+  ).toBe(false);
+});

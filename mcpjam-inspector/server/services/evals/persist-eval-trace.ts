@@ -13,6 +13,7 @@ import type {
   WidgetRenderObservationPayload,
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
+import { leaseTokenArg } from "./run-lease.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import {
   toBrowserStepPayload,
@@ -298,6 +299,7 @@ export async function persistEvalTraceFanout(args: {
         "testSuites:appendEvalTurnTrace" as any,
         {
           iterationId: args.iterationId,
+          ...leaseTokenArg(args.iterationId),
           modelId,
           modelSource,
           ...(args.displayLabel ? { displayLabel: args.displayLabel } : {}),
@@ -390,7 +392,12 @@ export async function lockEvalSessionAfterUpdate(args: {
   try {
     await args.convexClient.action(
       "testSuites:lockEvalSession" as any,
-      { iterationId: args.iterationId, reason: args.reason },
+      {
+        iterationId: args.iterationId,
+        reason: args.reason,
+        // E4.2: fenced as telemetry on the backend.
+        ...leaseTokenArg(args.iterationId),
+      },
     );
   } catch (error) {
     logger.warn(

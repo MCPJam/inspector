@@ -16,6 +16,10 @@ import {
  */
 import { logger } from "../../utils/logger.js";
 import {
+  vendorLifecycleField,
+  type SandboxVendorLifecycle,
+} from "../../utils/computers/sandbox-lifecycle.js";
+import {
   isComputersDataPlaneConfigured,
   provisionJourneySandbox,
   releaseSandbox,
@@ -213,6 +217,12 @@ export function sandboxIntentFor(
 export interface ProvisionedAttemptSandbox {
   binding: TrustedSandboxBinding;
   sandboxRowId: string;
+  /**
+   * The box's server-resolved vendor lifecycle, for the harness's
+   * `Sandbox.connect` (see `TrustedHarnessSandboxBinding.vendorLifecycle`).
+   * Kept off the bash binding: only the harness connects with a window.
+   */
+  vendorLifecycle?: SandboxVendorLifecycle;
 }
 
 export type ProvisionAttemptResult =
@@ -300,6 +310,7 @@ export async function provisionAttemptSandbox(args: {
           ok: true,
           sandbox: {
             sandboxRowId: result.value.sandboxRowId,
+            ...vendorLifecycleField(result.value.vendorLifecycle),
             binding: {
               sandboxId: result.value.sandboxId,
               // The CONTROL-PLANE row, which a browser session is recorded

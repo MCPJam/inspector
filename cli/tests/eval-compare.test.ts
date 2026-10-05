@@ -10,10 +10,13 @@ import test from "node:test";
 import {
   compareGateInputFrom,
   comparePolicyFromOptions,
+  compareSampleFrom,
+  compareTrialStatisticsFrom,
   deterministicRegressionsFrom,
   flakyInputFrom,
   iterationWeightingEqualFrom,
 } from "../src/lib/eval-compare.js";
+import type { EvalVerdictTrialStatistics } from "@mcpjam/sdk";
 import type {
   PlatformCaseScoreDelta,
   PlatformRunCompare,
@@ -427,4 +430,136 @@ test("pending iterations are excluded from flakiness, not counted as failures", 
     ]),
     [{ caseKey: "tc1", passed: true }]
   );
+});
+
+// ── the comparison's sample: eligible trials, one unit ──────────────────────
+
+/**
+ * A side's trial statistics, written out by hand (the values are what the
+ * SDK's `evalVerdictTrialStatistics` produces for these counts; the contract
+ * test pins that function bit for bit). Two case variants: 5 eligible trials
+ * with 3 passing — pass@5 = 1 − C(2,5)/C(5,5) = 1, pass^5 = C(3,5)/C(5,5) = 0
+ * — and 10 with 10.
+ */
+function trialStatistics(
+  rows: Array<[eligible: number, passed: number]>
+): EvalVerdictTrialStatistics {
+  const cases = rows.map(([eligible, passed], index) => ({
+    caseId: `c_${index}`,
+    eligibleTrials: eligible,
+    passedTrials: passed,
+    k: eligible,
+    passAtK: eligible === 0 ? null : passed > 0 ? 1 : 0,
+    passHatK: eligible === 0 ? null : passed === eligible ? 1 : 0,
+    passRateInterval: null,
+  }));
+  return {
+    unit: "caseVariant",
+    eligibleTrials: rows.reduce((sum, [eligible]) => sum + eligible, 0),
+    passedTrials: rows.reduce((sum, [, passed]) => sum + passed, 0),
+    cases,
+  };
+}
+
+function withStatistics(
+  base: EvalVerdictTrialStatistics | undefined,
+  compare: EvalVerdictTrialStatistics | undefined
+): PlatformRunCompare {
+  const row = wire([caseRow()]);
+  // `summary` here is case-variant counts (2 rows), the unit a per-case-graded
+  // run's legacy summary is in — NOT the trial population.
+  return {
+    ...row,
+    baseRun: {
+      ...row.baseRun,
+      summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+      ...(base ? { trialStatistics: base } : {}),
+    },
+    compareRun: {
+      ...row.compareRun,
+      summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+      ...(compare ? { trialStatistics: compare } : {}),
+    },
+  };
+}
+
+test("both sides graded per case: the sample is ELIGIBLE TRIALS, not summary.total", () => {
+  const compare = withStatistics(
+    trialStatistics([
+      [5, 5],
+      [10, 10],
+    ]),
+    trialStatistics([
+      [5, 3],
+      [10, 10],
+    ])
+  );
+  const sample = compareSampleFrom(compare);
+  assert.equal(sample.basis, "eligibleTrials");
+  assert.deepEqual(sample.base, { total: 15, passed: 15 });
+  assert.deepEqual(sample.compare, { total: 15, passed: 13 });
+
+  // And the gate reads exactly that sample: 15 trials a side, which clears the
+  // default minimum sample of 5 — the 2 case variants `summary.total` reports
+  // would not.
+  const input = compareGateInputFrom(compare);
+  assert.deepEqual(input.base.iterations, { total: 15, passed: 15 });
+  assert.deepEqual(input.compare.iterations, { total: 15, passed: 13 });
+});
+
+test("infrastructure failures are already out of the sample", () => {
+  // 5 configured, 1 execution failure: the statistics carry 4 eligible trials,
+  // and the comparison is sized by 4, not by the 5 that were configured.
+  const compare = withStatistics(
+    trialStatistics([[4, 4]]),
+    trialStatistics([[4, 2]])
+  );
+  assert.deepEqual(compareSampleFrom(compare).compare, {
+    total: 4,
+    passed: 2,
+  });
+});
+
+test("one side without trial statistics: BOTH fall back to the legacy summary", () => {
+  // Never one of each — that would set a trial count against a case count.
+  for (const compare of [
+    withStatistics(trialStatistics([[5, 5]]), undefined),
+    withStatistics(undefined, trialStatistics([[5, 3]])),
+    withStatistics(undefined, undefined),
+  ]) {
+    const sample = compareSampleFrom(compare);
+    assert.equal(sample.basis, "legacySummary");
+    assert.deepEqual(sample.base, { total: 2, passed: 2 });
+    assert.deepEqual(sample.compare, { total: 2, passed: 1 });
+    const input = compareGateInputFrom(compare);
+    assert.deepEqual(input.base.iterations, { total: 2, passed: 2 });
+  }
+});
+
+test("a missing legacy summary still reads as an empty sample", () => {
+  const row = wire([caseRow()]);
+  const sample = compareSampleFrom({
+    ...row,
+    baseRun: { ...row.baseRun, summary: null },
+  });
+  assert.equal(sample.basis, "legacySummary");
+  assert.deepEqual(sample.base, { total: 0, passed: 0 });
+});
+
+test("compare output carries both sides' statistics and the sample basis", () => {
+  const base = trialStatistics([[5, 5]]);
+  const next = trialStatistics([[5, 3]]);
+  const report = compareTrialStatisticsFrom(withStatistics(base, next));
+  assert.equal(report.sample.basis, "eligibleTrials");
+  assert.deepEqual(report.base, base);
+  assert.deepEqual(report.compare, next);
+  // pass@k / pass^k are reported per case variant, at k = n.
+  assert.equal(report.compare?.cases[0]?.k, 5);
+  assert.equal(report.compare?.cases[0]?.passAtK, 1);
+  assert.equal(report.compare?.cases[0]?.passHatK, 0);
+
+  const legacy = compareTrialStatisticsFrom(wire([caseRow()]));
+  assert.equal(legacy.base, null);
+  assert.equal(legacy.compare, null);
+  assert.equal(legacy.sample.basis, "legacySummary");
 });

@@ -1,4 +1,4 @@
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import {
   iterationLatencyP50,
   iterationLatencyP95,
@@ -84,6 +84,7 @@ export function runMetricsFromIterations(
     setupFailed: 0,
     skipped: 0,
     unscored: 0,
+    infraError: 0,
   };
   const durationsMs: number[] = [];
   let tokensTotal = 0;
@@ -96,13 +97,17 @@ export function runMetricsFromIterations(
   const models = new Map<string, EvalRunMetrics["models"][number]>();
 
   for (const iteration of iterations) {
-    const result = computeIterationResult(iteration);
+    // Infra rows land in their own bucket and in no verdict count, exactly as
+    // the backend fold does (`evalRunMetrics.verdictOf`).
+    const result = computeMeasuredIterationResult(iteration);
     const bucket =
       result === "timed_out"
         ? "timedOut"
         : result === "setup_failed"
           ? "setupFailed"
-          : result;
+          : result === "infra_error"
+            ? "infraError"
+            : result;
     results[bucket] += 1;
 
     if (iteration.status === "completed") {

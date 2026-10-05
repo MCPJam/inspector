@@ -1,0 +1,119 @@
+# The REAL E2B release check for both hosted harnesses — manual, staging only.
+#
+# Run it against a CANDIDATE computer template and candidate backend/inspector
+# revisions before widening cloud access to them. Unlike the Docker CI job
+# (`hosted-harness-docker.yml`), nothing E2B-specific is mocked: the run's box
+# boots the candidate template on staging, the model-broker lease is installed
+# as an E2B egress transform, and the box is reserved, interrupted and torn
+# down for real. See `mcpjam-inspector/scripts/hosted-harness-release-check.mjs`
+# for the scenarios, the safety rules (disposable project, staging only, only
+# boxes it launched) and the result format.
+#
+# The result — the tested revisions, the template id, the bake id and recipe
+# identities, and every check — is uploaded as the `hosted-harness-release-check`
+# artifact. Attach it to the template's change record.
+#
+# Configuration (the `staging` environment):
+#   vars.STAGING_APP_URL, vars.RELEASE_CHECK_PROJECT_ID, vars.RELEASE_CHECK_SUITES
+#   secrets.RELEASE_CHECK_API_KEY, secrets.STAGING_E2B_API_KEY,
+#   secrets.STAGING_CONVEX_DEPLOY_KEY (lease/refund ledger checks),
+#   secrets.BACKEND_PREVIEW_DISPATCH_TOKEN (to check out the backend revision)
+# With none of them set the job SKIPS and says so; with only some it FAILS.
+name: Hosted harness release check (staging E2B)
+
+on:
+  workflow_dispatch:
+    inputs:
+      template_id:
+        description: Candidate computer template id (what staging's E2B_TEMPLATE_ID points at)
+        required: true
+        type: string
+      backend_revision:
+        description: Backend commit deployed to staging (recorded; its CLI reads the ledgers)
+        required: true
+        type: string
+      harnesses:
+        description: Harnesses to check
+        required: false
+        type: string
+        default: claude-code,codex
+
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time: the scenarios cancel and kill runs in a shared staging project.
+  group: hosted-harness-release-check
+  cancel-in-progress: false
+
+jobs:
+  release-check:
+    name: Staging E2B release check
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 120
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # Job-level so a step's `if` can read it (secrets cannot appear in `if`).
+      HAS_BACKEND_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Read harness toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      # Generates the Codex bridge bundle the check resolves recipe identities from.
+      - name: Build shared contracts and adapter bundles
+        run: npm run pretest -w @mcpjam/inspector
+
+      - name: Check out the backend revision under test
+        if: env.HAS_BACKEND_TOKEN == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: MCPJam/mcpjam-backend
+          ref: ${{ inputs.backend_revision }}
+          token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          path: .release-backend
+          persist-credentials: false
+
+      - name: Install the backend CLI
+        if: hashFiles('.release-backend/package-lock.json') != ''
+        working-directory: .release-backend
+        run: npm ci --ignore-scripts --legacy-peer-deps
+
+      - name: Run the release check
+        working-directory: mcpjam-inspector
+        env:
+          RELEASE_CHECK_BASE_URL: ${{ vars.STAGING_APP_URL }}
+          RELEASE_CHECK_API_KEY: ${{ secrets.RELEASE_CHECK_API_KEY }}
+          RELEASE_CHECK_PROJECT_ID: ${{ vars.RELEASE_CHECK_PROJECT_ID }}
+          RELEASE_CHECK_SUITES: ${{ vars.RELEASE_CHECK_SUITES }}
+          RELEASE_CHECK_TEMPLATE_ID: ${{ inputs.template_id }}
+          RELEASE_CHECK_HARNESSES: ${{ inputs.harnesses }}
+          RELEASE_CHECK_INSPECTOR_REVISION: ${{ github.sha }}
+          RELEASE_CHECK_BACKEND_REVISION: ${{ inputs.backend_revision }}
+          RELEASE_CHECK_BACKEND_DIR: ${{ github.workspace }}/.release-backend
+          RELEASE_CHECK_OUT: ${{ runner.temp }}/release-check-result.json
+          E2B_API_KEY: ${{ secrets.STAGING_E2B_API_KEY }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.STAGING_CONVEX_DEPLOY_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: node scripts/hosted-harness-release-check.mjs
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hosted-harness-release-check
+          path: ${{ runner.temp }}/release-check-result.json
+          if-no-files-found: warn

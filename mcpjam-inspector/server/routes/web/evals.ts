@@ -19,7 +19,10 @@ import {
   assertNoConflictingEnvironmentOverrides,
 } from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
-import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
+import {
+  prepareSuiteReplayFromRun,
+  rerunRefusalError,
+} from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -140,6 +143,12 @@ const hostedReplayRunSchema = z.object({
   // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
   // and the gate it produced could never fail.
   passCriteria: passCriteriaSchema.optional(),
+  /**
+   * E3 — `"failed_cases"` reruns only the cases of `runId` with a trial that
+   * did not complete and pass (the backend picks them). Absent replays the
+   * whole run.
+   */
+  scope: z.literal("failed_cases").optional(),
 });
 
 const hostedTraceRepairStartSchema = z.discriminatedUnion("scope", [
@@ -716,6 +725,7 @@ evals.post("/replay-run", async (c) =>
           modelApiKeys: body.modelApiKeys,
           notes: body.notes,
           passCriteria: body.passCriteria,
+          ...(body.scope ? { scope: body.scope } : {}),
         });
 
         detachPreparedEvalRun({
@@ -738,6 +748,8 @@ evals.post("/replay-run", async (c) =>
           message: "Replay started. Results will appear shortly.",
         };
       } catch (err) {
+        const rerunRefusal = rerunRefusalError(err);
+        if (rerunRefusal) throw rerunRefusal;
         const message = err instanceof Error ? err.message : String(err);
         if (
           message.includes("stored replay config") ||

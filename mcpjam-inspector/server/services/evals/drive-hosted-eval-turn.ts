@@ -70,6 +70,35 @@ import {
   wrapToolSetForEvalTrace,
 } from "./eval-trace-capture";
 import type { ToolPolicyGate } from "./tool-policy-gate";
+import type { TurnErrorInfraEvidence } from "./step-executor";
+import {
+  wrapToolSetWithEffectGate,
+  type EffectDispatchGate,
+} from "./effect-dispatch-gate";
+import { harnessFailureEvidenceOf } from "../../utils/harness/harness-provider-error.js";
+
+/** `{ errorInfra }` when any structured field is present, else nothing. */
+function turnErrorInfraOf(
+  evidence:
+    | {
+        layer?: TurnErrorInfraEvidence["layer"];
+        retryAfterMs?: number;
+        isRetryable?: boolean;
+      }
+    | undefined,
+): { errorInfra?: TurnErrorInfraEvidence } {
+  if (!evidence) return {};
+  const errorInfra: TurnErrorInfraEvidence = {
+    ...(evidence.layer ? { layer: evidence.layer } : {}),
+    ...(typeof evidence.retryAfterMs === "number"
+      ? { retryAfterMs: evidence.retryAfterMs }
+      : {}),
+    ...(typeof evidence.isRetryable === "boolean"
+      ? { isRetryable: evidence.isRetryable }
+      : {}),
+  };
+  return Object.keys(errorInfra).length > 0 ? { errorInfra } : {};
+}
 import type { UsageTotals } from "./types";
 
 type ToolCall = {
@@ -110,6 +139,13 @@ export type HostedEvalTurnOutcome =
       errorCode?: string;
       /** HTTP status, when the failure came from a non-OK response. */
       errorHttpStatus?: number;
+      /**
+       * The rest of the producer's STRUCTURED evidence (typed layer,
+       * Retry-After, retryability) — read only by the eval infra-error
+       * classifier. Copied from the engine's event or a typed throw, never
+       * derived from the message.
+       */
+      errorInfra?: TurnErrorInfraEvidence;
     };
 
 /** Stream-runner SSE concerns, layered over the shared skeleton per turn. */
@@ -178,6 +214,13 @@ export interface DriveHostedEvalTurnParams {
    *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
+  /**
+   * E2/E4 replay-safety gate for this trial attempt. When set, every tool the
+   * turn could execute passes it first, so the attempt's FIRST potentially
+   * effectful dispatch is durably recorded before it happens
+   * (`effect-dispatch-gate.ts`). Absent ⇒ no recording, and no replay.
+   */
+  effectGate?: EffectDispatchGate;
   /** Project that owns the host's computer — required by runHarnessTurn to
    *  resolve the E2B sandbox. Forwarded (harness turns only) from the eval's
    *  resolved billing target; absent for org-level evals (no project/computer,
@@ -515,10 +558,18 @@ export async function driveHostedEvalTurn(
     ...prepared.allTools,
     ...browser.computerWidgetTools,
   };
+  // The effect gate sits INSIDE the policy wrap — a call the policy blocks
+  // never executes, so it is not a dispatch — and inside the trace wrap, so a
+  // refused call still shows up as a failed tool span.
+  const gatedTools = wrapToolSetWithEffectGate(
+    mergedTools,
+    params.effectGate,
+    (name) => (name in browser.computerWidgetTools ? "browser" : "tool"),
+  );
   const tracedTools = wrapToolSetForEvalTrace(
     params.toolPolicyGate
-      ? params.toolPolicyGate.wrap(mergedTools)
-      : mergedTools,
+      ? params.toolPolicyGate.wrap(gatedTools)
+      : gatedTools,
     traceCtx,
     promptIndex,
   );
@@ -674,6 +725,10 @@ export async function driveHostedEvalTurn(
       ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
     };
     sinks.onTurnFailure?.(failure);
+    // Structured evidence ONLY from a typed thrower (a harness setup step, a
+    // bridge's typed provider error, an AI SDK call error) — an arbitrary
+    // object with a `statusCode` could be the customer's server talking.
+    const evidence = harnessFailureEvidenceOf(error);
     // `failedStage` already names the layer; "pre-turn setup" is the one call
     // site that never reached the model.
     return {
@@ -683,6 +738,11 @@ export async function driveHostedEvalTurn(
         failedStage === "pre-turn setup"
           ? ("setup" as const)
           : ("model" as const),
+      ...(evidence?.code ? { errorCode: evidence.code } : {}),
+      ...(evidence?.httpStatus !== undefined
+        ? { errorHttpStatus: evidence.httpStatus }
+        : {}),
+      ...turnErrorInfraOf(evidence),
     };
   };
 
@@ -1077,6 +1137,21 @@ export async function driveHostedEvalTurn(
       ...(typeof lastEngineError?.httpStatus === "number"
         ? { errorHttpStatus: lastEngineError.httpStatus }
         : {}),
+      ...turnErrorInfraOf(
+        lastEngineError
+          ? {
+              ...(lastEngineError.infraLayer
+                ? { layer: lastEngineError.infraLayer }
+                : {}),
+              ...(typeof lastEngineError.retryAfterMs === "number"
+                ? { retryAfterMs: lastEngineError.retryAfterMs }
+                : {}),
+              ...(typeof lastEngineError.isRetryable === "boolean"
+                ? { isRetryable: lastEngineError.isRetryable }
+                : {}),
+            }
+          : undefined,
+      ),
     };
   };
 

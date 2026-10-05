@@ -5,6 +5,7 @@ import {
   formatRunId,
   computeIterationSummary,
   getTemplateKey,
+  isSubsetRerunRun,
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import {
@@ -118,6 +119,9 @@ export function useSuiteData(
         // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
         // Do not fall back to their legacy-looking summary counts in charts.
         if (run.result === "inconclusive") return null;
+        // A subset rerun re-ran only what failed; its pass rate is biased by
+        // that selection and is not a point on the suite's trend.
+        if (isSubsetRerunRun(run)) return null;
         const runIterations = allIterations.filter(
           (iter) => iter.suiteRunId === run._id,
         );
@@ -476,6 +480,8 @@ export function useSuiteDataFromMetrics(
       .map((run) => {
         // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
         if (run.result === "inconclusive") return null;
+        // Subset reruns are not trend points (see `isSubsetRerunRun`).
+        if (isSubsetRerunRun(run)) return null;
         const metrics = metricsByRun.get(run._id);
         // Only decided iterations count - exclude pending/cancelled/timeouts.
         const realTimePassed = metrics?.results.passed ?? 0;

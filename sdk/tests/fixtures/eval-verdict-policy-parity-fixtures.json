@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared parity fixtures for the versioned eval VERDICT POLICY contract (verdictPolicyVersion 2). Loaded by sdk/tests/contract-verdict-policy.test.ts in mcpjam-inspector (zod: evalVerdictDecisionSchema / evalCaseVerdictAggregationSchema / evalRateMeasurementSchema / resolvedEvalValidityPolicySchema in sdk/src/contract/verdict-policy.ts) and by sdk/tests/eval-verdict-policy-schema-json.test.ts (the GENERATED JSON Schema, through ajv). It is written to be copied VERBATIM into mcpjam-backend as the B4-W2 mirror corpus, exactly as score-contract-parity-fixtures.json already is: the backend cannot import @mcpjam/sdk into convex/ default-runtime code, so a shared fixture file is the only common ground truth. Copy it byte for byte; do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__kind, __label, __why, __structural) and every object in this contract is closed, so a payload still carrying them would be rejected for the wrong reason \u2014 turning an accept row into a false failure and, worse, a reject row into a false success. DISPATCH: '__kind' selects the validator \u2014 'decision', 'case', 'rate' or 'policy'. '__structural' says whether the GENERATED JSON Schema must reject the row too (true) or whether it is a cross-field rule only zod can express (false); the json-schema test asserts BOTH directions, so a mislabelled row fails loudly instead of being excused. NOT EXPRESSIBLE IN JSON: NaN, Infinity and -Infinity are not JSON values, so the non-finite rejections live in the zod test itself rather than here. AGGREGATION COHORT: each row is an INPUT (a case's configured trial count, its effective pass threshold, and one entry per trial carrying a lifecycle status, an optional task verdict and an optional evaluator-error flag) plus the EXPECTED per-case aggregation output. This wave ships no aggregator: the rows pin the arithmetic a future producer must reproduce, and the test derives the counts from the trial list to prove the expected output is self-consistent. DERIVATION RULES, which the mirror must match: a trial is ATTEMPTED unless its status is pending, skipped or cancelled \u2014 a RUNNING trial has begun and stays in the attempted denominator, while a CANCELLED one is withdrawn from every denominator so that stopping a run cannot report it as incomplete; it is ELIGIBLE when it completed with a task verdict and no evaluator error; passRate is passed over eligible; completionRate is completed over attempted; observedStability is max(passed, failed) over eligible; mixedVerdict is true exactly when both a pass and a fail were graded; a zero denominator is notMeasured with a null value; and validity is decided BEFORE the task verdict, so a run whose validity fails is inconclusive with validity-only reasons. When the contract shape changes, edit the zod source, regenerate the JSON Schema artifacts, AND update this fixture in the same PR. IDENTITY: a case aggregate is keyed by caseId PLUS its optional executionVariant (the provider/model pair a hosted fan-out ran it under), configuredTrials is the PER-VARIANT repetitions count, and one case may not mix variant-keyed and unkeyed aggregates. REASONS: a decision's reasons array must be EXACTLY the checks its own measurements failed \u2014 in the vocabulary's order, nothing missing and nothing invented \u2014 and once validity holds it is exactly the one reason its cases produced.",
+  "__readme": "Shared parity fixtures for the versioned eval VERDICT POLICY contract (verdictPolicyVersion 2). Loaded by sdk/tests/contract-verdict-policy.test.ts in mcpjam-inspector (zod: evalVerdictDecisionSchema / evalCaseVerdictAggregationSchema / evalRateMeasurementSchema / resolvedEvalValidityPolicySchema in sdk/src/contract/verdict-policy.ts) and by sdk/tests/eval-verdict-policy-schema-json.test.ts (the GENERATED JSON Schema, through ajv). It is written to be copied VERBATIM into mcpjam-backend as the B4-W2 mirror corpus, exactly as score-contract-parity-fixtures.json already is: the backend cannot import @mcpjam/sdk into convex/ default-runtime code, so a shared fixture file is the only common ground truth. Copy it byte for byte; do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__kind, __label, __why, __structural) and every object in this contract is closed, so a payload still carrying them would be rejected for the wrong reason \u2014 turning an accept row into a false failure and, worse, a reject row into a false success. DISPATCH: '__kind' selects the validator \u2014 'decision', 'case', 'rate' or 'policy'. '__structural' says whether the GENERATED JSON Schema must reject the row too (true) or whether it is a cross-field rule only zod can express (false); the json-schema test asserts BOTH directions, so a mislabelled row fails loudly instead of being excused. NOT EXPRESSIBLE IN JSON: NaN, Infinity and -Infinity are not JSON values, so the non-finite rejections live in the zod test itself rather than here. AGGREGATION COHORT: each row is an INPUT (a case's configured trial count, its effective pass threshold, and one entry per trial carrying a lifecycle status, an optional task verdict and an optional evaluator-error flag) plus the EXPECTED per-case aggregation output. This wave ships no aggregator: the rows pin the arithmetic a future producer must reproduce, and the test derives the counts from the trial list to prove the expected output is self-consistent. DERIVATION RULES, which the mirror must match: a trial is ATTEMPTED unless its status is pending, skipped or cancelled \u2014 a RUNNING trial has begun and stays in the attempted denominator, while a CANCELLED one is withdrawn from every denominator so that stopping a run cannot report it as incomplete; it is ELIGIBLE when it completed with a task verdict and no evaluator error; passRate is passed over eligible; completionRate is completed over attempted; observedStability is max(passed, failed) over eligible; mixedVerdict is true exactly when both a pass and a fail were graded; a zero denominator is notMeasured with a null value; and validity is decided BEFORE the task verdict, so a run whose validity fails is inconclusive with validity-only reasons. When the contract shape changes, edit the zod source, regenerate the JSON Schema artifacts, AND update this fixture in the same PR. IDENTITY: a case aggregate is keyed by caseId PLUS its optional executionVariant (the provider/model pair a hosted fan-out ran it under), configuredTrials is the PER-VARIANT repetitions count, and one case may not mix variant-keyed and unkeyed aggregates. REASONS: a decision's reasons array must be EXACTLY the checks its own measurements failed \u2014 in the vocabulary's order, nothing missing and nothing invented \u2014 and once validity holds it is exactly the one reason its cases produced. TRIAL STATISTICS COHORT: report-only per-case statistics over a case's ELIGIBLE trials (n = eligibleTrials, c = passedTrials) \u2014 derived from a decision's counts, never part of a decision and never a verdict. Each row is an INPUT (n, c, k) plus `expected`: the EXACT doubles of pass@k = 1 \u2212 C(n\u2212c, k)/C(n, k) and pass^k = C(c, k)/C(n, k), both computed as the running product of (a\u2212i)/(n\u2212i) for i = 0..k\u22121 in that order (never as binomials, which pass 2^53 at n = 100), so two implementations agree to the last bit, and the 95% Wilson score interval on c/n (the compare-stats arithmetic, z = 1.959963984540054, with its endpoints pinned to exactly 0 at c = 0 and exactly 1 at c = n). `handComputed` is each estimate worked by hand as an exact fraction [numerator, denominator] (asserted to 1e-12), and `publishedInterval`, where present, is the Wilson interval as published in the literature (asserted to 4 decimal places). A statistic is null exactly when it is not estimable: n = 0, or k outside 1..n \u2014 never clamped. A producer reports k = n on every case row.",
   "accept": [
     {
       "__kind": "decision",
@@ -6374,6 +6374,543 @@
         "mixedVerdict": true,
         "verdict": "passed",
         "reason": "casePassRateMetThreshold"
+      }
+    }
+  ],
+  "trialStatistics": [
+    {
+      "__label": "n=5, c=3, k=2 \u2014 the worked example",
+      "__why": "pass@2 = 1 \u2212 C(2,2)/C(5,2) = 1 \u2212 1/10 = 9/10; pass^2 = C(3,2)/C(5,2) = 3/10. Product form: 1 \u2212 (2/5)(1/4) and (3/5)(2/4).",
+      "input": {
+        "eligibleTrials": 5,
+        "passedTrials": 3,
+        "k": 2
+      },
+      "expected": {
+        "passAtK": 0.9,
+        "passHatK": 0.3,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.23072428127601297,
+          "upper": 0.8823792257673521
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          9,
+          10
+        ],
+        "passHatK": [
+          3,
+          10
+        ]
+      },
+      "publishedInterval": {
+        "lower": 0.2307,
+        "upper": 0.8824,
+        "__source": "Wilson score interval for 3/5 at 95% (statsmodels proportion_confint, method=\"wilson\")"
+      }
+    },
+    {
+      "__label": "n=5, c=3, k=1 \u2014 k=1 is the pass rate itself",
+      "__why": "pass@1 = 1 \u2212 C(2,1)/C(5,1) = 1 \u2212 2/5 = 3/5; pass^1 = C(3,1)/C(5,1) = 3/5. Both estimators collapse to c/n at k=1.",
+      "input": {
+        "eligibleTrials": 5,
+        "passedTrials": 3,
+        "k": 1
+      },
+      "expected": {
+        "passAtK": 0.6,
+        "passHatK": 0.6,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.23072428127601297,
+          "upper": 0.8823792257673521
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          3,
+          5
+        ],
+        "passHatK": [
+          3,
+          5
+        ]
+      }
+    },
+    {
+      "__label": "n=5, c=3, k=3 \u2014 pass^k past the failures",
+      "__why": "pass@3 = 1 \u2212 C(2,3)/C(5,3) = 1 \u2212 0 = 1: any 3 of 5 must include a pass when only 2 fail. pass^3 = C(3,3)/C(5,3) = 1/10.",
+      "input": {
+        "eligibleTrials": 5,
+        "passedTrials": 3,
+        "k": 3
+      },
+      "expected": {
+        "passAtK": 1,
+        "passHatK": 0.09999999999999999,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.23072428127601297,
+          "upper": 0.8823792257673521
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          1,
+          1
+        ],
+        "passHatK": [
+          1,
+          10
+        ]
+      }
+    },
+    {
+      "__label": "n=5, c=3, k=5 \u2014 k = n, the reported k",
+      "__why": "At k = n the estimators read plainly: pass@5 = 1 \u2212 C(2,5)/C(5,5) = 1 (at least one trial passed), pass^5 = C(3,5)/C(5,5) = 0 (not every trial passed).",
+      "input": {
+        "eligibleTrials": 5,
+        "passedTrials": 3,
+        "k": 5
+      },
+      "expected": {
+        "passAtK": 1,
+        "passHatK": 0,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.23072428127601297,
+          "upper": 0.8823792257673521
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          1,
+          1
+        ],
+        "passHatK": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "__label": "n=4, c=1, k=2",
+      "__why": "pass@2 = 1 \u2212 C(3,2)/C(4,2) = 1 \u2212 3/6 = 1/2; pass^2 = C(1,2)/C(4,2) = 0 \u2014 one pass cannot fill a draw of two.",
+      "input": {
+        "eligibleTrials": 4,
+        "passedTrials": 1,
+        "k": 2
+      },
+      "expected": {
+        "passAtK": 0.5,
+        "passHatK": 0,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.04558726080970055,
+          "upper": 0.6993581574175981
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          1,
+          2
+        ],
+        "passHatK": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "__label": "n=4, c=3, k=3",
+      "__why": "pass@3 = 1 \u2212 C(1,3)/C(4,3) = 1; pass^3 = C(3,3)/C(4,3) = 1/4.",
+      "input": {
+        "eligibleTrials": 4,
+        "passedTrials": 3,
+        "k": 3
+      },
+      "expected": {
+        "passAtK": 1,
+        "passHatK": 0.25,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.30064184258240184,
+          "upper": 0.9544127391902995
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          1,
+          1
+        ],
+        "passHatK": [
+          1,
+          4
+        ]
+      }
+    },
+    {
+      "__label": "n=10, c=3, k=5",
+      "__why": "pass@5 = 1 \u2212 C(7,5)/C(10,5) = 1 \u2212 21/252 = 11/12; pass^5 = C(3,5)/C(10,5) = 0.",
+      "input": {
+        "eligibleTrials": 10,
+        "passedTrials": 3,
+        "k": 5
+      },
+      "expected": {
+        "passAtK": 0.9166666666666667,
+        "passHatK": 0,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.10779126740630102,
+          "upper": 0.6032218525388546
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          11,
+          12
+        ],
+        "passHatK": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "__label": "n=10, c=7, k=3",
+      "__why": "pass@3 = 1 \u2212 C(3,3)/C(10,3) = 1 \u2212 1/120 = 119/120; pass^3 = C(7,3)/C(10,3) = 35/120 = 7/24.",
+      "input": {
+        "eligibleTrials": 10,
+        "passedTrials": 7,
+        "k": 3
+      },
+      "expected": {
+        "passAtK": 0.9916666666666667,
+        "passHatK": 0.29166666666666663,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.3967781474611453,
+          "upper": 0.8922087325936989
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          119,
+          120
+        ],
+        "passHatK": [
+          7,
+          24
+        ]
+      }
+    },
+    {
+      "__label": "n=20, c=10, k=10 \u2014 the product form keeps precision",
+      "__why": "pass@10 = 1 \u2212 C(10,10)/C(20,10) = 1 \u2212 1/184756 = 184755/184756; pass^10 = C(10,10)/C(20,10) = 1/184756.",
+      "input": {
+        "eligibleTrials": 20,
+        "passedTrials": 10,
+        "k": 10
+      },
+      "expected": {
+        "passAtK": 0.9999945874558878,
+        "passHatK": 5.412544112234513e-06,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.2992980081982124,
+          "upper": 0.7007019918017876
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          184755,
+          184756
+        ],
+        "passHatK": [
+          1,
+          184756
+        ]
+      }
+    },
+    {
+      "__label": "n=100, c=99, k=50 \u2014 past 2^53 as binomials, exact as a product",
+      "__why": "C(100,50) is about 1e29, so the binomials cannot be formed in doubles. The running product telescopes: pass^50 = C(99,50)/C(100,50) = 50/100 = 1/2, and pass@50 = 1 \u2212 C(1,50)/C(100,50) = 1.",
+      "input": {
+        "eligibleTrials": 100,
+        "passedTrials": 99,
+        "k": 50
+      },
+      "expected": {
+        "passAtK": 1,
+        "passHatK": 0.49999999999999956,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.9455138038212946,
+          "upper": 0.9982325679358593
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          1,
+          1
+        ],
+        "passHatK": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "__label": "every trial passed",
+      "__why": "c = n: pass@k = pass^k = 1 for every k, and the interval upper bound is EXACTLY 1.",
+      "input": {
+        "eligibleTrials": 3,
+        "passedTrials": 3,
+        "k": 2
+      },
+      "expected": {
+        "passAtK": 1,
+        "passHatK": 1,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.4385029682449546,
+          "upper": 1
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          1,
+          1
+        ],
+        "passHatK": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "__label": "no trial passed",
+      "__why": "c = 0: pass@k = pass^k = 0 for every k, and the interval lower bound is EXACTLY 0.",
+      "input": {
+        "eligibleTrials": 3,
+        "passedTrials": 0,
+        "k": 2
+      },
+      "expected": {
+        "passAtK": 0,
+        "passHatK": 0,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0,
+          "upper": 0.5614970317550454
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          0,
+          1
+        ],
+        "passHatK": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "__label": "no eligible trials \u2014 not estimable",
+      "__why": "n = 0 is not a pass rate of 0: every statistic is null, the same rule that makes 0/0 a notMeasured rate.",
+      "input": {
+        "eligibleTrials": 0,
+        "passedTrials": 0,
+        "k": 1
+      },
+      "expected": {
+        "passAtK": null,
+        "passHatK": null,
+        "passRateInterval": null
+      },
+      "handComputed": {
+        "passAtK": null,
+        "passHatK": null
+      }
+    },
+    {
+      "__label": "k above n \u2014 not estimable",
+      "__why": "A draw of 4 from 3 trials does not exist, so the estimator is null rather than clamped to k = n (which would silently answer a different question).",
+      "input": {
+        "eligibleTrials": 3,
+        "passedTrials": 2,
+        "k": 4
+      },
+      "expected": {
+        "passAtK": null,
+        "passHatK": null,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.20765960080204782,
+          "upper": 0.9385080552796038
+        }
+      },
+      "handComputed": {
+        "passAtK": null,
+        "passHatK": null
+      }
+    },
+    {
+      "__label": "k = 0 \u2014 not estimable",
+      "__why": "pass@0 has no meaning; null rather than a vacuous 0 or 1.",
+      "input": {
+        "eligibleTrials": 3,
+        "passedTrials": 2,
+        "k": 0
+      },
+      "expected": {
+        "passAtK": null,
+        "passHatK": null,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.20765960080204782,
+          "upper": 0.9385080552796038
+        }
+      },
+      "handComputed": {
+        "passAtK": null,
+        "passHatK": null
+      }
+    },
+    {
+      "__label": "Newcombe 1998 example (a): 81/263",
+      "__why": "Wilson score interval, published as 0.2553 to 0.3662 (Newcombe 1998, Statistics in Medicine 17:857, method 3). k=1 makes both estimators c/n = 81/263.",
+      "input": {
+        "eligibleTrials": 263,
+        "passedTrials": 81,
+        "k": 1
+      },
+      "expected": {
+        "passAtK": 0.3079847908745247,
+        "passHatK": 0.30798479087452474,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.2552885198782742,
+          "upper": 0.36620957698280004
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          81,
+          263
+        ],
+        "passHatK": [
+          81,
+          263
+        ]
+      },
+      "publishedInterval": {
+        "lower": 0.2553,
+        "upper": 0.3662,
+        "__source": "Newcombe (1998) Statistics in Medicine 17:857-872, method 3 (Wilson score)"
+      }
+    },
+    {
+      "__label": "Newcombe 1998 example (b): 15/148",
+      "__why": "Wilson score interval, published as 0.0624 to 0.1605.",
+      "input": {
+        "eligibleTrials": 148,
+        "passedTrials": 15,
+        "k": 1
+      },
+      "expected": {
+        "passAtK": 0.10135135135135132,
+        "passHatK": 0.10135135135135136,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.06238639953073629,
+          "upper": 0.16048724172330803
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          15,
+          148
+        ],
+        "passHatK": [
+          15,
+          148
+        ]
+      },
+      "publishedInterval": {
+        "lower": 0.0624,
+        "upper": 0.1605,
+        "__source": "Newcombe (1998) Statistics in Medicine 17:857-872, method 3 (Wilson score)"
+      }
+    },
+    {
+      "__label": "Newcombe 1998 example (c): 0/20",
+      "__why": "Wilson score interval, published as 0 to 0.1611. The formula lands on 1.4e-17 for the lower bound; the statistic pins it to exactly 0.",
+      "input": {
+        "eligibleTrials": 20,
+        "passedTrials": 0,
+        "k": 1
+      },
+      "expected": {
+        "passAtK": 0,
+        "passHatK": 0,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0,
+          "upper": 0.16112515805281935
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          0,
+          1
+        ],
+        "passHatK": [
+          0,
+          1
+        ]
+      },
+      "publishedInterval": {
+        "lower": 0,
+        "upper": 0.1611,
+        "__source": "Newcombe (1998) Statistics in Medicine 17:857-872, method 3 (Wilson score)"
+      }
+    },
+    {
+      "__label": "Newcombe 1998 example (d): 1/29",
+      "__why": "Wilson score interval, published as 0.0061 to 0.1718.",
+      "input": {
+        "eligibleTrials": 29,
+        "passedTrials": 1,
+        "k": 1
+      },
+      "expected": {
+        "passAtK": 0.03448275862068961,
+        "passHatK": 0.034482758620689655,
+        "passRateInterval": {
+          "confidence": 0.95,
+          "lower": 0.006113214292762667,
+          "upper": 0.17175521879320282
+        }
+      },
+      "handComputed": {
+        "passAtK": [
+          1,
+          29
+        ],
+        "passHatK": [
+          1,
+          29
+        ]
+      },
+      "publishedInterval": {
+        "lower": 0.0061,
+        "upper": 0.1718,
+        "__source": "Newcombe (1998) Statistics in Medicine 17:857-872, method 3 (Wilson score)"
       }
     }
   ]

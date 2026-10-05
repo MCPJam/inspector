@@ -11,7 +11,9 @@ import {
 import {
   evalBacktestDraftSchema,
   evalBacktestContinuationSchema,
+  evalRegradeRequestSchema,
   type EvalBacktestReport,
+  type EvalRegradeReport,
 } from "../contract/eval-backtest.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "../contract/standard-checks.js";
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
@@ -46,6 +48,11 @@ import {
   suiteGatePolicySchema,
 } from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
+import { evalVerdictTrialStatistics } from "../contract/verdict-aggregate.js";
+import {
+  evalVerdictDecisionSchema,
+  isEvalVerdictPolicyV2,
+} from "../contract/verdict-policy.js";
 import {
   MODEL_REASONING_EFFORTS,
   MODEL_SELECTION_FALLBACK_PROVIDERS,
@@ -7258,6 +7265,26 @@ export type GetEvalRunResult = {
   decisionSummary?: PlatformEvalRunDecisionSummary;
 };
 
+/**
+ * Attach `trialStatistics` when the deployment that answered predates it.
+ *
+ * Same posture as the decision-summary fallback below: MCP and CLI must not
+ * disagree about a run merely because the API has not rolled the additive
+ * field out yet. Computed ONLY from a decision that parses against the
+ * contract, with the same function the API (and, bit for bit, the backend)
+ * uses — never from `summary`, whose unit depends on the producer. A response
+ * that already carries the field is returned untouched.
+ */
+export function withEvalRunTrialStatistics(
+  run: PlatformEvalRun
+): PlatformEvalRun {
+  if (run.trialStatistics !== undefined) return run;
+  if (!isEvalVerdictPolicyV2(run.verdictPolicyVersion)) return run;
+  const decision = evalVerdictDecisionSchema.safeParse(run.verdictSummary);
+  if (!decision.success) return run;
+  return { ...run, trialStatistics: evalVerdictTrialStatistics(decision.data) };
+}
+
 export const getEvalRunOperation: PlatformOperation<
   GetEvalRunInput,
   GetEvalRunResult
@@ -7276,9 +7303,11 @@ export const getEvalRunOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const run = await client.getEvalRun(
-      { projectId: project.id, runId: input.runId },
-      { signal }
+    const run = withEvalRunTrialStatistics(
+      await client.getEvalRun(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      )
     );
     if (!TERMINAL_EVAL_RUN_STATUSES.has(run.status)) {
       return { project: toSelectedProjectInfo(project), run };
@@ -8569,6 +8598,67 @@ export const backtestEvalRunOperation: PlatformOperation<
         runId: input.runId,
         draft: input.draft,
         continuation: input.continuation,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: run.id,
+      suiteId: run.suiteId,
+      report,
+    };
+  },
+};
+
+// Strict: a draft carrying `matchOptions` is refused rather than silently
+// re-graded without them — a re-grade never changes the matcher's options.
+const regradeEvalRunInput = evalRunScopedInput
+  .extend(evalRegradeRequestSchema.shape)
+  .strict();
+export type RegradeEvalRunInput = z.infer<typeof regradeEvalRunInput>;
+/**
+ * Persisted re-grade of a completed run from its stored traces.
+ *
+ * Deliberately ABSENT from `ALL_OPERATIONS`, so no agent surface (the MCP
+ * catalog, the agent registry, the in-app toolset) advertises it: it rewrites
+ * recorded verdicts, and that is a decision for a person at the CLI or the
+ * API, not one an agent should be offered alongside read tools. The CLI runs
+ * it as `mcpjam cloud eval regrade <runId>`.
+ */
+export const regradeEvalRunOperation: PlatformOperation<
+  RegradeEvalRunInput,
+  {
+    project: SelectedProjectInfo;
+    runId: string;
+    suiteId: string;
+    report: EvalRegradeReport;
+  }
+> = {
+  name: "regrade_eval_run",
+  title: "Re-grade an MCPJam eval run",
+  description:
+    "Re-grade a completed eval run from its stored traces and persist the verdicts that change, then re-decide the run. Applies an explicit assertion draft (replace, extend or inherit the frozen rules; omitted ⇒ inherit, re-grading the frozen rules with today's evaluators). No model calls and no credits; the judge is never re-run. Only completed iterations of a completed, non-SDK run whose stored trace reproduces the recorded verdict are re-graded; the rest are reported as skipped with a reason. dryRun returns the diff without writing. CLI: mcpjam cloud eval regrade <runId> [--json <draft>] [--dry-run].",
+  readOnly: false,
+  risk: "none",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: regradeEvalRunInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    const report = await client.regradeEvalRun(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        ...(input.assertions ? { assertions: input.assertions } : {}),
+        ...(input.dryRun === true ? { dryRun: true } : {}),
       },
       { signal }
     );

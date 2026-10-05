@@ -289,6 +289,7 @@ export function buildHostedStepHandlers(
             ...(typeof outcome.errorHttpStatus === "number"
               ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
+            ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           }
         : {}),
     };
@@ -357,6 +358,7 @@ export function buildHostedStepHandlers(
             ...(typeof outcome.errorHttpStatus === "number"
               ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
+            ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           }
         : {}),
     };
@@ -381,6 +383,10 @@ export function buildHostedStepHandlers(
       // stamped `setActivePromptIndex(turnOrdinal)` before dispatching here.
       ctx.browser.setActiveWidgetChecks([]);
       await ctx.browser.dismissCarriedWidget();
+      // A scripted call against the customer's server is a dispatch: record
+      // it BEFORE it happens (E2/E4). A refusal throws into the catch below,
+      // so the call never runs.
+      await ctx.effectGate?.admit("scripted_tool");
       const result = await runPinnedTurn({
         pinned,
         resolvedServerKey: ctx.resolvePinnedServerKey(pinned),

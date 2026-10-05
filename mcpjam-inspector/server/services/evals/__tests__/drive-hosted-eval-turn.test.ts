@@ -397,3 +397,81 @@ it("leaves the breakdown absent when no turn reported one", async () => {
     totalTokens: 5,
   });
 });
+
+describe("structured failure evidence reaches the outcome (E1)", () => {
+  beforeEach(() => {
+    runAssistantTurnMock.mockReset();
+  });
+
+  it("carries the engine's typed layer, status, Retry-After and retryability", async () => {
+    runAssistantTurnMock.mockImplementationOnce((async (options: {
+      onEngineError?: (event: Record<string, unknown>) => void;
+    }) => {
+      options.onEngineError?.({
+        message: "MCPJam is experiencing high demand.",
+        rawText: "{}",
+        promptIndex: 0,
+        code: "mcpjam_rate_limit",
+        httpStatus: 429,
+        retryAfterMs: 30_000,
+        isRetryable: true,
+        infraLayer: "model",
+        phase: "stream",
+      });
+      // The engine caught the error mid-turn: no turn trace.
+      return { messages: [], usage: {}, turnTrace: undefined };
+    }) as never);
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      errorSource: "model",
+      errorCode: "mcpjam_rate_limit",
+      errorHttpStatus: 429,
+      errorInfra: { layer: "model", retryAfterMs: 30_000, isRetryable: true },
+    });
+  });
+
+  it("an untyped engine error carries no infra evidence", async () => {
+    runAssistantTurnMock.mockImplementationOnce((async (options: {
+      onEngineError?: (event: Record<string, unknown>) => void;
+    }) => {
+      options.onEngineError?.({
+        message: "tool exploded",
+        rawText: "tool exploded",
+        promptIndex: 0,
+        phase: "stream",
+      });
+      return { messages: [], usage: {}, turnTrace: undefined };
+    }) as never);
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome.kind).toBe("failed");
+    expect(outcome).not.toHaveProperty("errorInfra");
+  });
+
+  it("a typed throw (AI SDK APICallError) escaping the engine is model evidence", async () => {
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("Service Unavailable"), {
+        name: "AI_APICallError",
+        statusCode: 503,
+        isRetryable: true,
+      });
+    });
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      errorSource: "model",
+      errorHttpStatus: 503,
+      errorInfra: { layer: "model", isRetryable: true },
+    });
+  });
+
+  it("an arbitrary thrown object with a status is NOT evidence", async () => {
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("upstream said 503"), { statusCode: 503 });
+    });
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome.kind).toBe("failed");
+    expect(outcome).not.toHaveProperty("errorHttpStatus");
+    expect(outcome).not.toHaveProperty("errorInfra");
+  });
+});

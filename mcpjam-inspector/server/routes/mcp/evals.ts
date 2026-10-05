@@ -4,7 +4,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
-import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
+import {
+  executeSuiteReplayFromRun,
+  rerunRefusalError,
+} from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import "../../types/hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
@@ -62,6 +65,8 @@ const ReplayRunRequestSchema = z.object({
   // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
   // and the gate it produced could never fail.
   passCriteria: passCriteriaSchema.optional(),
+  /** E3 — `"failed_cases"` reruns only the cases that did not pass. */
+  scope: z.literal("failed_cases").optional(),
 });
 
 const TraceRepairStartSchema = z.discriminatedUnion("scope", [
@@ -249,7 +254,7 @@ evals.post("/replay-run", async (c) => {
       );
     }
 
-    const { runId, convexAuthToken, modelApiKeys, notes, passCriteria } =
+    const { runId, convexAuthToken, modelApiKeys, notes, passCriteria, scope } =
       validationResult.data;
 
     const convexClient = createConvexClient(convexAuthToken);
@@ -261,9 +266,12 @@ evals.post("/replay-run", async (c) => {
         modelApiKeys,
         notes,
         passCriteria,
+        ...(scope ? { scope } : {}),
       });
       return c.json(result);
     } catch (err) {
+      const rerunRefusal = rerunRefusalError(err);
+      if (rerunRefusal) throw rerunRefusal;
       const message = err instanceof Error ? err.message : String(err);
       if (
         message.includes("stored replay config") ||

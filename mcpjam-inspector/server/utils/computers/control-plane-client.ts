@@ -17,6 +17,7 @@
  */
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
+import type { SandboxVendorLifecycle } from "./sandbox-lifecycle.js";
 import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import {
   EVAL_SANDBOX_CAPACITY_POLICY,
@@ -290,6 +291,12 @@ export interface EvalSandbox {
   runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
+  /**
+   * The box's server-resolved vendor lifecycle — the window a `Sandbox.connect`
+   * must arm instead of an SDK default. Absent on an older backend. Untrusted
+   * shape: read it through `parseSandboxVendorLifecycle`.
+   */
+  vendorLifecycle?: SandboxVendorLifecycle;
 }
 
 /**
@@ -330,6 +337,8 @@ export async function provisionEvalSandbox(args: {
   bearer: string;
   runId: string;
   iterationId?: string;
+  /** E4.2: the iteration's lease token; the backend fences provision on it. */
+  leaseToken?: string;
   runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
   /**
@@ -355,6 +364,7 @@ export async function provisionEvalSandbox(args: {
         {
           runId: args.runId,
           ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+          ...(args.leaseToken ? { leaseToken: args.leaseToken } : {}),
           ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
         },
         signal,
@@ -456,6 +466,8 @@ export interface JourneySandbox {
   runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
+  /** Server-resolved vendor lifecycle (see `EvalSandbox.vendorLifecycle`). */
+  vendorLifecycle?: SandboxVendorLifecycle;
 }
 
 export interface PlaygroundSandbox {
@@ -706,6 +718,8 @@ export interface ScenarioSandbox {
    * fused path or a backend that predates the protocol. Nothing to ack.
    */
   noticeAckPending?: boolean;
+  /** Server-resolved vendor lifecycle (see `EvalSandbox.vendorLifecycle`). */
+  vendorLifecycle?: SandboxVendorLifecycle;
 }
 
 /**

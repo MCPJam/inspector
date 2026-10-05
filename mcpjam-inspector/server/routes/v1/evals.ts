@@ -40,6 +40,7 @@ import {
   toScoreProjection,
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
+import { toInfraErrorProjection } from "./eval-infra-error-projection.js";
 import {
   toFrictionSignalsProjection,
   toSuspectedConditionProjection,
@@ -176,6 +177,7 @@ import type {
 } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
+import { rerunRefusalError } from "../../services/evals/replay-suite-run.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -192,6 +194,10 @@ import {
   TERMINAL_RUN_STATUSES,
 } from "../../services/evals/run-status.js";
 import { shouldSkipExecution } from "../shared/evals.js";
+import {
+  caseAuthoringWarnings,
+  type CaseAuthoringWarning,
+} from "../../services/evals/case-can-fail.js";
 import {
   createEvalCasesInBatches,
   withMintedCaseIds,
@@ -2180,6 +2186,10 @@ function toIterationDto(
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     ...(snapshot.isNegativeTest === true ? { isNegativeTest: true } : {}),
     error: iteration.error ?? null,
+    // E1: OUR infrastructure failed this trial (a provider outage, a sandbox,
+    // a lost worker). It measured nothing about the server, and every score
+    // excludes it. OMITTED on every trial without one.
+    ...toInfraErrorProjection(iteration.infraError),
     ...toScoreProjection(iteration.metadata, vocabulary),
     ...toStageProjection(iteration.metadata),
     // Observable patterns in this trial's tool calls — a report beside the
@@ -3410,11 +3420,20 @@ function parseCreateCasesBatchBody(
  * policy role), then the field spellings are renamed on top — one pipeline,
  * in that order. `vocabularyOf` has already appended `Vary`.
  */
-function caseResource(c: Context, doc: CaseDoc, status = 200) {
+function caseResource(
+  c: Context,
+  doc: CaseDoc,
+  status = 200,
+  /** Authoring notes for a create/update response; never on a read. */
+  warnings: CaseAuthoringWarning[] = [],
+) {
   const vocabulary = vocabularyOf(c);
   return v1Resource(
     c,
-    projectCaseDto(toCaseDto(doc, vocabulary), vocabulary),
+    {
+      ...projectCaseDto(toCaseDto(doc, vocabulary), vocabulary),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    },
     status,
   );
 }
@@ -6117,6 +6136,216 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     .query("testSuites:getTestSuiteRun" as any, { runId })
     .catch(() => null);
   return v1Resource(c, toRunDto((updated ?? run)!));
+});
+
+// ── Rerun failed cases (E3) ─────────────────────────────────────────────────
+//
+// Replay a finished run narrowed to the cases that did not pass there. The
+// BACKEND picks the cases (`startTestSuiteRun` with `rerunScope:
+// 'failed_cases'`): any case with a trial that is not completed+passed, with
+// cancelled and skipped trials not counting. The preview reports that same
+// selection before anything spends. The new run is stamped `rerunOfRunId` +
+// `rerunScope`, and because its pass rate is biased by that selection it never
+// becomes the suite's latest run, a trend point, or a baseline.
+
+const rerunEvalRunSchema = z
+  .object({
+    scope: z.literal("failed_cases"),
+    notes: z.string().optional(),
+    idempotencyKey: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+function toRerunPreviewDto(raw: Record<string, any>) {
+  return {
+    runId: String(raw.runId),
+    suiteId: String(raw.suiteId),
+    scope: "failed_cases" as const,
+    sourceStatus: String(raw.sourceStatus),
+    sourceTerminal: raw.sourceTerminal === true,
+    totalCaseCount: Number(raw.totalCaseCount ?? 0),
+    selectedCaseCount: Number(raw.selectedCaseCount ?? 0),
+    selectedCaseIds: Array.isArray(raw.selectedCaseIds)
+      ? raw.selectedCaseIds.map(String)
+      : [],
+    reasons: raw.reasons ?? {},
+    excluded: raw.excluded ?? {},
+    rerunnable: raw.rerunnable === true,
+  };
+}
+
+async function readRerunPreview(
+  token: string,
+  runId: string,
+  projectId: string,
+) {
+  let preview: RunDoc | null;
+  try {
+    preview = await createConvexReadClient(token).query(
+      "testSuites:getRerunPreview" as any,
+      { runId },
+    );
+  } catch (error) {
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
+  }
+  requireProjectMatch(preview, projectId, "Eval run");
+  return toRerunPreviewDto(preview!);
+}
+
+// GET /v1/projects/:projectId/eval-runs/:runId/rerun-preview
+// What `POST …/rerun` with `scope: "failed_cases"` would execute. Read-only.
+evals.get("/projects/:projectId/eval-runs/:runId/rerun-preview", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = evalIdParam(c, "runId", "Eval run");
+  const token = await getConvexBearerForRequest(c);
+  return v1Resource(c, await readRerunPreview(token, runId, projectId));
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/rerun
+// Launch the rerun. 202 with the new run's id; 409 when the source is still in
+// flight or nothing in it qualifies (`details.reason` names which).
+evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = evalIdParam(c, "runId", "Eval run");
+  const headerIdempotencyKey = readIdempotencyKey(c);
+  const body = parseWithSchema(rerunEvalRunSchema, await readJsonObjectBody(c));
+  const idempotencyKey = headerIdempotencyKey ?? body.idempotencyKey;
+  const token = await getConvexBearerForRequest(c);
+  const readClient = createConvexReadClient(token);
+
+  // Refused at the door, before a server is connected or a slot is taken. The
+  // launch mutation makes the same decision again; this only spares the
+  // caller a connection cycle for an answer that is already known.
+  const preview = await readRerunPreview(token, runId, projectId);
+  if (!preview.rerunnable) {
+    const reason = preview.sourceTerminal
+      ? "RERUN_NOTHING_TO_RERUN"
+      : "RERUN_SOURCE_NOT_TERMINAL";
+    throw new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      preview.sourceTerminal
+        ? "Every case in that run passed (cancelled and skipped trials do not count), so there is nothing to rerun."
+        : "The run to rerun is still in progress; rerun it once it finishes.",
+      { reason, sourceStatus: preview.sourceStatus },
+    );
+  }
+
+  let sourceRun: RunDoc | null;
+  try {
+    sourceRun = await readClient.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
+  }
+  requireProjectMatch(sourceRun, projectId, "Eval run");
+  const suiteId = String(sourceRun!.suiteId);
+
+  // The servers the SOURCE run executed against — the same derivation the
+  // description-experiment arms use for their snapshot replays.
+  const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
+    .configSnapshot;
+  const envRef = snapshot?.environmentRef as
+    | { environmentId?: string }
+    | undefined;
+  const namedHostId =
+    (typeof sourceRun!.namedHostId === "string"
+      ? (sourceRun!.namedHostId as string)
+      : undefined) ??
+    (typeof snapshot?.namedHostId === "string"
+      ? snapshot.namedHostId
+      : undefined);
+  const servers = await resolveLaunchServers({
+    convexAuthToken: token,
+    projectId,
+    suiteId,
+    suiteReadPhase: "authorized",
+    requestedEnvironmentId: envRef?.environmentId,
+    namedHostId,
+    requestedServerIds: [],
+    requestedServerNames: undefined,
+  });
+  const runHostConfig = await loadSuiteHostConfig(
+    readClient,
+    suiteId,
+    namedHostId ?? servers.environmentLaunch?.hostId,
+  );
+
+  const slotKey = orgConcurrencyKey(c);
+  if (!tryAcquireRunSlot(slotKey)) {
+    return v1Error(
+      c,
+      "RATE_LIMITED",
+      `Too many concurrent eval runs (max ${MAX_CONCURRENT_RUNS}). Wait for an active run to finish.`,
+      {
+        reason: "CONCURRENT_RUN_LIMIT",
+        maxConcurrentRuns: MAX_CONCURRENT_RUNS,
+      },
+    );
+  }
+  let released = false;
+  const releaseSlotOnce = () => {
+    if (!released) {
+      released = true;
+      releaseRunSlot(slotKey);
+    }
+  };
+
+  try {
+    const launched = await launchEvalRun({
+      callerContext: callerContextFromHono(c),
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      projectId,
+      convexAuthToken: token,
+      vocabulary: vocabularyOf(c),
+      hostConfig: runHostConfig,
+      launchContext: readLaunchContext(c),
+      body: {
+        suiteId,
+        tests: [] as PublicInlineTest[],
+        replayedFromRunId: runId,
+        useCurrentSuiteConfig: false,
+        rerunOfRunId: runId,
+        rerunScope: body.scope,
+        ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      },
+      suiteRerun: true,
+      environmentId: servers.environmentId,
+      environmentLaunch: servers.environmentLaunch,
+      serverIds: servers.serverIds,
+      serverNames: servers.serverNames,
+      onSettled: releaseSlotOnce,
+    });
+
+    return v1Resource(
+      c,
+      {
+        runId: launched.runId,
+        suiteId: launched.suiteId,
+        status: launched.status,
+        ...(launched.deduped ? { deduped: true } : {}),
+        rerunOfRunId: runId,
+        rerunScope: body.scope,
+        selectedCaseCount: preview.selectedCaseCount,
+        servers: launched.servers,
+        environment: launched.environment,
+      },
+      202,
+    );
+  } catch (error) {
+    releaseSlotOnce();
+    throw (
+      rerunRefusalError(error) ?? translateImportIneligibleError(error) ?? error
+    );
+  }
 });
 
 // ── Gate waivers ────────────────────────────────────────────────────────────
@@ -9386,7 +9615,13 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     String(committed.testCaseId),
     "authorized",
   );
-  return caseResource(c, created, 201);
+  // A case that can never fail is saved, and said so — never refused.
+  return caseResource(
+    c,
+    created,
+    201,
+    caseAuthoringWarnings(created, suite),
+  );
 });
 
 // POST /v1/projects/:projectId/eval-suites/:suiteId/cases/batch
@@ -9509,16 +9744,23 @@ evals.post(
     return v1Resource(
       c,
       {
-        created: result.committed.map((entry) => ({
-          index: entry.index,
-          id: String(entry.testCaseId),
-          ...(entry.caseId ? { declaredId: entry.caseId } : {}),
-          title: entry.title,
-          // True when an idempotent retry landed on a case the first attempt
-          // had already authored — nothing new was written.
-          replayed: entry.replayed,
-          ...(entry.warnings?.length ? { warnings: entry.warnings } : {}),
-        })),
+        created: result.committed.map((entry) => {
+          // A case that can never fail is saved, and said so per entry.
+          const warnings = [
+            ...(entry.warnings ?? []),
+            ...caseAuthoringWarnings(items[entry.index], suite),
+          ];
+          return {
+            index: entry.index,
+            id: String(entry.testCaseId),
+            ...(entry.caseId ? { declaredId: entry.caseId } : {}),
+            title: entry.title,
+            // True when an idempotent retry landed on a case the first attempt
+            // had already authored — nothing new was written.
+            replayed: entry.replayed,
+            ...(warnings.length ? { warnings } : {}),
+          };
+        }),
         // Per-item failures are DATA, not an error response: the siblings that
         // committed really did commit, and a 4xx for the whole call would tell
         // the caller to retry writes that already landed.
@@ -9607,7 +9849,17 @@ evals.patch(
         "authorized",
       );
     }
-    return caseResource(c, updated);
+    // The suite's default checks decide whether the edited case can fail.
+    // Best effort: an unreadable suite costs the warning, never the update.
+    const suiteForWarnings = await createConvexReadClient(token)
+      .query("testSuites:getTestSuite" as any, { suiteId })
+      .catch(() => null);
+    return caseResource(
+      c,
+      updated,
+      200,
+      caseAuthoringWarnings(updated, suiteForWarnings),
+    );
   },
 );
 

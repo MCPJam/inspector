@@ -236,3 +236,31 @@ describe("guest access is unaffected by the new fields", () => {
     ).toBe(false);
   });
 });
+
+describe("iteration infraError projection", () => {
+  it("projects known keys only, and nothing for a trial without one", async () => {
+    const { toInfraErrorProjection } = await import(
+      "../eval-infra-error-projection.js"
+    );
+    expect(
+      toInfraErrorProjection({
+        class: "provider_unavailable",
+        layer: "model",
+        retryable: true,
+        code: "provider_error",
+        httpStatus: 503,
+        internalNote: "never crosses",
+      }),
+    ).toEqual({
+      infraError: {
+        class: "provider_unavailable",
+        layer: "model",
+        retryable: true,
+        code: "provider_error",
+        httpStatus: 503,
+      },
+    });
+    expect(toInfraErrorProjection(undefined)).toEqual({});
+    expect(toInfraErrorProjection({ layer: "model" })).toEqual({});
+  });
+});

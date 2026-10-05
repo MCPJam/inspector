@@ -37,6 +37,10 @@ import {
 import type { ToolPolicyGate } from "./tool-policy-gate.js";
 import { consumeFullStreamAsEvalEvents } from "./stream-adapter.js";
 import type { BrowserSessionContext } from "../browser-session-context.js";
+import {
+  harnessFailureEvidenceOf,
+  type HarnessFailureEvidence,
+} from "../../utils/harness/harness-provider-error.js";
 import { addUsageTotals, type UsageTotals } from "./types.js";
 
 export type LocalEvalTurnAcc = {
@@ -70,6 +74,13 @@ export type LocalEvalTurnAcc = {
    * attribution beats a wrong one.
    */
   stepErrorSource: "model" | undefined;
+  /**
+   * STRUCTURED evidence for a model-call failure — the AI SDK's own
+   * `APICallError` (status, retryability) from the stream's error part or the
+   * thrown error. Read only by the eval infra-error classifier (E1); unset
+   * whenever the failure carried no typed error.
+   */
+  stepErrorEvidence?: HarnessFailureEvidence;
   pinnedSetupFailure: boolean;
 };
 
@@ -218,6 +229,7 @@ async function consumeDirectChatTurnViaFullStream(
   handle: RunDirectChatTurnHandle,
   sinks: LocalEvalTurnSinks | undefined
 ) {
+  let streamError: unknown;
   try {
     const maybeFullStream = handle.result.fullStream;
     if (
@@ -228,6 +240,9 @@ async function consumeDirectChatTurnViaFullStream(
       await consumeFullStreamAsEvalEvents(maybeFullStream, {
         emit: sinks?.emit ?? (() => {}),
         getStepIndex: sinks?.getStepIndex ?? (() => 0),
+        onError: (error) => {
+          streamError = error;
+        },
       });
     } else {
       await handle.result.consumeStream();
@@ -252,6 +267,7 @@ async function consumeDirectChatTurnViaFullStream(
       upstreamModel,
       spans: handle.traceContext.recordedSpans,
       aborted: handle.isAborted(),
+      streamError,
     };
   } finally {
     handle.cleanup();
@@ -488,6 +504,8 @@ export async function driveLocalEvalTurn(
       ...(localIsAborted() ? {} : { code: "provider_error" }),
       at: Date.now(),
     });
+    // Typed evidence only (an AI SDK call error); the runner's catch reads it.
+    acc.stepErrorEvidence = harnessFailureEvidenceOf(error);
     throw error;
   }
   const turnTimedOut = turnDeadline.firedClock() === "turn";
@@ -598,6 +616,8 @@ export async function driveLocalEvalTurn(
     // The model stream itself returned nothing. Unambiguously the model-call
     // layer — there is no other layer this branch can be reached from.
     acc.stepErrorSource = "model";
+    // A stream that died before its first byte usually left a typed error.
+    acc.stepErrorEvidence = harnessFailureEvidenceOf(headless.streamError);
     logger.error(
       "[evals] streamText returned no new messages this turn; treating as cycle failure"
     );
@@ -635,6 +655,11 @@ export async function driveLocalEvalTurn(
     acc.iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
     settle("error", "provider_error");
     acc.stepErrorSource = modelLayerForErrorSpan(stepErrorSpan);
+    // The stream's typed error, when the failed span is the MODEL's: a tool
+    // or connection span says nothing about the provider.
+    if (acc.stepErrorSource === "model") {
+      acc.stepErrorEvidence = harnessFailureEvidenceOf(headless.streamError);
+    }
     logger.error(
       `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`
     );

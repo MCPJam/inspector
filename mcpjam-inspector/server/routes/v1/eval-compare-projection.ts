@@ -27,6 +27,11 @@
  * only inside `scoreContract` / `scoreDeltas`.
  */
 
+import {
+  assertValidEvalVerdictTrialStatistics,
+  type EvalVerdictTrialStatistics,
+} from "@mcpjam/sdk/contract";
+
 type Rec = Record<string, unknown>;
 
 function isRecord(value: unknown): value is Rec {
@@ -214,10 +219,34 @@ const CASE_STATUSES = new Set([
   "changed",
 ]);
 
+/**
+ * One side's report-only trial statistics — the per-case pass@k / pass^k /
+ * Wilson rows and the pooled ELIGIBLE trials a comparison is sized by.
+ *
+ * ABSENT STAYS ABSENT: a legacy run, or a backend predating the field, sends
+ * none, and the CLI then sizes the comparison from the legacy summary on both
+ * sides. A block that does not validate — any value that is not exactly what
+ * its own counts produce, any field outside the closed shape — is dropped
+ * whole rather than partly trusted, which also makes this the whitelist: a
+ * validated block has no field the contract does not name.
+ */
+function trialStatistics(
+  value: unknown,
+): EvalVerdictTrialStatistics | undefined {
+  if (value === undefined) return undefined;
+  try {
+    assertValidEvalVerdictTrialStatistics(value);
+  } catch {
+    return undefined;
+  }
+  return JSON.parse(JSON.stringify(value)) as EvalVerdictTrialStatistics;
+}
+
 function runSide(value: unknown): Rec {
   const run = isRecord(value) ? value : {};
   const summary = isRecord(run.summary) ? run.summary : null;
   const environment = isRecord(run.environment) ? run.environment : null;
+  const statistics = trialStatistics(run.trialStatistics);
   return {
     id: str(run.id),
     runNumber: countOf(run.runNumber),
@@ -250,6 +279,7 @@ function runSide(value: unknown): Rec {
     run.modelSource === "case"
       ? { modelSource: run.modelSource }
       : {}),
+    ...(statistics !== undefined ? { trialStatistics: statistics } : {}),
   };
 }
 

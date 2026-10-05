@@ -55,12 +55,42 @@ export type AggregationFixtureRow = {
   expected: Record<string, unknown>;
 };
 
+/** An exact fraction worked by hand, or `null` for "not estimable". */
+export type HandComputedFraction = [number, number] | null;
+
+/**
+ * One report-only trial-statistics golden: an input (n, c, k), the EXACT
+ * doubles both implementations must produce, the same estimates as fractions
+ * worked by hand, and — where the literature has one — a published Wilson
+ * interval.
+ */
+export type TrialStatisticsFixtureRow = {
+  __label: string;
+  __why?: string;
+  input: { eligibleTrials: number; passedTrials: number; k: number };
+  expected: {
+    passAtK: number | null;
+    passHatK: number | null;
+    passRateInterval: {
+      confidence: number;
+      lower: number;
+      upper: number;
+    } | null;
+  };
+  handComputed: {
+    passAtK: HandComputedFraction;
+    passHatK: HandComputedFraction;
+  };
+  publishedInterval?: { lower: number; upper: number; __source: string };
+};
+
 export type VerdictPolicyFixtures = {
   __readme: string;
   accept: VerdictPolicyFixtureRow[];
   reject: VerdictPolicyFixtureRow[];
   roundTrip: VerdictPolicyFixtureRow[];
   aggregation: AggregationFixtureRow[];
+  trialStatistics: TrialStatisticsFixtureRow[];
 };
 
 export const verdictPolicyFixtures =

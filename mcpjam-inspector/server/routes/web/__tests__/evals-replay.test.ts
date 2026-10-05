@@ -329,4 +329,69 @@ describe("web replay route", () => {
       expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
     });
   });
+
+  // E3: `scope: "failed_cases"` reruns only the cases that did not pass. The
+  // backend picks them; the route only forwards the scope, and only when set.
+  describe("the failed-cases scope", () => {
+    async function replay(body: Record<string, unknown>): Promise<Response> {
+      return createApp().request("/api/web/evals/replay-run", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer token-123",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ runId: "source-run", ...body }),
+      });
+    }
+
+    it("sends no rerun args on an unscoped replay", async () => {
+      const response = await replay({});
+
+      expect(response.status).toBe(202);
+      const args = startSuiteRunWithRecorderMock.mock.calls[0]![0] as Record<
+        string,
+        unknown
+      >;
+      expect(args).not.toHaveProperty("rerunOfRunId");
+      expect(args).not.toHaveProperty("rerunScope");
+    });
+
+    it("forwards the scope as a rerun of the source run", async () => {
+      const response = await replay({ scope: "failed_cases" });
+
+      expect(response.status).toBe(202);
+      expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          replayedFromRunId: "source-run",
+          rerunOfRunId: "source-run",
+          rerunScope: "failed_cases",
+        }),
+      );
+    });
+
+    it("refuses an unknown scope", async () => {
+      const response = await replay({ scope: "everything" });
+
+      expect(response.status).toBe(400);
+      expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+    });
+
+    it("answers the backend's nothing-to-rerun refusal as a 409", async () => {
+      startSuiteRunWithRecorderMock.mockRejectedValueOnce(
+        Object.assign(new Error("ConvexError"), {
+          data: {
+            code: "RERUN_NOTHING_TO_RERUN",
+            message: "Every case in that run passed.",
+          },
+        }),
+      );
+      const response = await replay({ scope: "failed_cases" });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        details: { reason: "RERUN_NOTHING_TO_RERUN" },
+      });
+      expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

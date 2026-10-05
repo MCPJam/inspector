@@ -641,6 +641,18 @@ The line is **not** a diagnosis. A first failed stage is a location and a failur
 
 `eval status --stages` expands each failing iteration to all six chain rows with their states and reasons. It is off by default: six rows per iteration is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
 
+#### Trial statistics
+
+A per-case-graded run also carries `trialStatistics` beside its decision — on the run (`eval status`), and on each side of `eval compare` (`trialStatistics.base` / `.compare`, in both output formats). One row per case variant, the same rows as `decision.cases`, each with:
+
+- `eligibleTrials` (n) and `passedTrials` (c) — trials with a task verdict, so infrastructure failures and evaluator errors are already out;
+- `passAtK` and `passHatK` — the unbiased estimators `1 − C(n−c, k)/C(n, k)` ("at least one of k passes") and `C(c, k)/C(n, k)` ("all k pass"), taken at `k` = n, which is stated on the row. At k = n they read "some trial passed" and "every trial passed";
+- `passRateInterval` — a 95% Wilson interval on c/n.
+
+Every statistic is `null` for a case variant with no eligible trials. They are **report only**: the verdict is still each case's pass rate against its threshold, and nothing here moves it.
+
+`eval compare` sizes its pass-rate regression check from the pooled **eligible trials** when both runs carry these statistics (`trialStatistics.sample.basis: "eligibleTrials"`), and from the legacy run summary on both sides otherwise (`"legacySummary"`) — never one of each, because the legacy summary counts iterations, cases or case variants depending on which producer wrote it.
+
 Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval github list/connect` (GitHub checks integration), and more.
 
 ### Upload SDK eval results

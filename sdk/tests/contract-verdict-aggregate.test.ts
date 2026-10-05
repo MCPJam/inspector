@@ -26,8 +26,13 @@ import {
   EvalVerdictAggregationError,
   aggregateEvalCaseVerdict,
   aggregateEvalRunVerdict,
+  assertValidEvalVerdictTrialStatistics,
+  evalPassAtK,
+  evalPassHatK,
+  evalPassRateWilsonInterval,
   evalV2IterationHasEvaluatorError,
   evalV2TrialObservation,
+  evalVerdictTrialStatistics,
   type EvalCaseVerdictInput,
   type EvalV2IterationEvidence,
 } from "../src/contract/verdict-aggregate.js";
@@ -51,7 +56,7 @@ import {
 
 /** Pinned bytes of the backend-owned copy. Re-pin only on a deliberate re-sync. */
 const RUN_FIXTURE_SHA256 =
-  "c8fb45bf8a9fddf847f4fc3c5d1f8c574b8c09dbafb199f7542621182175d70f";
+  "76daa1dc5c9e9d7d6db14d320aef60a138205a8896d92216d45454c25c8c95da";
 
 type RunCorpus = {
   __generator: {
@@ -67,6 +72,7 @@ type RunCorpus = {
       cases: EvalCaseVerdictInput[];
     };
     expected: Record<string, unknown>;
+    expectedTrialStatistics: Record<string, unknown>;
   }>;
   refusals: Array<{
     __label: string;
@@ -146,6 +152,52 @@ describe("aggregateEvalCaseVerdict — the per-case corpus", () => {
   }
 });
 
+describe("trial statistics — the per-case corpus's goldens", () => {
+  // `expected` is the exact double the backend mirror also asserts,
+  // `handComputed` the same estimate as a fraction worked by hand, and
+  // `publishedInterval` a Wilson interval from the literature — e.g.
+  // n=5, c=3, k=2: pass@2 = 1 − C(2,2)/C(5,2) = 0.9, pass^2 = C(3,2)/C(5,2)
+  // = 0.3.
+  for (const row of verdictPolicyFixtures.trialStatistics) {
+    it(`computes: ${row.__label}`, () => {
+      const { eligibleTrials: n, passedTrials: c, k } = row.input;
+      const actual = {
+        passAtK: evalPassAtK(n, c, k),
+        passHatK: evalPassHatK(n, c, k),
+        passRateInterval: evalPassRateWilsonInterval(n, c),
+      };
+      expect(actual).toEqual(stripAnnotations(row.expected));
+      for (const key of ["passAtK", "passHatK"] as const) {
+        const fraction = row.handComputed[key];
+        if (fraction === null) expect(actual[key], key).toBeNull();
+        else
+          expect(actual[key], key).toBeCloseTo(fraction[0] / fraction[1], 12);
+      }
+      if (row.publishedInterval !== undefined) {
+        expect(actual.passRateInterval?.lower).toBeCloseTo(
+          row.publishedInterval.lower,
+          4
+        );
+        expect(actual.passRateInterval?.upper).toBeCloseTo(
+          row.publishedInterval.upper,
+          4
+        );
+      }
+    });
+  }
+
+  it("carries the worked example", () => {
+    const worked = verdictPolicyFixtures.trialStatistics.find(
+      (row) =>
+        row.input.eligibleTrials === 5 &&
+        row.input.passedTrials === 3 &&
+        row.input.k === 2
+    );
+    expect(worked?.expected.passAtK).toBe(0.9);
+    expect(worked?.expected.passHatK).toBe(0.3);
+  });
+});
+
 describe("aggregateEvalRunVerdict — the backend-generated run corpus", () => {
   for (const row of corpus.runs) {
     it(`decides: ${row.__label}`, () => {
@@ -156,6 +208,20 @@ describe("aggregateEvalRunVerdict — the backend-generated run corpus", () => {
       expect(evalVerdictDecisionSchema.safeParse(row.expected).success).toBe(
         true
       );
+    });
+
+    it(`derives trial statistics: ${row.__label}`, () => {
+      // Report-only, bit-exact: the hosted doubles, reproduced here.
+      const decision = evalVerdictDecisionSchema.parse(row.expected);
+      expect(evalVerdictTrialStatistics(decision)).toEqual(
+        row.expectedTrialStatistics
+      );
+      expect(() =>
+        assertValidEvalVerdictTrialStatistics(
+          row.expectedTrialStatistics,
+          decision
+        )
+      ).not.toThrow();
     });
   }
 
@@ -207,6 +273,12 @@ describe("the contract entry exports the producer", () => {
     );
     expect(contract.EvalVerdictAggregationError).toBe(
       EvalVerdictAggregationError
+    );
+    expect(contract.evalVerdictTrialStatistics).toBe(
+      evalVerdictTrialStatistics
+    );
+    expect(contract.assertValidEvalVerdictTrialStatistics).toBe(
+      assertValidEvalVerdictTrialStatistics
     );
   });
 });

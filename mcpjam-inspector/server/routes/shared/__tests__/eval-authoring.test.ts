@@ -4,6 +4,7 @@ import { NO_READ_ONLY_TOOLS_MESSAGE } from "../../../../shared/eval-generation-e
 import { ErrorCode, WebRouteError } from "../../web/errors.js";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
+  mutation: vi.fn(),
   fetch: vi.fn(),
   warn: vi.fn(),
   event: vi.fn(),
@@ -13,7 +14,10 @@ const mocks = vi.hoisted(() => ({
   })),
 }));
 vi.mock("../../../services/evals/route-helpers.js", () => ({
-  createConvexClient: () => ({ query: mocks.query }),
+  createConvexClient: () => ({
+    query: mocks.query,
+    mutation: mocks.mutation,
+  }),
   requireConvexHttpUrl: () => "https://backend.test",
   captureToolSnapshotForEvalAuthoring: async () => ({ toolSnapshot: { servers: [] } }),
 }));
@@ -56,6 +60,57 @@ beforeEach(() => {
   mocks.query.mockResolvedValue({});
   mocks.selectEnvironment.mockReset();
   mocks.selectEnvironment.mockResolvedValue(undefined);
+});
+describe("authoring commit", () => {
+  it("returns the can-it-fail warning on a committed case without blocking it", async () => {
+    // The suite's only default check passes on an empty answer, and the
+    // committed draft expects no tool call: it can never fail.
+    mocks.query.mockImplementation(async (name: string) =>
+      name === "testSuites:getTestSuite"
+        ? { defaultPredicates: [{ type: "noToolErrors" }] }
+        : {},
+    );
+    mocks.mutation.mockImplementation(async (name: string) => {
+      if (name === "evalAuthoringState:prepareCommit") {
+        return {
+          title: "Summarize",
+          steps: [{ id: "p1", kind: "prompt", prompt: "Summarize." }],
+        };
+      }
+      if (name === "testSuites:createTestCases") {
+        return {
+          caseUpsert: {
+            committed: [
+              {
+                index: 0,
+                title: "Summarize",
+                testCaseId: "tc1",
+                replayed: false,
+              },
+            ],
+            failed: [],
+          },
+          warnings: [],
+        };
+      }
+      return null;
+    });
+    const response = await post(
+      JSON.stringify({
+        operation: "commit",
+        suiteId: "s",
+        draftId: "d",
+        revision: 0,
+        caseId: "c",
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as any;
+    expect(body.committed[0]).toMatchObject({
+      testCaseId: "tc1",
+      warnings: [{ code: "case_passes_with_empty_answer" }],
+    });
+  });
 });
 describe("authoring adapter", () => {
   it.each([

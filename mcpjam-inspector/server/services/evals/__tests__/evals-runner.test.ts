@@ -3228,6 +3228,485 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     }
   });
 
+  describe("E1 — infra errors are recorded apart from the agent's verdict", () => {
+    const runOnce = async (testCaseId: string) =>
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Infra case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId,
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId,
+      });
+
+    const providerRateLimit = async (options: {
+      onEngineError?: (event: Record<string, unknown>) => void;
+    }) => {
+      options.onEngineError?.({
+        message: "MCPJam is experiencing high demand.",
+        rawText: "{}",
+        promptIndex: 0,
+        code: "mcpjam_rate_limit",
+        httpStatus: 429,
+        retryAfterMs: 30_000,
+        isRetryable: true,
+        infraLayer: "model",
+        phase: "stream",
+      });
+      return { messages: [], usage: {}, turnTrace: undefined };
+    };
+
+    const updatePayload = () => {
+      const call = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(call).toBeDefined();
+      return call![1] as Record<string, any>;
+    };
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("on: a classified provider failure is `failed` + infraError, never a graded failure", async () => {
+      vi.stubEnv("MCPJAM_EVAL_INFRA_CLASSIFY", "on");
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(providerRateLimit as never);
+      try {
+        const result = await runOnce("case-infra-on");
+        const payload = updatePayload();
+        expect(payload.status).toBe("failed");
+        expect(payload.result).toBe("failed");
+        expect(payload.infraError).toEqual({
+          class: "rate_limited",
+          layer: "model",
+          retryable: true,
+          code: "mcpjam_rate_limit",
+          httpStatus: 429,
+        });
+        // The outcome carries it, so a run summary can leave it out entirely
+        // (see the aggregation in runEvalSuiteWithAiSdk), like the backend.
+        expect(
+          (result as { quickRunIterationOutcomes?: Array<{ infraError?: unknown }> })
+            ?.quickRunIterationOutcomes?.[0]?.infraError,
+        ).toMatchObject({ class: "rate_limited" });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("shadow: the row is unchanged; only metadata.infraErrorShadow is written", async () => {
+      vi.stubEnv("MCPJAM_EVAL_INFRA_CLASSIFY", "shadow");
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(providerRateLimit as never);
+      try {
+        await runOnce("case-infra-shadow");
+        const payload = updatePayload();
+        expect(payload.status).toBe("completed");
+        expect(payload.infraError).toBeUndefined();
+        expect(payload.metadata?.infraErrorShadow).toMatchObject({
+          class: "rate_limited",
+          httpStatus: 429,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("an untyped failure stays a measured one even with classification on", async () => {
+      vi.stubEnv("MCPJAM_EVAL_INFRA_CLASSIFY", "on");
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockRejectedValueOnce(new Error("HTTP 503 from somewhere"));
+      try {
+        await runOnce("case-infra-untyped");
+        const payload = updatePayload();
+        expect(payload.status).toBe("completed");
+        expect(payload.infraError).toBeUndefined();
+        expect(payload.metadata?.infraErrorShadow).toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  describe("E2 — infra errors retried in place, only when replay-safe", () => {
+    const makeRecorder = () => ({
+      runId: "run-1",
+      suiteId: "suite-1",
+      startIteration: vi.fn(async () => "iter-1"),
+      finishIteration: vi.fn(async (_params: Record<string, any>) => {}),
+      finalize: vi.fn(async () => {}),
+    });
+
+    const runSuite = (
+      recorder: ReturnType<typeof makeRecorder>,
+      overrides: Record<string, unknown> = {},
+    ) =>
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: "run-1",
+        recorder: recorder as any,
+        config: {
+          tests: [
+            {
+              title: "Retry case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-retry",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-retry",
+        ...overrides,
+      } as any);
+
+    type TurnOptions = {
+      messages: unknown[];
+      tools?: Record<string, { execute?: (...a: unknown[]) => unknown }>;
+      onEngineError?: (event: Record<string, unknown>) => void;
+    };
+    const providerFailure =
+      (event: Record<string, unknown>, before?: (o: TurnOptions) => Promise<void>) =>
+      async (options: TurnOptions) => {
+        await before?.(options);
+        options.onEngineError?.({
+          message: "The AI provider is temporarily unavailable.",
+          rawText: "{}",
+          promptIndex: 0,
+          phase: "stream",
+          infraLayer: "model",
+          ...event,
+        });
+        return { messages: options.messages, usage: {}, turnTrace: undefined };
+      };
+    const success = async (options: TurnOptions) => ({
+      messages: [...options.messages, { role: "assistant", content: "Done" }],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      turnTrace: { spans: [] },
+    });
+    const unavailable503 = {
+      code: "provider_error",
+      httpStatus: 503,
+      isRetryable: true,
+      // A tiny Retry-After keeps the test fast; it is honoured exactly.
+      retryAfterMs: 1,
+    };
+    const mutationNames = () =>
+      convexClient.mutation.mock.calls.map((call) => call[0] as string);
+
+    beforeEach(() => {
+      vi.stubEnv("MCPJAM_EVAL_INFRA_CLASSIFY", "on");
+      vi.stubEnv("MCPJAM_EVAL_INFRA_RETRY", "1");
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("503 before any dispatch, then success → completed on attempt 2, no infraError", async () => {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(providerFailure(unavailable503) as never)
+        .mockImplementationOnce(success as never);
+      const recorder = makeRecorder();
+      try {
+        await runSuite(recorder);
+        expect(spy).toHaveBeenCalledTimes(2);
+        // ONE iteration row, finalized ONCE, on the second attempt.
+        expect(recorder.startIteration).toHaveBeenCalledTimes(1);
+        expect(recorder.finishIteration).toHaveBeenCalledTimes(1);
+        const finished = recorder.finishIteration.mock.calls[0]![0];
+        expect(finished.iterationId).toBe("iter-1");
+        expect(finished.status).toBe("completed");
+        expect(finished.infraError).toBeUndefined();
+        expect(finished.metadata?.trialAttempt).toBe(2);
+        // The failed attempt is durable history, recorded before the wait.
+        const retry = convexClient.mutation.mock.calls.find(
+          (call) => call[0] === "testSuites:recordInfraRetry",
+        );
+        expect(retry?.[1]).toMatchObject({
+          iterationId: "iter-1",
+          entry: {
+            attempt: 1,
+            class: "provider_unavailable",
+            httpStatus: 503,
+            delayMs: 1,
+          },
+        });
+        const begins = convexClient.mutation.mock.calls.filter(
+          (call) => call[0] === "testSuites:beginTrialAttempt",
+        );
+        expect(begins.map((call) => (call[1] as any).attempt)).toEqual([1, 2]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("a tool dispatched before the 503 makes the attempt unsafe: no retry, one remote action", async () => {
+      const execute = vi.fn(async () => "ok");
+      preparedToolsOverride.current = { echo: { execute } };
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(
+          providerFailure(unavailable503, async (options) => {
+            await options.tools!.echo!.execute!({}, { toolCallId: "c1" });
+          }) as never,
+        )
+        .mockImplementation(success as never);
+      const recorder = makeRecorder();
+      try {
+        await runSuite(recorder);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(execute).toHaveBeenCalledTimes(1);
+        // The marker was written BEFORE the dispatch it covers.
+        const names = mutationNames();
+        expect(names).toContain("testSuites:markTrialEffectDispatch");
+        expect(names).not.toContain("testSuites:recordInfraRetry");
+        const finished = recorder.finishIteration.mock.calls[0]![0];
+        expect(finished.status).toBe("failed");
+        expect(finished.infraError).toMatchObject({
+          class: "provider_unavailable",
+        });
+        expect(finished.metadata?.infraRetryDeclined).toBe("effects_dispatched");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("a dispatch marker that cannot be persisted refuses the dispatch and never replays", async () => {
+      const execute = vi.fn(async () => "ok");
+      preparedToolsOverride.current = { echo: { execute } };
+      convexClient.mutation.mockImplementation(async (name: string) => {
+        if (name === "testSuites:markTrialEffectDispatch") {
+          throw new Error("convex unavailable");
+        }
+        return { iterationId: "iter-1" };
+      });
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      let toolError: unknown;
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (options: any) => {
+          try {
+            await options.tools.echo.execute({}, { toolCallId: "c1" });
+          } catch (error) {
+            toolError = error;
+          }
+          return success(options);
+        });
+      const recorder = makeRecorder();
+      try {
+        await runSuite(recorder);
+        // The tool NEVER ran.
+        expect(execute).not.toHaveBeenCalled();
+        expect((toolError as Error)?.name).toBe("EffectDispatchRefusedError");
+        const finished = recorder.finishIteration.mock.calls[0]![0];
+        expect(finished.status).toBe("failed");
+        expect(finished.infraError).toMatchObject({
+          class: "worker_lost",
+          layer: "platform",
+          code: "effect_dispatch_unrecorded",
+        });
+        expect(mutationNames()).not.toContain("testSuites:recordInfraRetry");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("missing attempt state (start write failed) → work runs, but no replay", async () => {
+      convexClient.mutation.mockImplementation(async (name: string) => {
+        if (name === "testSuites:beginTrialAttempt") {
+          throw new Error("convex unavailable");
+        }
+        return { iterationId: "iter-1" };
+      });
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(providerFailure(unavailable503) as never)
+        .mockImplementation(success as never);
+      const recorder = makeRecorder();
+      try {
+        await runSuite(recorder);
+        expect(spy).toHaveBeenCalledTimes(1);
+        const finished = recorder.finishIteration.mock.calls[0]![0];
+        expect(finished.status).toBe("failed");
+        expect(finished.metadata?.infraRetryDeclined).toBe(
+          "attempt_state_missing",
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it.each([
+      [
+        "a Retry-After longer than the allowed wait",
+        { code: "provider_rate_limit", httpStatus: 429, retryAfterMs: 10 * 60_000 },
+        "retry_after_exceeds_max_wait",
+      ],
+      [
+        "an auth failure",
+        { code: "mcpjam_api_error", httpStatus: 401 },
+        "class_not_retryable",
+      ],
+      [
+        "an account admission limit",
+        { code: "agent_turn_limit", httpStatus: 429, retryAfterMs: 1 },
+        "class_not_retryable",
+      ],
+    ])("never retries %s", async (_label, event, declined) => {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(providerFailure(event) as never)
+        .mockImplementation(success as never);
+      const recorder = makeRecorder();
+      try {
+        await runSuite(recorder);
+        expect(spy).toHaveBeenCalledTimes(1);
+        const finished = recorder.finishIteration.mock.calls[0]![0];
+        expect(finished.status).toBe("failed");
+        expect(finished.metadata?.infraRetryDeclined).toBe(declined);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("declines when too little of the iteration budget would remain after the wait", async () => {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(
+          providerFailure({ ...unavailable503, retryAfterMs: 50_000 }) as never,
+        )
+        .mockImplementation(success as never);
+      const recorder = makeRecorder();
+      try {
+        // 100s unit budget → 60s must remain after the wait; 50s wait leaves <60s.
+        await runSuite(recorder, {
+          executionBudgets: {
+            ...defaultEvalExecutionBudgets(),
+            unitTimeoutMs: 100_000,
+          },
+        });
+        expect(spy).toHaveBeenCalledTimes(1);
+        const finished = recorder.finishIteration.mock.calls[0]![0];
+        expect(finished.metadata?.infraRetryDeclined).toBe("insufficient_budget");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("with the retry flag off, writes no attempt state and never retries", async () => {
+      vi.stubEnv("MCPJAM_EVAL_INFRA_RETRY", "");
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(providerFailure(unavailable503) as never)
+        .mockImplementation(success as never);
+      const recorder = makeRecorder();
+      try {
+        await runSuite(recorder);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(mutationNames()).not.toContain("testSuites:beginTrialAttempt");
+        const finished = recorder.finishIteration.mock.calls[0]![0];
+        expect(finished.status).toBe("failed");
+        expect(finished.infraError).toMatchObject({ class: "provider_unavailable" });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  it("caps concurrent cases at MCPJAM_EVAL_MAX_CONCURRENT_CASES (E2)", async () => {
+    vi.stubEnv("MCPJAM_EVAL_MAX_CONCURRENT_CASES", "1");
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    let active = 0;
+    let peak = 0;
+    const spy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation((async (options: { messages: unknown[] }) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+        return {
+          messages: [...options.messages, { role: "assistant", content: "ok" }],
+          usage: {},
+          turnTrace: { spans: [] },
+        };
+      }) as never);
+    const caseFor = (id: string) => ({
+      title: id,
+      query: "Hello",
+      runs: 1,
+      model: "claude-haiku-4.5",
+      provider: "anthropic",
+      expectedToolCalls: [],
+      promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+      testCaseId: id,
+    });
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [caseFor("a"), caseFor("b"), caseFor("c")],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+      } as any);
+      expect(spy).toHaveBeenCalledTimes(3);
+      expect(peak).toBe(1);
+    } finally {
+      spy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("treats an error-status span in turnTrace as a cycle failure (PR 3 review round 2)", async () => {
     // Codex P1 round-2 ("Fail turns when later backend steps error"):
     // if step 1 produced assistant + tool messages and step 2 errors,
@@ -3669,6 +4148,311 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
+  });
+
+  describe("E4 — leases, silent stops and resumes", () => {
+    const makeRecorder = (
+      startIteration: (args: Record<string, any>) => Promise<string | undefined>,
+    ) => {
+      const recorder = {
+        runId: "run-1",
+        suiteId: "suite-1",
+        startIteration: vi.fn(startIteration),
+        finishIteration: vi.fn(async (_params: Record<string, any>) => {}),
+        finalize: vi.fn(async (_args: Record<string, any>) => {}),
+        attachLeaseDriver: vi.fn(),
+        flushIterationWrites: vi.fn(async () => {}),
+      };
+      return recorder;
+    };
+    const testCase = (testCaseId: string, runs = 1) => ({
+      title: `Case ${testCaseId}`,
+      query: "Hello",
+      runs,
+      model: "claude-haiku-4.5",
+      provider: "anthropic",
+      expectedToolCalls: [],
+      promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+      testCaseId,
+    });
+    const runSuite = (
+      recorder: ReturnType<typeof makeRecorder>,
+      overrides: Record<string, unknown> = {},
+    ) =>
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: "run-1",
+        recorder: recorder as any,
+        config: {
+          tests: [testCase("case-a")],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        ...overrides,
+      } as any);
+    const success = async (options: { messages: unknown[] }) => ({
+      messages: [...options.messages, { role: "assistant", content: "Done" }],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      turnTrace: { spans: [] },
+    });
+    const leaseMutations = async (name: string) => {
+      if (name === "evalRunLeases:claimRunDriver") {
+        return { ok: true, driverToken: "drv-1", driverLeaseExpiresAt: 1 };
+      }
+      if (name === "evalRunLeases:claimTestIteration") {
+        return { ok: true, leaseToken: "lease-1", leaseExpiresAt: 1 };
+      }
+      if (name === "evalRunLeases:releaseTestIteration") return { ok: true };
+      return { iterationId: "iter-1" };
+    };
+
+    beforeEach(() => {
+      vi.stubEnv("MCPJAM_EVAL_ITERATION_LEASES", "1");
+      convexClient.mutation.mockImplementation(leaseMutations as never);
+    });
+    afterEach(async () => {
+      vi.unstubAllEnvs();
+      const leases = await import("../run-lease");
+      leases.resetIterationLeasesForTests();
+      const active = await import("../active-eval-runs");
+      active.resetActiveEvalRunsForTests();
+    });
+
+    it("claims the run's driver and hands it to the recorder", async () => {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation(success as never);
+      const recorder = makeRecorder(async () => "iter-1");
+      try {
+        await runSuite(recorder);
+        expect(convexClient.mutation).toHaveBeenCalledWith(
+          "evalRunLeases:claimRunDriver",
+          { runId: "run-1" },
+        );
+        expect(recorder.attachLeaseDriver).toHaveBeenCalledTimes(1);
+        expect(recorder.attachLeaseDriver.mock.calls[0]![0]).toMatchObject({
+          driverToken: "drv-1",
+          resumable: false,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("an iteration whose claim is refused is not run and counted nowhere", async () => {
+      const { IterationClaimRefusedError } = await import("../run-lease");
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation(success as never);
+      const recorder = makeRecorder(async () => {
+        throw new IterationClaimRefusedError("iter-1", "terminal");
+      });
+      try {
+        await runSuite(recorder);
+        expect(spy).not.toHaveBeenCalled();
+        expect(recorder.finishIteration).not.toHaveBeenCalled();
+        expect(recorder.finalize).toHaveBeenCalledTimes(1);
+        expect(recorder.finalize.mock.calls[0]![0].summary).toMatchObject({
+          total: 0,
+          passed: 0,
+          failed: 0,
+        });
+        // Nothing marked it stopped either: it is not this worker's row.
+        expect(
+          convexClient.action.mock.calls.filter(
+            (call) => call[0] === "testSuites:updateTestIteration",
+          ),
+        ).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("a lease lost mid-iteration stops that iteration silently and leaves it out of the summary", async () => {
+      let driver: { applyHeartbeatResult(result: unknown): void } | undefined;
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation((async (options: {
+          messages: unknown[];
+          abortSignal?: AbortSignal;
+        }) => {
+          // The heartbeat reports the lease gone while the turn is in flight.
+          driver!.applyHeartbeatResult({ lostIterationIds: ["iter-1"] });
+          if (options.abortSignal?.aborted) throw options.abortSignal.reason;
+          return success(options);
+        }) as never);
+      const recorder = makeRecorder(async () => {
+        const claim = await (recorder.attachLeaseDriver.mock.calls[0]![0] as {
+          claimIteration(id: string, ms: number): Promise<unknown>;
+        }).claimIteration("iter-1", 60_000);
+        expect(claim).toMatchObject({ ok: true });
+        return "iter-1";
+      });
+      recorder.attachLeaseDriver.mockImplementation((d: never) => {
+        driver = d;
+      });
+      try {
+        await runSuite(recorder);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(recorder.finalize).toHaveBeenCalledTimes(1);
+        expect(recorder.finalize.mock.calls[0]![0].summary).toMatchObject({
+          total: 0,
+        });
+        // The lost row is not released (it is not ours) and never marked
+        // stopped by this worker.
+        expect(
+          convexClient.mutation.mock.calls.filter(
+            (call) => call[0] === "evalRunLeases:releaseTestIteration",
+          ),
+        ).toEqual([]);
+        expect(
+          convexClient.action.mock.calls.filter(
+            (call) =>
+              call[0] === "testSuites:updateTestIteration" &&
+              (call[1] as { status?: string }).status === "cancelled",
+          ),
+        ).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("a finished trial releases its iteration lease", async () => {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation(success as never);
+      const recorder = makeRecorder(async () => {
+        await (recorder.attachLeaseDriver.mock.calls[0]![0] as {
+          claimIteration(id: string, ms: number): Promise<unknown>;
+        }).claimIteration("iter-1", 60_000);
+        return "iter-1";
+      });
+      try {
+        await runSuite(recorder);
+        expect(recorder.finishIteration).toHaveBeenCalledTimes(1);
+        expect(recorder.flushIterationWrites).toHaveBeenCalled();
+        expect(convexClient.mutation).toHaveBeenCalledWith(
+          "evalRunLeases:releaseTestIteration",
+          { iterationId: "iter-1", leaseToken: "lease-1" },
+        );
+        expect(recorder.finalize.mock.calls[0]![0].summary).toMatchObject({
+          total: 1,
+          passed: 1,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("a worker shutdown is a silent stop: no finalize, and the run is terminalized by the backend", async () => {
+      vi.stubEnv("MCPJAM_EVAL_ITERATION_LEASES", "");
+      convexClient.mutation.mockImplementation((async (name: string) =>
+        name === "evalRunLeases:terminalizeInterruptedRun"
+          ? { ok: true, terminalized: 1 }
+          : { iterationId: "iter-1" }) as never);
+      const { shutdownActiveEvalRuns } = await import("../active-eval-runs");
+      const { EvalWorkerShutdownError } = await import("../run-lease");
+      let shutdown: Promise<unknown> | undefined;
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation((async (options: { abortSignal?: AbortSignal }) => {
+          shutdown = shutdownActiveEvalRuns({
+            graceMs: 2_000,
+            callTimeoutMs: 500,
+            env: { MCPJAM_EVAL_SHUTDOWN_HANDOFF: "1" },
+          });
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (options.abortSignal?.aborted) throw options.abortSignal.reason;
+          throw new Error("expected the shutdown to abort this turn");
+        }) as never);
+      const recorder = makeRecorder(async () => "iter-1");
+      try {
+        await expect(runSuite(recorder)).rejects.toBeInstanceOf(
+          EvalWorkerShutdownError,
+        );
+        await expect(shutdown).resolves.toMatchObject({
+          runs: 1,
+          terminalized: 1,
+        });
+        expect(recorder.finalize).not.toHaveBeenCalled();
+        expect(convexClient.mutation).toHaveBeenCalledWith(
+          "evalRunLeases:terminalizeInterruptedRun",
+          { runId: "run-1", reason: "worker_shutdown" },
+        );
+        expect(
+          convexClient.action.mock.calls.filter(
+            (call) => call[0] === "testSuites:updateTestIteration",
+          ),
+        ).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("a resume runs only the requeued attempts, with the claimed driver token", async () => {
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const spy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementation(success as never);
+      const recorder = makeRecorder(async () => {
+        await (recorder.attachLeaseDriver.mock.calls[0]![0] as {
+          claimIteration(id: string, ms: number): Promise<unknown>;
+        }).claimIteration("iter-b2", 60_000);
+        return "iter-b2";
+      });
+      try {
+        await runSuite(recorder, {
+          config: {
+            tests: [testCase("case-a", 2), testCase("case-b", 2)],
+            environment: { servers: ["srv-1"] },
+          },
+          resumeDriverToken: "drv-resume",
+          resumeExecutionDeadlineAt: Date.now() + 60_000,
+          resumeIterations: [
+            {
+              iterationId: "iter-b2",
+              testCaseId: "case-b",
+              iterationNumber: 2,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              trialAttempt: 1,
+            },
+          ],
+        });
+        // The leased row gets the durable dispatch gate even with the retry
+        // flag off, numbered ABOVE the interrupted attempt.
+        const begin = convexClient.mutation.mock.calls.find(
+          (call) => call[0] === "testSuites:beginTrialAttempt",
+        );
+        expect(begin?.[1]).toMatchObject({ iterationId: "iter-b2", attempt: 2 });
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(recorder.startIteration).toHaveBeenCalledTimes(1);
+        expect(recorder.startIteration.mock.calls[0]![0]).toMatchObject({
+          testCaseId: "case-b",
+          iterationNumber: 2,
+        });
+        // The resume adopts the claimed driver instead of minting one.
+        expect(
+          convexClient.mutation.mock.calls.filter(
+            (call) => call[0] === "evalRunLeases:claimRunDriver",
+          ),
+        ).toEqual([]);
+        expect(recorder.attachLeaseDriver.mock.calls[0]![0]).toMatchObject({
+          driverToken: "drv-resume",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 
   describe("the toolCalls:match row records the matcher's own verdict", () => {

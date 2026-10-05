@@ -1492,6 +1492,24 @@ export type {
   EvalVerdictValidity,
   ResolvedEvalValidityPolicy,
 } from "./contract/index.js";
+// Per-case trial statistics over a v2 decision — pass@k, pass^k (k = the
+// case's eligible trials) and a Wilson interval on its pass rate. REPORT ONLY:
+// derived from a decision's counts, never part of it, and never a verdict.
+export {
+  EVAL_TRIAL_STATISTICS_CONFIDENCE,
+  EVAL_TRIAL_STATISTICS_UNIT,
+  assertValidEvalVerdictTrialStatistics,
+  evalCaseTrialStatistics,
+  evalPassAtK,
+  evalPassHatK,
+  evalPassRateWilsonInterval,
+  evalVerdictTrialStatistics,
+} from "./contract/index.js";
+export type {
+  EvalCaseTrialStatistics,
+  EvalTrialStatisticsInterval,
+  EvalVerdictTrialStatistics,
+} from "./contract/index.js";
 
 // Execution budgets — the eval/swarm clock contract (§3.1). Re-exported from
 // the main entry because the inspector server and the CLI both resolve budgets,

@@ -27,6 +27,7 @@ import {
   mergeToolCalls,
 } from "../../shared/eval-tool-call-projection";
 import {
+  addUsageTotals,
   copyUsageTotals,
   evaluateMultiTurnResults,
   type EvaluationResult,
@@ -47,6 +48,45 @@ import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
+import type { TurnErrorInfraEvidence } from "./evals/step-executor";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
+import type { HarnessFailureEvidence } from "../utils/harness/harness-provider-error.js";
+import {
+  classifyEvalInfraError,
+  resolveInfraClassifyMode,
+  toPersistedInfraError,
+  type ClassifiedInfraError,
+  type InfraClassifyMode,
+} from "./evals/infra-error-classification";
+import {
+  commitInfraRetry,
+  createRunInfraRetryBudget,
+  decideInfraRetry,
+  infraRetryEnabled,
+  noteAttemptOutcome,
+  resolveMaxConcurrentCases,
+  type InfraRetryDeclineReason,
+  type InfraRetryEntry,
+  type InfraRetryRequest,
+  type RunInfraRetryBudget,
+  type TrialAttemptContext,
+} from "./evals/infra-retry";
+import {
+  beginEffectDispatchGate,
+  type EffectDispatchGate,
+} from "./evals/effect-dispatch-gate";
+import { abortableSleep } from "../utils/run-supervisor/backoff.js";
+import {
+  IterationClaimRefusedError,
+  LeaseLostError,
+  isLeaseLostError,
+  isSilentStop,
+  leaseTokenArg,
+  startRunLeaseDriver,
+  type RunLeaseDriver,
+} from "./evals/run-lease";
+import { registerActiveEvalRun } from "./evals/active-eval-runs";
+import { randomUUID } from "node:crypto";
 import {
   buildLocalStepHandlers,
   buildHostedStepHandlers,
@@ -93,6 +133,7 @@ import {
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
+import { vendorLifecycleField } from "../utils/computers/sandbox-lifecycle.js";
 import {
   collectHostedRecordingThenRelease,
   forgetHostedRecording,
@@ -167,6 +208,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
   createSuiteRunRecorder,
+  type EvalResumeIteration,
   type SuiteRunRecorder,
 } from "./evals/recorder";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
@@ -771,6 +813,26 @@ export type RunEvalSuiteOptions = {
    * into the one the run's cleanup will read.
    */
   benchmarkWriteGuard?: BenchmarkWriteGuard;
+  /**
+   * E4.3 — a RESUME of an interrupted run. The resume worker already claimed
+   * the run's driver (`/internal/v1/eval-run-resume/claim`), so this runner
+   * adopts that token instead of claiming a new one.
+   */
+  resumeDriverToken?: string;
+  /**
+   * E4.3 — the interrupted run's ORIGINAL execution deadline. A resume never
+   * gets a fresh clock: its run timer fires at this instant (or sooner, per
+   * the budget). Rows it does not own — finished ones, and any held by
+   * another worker — are refused at claim time, never re-run.
+   */
+  resumeExecutionDeadlineAt?: number;
+  /**
+   * E4.3 — the requeued rows a resume executes (the generalization of
+   * {@link committedQuickRunIterationIds} to a suite run): a case runs only
+   * the attempts listed here, and a case with none is not run at all. Every
+   * other row already has its outcome. ABSENT ⇒ every attempt (a fresh run).
+   */
+  resumeIterations?: EvalResumeIteration[];
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -779,7 +841,147 @@ export type EvalIterationOutcome = {
   iterationId?: string;
   policyBlockCount?: number;
   creditsExhausted?: boolean;
+  /**
+   * OUR infrastructure failed this trial (E1). The run summary leaves it out
+   * of `total`/`passed`/`failed`, as the backend's header does.
+   */
+  infraError?: EvalInfraError;
+  /**
+   * E2: this attempt failed on OUR infrastructure and the retry gate said
+   * yes — the row was NOT finalized, and the loop in `runSingleIteration`
+   * runs the next attempt after `delayMs`.
+   */
+  infraRetry?: InfraRetryRequest;
+  /**
+   * E4: this worker could not claim the iteration (another worker holds it,
+   * or it already finished) — it was not run, and it is counted nowhere.
+   */
+  leaseSkipped?: boolean;
 };
+
+/**
+ * E4.3 — which attempts of `test` a resume runs: the requeued rows of the
+ * same case (and, for a multi-model case, the same model). A model-free case
+ * runs under a sentinel model, so only its case id and attempt number count.
+ */
+export function resumeAttemptNumbersFor(
+  test: EvalTestCase,
+  rows: readonly EvalResumeIteration[],
+): Map<number, number> {
+  const numbers = new Map<number, number>();
+  if (!test.testCaseId) return numbers;
+  const modelFree = test.provider === "none";
+  for (const row of rows) {
+    if (row.testCaseId !== test.testCaseId) continue;
+    if (!modelFree) {
+      if (row.model && test.model && row.model !== test.model) continue;
+      if (row.provider && test.provider && row.provider !== test.provider) {
+        continue;
+      }
+    }
+    numbers.set(row.iterationNumber, row.trialAttempt ?? 0);
+  }
+  return numbers;
+}
+
+/**
+ * E1 — classify a failed iteration's STRUCTURED evidence under the rollout
+ * mode (`MCPJAM_EVAL_INFRA_CLASSIFY`).
+ *
+ *  - no error, or a TIMEOUT (`timeout` set: a turn or iteration clock fired):
+ *    nothing. A budget is the user's ceiling; it stays a measured failure.
+ *  - `on` + classified: `infraError` — the runner records `status: "failed"`
+ *    and the backend excludes and refunds the row.
+ *  - `shadow` + classified: `shadow` only, written to
+ *    `metadata.infraErrorShadow`; the row is persisted exactly as before.
+ *
+ * `classified` is returned either way for the retry gate (E2).
+ */
+export function resolveIterationInfraError(
+  result: {
+    iterationError?: string;
+    timeout?: unknown;
+    errorCode?: string;
+    errorHttpStatus?: number;
+    errorInfra?: TurnErrorInfraEvidence;
+  },
+  mode: InfraClassifyMode = resolveInfraClassifyMode(),
+): {
+  infraError?: EvalInfraError;
+  shadow?: EvalInfraError;
+  classified?: ClassifiedInfraError;
+} {
+  if (mode === "off" || !result.iterationError || result.timeout) return {};
+  const classified = classifyEvalInfraError({
+    ...(result.errorInfra?.layer ? { layer: result.errorInfra.layer } : {}),
+    ...(result.errorCode ? { code: result.errorCode } : {}),
+    ...(typeof result.errorHttpStatus === "number"
+      ? { httpStatus: result.errorHttpStatus }
+      : {}),
+    ...(typeof result.errorInfra?.retryAfterMs === "number"
+      ? { retryAfterMs: result.errorInfra.retryAfterMs }
+      : {}),
+    ...(typeof result.errorInfra?.isRetryable === "boolean"
+      ? { isRetryable: result.errorInfra.isRetryable }
+      : {}),
+  });
+  if (!classified) return {};
+  const persisted = toPersistedInfraError(classified);
+  return mode === "on"
+    ? { infraError: persisted, classified }
+    : { shadow: persisted, classified };
+}
+
+/** `base + delta` as a fresh total (E2: earlier attempts' cost). */
+function addUsageTotalsTo(
+  base: UsageTotals | undefined,
+  delta: UsageTotals,
+): UsageTotals {
+  const out: UsageTotals = base
+    ? copyUsageTotals(base)
+    : { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  addUsageTotals(out, delta);
+  return out;
+}
+
+/** `metadata.infraErrorShadow`: the shadow classification, scalars only. */
+function infraShadowMetadata(
+  shadow: EvalInfraError,
+): Record<string, string | number | boolean> {
+  return Object.fromEntries(
+    Object.entries(shadow).filter(([, value]) => value !== undefined),
+  ) as Record<string, string | number | boolean>;
+}
+
+/** The local driver's accumulator, as {@link resolveIterationInfraError} input. */
+function localInfraEvidence(acc: {
+  iterationError?: string;
+  timeout?: unknown;
+  stepErrorEvidence?: HarnessFailureEvidence;
+}) {
+  const evidence = acc.stepErrorEvidence;
+  return {
+    ...(acc.iterationError ? { iterationError: acc.iterationError } : {}),
+    ...(acc.timeout ? { timeout: acc.timeout } : {}),
+    ...(evidence?.code ? { errorCode: evidence.code } : {}),
+    ...(evidence?.httpStatus !== undefined
+      ? { errorHttpStatus: evidence.httpStatus }
+      : {}),
+    ...(evidence
+      ? {
+          errorInfra: {
+            ...(evidence.layer ? { layer: evidence.layer } : {}),
+            ...(evidence.retryAfterMs !== undefined
+              ? { retryAfterMs: evidence.retryAfterMs }
+              : {}),
+            ...(evidence.isRetryable !== undefined
+              ? { isRetryable: evidence.isRetryable }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
 
 /**
  * D7: narrow a turn's full tool registry down to the subset the model was
@@ -1055,7 +1257,9 @@ type IterationMetadataValue =
   | number
   | boolean
   | DescriptionExperimentIterationStamp
-  | TimeoutMetadata;
+  | TimeoutMetadata
+  // E1 shadow classification (`metadata.infraErrorShadow`).
+  | Record<string, string | number | boolean>;
 
 type IterationMetadataBase = Record<string, IterationMetadataValue>;
 
@@ -2397,6 +2601,12 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   extraBodyFields?: Record<string, unknown>;
   /** See {@link RunEvalSuiteOptions.extraHeaders}. */
   extraHeaders?: Record<string, string>;
+  /** E2: identity + history of THIS trial attempt (set by the retry loop). */
+  trialAttempt?: TrialAttemptContext;
+  /** E2: the run's shared retry budget and circuit breaker. */
+  infraRetryBudget?: RunInfraRetryBudget;
+  /** E2: the run's credit stop, read by the retry gate. */
+  creditStop?: { exhausted: boolean };
 };
 
 function parseCustomProviderName(modelId: string): string | undefined {
@@ -2847,6 +3057,7 @@ async function markIterationTimedOut(args: {
   try {
     await args.convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId,
+      ...leaseTokenArg(iterationId),
       status: "timed_out",
       result: "timed_out",
       actualToolCalls: [],
@@ -2911,6 +3122,9 @@ async function markIterationStopped(args: {
   if (!args.iterationId) return;
 
   const reason = args.abortSignal?.reason;
+  // E4: shutdown or a lost lease — this worker no longer owns the row, and
+  // the backend (handback, sweeper) decides its outcome. Write nothing.
+  if (isSilentStop(reason)) return;
   const stop = isEvalRunStoppedError(reason) ? reason : undefined;
   const terminal = stop?.terminalStatus ?? "cancelled";
   const stopReason = stop?.stopReason ?? "user_cancelled";
@@ -2921,6 +3135,7 @@ async function markIterationStopped(args: {
   try {
     await args.convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId: args.iterationId,
+      ...leaseTokenArg(args.iterationId),
       status: terminal,
       result: terminal,
       actualToolCalls: [],
@@ -3070,6 +3285,17 @@ const executeTestCase = async (params: {
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
   creditStop?: { exhausted: boolean };
+  /** E2: the run's shared infra-retry budget (absent ⇒ no retries). */
+  infraRetryBudget?: RunInfraRetryBudget;
+  /** E4.2: the run's lease driver (leases flag on, suite runs only). */
+  leaseDriver?: RunLeaseDriver;
+  /**
+   * E4.3: on a resume, the 1-based iteration numbers of this case the backend
+   * requeued, each mapped to the trial attempt the interrupted worker reached
+   * (0 when it never began one). Every other iteration already has its
+   * outcome and is not run.
+   */
+  resumeAttemptNumbers?: ReadonlyMap<number, number>;
   compareRunId?: string;
   /**
    * See {@link RunEvalSuiteOptions.committedQuickRunIterationIds}. When set,
@@ -3205,6 +3431,7 @@ const executeTestCase = async (params: {
       iterationSignal: AbortSignal,
       deadlineAt: number,
       onIterationStarted: (iterationId: string) => void,
+      trialAttempt: TrialAttemptContext,
     ) => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
@@ -3223,9 +3450,28 @@ const executeTestCase = async (params: {
      * produce a value here. Holding the id lets the stop be recorded anyway.
      */
     let startedIterationId = precreatedIterationId;
+    // E4.2: a lost lease aborts THIS iteration's work — and only its own.
+    const leaseDriver = params.leaseDriver;
+    const leaseAbort = leaseDriver ? new AbortController() : undefined;
+    let unregisterLeaseLoss: (() => void) | undefined;
     const noteIterationStarted = (iterationId: string) => {
       startedIterationId = iterationId;
+      if (leaseDriver && leaseAbort && !unregisterLeaseLoss) {
+        unregisterLeaseLoss = leaseDriver.onIterationLost(
+          iterationId,
+          (error: LeaseLostError) => {
+            if (!leaseAbort.signal.aborted) leaseAbort.abort(error);
+          },
+        );
+      }
     };
+    /** Not run here (claim refused) or no longer ours (lease lost). */
+    const leaseSkippedOutcome = (): T =>
+      ({
+        evaluation: { passed: false },
+        leaseSkipped: true,
+        ...(startedIterationId ? { iterationId: startedIterationId } : {}),
+      }) as unknown as T;
     /** Persist the stop, once, on the way out. */
     const recordCancelledIteration = async () =>
       await markIterationStopped({
@@ -3235,10 +3481,58 @@ const executeTestCase = async (params: {
       });
 
     const runAndCheckCredits = async (
-      signal: AbortSignal,
+      iterationSignal: AbortSignal,
       deadline: number,
     ) => {
-      const outcome = await runner(signal, deadline, noteIterationStarted);
+      const signal = leaseAbort
+        ? AbortSignal.any([iterationSignal, leaseAbort.signal])
+        : iterationSignal;
+      // E2: attempts of ONE trial run here, inside the iteration's own clock
+      // and abort signal. A runner that hands back `infraRetry` did NOT
+      // finalize: the row stays `running` under the same iteration id, and
+      // the next attempt reuses it after the wait (which the gate already
+      // proved leaves enough of the budget).
+      const trialAttempt: TrialAttemptContext = {
+        // E4.3: a resumed row continues ABOVE the attempt it was interrupted
+        // in — the backend refuses a stale attempt number.
+        attempt: (params.resumeAttemptNumbers?.get(runIndex + 1) ?? 0) + 1,
+        attemptId: randomUUID(),
+        infraRetries: [],
+      };
+      let outcome = await runner(
+        signal,
+        deadline,
+        noteIterationStarted,
+        trialAttempt,
+      );
+      while (outcome.infraRetry) {
+        const request = outcome.infraRetry;
+        logger.info("[evals] retrying infra-failed attempt in place", {
+          event: "evals.infra_retry",
+          iterationId: startedIterationId,
+          attempt: request.entry.attempt,
+          class: request.entry.class,
+          delayMs: request.delayMs,
+        });
+        await abortableSleep(request.delayMs, signal);
+        trialAttempt.priorUsage = addUsageTotalsTo(
+          trialAttempt.priorUsage,
+          request.usage,
+        );
+        trialAttempt.infraRetries = [
+          ...trialAttempt.infraRetries,
+          request.entry,
+        ];
+        trialAttempt.attempt += 1;
+        trialAttempt.attemptId = randomUUID();
+        if (outcome.iterationId) trialAttempt.iterationId = outcome.iterationId;
+        outcome = await runner(
+          signal,
+          deadline,
+          noteIterationStarted,
+          trialAttempt,
+        );
+      }
       if (outcome.creditsExhausted && !creditStop.exhausted) {
         creditStop.exhausted = true;
         logger.info("[evals] credits exhausted; remaining iterations skipped", {
@@ -3248,18 +3542,51 @@ const executeTestCase = async (params: {
       }
       return outcome;
     };
-    if (!isolatedIterationTimeoutEnabled()) {
-      // Kill-switch path: the pre-isolation behaviour, kept verbatim for one
-      // release. An iteration timeout aborts the WHOLE run and rejects, which
-      // is the contract `evals-runner.test.ts` pinned before this change.
+    const runGuarded = async (): Promise<T> => {
+      if (!isolatedIterationTimeoutEnabled()) {
+        // Kill-switch path: the pre-isolation behaviour, kept verbatim for one
+        // release. An iteration timeout aborts the WHOLE run and rejects, which
+        // is the contract `evals-runner.test.ts` pinned before this change.
+        try {
+          return await runIterationUnderBudget({
+            run: runAndCheckCredits,
+            runSignal: abortSignal,
+            unitTimeoutMs: budgets.unitTimeoutMs,
+            graceMs: EVAL_ABORT_GRACE_MS,
+            onTimeout: async () => {
+              abortRun?.(iterationTimeoutError(budgets.unitTimeoutMs));
+              await markIterationTimedOut({
+                convexClient,
+                runId,
+                precreatedIterationId,
+                test: timeoutTest,
+                runIndex,
+                budgetMs: budgets.unitTimeoutMs,
+              });
+            },
+            timedOutOutcome: () => {
+              throw iterationTimeoutError(budgets.unitTimeoutMs);
+            },
+          });
+        } catch (error) {
+          if (isCancelUnwind(error, abortSignal)) {
+            await recordCancelledIteration();
+          }
+          throw error;
+        }
+      }
+
       try {
         return await runIterationUnderBudget({
           run: runAndCheckCredits,
           runSignal: abortSignal,
           unitTimeoutMs: budgets.unitTimeoutMs,
           graceMs: EVAL_ABORT_GRACE_MS,
-          onTimeout: async () => {
-            abortRun?.(iterationTimeoutError(budgets.unitTimeoutMs));
+          onTimeout: async (elapsedMs) => {
+            // NOTE: no `abortRun`. That is the change — one slow trial used to
+            // kill every sibling trial in the run, discarding evidence that had
+            // already been produced and turning an infrastructure event into a
+            // run-level verdict of `timed_out`.
             await markIterationTimedOut({
               convexClient,
               runId,
@@ -3267,11 +3594,19 @@ const executeTestCase = async (params: {
               test: timeoutTest,
               runIndex,
               budgetMs: budgets.unitTimeoutMs,
+              elapsedMs,
             });
           },
-          timedOutOutcome: () => {
-            throw iterationTimeoutError(budgets.unitTimeoutMs);
-          },
+          // Resolve, never reject: the caller's `for (runIndex…)` loop has no
+          // try/catch, so rejecting here strands this case's remaining iterations
+          // as `pending` and blocks the run's terminal transition.
+          timedOutOutcome: () =>
+            ({
+              evaluation: { passed: false },
+              ...(precreatedIterationId
+                ? { iterationId: precreatedIterationId }
+                : {}),
+            }) as unknown as T,
         });
       } catch (error) {
         if (isCancelUnwind(error, abortSignal)) {
@@ -3279,45 +3614,42 @@ const executeTestCase = async (params: {
         }
         throw error;
       }
-    }
+    };
 
     try {
-      return await runIterationUnderBudget({
-        run: runAndCheckCredits,
-        runSignal: abortSignal,
-        unitTimeoutMs: budgets.unitTimeoutMs,
-        graceMs: EVAL_ABORT_GRACE_MS,
-        onTimeout: async (elapsedMs) => {
-          // NOTE: no `abortRun`. That is the change — one slow trial used to
-          // kill every sibling trial in the run, discarding evidence that had
-          // already been produced and turning an infrastructure event into a
-          // run-level verdict of `timed_out`.
-          await markIterationTimedOut({
-            convexClient,
-            runId,
-            precreatedIterationId,
-            test: timeoutTest,
-            runIndex,
-            budgetMs: budgets.unitTimeoutMs,
-            elapsedMs,
-          });
-        },
-        // Resolve, never reject: the caller's `for (runIndex…)` loop has no
-        // try/catch, so rejecting here strands this case's remaining iterations
-        // as `pending` and blocks the run's terminal transition.
-        timedOutOutcome: () =>
-          ({
-            evaluation: { passed: false },
-            ...(precreatedIterationId
-              ? { iterationId: precreatedIterationId }
-              : {}),
-          }) as unknown as T,
-      });
+      const outcome = await runGuarded();
+      // A runner that unwound on its own after the lease went may still have
+      // produced a value; it is not this worker's to count.
+      return leaseAbort?.signal.aborted ? leaseSkippedOutcome() : outcome;
     } catch (error) {
-      if (isCancelUnwind(error, abortSignal)) {
-        await recordCancelledIteration();
+      if (
+        error instanceof IterationClaimRefusedError ||
+        (leaseDriver && isLeaseLostError(error)) ||
+        (leaseAbort?.signal.aborted && !abortSignal?.aborted)
+      ) {
+        logger.info("[evals] iteration skipped: not leased by this worker", {
+          event: "evals.iteration_lease_skipped",
+          iterationId: startedIterationId,
+          reason:
+            error instanceof IterationClaimRefusedError
+              ? error.reason
+              : "lease_lost",
+        });
+        return leaseSkippedOutcome();
       }
       throw error;
+    } finally {
+      unregisterLeaseLoss?.();
+      // Release once the trial is over (retries included). Never on a
+      // silent stop: the handback owns every row the run still holds.
+      if (
+        leaseDriver &&
+        startedIterationId &&
+        !isSilentStop(abortSignal?.reason)
+      ) {
+        await recorder?.flushIterationWrites?.();
+        await leaseDriver.releaseIteration(startedIterationId);
+      }
     }
   };
 
@@ -3337,6 +3669,12 @@ const executeTestCase = async (params: {
     assertCommittedAttempts(pinnedRuns);
     for (let runIndex = 0; runIndex < pinnedRuns; runIndex++) {
       if (abortSignal?.aborted) break;
+      if (
+        params.resumeAttemptNumbers &&
+        !params.resumeAttemptNumbers.has(runIndex + 1)
+      ) {
+        continue;
+      }
       const committedIterationId = committedIterationIds?.[runIndex];
       onCommittedAttemptEntered?.(runIndex);
       const modelFreeParams = {
@@ -3604,6 +3942,13 @@ const executeTestCase = async (params: {
     // A stopped run leaves this and every later committed attempt unentered;
     // `executeCommittedTestCase` settles their rows.
     if (committedIterationIds && abortSignal?.aborted) break;
+    // E4.3: a resume runs only the attempts the backend requeued.
+    if (
+      params.resumeAttemptNumbers &&
+      !params.resumeAttemptNumbers.has(runIndex + 1)
+    ) {
+      continue;
+    }
     onCommittedAttemptEntered?.(runIndex);
     if (creditStop.exhausted) {
       // Only untouched rows are skipped. Completed evidence remains intact.
@@ -3615,9 +3960,19 @@ const executeTestCase = async (params: {
         precreatedIterationId:
           committedIterationIds?.[runIndex] ?? precreatedIterationIds[runIndex],
       });
-      if (iterationId) {
+      // E4.2: a leased run owns a row before writing it; a refused claim
+      // means someone else settles it.
+      const claimed =
+        iterationId && params.leaseDriver
+          ? (await params.leaseDriver.claimIteration(
+              iterationId,
+              budgets.unitTimeoutMs,
+            )).ok
+          : true;
+      if (iterationId && claimed) {
         await convexClient.action("testSuites:updateTestIteration" as any, {
           iterationId,
+          ...leaseTokenArg(iterationId),
           status: "skipped",
           result: "failed",
           actualToolCalls: [],
@@ -3625,6 +3980,9 @@ const executeTestCase = async (params: {
           error:
             "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
         });
+        if (params.leaseDriver) {
+          await params.leaseDriver.releaseIteration(iterationId);
+        }
       }
       continue;
     }
@@ -3694,12 +4052,22 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
+        (
+          iterationSignal,
+          iterationDeadlineAt,
+          onIterationStarted,
+          trialAttempt,
+        ) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
             iterationDeadlineAt,
             onIterationStarted,
+            trialAttempt,
+            creditStop,
+            ...(params.infraRetryBudget
+              ? { infraRetryBudget: params.infraRetryBudget }
+              : {}),
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -3770,12 +4138,22 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
+        (
+          iterationSignal,
+          iterationDeadlineAt,
+          onIterationStarted,
+          trialAttempt,
+        ) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
             iterationDeadlineAt,
             onIterationStarted,
+            trialAttempt,
+            creditStop,
+            ...(params.infraRetryBudget
+              ? { infraRetryBudget: params.infraRetryBudget }
+              : {}),
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -3934,6 +4312,9 @@ export const runEvalSuiteWithAiSdk = async ({
   toolPolicy,
   benchmarkWriteGuard,
   extraHeaders,
+  resumeDriverToken,
+  resumeExecutionDeadlineAt,
+  resumeIterations,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
@@ -3955,7 +4336,19 @@ export const runEvalSuiteWithAiSdk = async ({
   let toolDescriptionOverride: ToolDescriptionOverrideMarker | undefined;
   let descriptionOverrides: Record<string, string> | undefined;
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
-  const tests = config.tests ?? [];
+  // E4.3: a resume runs only the cases (and, below, only the attempts) the
+  // backend requeued; every other row already has its outcome.
+  const resumeAttemptsByTest = new Map<
+    EvalTestCase,
+    ReadonlyMap<number, number>
+  >();
+  const tests = resumeIterations
+    ? (config.tests ?? []).filter((test) => {
+        const numbers = resumeAttemptNumbersFor(test, resumeIterations);
+        if (numbers.size > 0) resumeAttemptsByTest.set(test, numbers);
+        return numbers.size > 0;
+      })
+    : (config.tests ?? []);
   const serverIds = resolveConfiguredServerIds({
     environment: config.environment,
     mcpClientManager,
@@ -4015,6 +4408,26 @@ export const runEvalSuiteWithAiSdk = async ({
       abortController.abort(error);
     }
   };
+  // E4: a SILENT stop — process shutdown or a lost lease. The run's work
+  // aborts and writes no terminal state; the backend owns what comes next.
+  const silentStop = (reason: Error) => {
+    if (!abortController.signal.aborted) {
+      abortController.abort(reason);
+    }
+  };
+  /** E4.2: this run's lease driver, once claimed (leases flag on). */
+  let leaseDriver: RunLeaseDriver | undefined;
+  // E4.0: registered so a process shutdown can stop and hand back this run.
+  const activeRun =
+    runId !== null && recorder
+      ? registerActiveEvalRun({
+          runId,
+          suiteId,
+          convexClient,
+          abort: silentStop,
+          lease: () => leaseDriver,
+        })
+      : undefined;
 
   const evalTasksSeam = resolveToolTaskSeam({
     tasksPolicy: readTasksPolicy(
@@ -4219,11 +4632,54 @@ export const runEvalSuiteWithAiSdk = async ({
         modelIdentifiers,
       });
     }
+    // E4.3: a resume inherits the interrupted run's deadline; a fresh run's
+    // deadline starts now.
+    const runTimerMs =
+      resumeExecutionDeadlineAt !== undefined
+        ? Math.max(
+            0,
+            Math.min(
+              budgets.runTimeoutMs,
+              resumeExecutionDeadlineAt - Date.now(),
+            ),
+          )
+        : budgets.runTimeoutMs;
+    if (runId !== null && recorder) {
+      leaseDriver = await startRunLeaseDriver({
+        convexClient,
+        runId,
+        abortRun: silentStop,
+        resumable: {
+          unitTimeoutMs: budgets.unitTimeoutMs,
+          executionDeadlineAt: Date.now() + runTimerMs,
+          // Keys sent with the REQUEST die with it: a resumed run could not
+          // execute with them, so such a run is never resumable.
+          requestScopedKeys:
+            !!modelApiKeys && Object.keys(modelApiKeys).length > 0,
+          harness: Boolean(harnessOfHostConfig(suiteHostConfig)),
+        },
+        ...(resumeDriverToken ? { existingDriverToken: resumeDriverToken } : {}),
+      });
+      if (leaseDriver) {
+        recorder.attachLeaseDriver?.(leaseDriver, budgets.unitTimeoutMs);
+      }
+    }
     const creditStop = { exhausted: false };
+    // E2: ONE retry budget and circuit breaker for the whole run, sized from
+    // every iteration it will execute. Only consulted when the retry flag is
+    // on (the runner creates no gate otherwise).
+    const infraRetryBudget = createRunInfraRetryBudget(
+      tests.reduce((sum, test) => sum + (test.runs || 1), 0),
+    );
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
         budgets,
+        infraRetryBudget,
+        ...(leaseDriver ? { leaseDriver } : {}),
+        ...(resumeAttemptsByTest.has(test)
+          ? { resumeAttemptNumbers: resumeAttemptsByTest.get(test)! }
+          : {}),
         tools,
         selectedServers: serverIds,
         mcpClientManager,
@@ -4283,17 +4739,24 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
       });
+    // E2 fan-out cap: at most `MCPJAM_EVAL_MAX_CONCURRENT_CASES` (default 8,
+    // 1–64) cases of this run execute at once. Every case used to start
+    // together, so a large suite opened one model stream per case — and a
+    // retry storm against a struggling provider multiplied that.
+    const caseLimit = createConcurrencyLimiter(resolveMaxConcurrentCases());
     const testPromises = tests.map((test) =>
-      // Cap concurrent headless browsers for every model-free render check
-      // (legacy widget_probe OR a unified case whose turns are all pinned),
-      // not just the legacy discriminator — otherwise a monitoring suite of
-      // new pinned-only cases launches one Chromium per case at once.
-      isPinnedOnly({
-        caseType: test.caseType,
-        promptTurns: resolveEvalTestCase(test).promptTurns,
-      })
-        ? renderCheckLimit(() => runOne(test))
-        : runOne(test),
+      caseLimit(() =>
+        // Cap concurrent headless browsers for every model-free render check
+        // (legacy widget_probe OR a unified case whose turns are all pinned),
+        // not just the legacy discriminator — otherwise a monitoring suite of
+        // new pinned-only cases launches one Chromium per case at once.
+        isPinnedOnly({
+          caseType: test.caseType,
+          promptTurns: resolveEvalTestCase(test).promptTurns,
+        })
+          ? renderCheckLimit(() => runOne(test))
+          : runOne(test),
+      ),
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -4365,10 +4828,16 @@ export const runEvalSuiteWithAiSdk = async ({
       if (runId === null) return;
       while (!stopControls) {
         try {
-          await convexClient.mutation(
+          const heartbeat = await convexClient.mutation(
             "testSuites:heartbeatTestSuiteRun" as any,
-            { runId },
+            {
+              runId,
+              // E4.2: extends this driver's leases (never the deadline) and
+              // reports any lease it no longer holds.
+              ...(leaseDriver ? leaseDriver.heartbeatArgs() : {}),
+            },
           );
+          leaseDriver?.applyHeartbeatResult(heartbeat);
         } catch (error) {
           logger.warn("[evals] Failed to heartbeat eval run", {
             runId,
@@ -4388,7 +4857,7 @@ export const runEvalSuiteWithAiSdk = async ({
           const stop = runTimeoutError(budgets.runTimeoutMs);
           abortRun(stop);
           reject(stop);
-        }, budgets.runTimeoutMs);
+        }, runTimerMs);
       });
 
     // Surface an `EvalRunStoppedError` thrown by ANY iteration immediately
@@ -4426,6 +4895,11 @@ export const runEvalSuiteWithAiSdk = async ({
         }),
         createRunTimeout(),
       ]);
+      // E4: a silent stop (shutdown / lost lease) neither aggregates nor
+      // finalizes — the run is handed back, not finished.
+      if (isSilentStop(abortController.signal.reason)) {
+        throw abortController.signal.reason;
+      }
       // allSettled and the lifecycle rejection can resolve in the same turn.
       // A stop already recorded on the run signal wins either race ordering.
       if (
@@ -4470,7 +4944,11 @@ export const runEvalSuiteWithAiSdk = async ({
     for (const [resultIndex, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const outcomes = result.value;
-        for (const { evaluation } of outcomes) {
+        for (const { evaluation, infraError, leaseSkipped } of outcomes) {
+          // E1: an infra trial measured nothing about the server — in no
+          // count, matching the backend's legacy header. E4: neither did a
+          // trial another worker owns.
+          if (infraError || leaseSkipped) continue;
           summary.total += 1;
           if (evaluation.passed) {
             summary.passed += 1;
@@ -4553,6 +5031,11 @@ export const runEvalSuiteWithAiSdk = async ({
     }
     return undefined;
   } catch (error) {
+    // E4: a silent stop writes nothing — no setup evidence, no finalize. The
+    // shutdown coordinator (or the backend watchdog) owns this run now.
+    if (isSilentStop(error) || isSilentStop(abortController.signal.reason)) {
+      throw error;
+    }
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -4598,6 +5081,8 @@ export const runEvalSuiteWithAiSdk = async ({
     }
 
     throw error;
+  } finally {
+    activeRun?.settle();
   }
 };
 
@@ -4960,6 +5445,7 @@ const runLocalIteration = async ({
     iterationError: undefined,
     iterationErrorDetails: undefined,
     stepErrorSource: undefined,
+    stepErrorEvidence: undefined,
     pinnedSetupFailure: false,
   };
   // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
@@ -5152,6 +5638,7 @@ const runLocalIteration = async ({
           bearer: convexAuthToken,
           runId: String(runId),
           ...(iterationId ? { iterationId: String(iterationId) } : {}),
+          ...leaseTokenArg(iterationId ? String(iterationId) : undefined),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!evalSandbox.ok) {
@@ -5624,6 +6111,16 @@ const runLocalIteration = async ({
     // closure above still applies the prefix to LIVE SSE
     // `trace_snapshot` events for the test-runner UI (different
     // consumer than the stored transcript).
+    // E1: OUR infrastructure (the model provider) failed the turn? Typed
+    // evidence only; a pinned setup failure is the server's, never infra.
+    const localInfra = acc.pinnedSetupFailure
+      ? {}
+      : resolveIterationInfraError(localInfraEvidence(acc));
+    if (localInfra.shadow) {
+      iterationMetadataBase.infraErrorShadow = infraShadowMetadata(
+        localInfra.shadow,
+      );
+    }
     const finishParams = buildIterationFinishParams({
       iterationId,
       // The layer that failed, when this driver could tell — the local twin of
@@ -5661,10 +6158,16 @@ const runLocalIteration = async ({
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
       // A model-free pinned setup failure (server not connected) records as
-      // `setup_failed` — it never reached the question; everything else
-      // completes (a failed verdict is still a completed run). Mirrors the
-      // former runIterationWithAiSdk.
-      status: acc.pinnedSetupFailure ? "setup_failed" : "completed",
+      // `setup_failed` — it never reached the question; an infra failure (E1)
+      // as `failed` + `infraError`; everything else completes (a failed
+      // verdict is still a completed run). Mirrors the former
+      // runIterationWithAiSdk.
+      status: acc.pinnedSetupFailure
+        ? "setup_failed"
+        : localInfra.infraError
+          ? "failed"
+          : "completed",
+      ...(localInfra.infraError ? { infraError: localInfra.infraError } : {}),
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
       // via the failure-detection branch, surface it on the persisted
@@ -5757,6 +6260,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(localInfra.infraError ? { infraError: localInfra.infraError } : {}),
     };
   } catch (error) {
     // Rethrown, not swallowed: this iteration ran out of its own budget, and
@@ -5897,6 +6401,28 @@ const runLocalIteration = async ({
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
     // success path.
+    const failStatus =
+      iterationMetadataBase.timeout &&
+      typeof iterationMetadataBase.timeout === "object" &&
+      "clock" in iterationMetadataBase.timeout &&
+      iterationMetadataBase.timeout.clock === "sandboxCapacity"
+        ? ("setup_failed" as const)
+        : ("failed" as const);
+    // E1: the throw already records `failed`; a typed provider failure also
+    // carries `infraError`, which is what makes it refundable.
+    const failInfra =
+      failStatus === "failed"
+        ? resolveIterationInfraError({
+            ...localInfraEvidence(acc),
+            iterationError: errorMessage ?? acc.iterationError,
+            timeout: iterationMetadataBase.timeout,
+          })
+        : {};
+    if (failInfra.shadow) {
+      iterationMetadataBase.infraErrorShadow = infraShadowMetadata(
+        failInfra.shadow,
+      );
+    }
     const failParams = buildIterationFinishParams({
       iterationId,
       // Same as the success path: carry the layer when the driver could tell.
@@ -5928,13 +6454,8 @@ const runLocalIteration = async ({
       // PR 9: browser artifacts collected before the failure still persist.
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
-      status:
-        iterationMetadataBase.timeout &&
-        typeof iterationMetadataBase.timeout === "object" &&
-        "clock" in iterationMetadataBase.timeout &&
-        iterationMetadataBase.timeout.clock === "sandboxCapacity"
-          ? "setup_failed"
-          : "failed",
+      status: failStatus,
+      ...(failInfra.infraError ? { infraError: failInfra.infraError } : {}),
       startedAt: runStartedAt,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
@@ -6001,6 +6522,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(failInfra.infraError ? { infraError: failInfra.infraError } : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -6089,6 +6611,9 @@ const runHostedIterationWithBrowser = async (
     toolPolicyWarnings,
     benchmarkWriteGuard,
     effectiveSettings,
+    trialAttempt,
+    infraRetryBudget,
+    creditStop,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -6249,12 +6774,41 @@ const runHostedIterationWithBrowser = async (
       : ("model" as const),
   };
 
-  const iterationId = precreatedIterationId
-    ? precreatedIterationId
-    : recorder
-      ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+  // E2: a retried attempt runs on the row its first attempt already holds.
+  const iterationId = trialAttempt?.iterationId
+    ? trialAttempt.iterationId
+    : precreatedIterationId
+      ? precreatedIterationId
+      : recorder
+        ? await recorder.startIteration(iterationParams)
+        : await createIterationDirectly(convexClient, iterationParams);
   if (iterationId) onIterationStarted?.(iterationId);
+
+  // E2: the replay-safety gate for THIS attempt. Only where an in-place retry
+  // is possible at all — the flag is on, it is a suite run with a recorder,
+  // and it is not a harness run (v1 never retries one). Elsewhere there is no
+  // gate: nothing extra is written and nothing is ever replayed.
+  //
+  // E4: a LEASED row gets the gate too, retry flag or not. Restart recovery
+  // shares the replay-safety rule, so an interrupted leased attempt can be
+  // requeued only if its durable pre-dispatch marker proves it never
+  // dispatched anything effectful.
+  const effectGate: EffectDispatchGate | undefined =
+    iterationId &&
+    runId !== null &&
+    recorder &&
+    !resolvedExecution.harness &&
+    (infraRetryEnabled() || leaseTokenArg(iterationId).leaseToken)
+      ? await beginEffectDispatchGate({
+          convexClient,
+          iterationId,
+          attempt: trialAttempt?.attempt ?? 1,
+          ...(trialAttempt ? { attemptId: trialAttempt.attemptId } : {}),
+        })
+      : undefined;
+  if (effectGate && effectGate.attempt > 1) {
+    iterationMetadataBase.trialAttempt = effectGate.attempt;
+  }
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -6551,6 +7105,7 @@ const runHostedIterationWithBrowser = async (
         bearer: convexAuthToken,
         runId: String(runId),
         ...(iterationId ? { iterationId: String(iterationId) } : {}),
+        ...leaseTokenArg(iterationId ? String(iterationId) : undefined),
         // Absent for a terminal box, so every request that predates desktops
         // is byte-identical on the wire.
         ...(sandboxNeed.runtimeKind === "desktop-browser"
@@ -6914,6 +7469,7 @@ const runHostedIterationWithBrowser = async (
     ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
     toolPolicyGate,
+    ...(effectGate ? { effectGate } : {}),
     abortSignal,
     maxSteps: MAX_STEPS,
     runStartedAt,
@@ -6932,6 +7488,8 @@ const runHostedIterationWithBrowser = async (
           harnessSandboxBinding: {
             sandboxRowId: evalSandbox.value.sandboxRowId,
             sandboxId: evalSandbox.value.sandboxId,
+            // The box's own vendor window, for the harness's connect.
+            ...vendorLifecycleField(evalSandbox.value.vendorLifecycle),
           },
         }
       : {}),
@@ -7076,6 +7634,9 @@ const runHostedIterationWithBrowser = async (
       state: stepState,
       browser,
       handlers: hostedHandlers,
+      ...(effectGate
+        ? { admitEffect: (kind: "browser") => effectGate.admit(kind) }
+        : {}),
       isAborted,
       ...(emit
         ? {
@@ -7119,9 +7680,108 @@ const runHostedIterationWithBrowser = async (
       };
     }
   }
+  // E2: a dispatch the gate REFUSED (its marker could not be persisted) never
+  // ran — the tool saw an error instead. Whatever the transcript shows after
+  // that is not a measurement of the server, so the attempt is OUR failure.
+  if (effectGate?.refusal) {
+    iterationError = effectGate.refusal.message;
+    result = {
+      ...result,
+      iterationError: effectGate.refusal.message,
+      errorCode: "effect_dispatch_unrecorded",
+      errorInfra: { layer: "platform" },
+    };
+  }
   // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
   // below, mirroring the local runner.
   const pinnedSetupFailure = result.setupFailure;
+  // E1: did OUR infrastructure fail the turn? Structured evidence only; a
+  // setup failure of the server under test is never re-labelled as infra.
+  const infra = pinnedSetupFailure ? {} : resolveIterationInfraError(result);
+  // E2: retry in place — or record why not. Only with a gate (flag on, suite
+  // run, not a harness run), and only for a CLASSIFIED infra failure.
+  let infraRetryDeclined: InfraRetryDeclineReason | undefined;
+  if (effectGate) {
+    noteAttemptOutcome(infraRetryBudget, {
+      ...(infra.classified ? { infraClass: infra.classified.class } : {}),
+    });
+    if (infra.classified && infra.infraError) {
+      const decision = decideInfraRetry({
+        enabled: true,
+        suiteRunWithRecorder: true,
+        harness: Boolean(resolvedExecution.harness),
+        classified: infra.classified,
+        replay: effectGate.replaySafety(),
+        // Retries THIS worker took — a resumed trial starts its attempt
+        // numbering above the interrupted one, but has retried nothing yet.
+        retriesSoFar: trialAttempt?.infraRetries.length ?? 0,
+        aborted: isAborted(),
+        creditsExhausted:
+          creditStop?.exhausted === true ||
+          isCreditExhaustion({
+            message: iterationError,
+            details: iterationErrorDetails,
+          }),
+        now: Date.now(),
+        deadlineAt: iterationDeadlineAt,
+        unitTimeoutMs: budgets.unitTimeoutMs,
+        runBudget: infraRetryBudget,
+      });
+      if (decision.retry) {
+        commitInfraRetry(infraRetryBudget);
+        const entry: InfraRetryEntry = {
+          attempt: effectGate.attempt,
+          attemptId: effectGate.attemptId,
+          class: infra.classified.class,
+          ...(infra.classified.code ? { code: infra.classified.code } : {}),
+          ...(infra.classified.httpStatus !== undefined
+            ? { httpStatus: infra.classified.httpStatus }
+            : {}),
+          delayMs: decision.delayMs,
+          ...(typeof accumulatedUsage.totalTokens === "number"
+            ? { tokensUsed: accumulatedUsage.totalTokens }
+            : {}),
+          at: Date.now(),
+        };
+        // Durable BEFORE the wait: the history survives a lost worker.
+        await convexClient
+          .mutation("testSuites:recordInfraRetry" as any, {
+            iterationId,
+            entry,
+            ...leaseTokenArg(iterationId),
+          })
+          .catch((error: unknown) => {
+            logger.warn("[evals] could not record infra retry", {
+              iterationId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        // NOT finalized: the row stays `running` for the next attempt.
+        return {
+          evaluation: {
+            ...evaluateMultiTurnResults(
+              resolvedTest.promptTurns,
+              [],
+              test.isNegativeTest,
+              test.matchOptions,
+            ),
+            passed: false,
+          },
+          iterationId: iterationId ?? undefined,
+          infraRetry: {
+            delayMs: decision.delayMs,
+            entry,
+            usage: copyUsageTotals(accumulatedUsage),
+          } satisfies InfraRetryRequest,
+        };
+      }
+      infraRetryDeclined = decision.reason;
+    }
+  }
+  if (infraRetryDeclined) {
+    iterationMetadataBase.infraRetryDeclined = infraRetryDeclined;
+  }
+  if (infra.shadow) iterationMetadataBase.infraErrorShadow = infraShadowMetadata(infra.shadow);
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
   hostedStepScriptedFailures = buildStepScriptedCheckFailures(stepState);
@@ -7254,7 +7914,11 @@ const runHostedIterationWithBrowser = async (
     ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
     passed,
     evaluation,
-    usage: accumulatedUsage,
+    // E2: earlier attempts our infrastructure failed still cost tokens; the
+    // row's cost counts them. Grading above used this attempt's usage only.
+    usage: trialAttempt?.priorUsage
+      ? addUsageTotalsTo(trialAttempt.priorUsage, accumulatedUsage)
+      : accumulatedUsage,
     // The persisted transcript is the TRACE view whenever this run captured
     // evidence: matched calls keep their narrated output, wire-only calls
     // appear as reconstructed tool results, and run detail / the judge's
@@ -7309,9 +7973,15 @@ const runHostedIterationWithBrowser = async (
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
     // A model-free pinned setup failure (server not connected) records as
-    // `setup_failed` — it never reached the question; everything else completes
-    // (a failed verdict is still a completed run). Mirrors the local runner.
-    status: pinnedSetupFailure ? "setup_failed" : "completed",
+    // `setup_failed` — it never reached the question; an infra failure (E1)
+    // as `failed` + `infraError`; everything else completes (a failed verdict
+    // is still a completed run). Mirrors the local runner.
+    status: pinnedSetupFailure
+      ? "setup_failed"
+      : infra.infraError
+        ? "failed"
+        : "completed",
+    ...(infra.infraError ? { infraError: infra.infraError } : {}),
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
@@ -7393,6 +8063,7 @@ const runHostedIterationWithBrowser = async (
     ...(toolPolicyGate?.blocks.length
       ? { policyBlockCount: toolPolicyGate.blocks.length }
       : {}),
+    ...(infra.infraError ? { infraError: infra.infraError } : {}),
   };
 };
 

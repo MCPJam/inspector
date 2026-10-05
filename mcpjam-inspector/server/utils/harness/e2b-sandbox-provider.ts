@@ -23,7 +23,13 @@ import type {
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { confineToHome } from "../computers/path-confine.js";
+import {
+  SandboxUnavailableError,
+  resolveSandboxConnectTimeoutMs,
+  type SandboxVendorLifecycle,
+} from "../computers/sandbox-lifecycle.js";
 import { logger } from "../logger.js";
+import { harnessPnpmGuardCommand } from "./harness-bake.js";
 
 export interface E2BHarnessSandboxProviderOptions {
   /**
@@ -55,8 +61,17 @@ export interface E2BHarnessSandboxProviderOptions {
    *  `session.ports` so the claude-code adapter picks it up. E2B's `getHost`
    *  bridges any listening port, but the adapter reads `ports`. */
   bridgePort?: number;
-  /** Connect/keep-alive timeout handed to `Sandbox.connect`. */
+  /** Connect/keep-alive timeout handed to `Sandbox.connect`. Ignored when
+   *  `vendorLifecycle` carries a window — the box's own policy wins. */
   connectTimeoutMs?: number;
+  /**
+   * The EPHEMERAL box's server-resolved vendor lifecycle (provision response).
+   * When it carries a window, every connect arms exactly that window, capped by
+   * the box's ceiling — so the SDK's own default can never replace the scope
+   * policy — and a box inside its ceiling margin is refused, typed, before any
+   * work starts on it. Absent ⇒ the historical connect.
+   */
+  vendorLifecycle?: SandboxVendorLifecycle;
   /** Per-command exec timeout for `run`. E2B foreground commands default to
    *  ~60s — too short for the harness bootstrap (`pnpm install`) on a larger
    *  dep tree. Background `spawn` is not subject to the foreground cap. */
@@ -226,11 +241,46 @@ export function createE2BHarnessSandboxProvider(
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
     // resolving the sandboxId. We never create or kill a box here.
-    const sandbox = await Sandbox.connect(opts.sandboxId, {
-      apiKey: opts.apiKey,
-      timeoutMs: opts.connectTimeoutMs,
-      ...(connectSignal ? { signal: connectSignal } : {}),
-    });
+    //
+    // `connect` ARMS A WINDOW on the box, so an ephemeral box is connected with
+    // its own server-resolved window (never the SDK default), capped by its
+    // ceiling; one too close to that ceiling takes no new turn.
+    const window = resolveSandboxConnectTimeoutMs(
+      opts.vendorLifecycle,
+      Date.now(),
+    );
+    if (!window.ok) {
+      throw new SandboxUnavailableError({
+        code: "sandbox_expiring",
+        phase: "connect",
+        sandboxId: opts.sandboxId,
+      });
+    }
+    let sandbox: Sandbox;
+    try {
+      sandbox = await Sandbox.connect(opts.sandboxId, {
+        apiKey: opts.apiKey,
+        timeoutMs: window.timeoutMs ?? opts.connectTimeoutMs,
+        ...(connectSignal ? { signal: connectSignal } : {}),
+      });
+    } catch (err) {
+      // E2B answers 404 for a box it already destroyed (killed on its
+      // timeout, or deleted) with its `SandboxNotFoundError`. Typed, so the
+      // turn records a SANDBOX failure rather than a generic error — and never
+      // reconnects into a fresh box as though this attempt survived. Matched by
+      // NAME, which the SDK sets, so a second copy of the SDK (or a test
+      // double) cannot slip past an `instanceof`.
+      if (err instanceof Error && err.name === "SandboxNotFoundError") {
+        throw new SandboxUnavailableError({
+          code: "sandbox_not_found",
+          phase: "connect",
+          httpStatus: 404,
+          sandboxId: opts.sandboxId,
+          cause: err,
+        });
+      }
+      throw err;
+    }
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.
     const ports: number[] = [bridgePort];
@@ -238,9 +288,11 @@ export function createE2BHarnessSandboxProvider(
     // The harness bootstrap shells `pnpm install` BEFORE any session hook runs.
     // pnpm is baked into the computer template (mcpjam-backend
     // templates/computer/e2b.Dockerfile); this idempotent guard covers boxes
-    // provisioned before that template rebuild lands, and no-ops once pnpm is
-    // present. We do not own the box, so a failure here propagates (the control
-    // plane still owns teardown).
+    // provisioned before that template rebuild lands — and custom environment
+    // images, which never had it — and no-ops once pnpm is present. The
+    // fallback install is PINNED to the template's version: an unpinned one is
+    // how pnpm 11 reached hosted turns. We do not own the box, so a failure
+    // here propagates (the control plane still owns teardown).
     //
     // Where it runs matters: on the harness path this is reached during PREWARM,
     // while the box still has ordinary egress. Reached after a lease has locked
@@ -248,7 +300,7 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
+      await sandbox.commands.run(harnessPnpmGuardCommand(), {
         timeoutMs: commandTimeoutMs,
         ...(connectSignal ? { signal: connectSignal } : {}),
       });

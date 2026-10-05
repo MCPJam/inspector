@@ -120,6 +120,7 @@ describe("verdict policy — fixture parity", () => {
     expect(data.reject.length).toBeGreaterThan(15);
     expect(data.roundTrip.length).toBeGreaterThan(0);
     expect(data.aggregation.length).toBeGreaterThan(5);
+    expect(data.trialStatistics.length).toBeGreaterThan(5);
     for (const kind of ["decision", "case", "rate", "policy"] as const) {
       const present =
         rowsOfKind(data.accept, kind).length +

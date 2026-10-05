@@ -197,6 +197,12 @@ import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
+import { shutdownActiveEvalRuns } from "./services/evals/active-eval-runs";
+import {
+  isEvalResumeWorkerEnabled,
+  startEvalResumeWorker,
+  type EvalResumeWorkerHandle,
+} from "./services/evals/resume-worker";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
@@ -975,6 +981,13 @@ if (isScheduledEvalsWorkerEnabled()) {
   scheduledEvalsWorker = startScheduledEvalsWorker();
 }
 
+// E4.3: resume eval runs a lost or shut-down worker handed back. Env-gated
+// (`EVAL_RESUME_ENABLED` + `MCPJAM_EVAL_ITERATION_LEASES`).
+let evalResumeWorker: EvalResumeWorkerHandle | undefined;
+if (isEvalResumeWorkerEnabled()) {
+  evalResumeWorker = startEvalResumeWorker();
+}
+
 // GitHub PR check runs: claim a PR trigger, build its MCP server in a sandbox,
 // run the dedicated eval suite, report an outcome. Env-gated; the backend has
 // its own GITHUB_CHECKS_ENABLED gate and 404s the routes when it is off.
@@ -1055,6 +1068,14 @@ async function shutdown() {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
+    // E4.0 (`MCPJAM_EVAL_SHUTDOWN_HANDOFF`): stop every eval run in this
+    // process and hand each to the backend (resumable runs requeue; the rest
+    // finalize with excluded, refunded `worker_lost` rows) BEFORE the workers
+    // wait on them. Bounded well inside the force-exit deadline; anything
+    // slower converges through the backend watchdog instead. A no-op while
+    // the flag is off.
+    await shutdownActiveEvalRuns({ graceMs: 2_000, callTimeoutMs: 1_500 });
+    await evalResumeWorker?.stop();
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
     await benchWorker?.stop();

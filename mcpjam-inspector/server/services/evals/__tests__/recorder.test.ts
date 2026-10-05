@@ -70,6 +70,39 @@ describe("startSuiteRunWithRecorder", () => {
     expect("importApprovals" in mutation.mock.calls[0][1]).toBe(false);
   });
 
+  it("forwards a failed-cases rerun only when one was asked for", async () => {
+    // E3. Reconstructed field by field like everything here: a dropped scope
+    // would launch a FULL replay stamped as nothing, and an always-sent one
+    // would break every launch against a backend that predates the args.
+    const action = vi.fn().mockResolvedValue(undefined);
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation, action } as any;
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      replayedFromRunId: "source-run",
+      rerunOfRunId: "source-run",
+      rerunScope: "failed_cases",
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      replayedFromRunId: "source-run",
+      rerunOfRunId: "source-run",
+      rerunScope: "failed_cases",
+    });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      replayedFromRunId: "source-run",
+    });
+    expect("rerunOfRunId" in mutation.mock.calls[0][1]).toBe(false);
+    expect("rerunScope" in mutation.mock.calls[0][1]).toBe(false);
+  });
+
   it("forwards the benchmark parent id that licenses the hidden source", async () => {
     // Same reconstruction hazard as the approvals above, with a sharper edge:
     // `startTestSuiteRun` refuses `source: 'benchmark'` unless it also receives
@@ -767,3 +800,169 @@ describe("createSuiteRunRecorder", () => {
     expect(mutation.mock.calls.length).toBe(mutationCallsBefore);
   });
 });
+
+describe("E4 — leased recorder writes", () => {
+  const setup = (claim: { ok: boolean; leaseToken?: string; reason?: string }) => {
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRun") return { status: "running" };
+      if (ref === "testSuites:getTestSuiteRunDetails") {
+        return {
+          iterations: [{ _id: "iter1", testCaseId: "tc1", iterationNumber: 1 }],
+        };
+      }
+      if (ref === "testSuites:getTestIteration") return { status: "running" };
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const mutation = vi.fn(async (ref: string) => {
+      if (ref === "evalRunLeases:claimTestIteration") return claim;
+      return undefined;
+    });
+    const action = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:appendEvalTurnTrace") return { skipped: false };
+      if (ref === "testSuites:updateTestIteration") return {};
+      if (ref === "testSuites:lockEvalSession") {
+        return { skipped: false, locked: true, alreadyLocked: false };
+      }
+      throw new Error(`unexpected action ${ref}`);
+    });
+    const convexClient = { query, mutation, action } as any;
+    const recorder = createSuiteRunRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+    return { recorder, convexClient, query, mutation, action };
+  };
+
+  it("claims before touching the row, then carries the token on every iteration write", async () => {
+    const { createRunLeaseDriver, resetIterationLeasesForTests } = await import(
+      "../run-lease.js"
+    );
+    const { recorder, convexClient, mutation, action } = setup({
+      ok: true,
+      leaseToken: "lease-1",
+    });
+    const driver = createRunLeaseDriver({
+      convexClient,
+      runId: "run-1",
+      driverToken: "drv",
+      resumable: false,
+      abortRun: vi.fn(),
+    });
+    recorder.attachLeaseDriver?.(driver, 60_000);
+    try {
+      await recorder.beginExecutionAttempt?.({
+        caseCount: 1,
+        repetitionCount: 1,
+        renderConcurrencyLimit: 1,
+        modelIdentifiers: [],
+      });
+      const iterationId = await recorder.startIteration({
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        startedAt: Date.now(),
+      });
+      expect(iterationId).toBe("iter1");
+      await recorder.finishIteration({
+        iterationId,
+        passed: true,
+        status: "completed",
+        toolsCalled: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        messages: [{ role: "user", content: "hi" } as ModelMessage],
+      });
+      await recorder.flushIterationWrites?.();
+
+      const refs = mutation.mock.calls.map(([ref]) => ref);
+      expect(refs.indexOf("evalRunLeases:claimTestIteration")).toBeLessThan(
+        refs.indexOf("testSuites:startTestIteration"),
+      );
+      const iterationWrites = [
+        ...mutation.mock.calls.filter(([ref]) =>
+          [
+            "testSuites:startTestIteration",
+            "testSuites:recordEvalIterationRuntimeStart",
+            "testSuites:recordEvalIterationRuntimeEnd",
+          ].includes(ref as string),
+        ),
+        ...action.mock.calls.filter(([ref]) =>
+          [
+            "testSuites:appendEvalTurnTrace",
+            "testSuites:updateTestIteration",
+          ].includes(ref as string),
+        ),
+      ];
+      expect(iterationWrites.length).toBeGreaterThanOrEqual(5);
+      for (const [ref, args] of iterationWrites) {
+        expect({ ref, leaseToken: (args as any).leaseToken }).toEqual({
+          ref,
+          leaseToken: "lease-1",
+        });
+      }
+    } finally {
+      resetIterationLeasesForTests();
+    }
+  });
+
+  it("a refused claim throws and never marks the row running", async () => {
+    const { createRunLeaseDriver, IterationClaimRefusedError } = await import(
+      "../run-lease.js"
+    );
+    const { recorder, convexClient, mutation } = setup({
+      ok: false,
+      reason: "terminal",
+    });
+    recorder.attachLeaseDriver?.(
+      createRunLeaseDriver({
+        convexClient,
+        runId: "run-1",
+        driverToken: "drv",
+        resumable: false,
+        abortRun: vi.fn(),
+      }),
+      60_000,
+    );
+    await expect(
+      recorder.startIteration({
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        startedAt: Date.now(),
+      }),
+    ).rejects.toBeInstanceOf(IterationClaimRefusedError);
+    expect(mutation.mock.calls.map(([ref]) => ref)).not.toContain(
+      "testSuites:startTestIteration",
+    );
+  });
+
+  it("a resume attaches to the existing run: no start mutation, no precreate", async () => {
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "evalRunLeases:getRunResumeContext") {
+        return {
+          runId: "run-9",
+          testCases: [],
+          resumeIterations: [
+            { iterationId: "it-2", testCaseId: "tc1", iterationNumber: 2 },
+          ],
+        };
+      }
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const mutation = vi.fn();
+    const action = vi.fn();
+    const started = await startSuiteRunWithRecorder({
+      convexClient: { query, mutation, action } as any,
+      suiteId: "suite-1",
+      resumeRunId: "run-9",
+    });
+    expect(started.runId).toBe("run-9");
+    expect(started.resumeIterations).toEqual([
+      { iterationId: "it-2", testCaseId: "tc1", iterationNumber: 2 },
+    ]);
+    expect(query).toHaveBeenCalledWith("evalRunLeases:getRunResumeContext", {
+      runId: "run-9",
+    });
+    expect(mutation).not.toHaveBeenCalled();
+    expect(action).not.toHaveBeenCalled();
+  });
+});
+

@@ -51,12 +51,14 @@ import {
   MAX_SUITE_FILE_CASES,
   MAX_SUITE_FILE_TITLE_CHARS,
 } from "./suite-file.js";
+import { Z_95, wilsonInterval } from "../compare-stats.js";
 import {
   EVAL_TRIAL_EXCLUSION_REASONS,
   EVAL_VERDICT_DECISION_REASONS,
   EVAL_VERDICT_POLICY_VERSION,
   MAX_EVAL_CASE_AGGREGATIONS,
   evalCaseAggregationKey,
+  evalExecutionVariantSchema,
   evalVerdictDecisionSchema,
   type EvalCaseVerdictAggregation,
   type EvalExecutionVariant,
@@ -823,4 +825,370 @@ export function evalV2TrialObservation(
     `a completed iteration carries verdict "${row.result}", which is neither ` +
       `a task verdict nor an evaluator error`
   );
+}
+
+// ── per-case trial statistics (mirror convex/lib/evalVerdictPolicy.ts) ──────
+
+/**
+ * pass@k, pass^k and a Wilson interval for every case aggregate of a decision —
+ * READ-SIDE statistics derived from the decision's own counts. They decide
+ * nothing: a case's verdict is `passRate.value >= effectivePassThreshold` and
+ * stays exactly that.
+ *
+ * A hand mirror of the backend's section of the same name, with the same
+ * arithmetic in the same operation order, so both sides produce the same
+ * IEEE-754 doubles for the same counts. Held to the per-case corpus's
+ * `trialStatistics` cohort (hand-computed goldens) and the run corpus's
+ * `expectedTrialStatistics` (generated on the backend from real decisions).
+ *
+ * NOT fields of {@link EvalCaseVerdictAggregation}: published SDKs parse a
+ * run's `verdictSummary` with closed schemas, so a field added to the stored
+ * decision would break every client already installed. The statistics travel
+ * BESIDE the decision (`trialStatistics`), computed on read.
+ *
+ * The unit is the decision's own rows — case × execution variant. `n` is
+ * `eligibleTrials` (infrastructure failures, evaluator errors and unfinished
+ * trials are already out of it), `c` is `passedTrials`, and `k = n`, stated on
+ * every row: pass@n reads "at least one eligible trial passed", pass^n "every
+ * eligible trial passed". {@link evalPassAtK} / {@link evalPassHatK} take any
+ * k. `n = 0` makes every statistic `null` (with `k = 0`).
+ */
+export const EVAL_TRIAL_STATISTICS_UNIT = "caseVariant";
+/** The confidence level of {@link evalPassRateWilsonInterval}. */
+export const EVAL_TRIAL_STATISTICS_CONFIDENCE = 0.95;
+/** {@link Z_95}, under the backend mirror's name. */
+export const EVAL_TRIAL_STATISTICS_Z = Z_95;
+
+export type EvalTrialStatisticsInterval = {
+  confidence: typeof EVAL_TRIAL_STATISTICS_CONFIDENCE;
+  lower: number;
+  upper: number;
+};
+
+export type EvalCaseTrialStatistics = {
+  caseId: string;
+  executionVariant?: EvalExecutionVariant;
+  /** n — the case aggregate's `eligibleTrials`. */
+  eligibleTrials: number;
+  /** c — the case aggregate's `passedTrials`. */
+  passedTrials: number;
+  /** The k both estimators below are taken at: always `eligibleTrials`. */
+  k: number;
+  /** Unbiased pass@k; `null` when `eligibleTrials` is 0. */
+  passAtK: number | null;
+  /** Unbiased pass^k; `null` when `eligibleTrials` is 0. */
+  passHatK: number | null;
+  /** Wilson score interval on `c / n`; `null` when `eligibleTrials` is 0. */
+  passRateInterval: EvalTrialStatisticsInterval | null;
+};
+
+export type EvalVerdictTrialStatistics = {
+  unit: typeof EVAL_TRIAL_STATISTICS_UNIT;
+  /**
+   * Σ eligibleTrials over every row: the sample a run-over-run comparison is
+   * sized by. NOT `summary.total`, whose unit is iterations, cases or case
+   * variants depending on which producer wrote it.
+   */
+  eligibleTrials: number;
+  /** Σ passedTrials over every row. */
+  passedTrials: number;
+  cases: EvalCaseTrialStatistics[];
+};
+
+function assertStatisticsCounts(
+  eligibleTrials: unknown,
+  passedTrials: unknown,
+  label: string
+): void {
+  const eligible = assertTrialCount(eligibleTrials, `${label}.eligibleTrials`);
+  const passed = assertTrialCount(passedTrials, `${label}.passedTrials`);
+  if (passed > eligible) {
+    fail(`${label} passed ${passed} exceeds eligible ${eligible}`);
+  }
+}
+
+/**
+ * C(a, k) / C(n, k) as a running product, never as two binomials (C(100, 50)
+ * is far past 2^53). The factors and their ORDER are the backend's, which is
+ * what makes the two doubles identical rather than merely close.
+ */
+function binomialRatio(a: number, n: number, k: number): number {
+  if (k > a) return 0;
+  let ratio = 1;
+  for (let i = 0; i < k; i += 1) ratio *= (a - i) / (n - i);
+  return ratio;
+}
+
+/** Whether k is estimable from n trials: an integer within 1..n. */
+function estimableK(eligibleTrials: number, k: unknown): boolean {
+  if (typeof k !== "number" || !Number.isInteger(k)) {
+    fail(`k must be an integer (received ${String(k)})`);
+  }
+  return eligibleTrials > 0 && k >= 1 && k <= eligibleTrials;
+}
+
+/**
+ * Unbiased pass@k: the probability that at least one of k trials, drawn
+ * without replacement from the n eligible ones, passed —
+ * `1 − C(n − c, k) / C(n, k)` (Chen et al. 2021).
+ *
+ *   n=5, c=3, k=2 → 1 − C(2,2)/C(5,2) = 1 − 1/10 = 0.9
+ *   n=4, c=1, k=2 → 1 − C(3,2)/C(4,2) = 1 − 3/6  = 0.5
+ *   n=5, c=0, k=k → 0;  c=n → 1
+ *
+ * `null` when it is not estimable: no eligible trials, or k outside 1..n.
+ */
+export function evalPassAtK(
+  eligibleTrials: number,
+  passedTrials: number,
+  k: number
+): number | null {
+  assertStatisticsCounts(eligibleTrials, passedTrials, "pass@k");
+  if (!estimableK(eligibleTrials, k)) return null;
+  return 1 - binomialRatio(eligibleTrials - passedTrials, eligibleTrials, k);
+}
+
+/**
+ * Unbiased pass^k: the probability that ALL k trials, drawn without
+ * replacement from the n eligible ones, passed — `C(c, k) / C(n, k)`.
+ *
+ *   n=5, c=3, k=2 → C(3,2)/C(5,2) = 3/10 = 0.3
+ *   n=4, c=3, k=3 → C(3,3)/C(4,3) = 1/4  = 0.25
+ *   k=1 → c/n, the pass rate itself
+ *
+ * `null` when it is not estimable: no eligible trials, or k outside 1..n.
+ */
+export function evalPassHatK(
+  eligibleTrials: number,
+  passedTrials: number,
+  k: number
+): number | null {
+  assertStatisticsCounts(eligibleTrials, passedTrials, "pass^k");
+  if (!estimableK(eligibleTrials, k)) return null;
+  return binomialRatio(passedTrials, eligibleTrials, k);
+}
+
+/**
+ * Wilson score interval on `c / n` at 95% — {@link wilsonInterval} itself, the
+ * interval the compare gates already use, with the endpoints at c = 0 and
+ * c = n pinned to their exact values (0 and 1). The formula reaches them only
+ * up to rounding (0/20 gives a lower bound of 1.4e-17), and a reader testing
+ * `upper === 1` for "every trial passed" must not be told otherwise.
+ */
+export function evalPassRateWilsonInterval(
+  eligibleTrials: number,
+  passedTrials: number
+): EvalTrialStatisticsInterval | null {
+  assertStatisticsCounts(eligibleTrials, passedTrials, "pass rate interval");
+  if (eligibleTrials === 0) return null;
+  const interval = wilsonInterval(
+    passedTrials,
+    eligibleTrials,
+    EVAL_TRIAL_STATISTICS_Z
+  );
+  return {
+    confidence: EVAL_TRIAL_STATISTICS_CONFIDENCE,
+    lower: passedTrials === 0 ? 0 : interval.lower,
+    upper: passedTrials === eligibleTrials ? 1 : interval.upper,
+  };
+}
+
+/** One case aggregate's statistics, at k = n. */
+export function evalCaseTrialStatistics(
+  aggregation: Pick<
+    EvalCaseVerdictAggregation,
+    "caseId" | "executionVariant" | "eligibleTrials" | "passedTrials"
+  >
+): EvalCaseTrialStatistics {
+  const n = aggregation.eligibleTrials;
+  const c = aggregation.passedTrials;
+  return {
+    caseId: aggregation.caseId,
+    ...(aggregation.executionVariant
+      ? { executionVariant: aggregation.executionVariant }
+      : {}),
+    eligibleTrials: n,
+    passedTrials: c,
+    k: n,
+    passAtK: evalPassAtK(n, c, n),
+    passHatK: evalPassHatK(n, c, n),
+    passRateInterval: evalPassRateWilsonInterval(n, c),
+  };
+}
+
+/**
+ * Every case aggregate's statistics, in `decision.cases` order, plus the
+ * pooled trial counts a comparison is sized by.
+ */
+export function evalVerdictTrialStatistics(
+  decision: Pick<EvalVerdictDecision, "cases">
+): EvalVerdictTrialStatistics {
+  const cases = decision.cases.map(evalCaseTrialStatistics);
+  let eligibleTrials = 0;
+  let passedTrials = 0;
+  for (const entry of cases) {
+    eligibleTrials += entry.eligibleTrials;
+    passedTrials += entry.passedTrials;
+  }
+  return {
+    unit: EVAL_TRIAL_STATISTICS_UNIT,
+    eligibleTrials,
+    passedTrials,
+    cases,
+  };
+}
+
+const TRIAL_STATISTICS_FIELDS = [
+  "unit",
+  "eligibleTrials",
+  "passedTrials",
+  "cases",
+] as const;
+const TRIAL_STATISTICS_INTERVAL_FIELDS = [
+  "confidence",
+  "lower",
+  "upper",
+] as const;
+const CASE_TRIAL_STATISTICS_FIELDS = [
+  "caseId",
+  "executionVariant",
+  "eligibleTrials",
+  "passedTrials",
+  "k",
+  "passAtK",
+  "passHatK",
+  "passRateInterval",
+] as const;
+
+/**
+ * Refuse a statistics block that is not EXACTLY what its own counts produce —
+ * and, given the decision it claims to describe, one whose rows are not that
+ * decision's rows. Every value is recomputed and compared exactly, as a rate's
+ * `value` is; every object is closed. Throws
+ * {@link EvalVerdictAggregationError} with the backend validator's messages.
+ */
+export function assertValidEvalVerdictTrialStatistics(
+  value: unknown,
+  decision?: Pick<EvalVerdictDecision, "cases">
+): asserts value is EvalVerdictTrialStatistics {
+  const label = "trial statistics";
+  const statistics = assertObject(value, label);
+  assertClosed(statistics, TRIAL_STATISTICS_FIELDS, label);
+  if (statistics.unit !== EVAL_TRIAL_STATISTICS_UNIT) {
+    fail(`${label}.unit must be "${EVAL_TRIAL_STATISTICS_UNIT}"`);
+  }
+  if (!Array.isArray(statistics.cases)) {
+    fail(`${label}.cases must be an array`);
+  }
+  const rows = statistics.cases as unknown[];
+  if (decision !== undefined && rows.length !== decision.cases.length) {
+    fail(
+      `${label} has ${rows.length} rows for a decision of ` +
+        `${decision.cases.length} case aggregates`
+    );
+  }
+  const recomputedRows = rows.map((raw, index) => {
+    const rowLabel = `${label}.cases[${index}]`;
+    const row = assertObject(raw, rowLabel);
+    assertClosed(row, CASE_TRIAL_STATISTICS_FIELDS, rowLabel);
+    if (typeof row.caseId !== "string" || !OPAQUE_ID_PATTERN.test(row.caseId)) {
+      fail(`${rowLabel}.caseId must match ${OPAQUE_ID_PATTERN.source}`);
+    }
+    // The CONTRACT's variant schema rather than this module's input check: a
+    // statistics row describes a stored decision, whose variants may carry a
+    // `selectionKey`, exactly as the backend validator accepts.
+    if (
+      row.executionVariant !== undefined &&
+      !evalExecutionVariantSchema.safeParse(row.executionVariant).success
+    ) {
+      fail(`${rowLabel}.executionVariant is not a valid execution variant`);
+    }
+    assertStatisticsCounts(row.eligibleTrials, row.passedTrials, rowLabel);
+    for (const field of ["k", "passAtK", "passHatK", "passRateInterval"]) {
+      // Absent is not null: `null` says "not estimable", absence says nothing.
+      if (row[field] === undefined) fail(`${rowLabel}.${field} is required`);
+    }
+    if (row.passRateInterval !== null) {
+      const interval = assertObject(
+        row.passRateInterval,
+        `${rowLabel}.passRateInterval`
+      );
+      assertClosed(
+        interval,
+        TRIAL_STATISTICS_INTERVAL_FIELDS,
+        `${rowLabel}.passRateInterval`
+      );
+    }
+    const identity = row as unknown as EvalCaseTrialStatistics;
+    if (decision !== undefined) {
+      const aggregate = decision.cases[index]!;
+      if (
+        evalCaseAggregationKey(identity) !== evalCaseAggregationKey(aggregate)
+      ) {
+        fail(
+          `${rowLabel} is not the identity of decision.cases[${index}] ` +
+            `("${aggregate.caseId}")`
+        );
+      }
+      if (
+        identity.eligibleTrials !== aggregate.eligibleTrials ||
+        identity.passedTrials !== aggregate.passedTrials
+      ) {
+        fail(
+          `${rowLabel} counts ${identity.passedTrials}/` +
+            `${identity.eligibleTrials} are not decision.cases[${index}]'s ` +
+            `${aggregate.passedTrials}/${aggregate.eligibleTrials}`
+        );
+      }
+    }
+    const expected = evalCaseTrialStatistics(identity);
+    if (canonicalStatisticsRow(identity) !== canonicalStatisticsRow(expected)) {
+      fail(
+        `${rowLabel} is not what its own counts produce at k = n ` +
+          `(expected k ${expected.k}, pass@k ${expected.passAtK}, ` +
+          `pass^k ${expected.passHatK})`
+      );
+    }
+    return expected;
+  });
+  const eligible = assertTrialCount(
+    statistics.eligibleTrials,
+    `${label}.eligibleTrials`
+  );
+  const passed = assertTrialCount(
+    statistics.passedTrials,
+    `${label}.passedTrials`
+  );
+  const sums = recomputedRows.reduce(
+    (sum, row) => ({
+      eligible: sum.eligible + row.eligibleTrials,
+      passed: sum.passed + row.passedTrials,
+    }),
+    { eligible: 0, passed: 0 }
+  );
+  if (eligible !== sums.eligible || passed !== sums.passed) {
+    fail(
+      `${label} totals ${passed}/${eligible} must be the sums over its rows ` +
+        `(${sums.passed}/${sums.eligible})`
+    );
+  }
+}
+
+/**
+ * Field-order-independent identity of one statistics row. Exact: JSON spells
+ * every double in its shortest round-trip form, so two distinct values never
+ * compare equal — and a string where a number belongs never does either.
+ */
+function canonicalStatisticsRow(row: EvalCaseTrialStatistics): string {
+  const interval = row.passRateInterval;
+  return JSON.stringify([
+    row.eligibleTrials,
+    row.passedTrials,
+    row.k,
+    row.passAtK,
+    row.passHatK,
+    interval === null
+      ? null
+      : [interval.confidence, interval.lower, interval.upper],
+  ]);
 }

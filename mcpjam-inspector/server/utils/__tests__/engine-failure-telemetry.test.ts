@@ -324,6 +324,53 @@ describe("engine failure telemetry", () => {
     });
   });
 
+  it("reports a mid-stream provider failure's envelope as STRUCTURED evidence (E1)", async () => {
+    // The backend categorized its own model call and serialized the verdict
+    // into the chunk: the eval classifier needs the upstream status and
+    // retryability as fields, not as a sentence.
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      { type: "start" },
+      {
+        type: "error",
+        errorText: JSON.stringify({
+          code: "provider_error",
+          message: "The AI provider is temporarily unavailable.",
+          statusCode: 503,
+          isRetryable: true,
+        }),
+      },
+    ]));
+    const { reporter } = makeReporter();
+    const onEngineError = vi.fn();
+
+    await runTurn({ failureReporter: reporter, onEngineError });
+
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onEngineError.mock.calls[0][0]).toMatchObject({
+      message: "The AI provider is temporarily unavailable.",
+      code: "provider_error",
+      infraLayer: "model",
+      httpStatus: 503,
+      isRetryable: true,
+    });
+  });
+
+  it("a non-JSON error chunk carries no infra layer", async () => {
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      { type: "start" },
+      { type: "error", errorText: "something broke" },
+    ]));
+    const { reporter } = makeReporter();
+    const onEngineError = vi.fn();
+
+    await runTurn({ failureReporter: reporter, onEngineError });
+
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const event = onEngineError.mock.calls[0][0];
+    expect(event.infraLayer).toBeUndefined();
+    expect(event.httpStatus).toBeUndefined();
+  });
+
   it("does not claim a mid-stream provider 5xx as MCPJam's", async () => {
     // `statusCode` in an error chunk is the UPSTREAM provider's, copied off
     // its error — not our backend's response status. Reading it with the

@@ -5397,3 +5397,114 @@ describe("v1 eval routes: store-once selections", () => {
     });
   });
 });
+
+describe("v1 eval-edit — case can-it-fail warnings", () => {
+  // The suite's only default check is `noToolErrors`: a case adding no check
+  // of its own and expecting no tool call passes when the agent does nothing.
+  const NO_TOOL_ERRORS_SUITE = {
+    ...SUITE_DOC,
+    defaultPredicates: [{ type: "noToolErrors" }],
+  };
+  const VACUOUS_CASE_DOC = {
+    ...CASE_DOC,
+    expectedToolCalls: [],
+    expectedOutput: undefined,
+    predicates: undefined,
+    steps: [{ id: "s1", kind: "prompt", prompt: "Summarize my tickets." }],
+  };
+  const CASES_URL =
+    "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite")
+        return Promise.resolve(NO_TOOL_ERRORS_SUITE);
+      if (name === "testSuites:getTestCase")
+        return Promise.resolve(VACUOUS_CASE_DOC);
+      return defaultQueryImpl(name);
+    });
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "testSuites:updateTestCase")
+        return Promise.resolve(VACUOUS_CASE_DOC);
+      return defaultMutationImpl(name, args);
+    });
+  });
+
+  it("saves a case with only noToolErrors and warns that it can never fail", async () => {
+    const res = await request("POST", CASES_URL, {
+      title: "vacuous",
+      steps: [{ id: "s1", kind: "prompt", prompt: "Summarize my tickets." }],
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as any;
+    expect(body.id).toBe("case1xxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    expect(body.warnings).toEqual([
+      {
+        code: "case_passes_with_empty_answer",
+        message: expect.stringContaining("noToolErrors"),
+      },
+    ]);
+  });
+
+  it("warns on an update that leaves the case unable to fail", async () => {
+    const res = await request(
+      "PATCH",
+      `${CASES_URL}/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`,
+      { title: "still vacuous" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.warnings?.[0]?.code).toBe("case_passes_with_empty_answer");
+  });
+
+  it("warns per created entry in a batch, and only on the vacuous one", async () => {
+    const res = await request("POST", `${CASES_URL}/batch`, {
+      cases: [
+        {
+          title: "vacuous",
+          steps: [{ id: "s1", kind: "prompt", prompt: "Summarize." }],
+        },
+        {
+          title: "real",
+          steps: [
+            { id: "s1", kind: "prompt", prompt: "List tickets." },
+            {
+              id: "s2",
+              kind: "assert",
+              assertion: {
+                type: "toolCalledWith",
+                toolName: "list_tickets",
+                args: { args: {} },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as any;
+    expect(body.created[0].warnings?.[0]?.code).toBe(
+      "case_passes_with_empty_answer",
+    );
+    expect(body.created[1].warnings).toBeUndefined();
+  });
+
+  it("says nothing when a suite default makes the case fail on an empty answer", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite") return Promise.resolve(SUITE_DOC);
+      if (name === "testSuites:getTestCase")
+        return Promise.resolve(VACUOUS_CASE_DOC);
+      return defaultQueryImpl(name);
+    });
+    const res = await request("POST", CASES_URL, {
+      title: "graded by the suite",
+      steps: [{ id: "s1", kind: "prompt", prompt: "Summarize my tickets." }],
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as any).warnings).toBeUndefined();
+  });
+});

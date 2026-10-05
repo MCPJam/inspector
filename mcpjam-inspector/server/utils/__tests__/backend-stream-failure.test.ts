@@ -297,6 +297,8 @@ describe("parseStreamErrorChunkText", () => {
       code: "mcpjam_api_error",
       message: "MCPJam is experiencing a configuration issue.",
       statusCode: 401,
+      // Kept: the eval infra-error classifier reads the backend's own verdict.
+      isRetryable: false,
       details: "invalid api key",
     });
   });

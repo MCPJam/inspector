@@ -155,6 +155,16 @@ export function createStepExecutionState(): StepExecutionState {
 }
 
 /** Outcome the caller's engine handlers return for a `prompt`/`toolCall` step. */
+/** Structured failure evidence beyond code/status. Never prose. */
+export type TurnErrorInfraEvidence = {
+  /** Which of OUR layers a typed producer named. */
+  layer?: "model" | "sandbox" | "platform";
+  /** The provider's own Retry-After, normalized to ms. */
+  retryAfterMs?: number;
+  /** The producer's own retryability verdict. */
+  isRetryable?: boolean;
+};
+
 export interface StepEngineOutcome {
   /** Transcript messages produced by this step (appended to `state.messages`). */
   messages?: ModelMessage[];
@@ -201,6 +211,13 @@ export interface StepEngineOutcome {
   errorCode?: string;
   /** HTTP status, when the failure came from a non-OK response. */
   errorHttpStatus?: number;
+  /**
+   * The rest of the producer's STRUCTURED failure evidence — which of OUR
+   * layers a typed producer named, the provider's Retry-After and its own
+   * retryability verdict. Read only by the eval infra-error classifier; see
+   * `infra-error-classification.ts`. Absent ⇒ unclassified.
+   */
+  errorInfra?: TurnErrorInfraEvidence;
   /**
    * When true, the iterationError is a SETUP failure (status:"failed"), not an
    * assertion failure (status:"completed"+error). Mirrors the pinned
@@ -259,6 +276,7 @@ export interface StepExecutorResult {
   errorSource?: "model" | "setup";
   errorCode?: string;
   errorHttpStatus?: number;
+  errorInfra?: TurnErrorInfraEvidence;
   /** A step's engine reported cancellation — see `StepEngineOutcome`. */
   cancelled?: boolean;
   /** True when `iterationError` is a setup (not assertion) failure. */
@@ -514,6 +532,12 @@ export async function executeSteps(args: {
     | "drainFollowUps"
   >;
   handlers: StepExecutorHandlers;
+  /**
+   * E2/E4: awaited before an `interact` step drives a widget (a browser
+   * action that can reach the customer's server). Throws to refuse it — the
+   * interaction then never runs and the step fails.
+   */
+  admitEffect?: (kind: "browser") => Promise<void>;
   /** Aborted check — when true at a step boundary the executor stops early. */
   isAborted?: () => boolean;
   /**
@@ -531,6 +555,7 @@ export async function executeSteps(args: {
   }) => void;
 }): Promise<StepExecutorResult> {
   const { steps, state, browser, handlers, isAborted, onStepStatus } = args;
+  const admitEffect = args.admitEffect;
 
   // Bind the state's render-observation field to the browser session's live
   // array (a stable reference the session pushes into as widgets render). This
@@ -621,6 +646,7 @@ export async function executeSteps(args: {
       ...(typeof failed.errorHttpStatus === "number"
         ? { errorHttpStatus: failed.errorHttpStatus }
         : {}),
+      ...(failed.errorInfra ? { errorInfra: failed.errorInfra } : {}),
       setupFailure: false,
     };
   };
@@ -664,6 +690,7 @@ export async function executeSteps(args: {
           ...(typeof outcome.errorHttpStatus === "number"
             ? { errorHttpStatus: outcome.errorHttpStatus }
             : {}),
+          ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -709,6 +736,7 @@ export async function executeSteps(args: {
           ...(typeof outcome.errorHttpStatus === "number"
             ? { errorHttpStatus: outcome.errorHttpStatus }
             : {}),
+          ...(outcome.errorInfra ? { errorInfra: outcome.errorInfra } : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -725,6 +753,24 @@ export async function executeSteps(args: {
 
     if (isInteractStep(step)) {
       emitStatus(stepIndex, "running");
+      if (admitEffect) {
+        try {
+          await admitEffect("browser");
+        } catch (error) {
+          // The action was refused before it ran; the attempt cannot be
+          // graded on an interaction that never happened.
+          emitStatus(stepIndex, "fail");
+          const message = error instanceof Error ? error.message : String(error);
+          recordSkippedSteps(
+            state,
+            steps,
+            stepIndex + 1,
+            `step ${stepIndex} errored: ${message}`,
+          );
+          emitSkipped(stepIndex + 1);
+          return { state, iterationError: message, setupFailure: false };
+        }
+      }
       const failuresBefore = state.interactionFailures.length;
       await runInteractStep(step, stepIndex, turnOrdinal, browser, state);
       if (state.interactionFailures.length > failuresBefore) {

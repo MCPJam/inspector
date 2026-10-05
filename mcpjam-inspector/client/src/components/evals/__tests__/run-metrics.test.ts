@@ -94,8 +94,37 @@ describe("runMetricsFromIterations", () => {
       setupFailed: 1,
       skipped: 1,
       unscored: 0,
+      infraError: 0,
     });
     expect(metrics.iterationCount).toBe(8);
+  });
+
+  it("leaves infra-error rows out of every verdict, like the backend fold", () => {
+    const infraError = {
+      class: "provider_unavailable" as const,
+      layer: "model" as const,
+      retryable: true,
+    };
+    const metrics = runMetricsFromIterations([
+      iteration({}),
+      iteration({ result: "failed" }),
+      // Stored `failed` + `failed` + reported; must NOT read as a failure.
+      iteration({
+        status: "failed",
+        result: "failed",
+        resultSource: "reported",
+        infraError,
+      }),
+    ]);
+    expect(metrics.results).toMatchObject({
+      passed: 1,
+      failed: 1,
+      infraError: 1,
+    });
+    // The pass rate the suite page shows: 1 of 2 measured, not 1 of 3.
+    expect(
+      computeRunEffectiveStatsFromMetrics(run(), metrics).passRate,
+    ).toBe(50);
   });
 
   it("sums tokens, tool calls, and cost with their coverage", () => {

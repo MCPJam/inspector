@@ -192,6 +192,10 @@ export type {
   PlatformEvalRunGoalCompletionCase,
   PlatformEvalRunGroundednessCase,
   PlatformEvalRunCreated,
+  PlatformEvalRunRerunBody,
+  PlatformEvalRunRerunCreated,
+  PlatformEvalRunRerunPreview,
+  PlatformEvalRunRerunScope,
   PlatformEvalRunGroupCreated,
   PlatformEvalRunGroupEntry,
   PlatformEvalRunGroupTarget,
@@ -403,6 +407,7 @@ export {
   createTunnelOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
+  regradeEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
@@ -1025,6 +1030,9 @@ export type {
   EvalBacktestContinuation,
   EvalBacktestReport,
   EvalBacktestDifference,
+  EvalRegradeRequest,
+  EvalRegradeIteration,
+  EvalRegradeReport,
 } from "../contract/eval-backtest.js";
 
 export type {

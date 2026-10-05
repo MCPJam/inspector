@@ -630,16 +630,28 @@ export {
  * the finalization adapter that reads one iteration's evidence as a trial.
  */
 export type {
+  EvalCaseTrialStatistics,
   EvalCaseVerdictInput,
   EvalTrialObservation,
+  EvalTrialStatisticsInterval,
   EvalV2IterationEvidence,
+  EvalVerdictTrialStatistics,
 } from "./verdict-aggregate.js";
 export {
+  EVAL_TRIAL_STATISTICS_CONFIDENCE,
+  EVAL_TRIAL_STATISTICS_UNIT,
+  EVAL_TRIAL_STATISTICS_Z,
   EvalVerdictAggregationError,
   aggregateEvalCaseVerdict,
   aggregateEvalRunVerdict,
+  assertValidEvalVerdictTrialStatistics,
+  evalCaseTrialStatistics,
+  evalPassAtK,
+  evalPassHatK,
+  evalPassRateWilsonInterval,
   evalV2IterationHasEvaluatorError,
   evalV2TrialObservation,
+  evalVerdictTrialStatistics,
 } from "./verdict-aggregate.js";
 
 /**
@@ -1186,12 +1198,16 @@ export {
   evalBacktestDraftSchema,
   evalBacktestRequestSchema,
   evalBacktestContinuationSchema,
+  evalRegradeRequestSchema,
 } from "./eval-backtest.js";
 export type {
   EvalBacktestDraft,
   EvalBacktestContinuation,
   EvalBacktestDifference,
   EvalBacktestReport,
+  EvalRegradeRequest,
+  EvalRegradeIteration,
+  EvalRegradeReport,
 } from "./eval-backtest.js";
 export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";

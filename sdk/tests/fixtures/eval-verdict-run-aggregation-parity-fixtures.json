@@ -1,5 +1,5 @@
 {
-  "__readme": "Run-level parity fixtures for the versioned eval VERDICT POLICY (verdictPolicyVersion 2). OWNED by mcpjam-backend and GENERATED, never hand-edited: `npm run generate:eval-verdict-run-fixtures` computes every expected output with convex/lib/evalVerdictPolicy.ts#aggregateEvalRunVerdict and convex/lib/evalVerdictFinalization.ts (evalV2IterationHasEvaluatorError, evalV2TrialObservation), and `-- --check` fails when the committed bytes differ from what the current aggregator produces. The Inspector SDK copies this file BYTE FOR BYTE to sdk/tests/fixtures/ and asserts its own mirror (sdk/src/contract/verdict-aggregate.ts) against it; neither side re-authors a row. It EXTENDS eval-verdict-policy-parity-fixtures.json (the per-case roll-up), whose sha256 at the time this corpus was cut is recorded under __generator.caseCorpusBaselineSha256. LOAD RULE: keys starting with \"__\" are annotations; strip them before handing an input to an aggregator. COHORTS: `runs` pairs a resolved validity policy and case inputs with the FULL expected decision (deep equality, including per-rate exclusion tallies and reason order); `refusals` are inputs the aggregator must refuse, with a distinctive substring of the refusal; `evaluatorErrorSignals` pairs iteration metadata with whether the finalization adapter reads it as an evaluator error; `trialObservations` pairs one iteration row (status, result, metadata) with the observation the adapter produces, or a refusal. RE-SYNC: regenerate here, bump __generator.sourceCommit when an output moved, re-pin FIXTURE_SHA256 in tests/convex/evalVerdictRunAggregationParity.test.ts and convex/lib/mirrors.json, and copy the file to the SDK in the matching Inspector PR.",
+  "__readme": "Run-level parity fixtures for the versioned eval VERDICT POLICY (verdictPolicyVersion 2). OWNED by mcpjam-backend and GENERATED, never hand-edited: `npm run generate:eval-verdict-run-fixtures` computes every expected output with convex/lib/evalVerdictPolicy.ts#aggregateEvalRunVerdict and convex/lib/evalVerdictFinalization.ts (evalV2IterationHasEvaluatorError, evalV2TrialObservation), and `-- --check` fails when the committed bytes differ from what the current aggregator produces. The Inspector SDK copies this file BYTE FOR BYTE to sdk/tests/fixtures/ and asserts its own mirror (sdk/src/contract/verdict-aggregate.ts) against it; neither side re-authors a row. It EXTENDS eval-verdict-policy-parity-fixtures.json (the per-case roll-up), whose sha256 at the time this corpus was cut is recorded under __generator.caseCorpusBaselineSha256. LOAD RULE: keys starting with \"__\" are annotations; strip them before handing an input to an aggregator. COHORTS: `runs` pairs a resolved validity policy and case inputs with the FULL expected decision (deep equality, including per-rate exclusion tallies and reason order) and with `expectedTrialStatistics`, the REPORT-ONLY per-case statistics convex/lib/evalVerdictPolicy.ts#evalVerdictTrialStatistics derives from that decision (pass@k and pass^k at k = eligible trials, a 95% Wilson interval on the pass rate, and the pooled eligible/passed trials a comparison is sized by), which a mirror must reproduce to the last bit; `refusals` are inputs the aggregator must refuse, with a distinctive substring of the refusal; `evaluatorErrorSignals` pairs iteration metadata with whether the finalization adapter reads it as an evaluator error; `trialObservations` pairs one iteration row (status, result, metadata) with the observation the adapter produces, or a refusal. RE-SYNC: regenerate here, bump __generator.sourceCommit when an output moved, re-pin FIXTURE_SHA256 in tests/convex/evalVerdictRunAggregationParity.test.ts and convex/lib/mirrors.json, and copy the file to the SDK in the matching Inspector PR.",
   "__generator": {
     "owner": "mcpjam-backend",
     "command": "npm run generate:eval-verdict-run-fixtures",
@@ -8,7 +8,7 @@
     "scenarios": "scripts/lib/evalVerdictRunAggregationFixtures.ts",
     "sourceCommit": "2d8faa8c877a7e8d50a8d99d9a11c16bdca4b4d9",
     "caseCorpus": "tests/convex/fixtures/eval-verdict-policy-parity-fixtures.json",
-    "caseCorpusBaselineSha256": "916aba2bedd2630b18345a8554dd21bb92ddeddcd9fab5d7f77713ed292e6406",
+    "caseCorpusBaselineSha256": "c96d63b3d067e857586151ba23d59dec2df0a565f96f0fbc9a07d513efb00c51",
     "sdkCopy": "sdk/tests/fixtures/eval-verdict-run-aggregation-parity-fixtures.json"
   },
   "runs": [
@@ -113,6 +113,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 3,
+        "passedTrials": 3,
+        "cases": [
+          {
+            "caseId": "c_pass",
+            "eligibleTrials": 3,
+            "passedTrials": 3,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.4385029682449546,
+              "upper": 1
+            }
           }
         ]
       }
@@ -224,6 +244,26 @@
             "reason": "casePassRateBelowThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 4,
+        "passedTrials": 2,
+        "cases": [
+          {
+            "caseId": "c_below",
+            "eligibleTrials": 4,
+            "passedTrials": 2,
+            "k": 4,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.15003898915214953,
+              "upper": 0.8499610108478505
+            }
+          }
+        ]
       }
     },
     {
@@ -333,6 +373,26 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 4,
+        "passedTrials": 2,
+        "cases": [
+          {
+            "caseId": "c_boundary",
+            "eligibleTrials": 4,
+            "passedTrials": 2,
+            "k": 4,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.15003898915214953,
+              "upper": 0.8499610108478505
+            }
+          }
+        ]
       }
     },
     {
@@ -432,6 +492,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 2,
+        "passedTrials": 0,
+        "cases": [
+          {
+            "caseId": "c_zero_threshold",
+            "eligibleTrials": 2,
+            "passedTrials": 0,
+            "k": 2,
+            "passAtK": 0,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0,
+              "upper": 0.6576197724933469
+            }
           }
         ]
       }
@@ -545,6 +625,26 @@
             "mixedVerdict": true,
             "verdict": "failed",
             "reason": "casePassRateBelowThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 5,
+        "passedTrials": 4,
+        "cases": [
+          {
+            "caseId": "c_strict",
+            "eligibleTrials": 5,
+            "passedTrials": 4,
+            "k": 5,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.3755346297625253,
+              "upper": 0.9637758913675698
+            }
           }
         ]
       }
@@ -704,6 +804,39 @@
             "reason": "casePassRateBelowThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 6,
+        "passedTrials": 2,
+        "cases": [
+          {
+            "caseId": "c_third_meets",
+            "eligibleTrials": 3,
+            "passedTrials": 1,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.06149194472039626,
+              "upper": 0.7923403991979523
+            }
+          },
+          {
+            "caseId": "c_third_misses",
+            "eligibleTrials": 3,
+            "passedTrials": 1,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.06149194472039626,
+              "upper": 0.7923403991979523
+            }
+          }
+        ]
       }
     },
     {
@@ -861,6 +994,39 @@
             "reason": "casePassRateBelowThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 6,
+        "passedTrials": 4,
+        "cases": [
+          {
+            "caseId": "c_a",
+            "eligibleTrials": 3,
+            "passedTrials": 3,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.4385029682449546,
+              "upper": 1
+            }
+          },
+          {
+            "caseId": "c_b",
+            "eligibleTrials": 3,
+            "passedTrials": 1,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.06149194472039626,
+              "upper": 0.7923403991979523
+            }
+          }
+        ]
       }
     },
     {
@@ -970,6 +1136,22 @@
             "mixedVerdict": false,
             "verdict": "inconclusive",
             "reason": "caseHasNoEligibleTrials"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 0,
+        "passedTrials": 0,
+        "cases": [
+          {
+            "caseId": "c_grader",
+            "eligibleTrials": 0,
+            "passedTrials": 0,
+            "k": 0,
+            "passAtK": null,
+            "passHatK": null,
+            "passRateInterval": null
           }
         ]
       }
@@ -1109,6 +1291,26 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 9,
+        "passedTrials": 9,
+        "cases": [
+          {
+            "caseId": "c_ceiling",
+            "eligibleTrials": 9,
+            "passedTrials": 9,
+            "k": 9,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.7008549515804559,
+              "upper": 1
+            }
+          }
+        ]
       }
     },
     {
@@ -1246,6 +1448,26 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 8,
+        "passedTrials": 8,
+        "cases": [
+          {
+            "caseId": "c_over_ceiling",
+            "eligibleTrials": 8,
+            "passedTrials": 8,
+            "k": 8,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.6755924351161198,
+              "upper": 1
+            }
+          }
+        ]
       }
     },
     {
@@ -1351,6 +1573,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 1,
+        "passedTrials": 1,
+        "cases": [
+          {
+            "caseId": "c_unreported",
+            "eligibleTrials": 1,
+            "passedTrials": 1,
+            "k": 1,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.20654931437723745,
+              "upper": 1
+            }
           }
         ]
       }
@@ -1464,6 +1706,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 1,
+        "passedTrials": 1,
+        "cases": [
+          {
+            "caseId": "c_cancelled",
+            "eligibleTrials": 1,
+            "passedTrials": 1,
+            "k": 1,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.20654931437723745,
+              "upper": 1
+            }
           }
         ]
       }
@@ -1587,6 +1849,26 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 1,
+        "passedTrials": 1,
+        "cases": [
+          {
+            "caseId": "c_floor_met",
+            "eligibleTrials": 1,
+            "passedTrials": 1,
+            "k": 1,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.20654931437723745,
+              "upper": 1
+            }
+          }
+        ]
       }
     },
     {
@@ -1697,6 +1979,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 2,
+        "passedTrials": 2,
+        "cases": [
+          {
+            "caseId": "c_floor_missed",
+            "eligibleTrials": 2,
+            "passedTrials": 2,
+            "k": 2,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.34238022750665303,
+              "upper": 1
+            }
           }
         ]
       }
@@ -1816,6 +2118,26 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 3,
+        "passedTrials": 3,
+        "cases": [
+          {
+            "caseId": "c_incomplete",
+            "eligibleTrials": 3,
+            "passedTrials": 3,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.4385029682449546,
+              "upper": 1
+            }
+          }
+        ]
       }
     },
     {
@@ -1932,6 +2254,26 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 4,
+        "passedTrials": 4,
+        "cases": [
+          {
+            "caseId": "c_one_timeout",
+            "eligibleTrials": 4,
+            "passedTrials": 4,
+            "k": 4,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.5101091635454027,
+              "upper": 1
+            }
+          }
+        ]
       }
     },
     {
@@ -2035,6 +2377,22 @@
             "mixedVerdict": false,
             "verdict": "inconclusive",
             "reason": "caseHasNoEligibleTrials"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 0,
+        "passedTrials": 0,
+        "cases": [
+          {
+            "caseId": "c_setup",
+            "eligibleTrials": 0,
+            "passedTrials": 0,
+            "k": 0,
+            "passAtK": null,
+            "passHatK": null,
+            "passRateInterval": null
           }
         ]
       }
@@ -2155,6 +2513,22 @@
             "reason": "caseHasNoEligibleTrials"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 0,
+        "passedTrials": 0,
+        "cases": [
+          {
+            "caseId": "c_nothing",
+            "eligibleTrials": 0,
+            "passedTrials": 0,
+            "k": 0,
+            "passAtK": null,
+            "passHatK": null,
+            "passRateInterval": null
+          }
+        ]
       }
     },
     {
@@ -2257,6 +2631,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 1,
+        "passedTrials": 1,
+        "cases": [
+          {
+            "caseId": "c_running",
+            "eligibleTrials": 1,
+            "passedTrials": 1,
+            "k": 1,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.20654931437723745,
+              "upper": 1
+            }
           }
         ]
       }
@@ -2422,6 +2816,47 @@
             "mixedVerdict": true,
             "verdict": "failed",
             "reason": "casePassRateBelowThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 4,
+        "passedTrials": 3,
+        "cases": [
+          {
+            "caseId": "c_fanout",
+            "executionVariant": {
+              "provider": "openai",
+              "model": "gpt-4o"
+            },
+            "eligibleTrials": 2,
+            "passedTrials": 2,
+            "k": 2,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.34238022750665303,
+              "upper": 1
+            }
+          },
+          {
+            "caseId": "c_fanout",
+            "executionVariant": {
+              "provider": "anthropic",
+              "model": "claude-sonnet-4.5"
+            },
+            "eligibleTrials": 2,
+            "passedTrials": 1,
+            "k": 2,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.09453120573423074,
+              "upper": 0.9054687942657693
+            }
           }
         ]
       }
@@ -2591,6 +3026,43 @@
             "reason": "caseHasNoEligibleTrials"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 2,
+        "passedTrials": 2,
+        "cases": [
+          {
+            "caseId": "c_fanout_gap",
+            "executionVariant": {
+              "provider": "openai",
+              "model": "gpt-4o"
+            },
+            "eligibleTrials": 2,
+            "passedTrials": 2,
+            "k": 2,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.34238022750665303,
+              "upper": 1
+            }
+          },
+          {
+            "caseId": "c_fanout_gap",
+            "executionVariant": {
+              "provider": "anthropic",
+              "model": "claude-sonnet-4.5"
+            },
+            "eligibleTrials": 0,
+            "passedTrials": 0,
+            "k": 0,
+            "passAtK": null,
+            "passHatK": null,
+            "passRateInterval": null
+          }
+        ]
       }
     },
     {
@@ -2746,6 +3218,47 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 2,
+        "passedTrials": 2,
+        "cases": [
+          {
+            "caseId": "c_two_providers",
+            "executionVariant": {
+              "provider": "openai",
+              "model": "gpt-5"
+            },
+            "eligibleTrials": 1,
+            "passedTrials": 1,
+            "k": 1,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.20654931437723745,
+              "upper": 1
+            }
+          },
+          {
+            "caseId": "c_two_providers",
+            "executionVariant": {
+              "provider": "azure",
+              "model": "gpt-5"
+            },
+            "eligibleTrials": 1,
+            "passedTrials": 1,
+            "k": 1,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.20654931437723745,
+              "upper": 1
+            }
           }
         ]
       }
@@ -2907,6 +3420,42 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 5,
+        "passedTrials": 4,
+        "cases": [
+          {
+            "caseId": "c_plain",
+            "eligibleTrials": 3,
+            "passedTrials": 3,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.4385029682449546,
+              "upper": 1
+            }
+          },
+          {
+            "caseId": "c_variant",
+            "executionVariant": {
+              "model": "sonnet"
+            },
+            "eligibleTrials": 2,
+            "passedTrials": 1,
+            "k": 2,
+            "passAtK": 1,
+            "passHatK": 0,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.09453120573423074,
+              "upper": 0.9054687942657693
+            }
+          }
+        ]
       }
     },
     {
@@ -3063,6 +3612,35 @@
             "reason": "caseHasNoEligibleTrials"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 4,
+        "passedTrials": 4,
+        "cases": [
+          {
+            "caseId": "c_a",
+            "eligibleTrials": 4,
+            "passedTrials": 4,
+            "k": 4,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.5101091635454027,
+              "upper": 1
+            }
+          },
+          {
+            "caseId": "c_b",
+            "eligibleTrials": 0,
+            "passedTrials": 0,
+            "k": 0,
+            "passAtK": null,
+            "passHatK": null,
+            "passRateInterval": null
+          }
+        ]
       }
     },
     {
@@ -3178,6 +3756,26 @@
             "reason": "casePassRateMetThreshold"
           }
         ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 3,
+        "passedTrials": 3,
+        "cases": [
+          {
+            "caseId": "c_validity_first",
+            "eligibleTrials": 3,
+            "passedTrials": 3,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.4385029682449546,
+              "upper": 1
+            }
+          }
+        ]
       }
     },
     {
@@ -3291,6 +3889,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 3,
+        "passedTrials": 3,
+        "cases": [
+          {
+            "caseId": "c_strict_completion",
+            "eligibleTrials": 3,
+            "passedTrials": 3,
+            "k": 3,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.4385029682449546,
+              "upper": 1
+            }
           }
         ]
       }
@@ -3411,6 +4029,26 @@
             "mixedVerdict": false,
             "verdict": "passed",
             "reason": "casePassRateMetThreshold"
+          }
+        ]
+      },
+      "expectedTrialStatistics": {
+        "unit": "caseVariant",
+        "eligibleTrials": 4,
+        "passedTrials": 4,
+        "cases": [
+          {
+            "caseId": "c_no_grader_errors",
+            "eligibleTrials": 4,
+            "passedTrials": 4,
+            "k": 4,
+            "passAtK": 1,
+            "passHatK": 1,
+            "passRateInterval": {
+              "confidence": 0.95,
+              "lower": 0.5101091635454027,
+              "upper": 1
+            }
           }
         ]
       }

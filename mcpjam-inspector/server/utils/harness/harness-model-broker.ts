@@ -54,7 +54,18 @@ export type HarnessBrokerStartResult =
       proxyBaseUrl: string;
       delivery: "e2b-network-transform";
     }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /**
+       * The backend's machine code, when it sent one — e.g. `sandbox_not_found`
+       * (404: the box was killed on its vendor timeout) or `sandbox_expiring`
+       * (409: past its ceiling). Lets a caller type the failure instead of
+       * reading the prose.
+       */
+      code?: string;
+    };
 
 /**
  * The LOCAL delivery's result. Structurally the cloud one plus a `lease`.
@@ -236,6 +247,9 @@ export async function startHarnessModelBroker(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Harness model-broker failed (${response.status})`,
+      ...(!response.ok && typeof payload?.code === "string"
+        ? { code: payload.code }
+        : {}),
     };
   }
 

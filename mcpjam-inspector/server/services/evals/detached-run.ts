@@ -2,6 +2,7 @@ import { logger } from "../../utils/logger.js";
 import { createConvexClient } from "./route-helpers.js";
 import { TERMINAL_RUN_STATUSES } from "./run-status.js";
 import { shouldSkipExecution } from "../../routes/shared/evals.js";
+import { isSilentStop } from "./run-lease.js";
 
 type DetachableEvalRun = {
   suiteId: string;
@@ -74,6 +75,17 @@ export function detachPreparedEvalRun(args: {
   void Promise.resolve()
     .then(() => prepared.execute())
     .catch(async (error) => {
+      // E4: shutdown or a lost lease. This worker no longer owns the run, so
+      // it writes no terminal state — the handback or the watchdog does.
+      if (isSilentStop(error)) {
+        logger.info(`${logPrefix} background eval run handed off`, {
+          ...logContext,
+          suiteId: prepared.suiteId,
+          runId: prepared.runId,
+          reason: error instanceof Error ? error.name : String(error),
+        });
+        return;
+      }
       logger.error(`${logPrefix} background eval run failed`, error, {
         ...logContext,
         suiteId: prepared.suiteId,

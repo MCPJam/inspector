@@ -3,6 +3,7 @@ import type { ModelMessage } from "ai";
 import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
 import type {
@@ -22,9 +23,15 @@ import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilit
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
+import { recordRunVacuousCases } from "./case-can-fail.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import { randomUUID } from "node:crypto";
+import {
+  IterationClaimRefusedError,
+  leaseTokenArg,
+  type RunLeaseDriver,
+} from "./run-lease.js";
 import {
   readStoredLegacySelection,
   readStoredModelSelection,
@@ -123,6 +130,14 @@ export type SuiteRunRecorder = {
     startedAt: number;
     executionType?: ExecutionType;
   }): Promise<string | undefined>;
+  /**
+   * E4.2: claim each iteration's lease before it runs. A refused claim makes
+   * `startIteration` throw {@link IterationClaimRefusedError}; the iteration is
+   * then skipped, never run unleased.
+   */
+  attachLeaseDriver?(driver: RunLeaseDriver, unitTimeoutMs: number): void;
+  /** Wait for in-flight per-iteration telemetry writes (bounded). */
+  flushIterationWrites?(): Promise<void>;
   finishIteration(args: {
     iterationId?: string;
     passed: boolean;
@@ -170,6 +185,8 @@ export type SuiteRunRecorder = {
     startedAt?: number;
     error?: string;
     errorDetails?: string;
+    /** OUR infrastructure failed this trial; only with `status: "failed"`. */
+    infraError?: EvalInfraError;
     resultSource?: "reported" | "derived";
     // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
     // nested `predicates: PredicateResult[]` rows. Persisted to
@@ -218,6 +235,8 @@ export const createSuiteRunRecorder = ({
   runId: string;
 }): SuiteRunRecorder => {
   let runDeleted = false; // Track if run was deleted
+  /** E4.2: set once the run's lease driver is claimed (leases flag on). */
+  let lease: { driver: RunLeaseDriver; unitTimeoutMs: number } | undefined;
   let runtimeAttempt:
     | { attemptId: string; monotonicStartedAt: number }
     | undefined;
@@ -280,6 +299,13 @@ export const createSuiteRunRecorder = ({
     runId,
     suiteId,
     isRunDeleted: () => runDeleted,
+    attachLeaseDriver(driver, unitTimeoutMs) {
+      lease = { driver, unitTimeoutMs };
+    },
+    async flushIterationWrites() {
+      // Each tracked write is already raced against the telemetry timeout.
+      await Promise.allSettled([...pendingRuntimeWrites]);
+    },
     async beginExecutionAttempt(metadata) {
       runtimeAttempt = undefined;
       iterationRuntime.clear();
@@ -366,9 +392,26 @@ export const createSuiteRunRecorder = ({
           return undefined;
         }
 
+        // E4.2: own the row before touching it. A refusal (finished, held by
+        // a live lease, past the run's deadline) means this worker does not
+        // run it at all.
+        if (lease) {
+          const claim = await lease.driver.claimIteration(
+            matchingIteration._id as string,
+            lease.unitTimeoutMs,
+          );
+          if (!claim.ok) {
+            throw new IterationClaimRefusedError(
+              matchingIteration._id as string,
+              claim.reason,
+            );
+          }
+        }
+
         // Mark it as running
         await convexClient.mutation("testSuites:startTestIteration" as any, {
           iterationId: matchingIteration._id,
+          ...leaseTokenArg(matchingIteration._id as string),
         });
 
         if (runtimeAttempt) {
@@ -388,6 +431,7 @@ export const createSuiteRunRecorder = ({
                     attemptId: attempt.attemptId,
                     executionType,
                     startOffsetMs,
+                    ...leaseTokenArg(iterationId),
                   },
                 ),
               "[evals] Failed to record iteration runtime start",
@@ -401,6 +445,7 @@ export const createSuiteRunRecorder = ({
 
         return matchingIteration._id as string;
       } catch (error) {
+        if (error instanceof IterationClaimRefusedError) throw error;
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 
@@ -444,6 +489,7 @@ export const createSuiteRunRecorder = ({
                     executionOutcome: params.status,
                     startOffsetMs: timing.startOffsetMs,
                     endOffsetMs,
+                    ...leaseTokenArg(params.iterationId),
                   },
                 ),
               "[evals] Failed to record iteration runtime end",
@@ -586,6 +632,8 @@ export const startSuiteRunWithRecorder = async ({
   serverIds,
   replayedFromRunId,
   useCurrentSuiteConfig,
+  rerunOfRunId,
+  rerunScope,
   environmentOverride,
   githubCheckServerOverride,
   toolSnapshot,
@@ -611,9 +659,17 @@ export const startSuiteRunWithRecorder = async ({
   importApprovals,
   launcher,
   ciMetadata,
+  resumeRunId,
 }: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
   suiteId: string;
+  /**
+   * E4.3 — attach to an EXISTING interrupted run instead of starting one. The
+   * frozen launch payload comes from `evalRunLeases:getRunResumeContext`
+   * (the same shape `startTestSuiteRun` returns for an existing run), and
+   * nothing is created: no run row, no iteration rows, no reservation.
+   */
+  resumeRunId?: string;
   notes?: string;
   passCriteria?: {
     minimumPassRate: number;
@@ -621,6 +677,14 @@ export const startSuiteRunWithRecorder = async ({
   serverIds?: string[];
   replayedFromRunId?: string;
   useCurrentSuiteConfig?: boolean;
+  /**
+   * E3 — rerun only the cases of `rerunOfRunId` that did not pass. Sent with
+   * `replayedFromRunId` set to the same run; the backend picks the cases and
+   * refuses `RERUN_NOTHING_TO_RERUN` when none qualify. Forwarded only when
+   * set, so an older backend never sees the unknown args on ordinary launches.
+   */
+  rerunOfRunId?: string;
+  rerunScope?: "failed_cases";
   environmentOverride?: {
     servers: string[];
     serverBindings?: Array<{
@@ -777,13 +841,20 @@ export const startSuiteRunWithRecorder = async ({
   ciMetadata?: RunCiMetadata;
 }) => {
   let response: any;
-  try {
+  if (resumeRunId) {
+    response = await convexClient.query(
+      "evalRunLeases:getRunResumeContext" as any,
+      { runId: resumeRunId },
+    );
+  } else try {
     const mutationArgs = {
       suiteId,
       notes,
       passCriteria,
       replayedFromRunId,
       useCurrentSuiteConfig,
+      ...(rerunOfRunId ? { rerunOfRunId } : {}),
+      ...(rerunScope ? { rerunScope } : {}),
       ...(environmentOverride ? { environmentOverride } : {}),
       ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
@@ -895,8 +966,8 @@ export const startSuiteRunWithRecorder = async ({
     runId,
   });
 
-  // Pre-create all iterations
-  try {
+  // Pre-create all iterations (a resume's rows already exist).
+  if (!resumeRunId) try {
     // ACTION, not the mutation: pre-creating reserves eval iterations, which
     // draws the org's single starter-pool row, and two suite runs starting
     // together used to roll the loser back whole. The action retries that
@@ -1007,6 +1078,16 @@ export const startSuiteRunWithRecorder = async ({
         | import("@/shared/eval-matching").Predicate[]
         | undefined,
     });
+
+  // Cases whose effective checks all pass on an empty answer, recorded on the
+  // run for run insights. Never changes grading; never fails the start. A
+  // resume's run recorded them at launch.
+  if (!resumeRunId) await recordRunVacuousCases(
+    convexClient,
+    runId,
+    testCases,
+    resolvePredicatesForCase,
+  );
 
   // Build config from test cases for backward compatibility
   const config = {
@@ -1184,5 +1265,20 @@ export const startSuiteRunWithRecorder = async ({
           proposalHash?: string;
         }
       | undefined,
+    /** E4.3: on a resume, the requeued rows this execution may run. */
+    resumeIterations: (resumeRunId
+      ? (response?.resumeIterations ?? [])
+      : undefined) as EvalResumeIteration[] | undefined,
   };
+};
+
+/** One requeued row of a resumed run (`getRunResumeContext`). */
+export type EvalResumeIteration = {
+  iterationId: string;
+  testCaseId?: string;
+  iterationNumber: number;
+  model?: string;
+  provider?: string;
+  /** The trial attempt the interrupted worker reached; the resume goes above. */
+  trialAttempt?: number;
 };

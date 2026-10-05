@@ -32,12 +32,27 @@ import {
  * `fullStream` is read LOOSELY (by part `type`) and we hand-build `ai@6`
  * `UIMessageChunk`s. The `agent.stream(...)` input is cast at the call site.
  *
- * ── NOT runtime-verified here ─────────────────────────────────────────────
- * This compiles against the real APIs, but the live path (E2B connect, harness
- * bootstrap, exact fullStream part shapes, transcript reconstruction) needs a
- * live box + a model credential to exercise — same gate the Phase 0 spike ran.
- * Treat the stream-part mapping + message reconstruction as first-cut until a
- * live run confirms them.
+ * ── What is verified, and where ───────────────────────────────────────────
+ * VERIFIED IN CI on a real box (`hosted-harness-docker.yml`, test
+ * `docker/__tests__/hosted-harness-docker.e2e.test.ts`): this function, end to
+ * end, for Claude Code (hosted adapter) and Codex (app-server), with the real
+ * `HarnessAgent`, adapters, bridges and vendor CLIs inside a container baked
+ * from the computer template's bake context, reached through the Docker
+ * sandbox provider, against the conformance mock upstreams. Pinned there:
+ *   - the fullStream → UI chunk mapping and the transcript / tool evidence it
+ *     reconstructs, as golden files (`docker/__tests__/goldens/`);
+ *   - native (Claude Code) and host-executed (Codex) MCP calls attributed to
+ *     their server;
+ *   - a baked start (no install at turn time), a typed stream failure after
+ *     partial output, cancellation, stream termination with exactly one
+ *     terminal part, one broker revoke, and no process left in the box.
+ * NOT verified by that job — it mocks them: E2B itself (`Sandbox.connect`,
+ * the egress baseline, the broker lease's egress transform, brokered secrets,
+ * box reservation and teardown) and the control plane (continuity sidecar,
+ * MCP proxy-token mint and public proxy route). Docker coverage says nothing
+ * about the E2B path; that is the manual staging release check
+ * (`hosted-harness-release-check.yml`), which runs both harnesses on real E2B
+ * boxes against a candidate template and records the revisions it tested.
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
@@ -122,7 +137,11 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
-import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
+import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import {
+  harnessBootstrapLogFields,
+  harnessBootstrapObservation,
+} from "./harness-bake-observer.js";
 import {
   prepareLocalHarnessTurn,
   type PreparedLocalHarnessTurn,
@@ -134,7 +153,18 @@ import {
   resolveWorkingDirectory,
   HOME_ROOT,
 } from "../computers/path-confine.js";
-import { resolveHarnessSandbox } from "./resolve-sandbox.js";
+import { SandboxUnavailableError } from "../computers/sandbox-lifecycle.js";
+import {
+  HarnessSandboxResolutionError,
+  resolveHarnessSandbox,
+} from "./resolve-sandbox.js";
+import {
+  HarnessInfraSetupError,
+  codexProviderEvidenceFromNotification,
+  harnessFailureEvidenceOf,
+  harnessFailureMessageOf,
+  type HarnessFailureEvidence,
+} from "./harness-provider-error.js";
 import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
@@ -1014,6 +1044,13 @@ export async function runHarnessTurn(
    * itself rather than a successful one.
    */
   let modelInvoked = false;
+  /**
+   * The last TERMINAL model-call failure an agent runtime reported as typed
+   * data mid-stream (Codex forwards `codexErrorInfo` as a `raw` notification).
+   * Consulted by the turn's catch when the thrown error itself carries no
+   * structured evidence — never derived from the error's text.
+   */
+  let rawProviderEvidence: HarnessFailureEvidence | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -2061,6 +2098,18 @@ export async function runHarnessTurn(
           projectId,
           ...(executionScope ? { executionScope } : {}),
           signal: abortSignal,
+        }).catch((error: unknown) => {
+          // TYPED at the producer: the control plane could not hand us a
+          // live box (provision / wake / lookup). Our sandbox layer, never the
+          // model's — see `harness-provider-error.ts`.
+          if (error instanceof HarnessSandboxResolutionError) {
+            throw new HarnessInfraSetupError(error.message, {
+              layer: "sandbox",
+              code: "harness_sandbox_unavailable",
+              httpStatus: error.status,
+            });
+          }
+          throw error;
         });
         box = {
           kind: "computer",
@@ -2139,7 +2188,12 @@ export async function runHarnessTurn(
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!reservation.ok) {
-          throw new Error(reservation.error);
+          // Typed: the box claim is our sandbox layer's concurrency control.
+          throw new HarnessInfraSetupError(reservation.error, {
+            layer: "sandbox",
+            code: "harness_box_reservation_failed",
+            httpStatus: reservation.status,
+          });
         }
         // From here until the lease is minted, ANY exit must hand the box back —
         // otherwise the next turn waits out the reservation's TTL for nothing.
@@ -2215,13 +2269,21 @@ export async function runHarnessTurn(
       // On the LOCAL path the provider was already built by
       // `prepareLocalHarnessTurn`: it supervises a real process tree on this
       // machine, so there is no sandbox id to attach to and nothing to
-      // construct here. The cloud provider is built only when there is a box.
+      // construct here. The cloud provider is built only when there is a box,
+      // through the factory: E2B unless `HARNESS_SANDBOX_PROVIDER=docker`
+      // (dev/CI only, refused in production).
       const sandbox =
         localPrepared !== null
           ? localPrepared.sandbox
-          : createE2BHarnessSandboxProvider({
+          : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
+              // An ephemeral box's own vendor window, so `Sandbox.connect`
+              // never re-arms it with the SDK default. Absent on the personal
+              // path and on an older backend: the historical connect.
+              ...(harnessSandboxBinding?.vendorLifecycle
+                ? { vendorLifecycle: harnessSandboxBinding.vendorLifecycle }
+                : {}),
               // The materialized secrets, as a session-wide env bag on every `run`
               // and `spawn`. This is the whole of materialized delivery on the
               // harness path: the agent runs `stripe customers list`, and
@@ -2299,7 +2361,26 @@ export async function runHarnessTurn(
           // Throws propagate to the turn's outer catch; onFinishEngine frees the
           // claimed lane (sessionEstablished still false) and revokes the broker
           // lease (brokerRunId set) if the backend installed before a lost response.
-          throw new Error(broker.error);
+          // Typed: lease installation is OUR platform layer, not the model —
+          // unless the backend says the BOX itself is gone (killed on its
+          // vendor timeout) or past its ceiling: that is the sandbox layer.
+          if (
+            broker.code === "sandbox_not_found" ||
+            broker.code === "sandbox_expiring"
+          ) {
+            throw new SandboxUnavailableError({
+              code: broker.code,
+              phase: "broker",
+              httpStatus: broker.status,
+              ...(sandboxId ? { sandboxId } : {}),
+              message: broker.error,
+            });
+          }
+          throw new HarnessInfraSetupError(broker.error, {
+            layer: "platform",
+            code: "harness_broker_unavailable",
+            httpStatus: broker.status,
+          });
         }
         // The lease is recorded, which consumed this turn's claim on the box; the
         // lease's own per-box fence covers the rest of the turn. Releasing now
@@ -3572,6 +3653,13 @@ export async function runHarnessTurn(
             pendingApprovalIds.push(approvalId);
             pausedForApproval = true;
             break;
+          } else if (type === "raw") {
+            // Passthrough of the runtime's own protocol message. Only a
+            // typed, terminal model-call failure is kept (E1).
+            const evidence = codexProviderEvidenceFromNotification(
+              (part as { rawValue?: unknown }).rawValue,
+            );
+            if (evidence) rawProviderEvidence = evidence;
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
             if (typeof fr === "string" && fr)
@@ -3725,6 +3813,15 @@ export async function runHarnessTurn(
         activeDriver.finishTurn(writer, { alreadyEmittedFinish: true });
         runSucceeded = true;
         const tStream = Date.now();
+        // Whether the box's runtime came from the baked template or was
+        // installed this turn (and if so why), plus the pinned versions —
+        // empty on the local path. Inlined for the console, and passed as
+        // context too: Axiom keeps the context, and the bake-miss alert reads
+        // those fields (mcpjam-backend templates/computer/OPS.md).
+        const bootstrapLog = harnessBootstrapLogFields(
+          await harnessBootstrapObservation(sandbox),
+          harnessAdapter.pinnedRuntimeVersion,
+        );
         // Values inlined into the message — this logger drops the 2nd arg.
         logger.info(
           `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
@@ -3733,7 +3830,8 @@ export async function runHarnessTurn(
             tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}`,
+          }ms resumed=${resumedSession}${bootstrapLog.text}`,
+          bootstrapLog.context,
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
@@ -3929,7 +4027,12 @@ export async function runHarnessTurn(
         aborted = true;
         return;
       }
-      const errorText = err instanceof Error ? err.message : String(err);
+      // A bridge's typed provider failure is a PLAIN OBJECT (the harness wire
+      // flattens Error instances), so `String(err)` would read
+      // "[object Object]". The structured fields ride separately below.
+      const errorText = harnessFailureMessageOf(err);
+      const failureEvidence =
+        harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
       // Reporter, not a bare logger.error: the old call captured to Sentry
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
@@ -3972,6 +4075,24 @@ export async function runHarnessTurn(
         // a provider that rejects the request outright still reads as the
         // model's failure rather than ours.
         phase: modelInvoked ? "stream" : "setup",
+        // STRUCTURED evidence, preserved from the producer that knew it: a
+        // typed setup step (sandbox / platform), a bridge's typed provider
+        // failure, or an AI SDK call error. Absent when the producer had none
+        // — the failure then stays unclassified rather than being guessed
+        // from the sentence above.
+        ...(failureEvidence?.layer
+          ? { infraLayer: failureEvidence.layer }
+          : {}),
+        ...(failureEvidence?.code ? { code: failureEvidence.code } : {}),
+        ...(failureEvidence?.httpStatus !== undefined
+          ? { httpStatus: failureEvidence.httpStatus }
+          : {}),
+        ...(failureEvidence?.retryAfterMs !== undefined
+          ? { retryAfterMs: failureEvidence.retryAfterMs }
+          : {}),
+        ...(failureEvidence?.isRetryable !== undefined
+          ? { isRetryable: failureEvidence.isRetryable }
+          : {}),
       });
     } finally {
       stopScopeStepUpBridge();

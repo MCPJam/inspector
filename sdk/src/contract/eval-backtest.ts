@@ -66,3 +66,68 @@ export type EvalBacktestReport = {
   differences: EvalBacktestDifference[];
   modelUse: "none";
 };
+
+/**
+ * Persisted re-grade of a completed run from its stored traces. The same
+ * assertion draft as a backtest — replace, extend or inherit the frozen rules —
+ * with no match-option changes (those change the matcher's recorded verdict,
+ * which only a new run measures). `inherit` re-grades the frozen rules with
+ * today's evaluators. `dryRun` returns the diff without persisting it.
+ */
+export const evalRegradeRequestSchema = z
+  .object({
+    assertions: evalBacktestDraftSchema.shape.assertions.optional(),
+    dryRun: z.boolean().optional(),
+  })
+  .strict();
+export type EvalRegradeRequest = z.infer<typeof evalRegradeRequestSchema>;
+export type EvalRegradeIteration = {
+  iterationId: string;
+  caseId: string;
+  /**
+   * `regraded` — the verdict or its check rows changed (persisted unless dry
+   * run); `unchanged` — re-grading reproduced what is stored; `skipped` — the
+   * stored evidence cannot re-grade this iteration (see `reason`) and it is
+   * left exactly as recorded.
+   */
+  outcome: "regraded" | "unchanged" | "skipped";
+  reason?: string;
+  stored: { result: string; gradingRevision: number };
+  regraded?: {
+    result: "passed" | "failed";
+    /** Checks the trace cannot evaluate, kept from the recorded rows. */
+    carriedChecks: number;
+  };
+  flipped?: boolean;
+  /** The iteration's revision after a persisted re-grade. */
+  gradingRevision?: number;
+};
+export type EvalRegradeReport = {
+  schemaVersion: 1;
+  runId: string;
+  suiteId: string;
+  draftHash: string;
+  dryRun: boolean;
+  /** True when at least one re-graded verdict was written. */
+  applied: boolean;
+  counts: {
+    iterations: number;
+    regraded: number;
+    unchanged: number;
+    skipped: number;
+    flipped: number;
+  };
+  iterations: EvalRegradeIteration[];
+  /** The run as re-decided after the write; absent on a dry run or no-op. */
+  run?: {
+    result?: string;
+    summary?: {
+      total: number;
+      passed: number;
+      failed: number;
+      passRate: number;
+    };
+    verdict?: string;
+  };
+  modelUse: "none";
+};

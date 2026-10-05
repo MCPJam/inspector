@@ -32,6 +32,7 @@ import {
   listEvalSuiteStageAnalyticsOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
+  regradeEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
@@ -119,6 +120,7 @@ import type {
   SuiteGateReportV1,
 } from "@mcpjam/sdk/contract";
 import { isPlatformApiError, PlatformApiError } from "@mcpjam/sdk/platform";
+import { withCaseWarningsOnStderr } from "../lib/eval-case-warnings.js";
 import { HOST_TEMPLATE_IDS } from "@mcpjam/sdk/host-config/templates";
 import type {
   PlatformApiClient,
@@ -182,6 +184,7 @@ import {
 } from "../lib/eval-gate.js";
 import {
   classifyLaunchErrorExitCode,
+  classifyWaitErrorExitCode,
   evalRunWaitExitCode,
   worstOf,
   type EvalRunWaitRunOutcome,
@@ -195,6 +198,7 @@ import type { EvalRunDecisionSummary } from "@mcpjam/sdk";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
+  compareTrialStatisticsFrom,
   flakyInputFrom,
   type EvalCompareOptions,
 } from "../lib/eval-compare.js";
@@ -1033,7 +1037,9 @@ async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
   input: TInput,
   options: PlatformOptions & { project?: string },
-  command: Command
+  command: Command,
+  /** A command-local `--json` overrides the global `--format`. */
+  overrides: { format?: ReturnType<typeof getGlobalOptions>["format"] } = {}
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const inputProject =
@@ -1056,7 +1062,8 @@ async function executeOp<TInput, TOutput>(
       quiet: globalOptions.quiet,
     }
   );
-  if (result !== undefined) writeResult(result, globalOptions.format);
+  if (result !== undefined)
+    writeResult(result, overrides.format ?? globalOptions.format);
 }
 
 /**
@@ -2511,6 +2518,9 @@ async function runEvalCompare(
       ...(outcome.decisionSummary
         ? { decisionSummary: outcome.decisionSummary }
         : {}),
+      ...(outcome.compare
+        ? { trialStatistics: compareTrialStatisticsFrom(outcome.compare) }
+        : {}),
     },
     outcome.compare
       ? buildRunCompareReport(outcome.compare, outcome.report, {
@@ -2767,6 +2777,13 @@ async function writeCompareResult(
      * assembled — an incomplete comparison, a failed walk.
      */
     decisionSummary?: EvalRunDecisionSummary;
+    /**
+     * Report-only per-case trial statistics (pass@k, pass^k at k = eligible
+     * trials, Wilson interval) for both sides, and which sample sized the
+     * pass-rate comparison. In BOTH formats: plain numbers, no wire enums to
+     * leak ahead of a label-aware block. Absent when no comparison was made.
+     */
+    trialStatistics?: ReturnType<typeof compareTrialStatisticsFrom>;
   },
   structured: StructuredRunReport | undefined
 ): Promise<void> {
@@ -2795,6 +2812,9 @@ async function writeCompareResult(
       // strips it for exactly this reason.
       ...(args.format === "json" && args.decisionSummary
         ? { decisionSummary: args.decisionSummary }
+        : {}),
+      ...(args.trialStatistics
+        ? { trialStatistics: args.trialStatistics }
         : {}),
     },
     args.format
@@ -4721,6 +4741,170 @@ export function registerEvalCommands(program: Command): void {
 
   addProjectOption(
     evals
+      .command("rerun")
+      .description(
+        "Rerun a finished eval run's failed cases as a new run. The platform picks the cases: any with a trial that did not complete and pass (cancelled and skipped trials do not count)"
+      )
+      .argument("<run-id>", "Eval run ID to rerun (from `eval run`)")
+      .option(
+        "--failed",
+        "Rerun only the cases that did not pass (required; the only rerun scope)"
+      )
+      .option(
+        "--dry-run",
+        "Show which cases would rerun, and why, without starting anything"
+      )
+      .option("--notes <text>", "Free-text note stored on the new run")
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call returns the run it already started"
+      )
+      .option("--wait", "Wait for the rerun to reach a terminal status")
+      .option(
+        "--wait-timeout <ms>",
+        "Maximum time to wait for completion (default 2100000; a run held for its judge gets up to 31 more minutes unless this flag is set)"
+      )
+      .option("--json", "Print machine-readable JSON (same as --format json)")
+  ).action(
+    async (
+      runId: string,
+      options: PlatformOptions & {
+        project?: string;
+        failed?: boolean;
+        dryRun?: boolean;
+        notes?: string;
+        idempotencyKey?: string;
+        wait?: boolean;
+        waitTimeout?: string;
+        json?: boolean;
+      },
+      command
+    ) => {
+      if (!options.failed) {
+        throw usageError(
+          "Pass --failed: rerunning the cases that did not pass is the only rerun scope."
+        );
+      }
+      if (options.waitTimeout !== undefined && !options.wait) {
+        throw usageError("--wait-timeout requires --wait.");
+      }
+      if (options.dryRun && options.wait) {
+        throw usageError("--dry-run starts nothing, so it cannot --wait.");
+      }
+      const globalOptions = getGlobalOptions(command);
+      const format = options.json ? "json" : globalOptions.format;
+      const waitTimeoutMs =
+        options.waitTimeout !== undefined
+          ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
+          : DEFAULT_RUN_WAIT_TIMEOUT_MS;
+      // Same rule as `eval run --wait`: an explicit budget is honoured strictly.
+      const gradingExtensionMs =
+        options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
+      const resolved = resolveCloudProjectArgs(options);
+      let webOrigin = DEFAULT_PLATFORM_ORIGIN;
+
+      const outcome = await runPlatformCommand(
+        platformOptionsOf(command),
+        options.wait
+          ? Math.max(globalOptions.timeout, waitTimeoutMs + gradingExtensionMs)
+          : globalOptions.timeout,
+        async (context) => {
+          webOrigin = context.webOrigin;
+          const { client, signal } = context;
+          const projects = await client.listProjects({}, { signal });
+          const resolution = resolveProject(projects.items, resolved.project);
+          if (!resolution.ok) {
+            throw usageError(
+              appendProjectLinkHint(resolution.message, resolved.projectScope)
+            );
+          }
+          const projectId = resolution.project.id;
+          if (options.dryRun) {
+            const preview = await client.getEvalRunRerunPreview(
+              { projectId, runId },
+              { signal }
+            );
+            return { projectId, preview };
+          }
+          const rerun = await client.rerunEvalRun(
+            {
+              projectId,
+              runId,
+              scope: "failed_cases",
+              ...(options.notes !== undefined ? { notes: options.notes } : {}),
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+            },
+            { signal }
+          );
+          if (!options.wait) return { projectId, rerun };
+          try {
+            const run = await waitForEvalRun(
+              client,
+              signal,
+              projectId,
+              rerun.runId,
+              Date.now() + waitTimeoutMs,
+              gradingExtensionMs
+            );
+            return { projectId, rerun, run };
+          } catch (error) {
+            // Not thrown from here: the receipt below is the only place the
+            // new run id is printed, and a wait that timed out must not cost
+            // the caller the id of the run it just paid for.
+            return {
+              projectId,
+              rerun,
+              waitError: {
+                message: error instanceof Error ? error.message : String(error),
+                ...(isPlatformApiError(error)
+                  ? { errorCode: error.code }
+                  : {}),
+              },
+            };
+          }
+        },
+        { projectScope: resolved.projectScope, quiet: globalOptions.quiet }
+      );
+
+      if ("preview" in outcome) {
+        writeResult({ preview: outcome.preview }, format);
+        return;
+      }
+      const { rerun } = outcome;
+      const run = "run" in outcome ? outcome.run : undefined;
+      const waitError = "waitError" in outcome ? outcome.waitError : undefined;
+      writeResult(
+        { rerun, ...(run ? { run } : {}), ...(waitError ? { waitError } : {}) },
+        format
+      );
+      writeRunLink(format, webOrigin, {
+        projectId: outcome.projectId,
+        suiteId: rerun.suiteId,
+        runId: rerun.runId,
+      });
+      if (waitError) {
+        throw cliError(
+          "OPERATIONAL_ERROR",
+          `Did not observe completion for: ${rerun.runId}. ${waitError.message}`,
+          classifyWaitErrorExitCode(waitError.errorCode)
+        );
+      }
+      if (run) {
+        setProcessExitCode(
+          evalRunWaitExitCode({
+            launchOutcome: "started",
+            runs: [{ status: run.status, result: run.result }],
+            waitErrors: [],
+          })
+        );
+      }
+    }
+  );
+
+  addProjectOption(
+    evals
       .command("judge-backtest")
       .description(
         "Preview draft grading instructions on recorded evidence (uses credits)"
@@ -4799,6 +4983,53 @@ export function registerEvalCommands(program: Command): void {
         { projectOptional: true }
       );
       await executeOp(backtestEvalRunOperation, input, options, command);
+    }
+  );
+
+  addProjectOption(
+    evals
+      .command("regrade")
+      .description(
+        "Re-grade a completed run from its stored traces and save the verdicts that change (no model calls, no credits)"
+      )
+      .argument("<run-id>", "Completed eval run ID")
+      .option(
+        "--draft <draft>",
+        'Assertion draft JSON (or @file, or -): {"assertions":{"mode":"replace|extend|inherit","list":[...]}}. Omit to re-grade the frozen assertions'
+      )
+      .option("--dry-run", "Show what would change without saving anything")
+      .option("--json", "Print machine-readable JSON (same as --format json)")
+  ).action(
+    async (
+      runId: string,
+      options: PlatformOptions & {
+        project?: string;
+        draft?: string;
+        dryRun?: boolean;
+        json?: boolean;
+      },
+      command
+    ) => {
+      const draft =
+        options.draft === undefined
+          ? {}
+          : new JsonInputContext().parseJsonInputRecord(
+              options.draft,
+              "--draft"
+            );
+      const input = validateOpInput(
+        regradeEvalRunOperation,
+        {
+          ...draft,
+          runId,
+          project: options.project,
+          ...(options.dryRun ? { dryRun: true } : {}),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(regradeEvalRunOperation, input, options, command, {
+        ...(options.json ? { format: "json" as const } : {}),
+      });
     }
   );
 
@@ -6170,7 +6401,17 @@ export function registerEvalCommands(program: Command): void {
         createEvalCaseOperation,
         buildCaseInput(options, { requireCase: false })
       );
-      await executeOp(createEvalCaseOperation, input, options, command);
+      // A saved case can still carry warnings (e.g. it can never fail):
+      // stderr in human output, the result's `warnings` in JSON.
+      await executeOp(
+        withCaseWarningsOnStderr(
+          createEvalCaseOperation,
+          getGlobalOptions(command).format
+        ),
+        input,
+        options,
+        command
+      );
     });
 
   cases
@@ -6187,7 +6428,15 @@ export function registerEvalCommands(program: Command): void {
         updateEvalCaseOperation,
         buildCaseInput(options, { requireCase: true })
       );
-      await executeOp(updateEvalCaseOperation, input, options, command);
+      await executeOp(
+        withCaseWarningsOnStderr(
+          updateEvalCaseOperation,
+          getGlobalOptions(command).format
+        ),
+        input,
+        options,
+        command
+      );
     });
 
   cases

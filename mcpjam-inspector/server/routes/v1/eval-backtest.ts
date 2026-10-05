@@ -1,8 +1,16 @@
 import { judgeBacktestRequestSchema } from "../../../../sdk/src/contract/judge-backtest.js";
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
-import { evalBacktestRequestSchema } from "../../../../sdk/src/contract/eval-backtest.js";
+import {
+  evalBacktestRequestSchema,
+  evalRegradeRequestSchema,
+} from "../../../../sdk/src/contract/eval-backtest.js";
 import { runAssertionBacktest } from "../../services/evals/assertion-backtest.js";
+import {
+  runRegrade,
+  type RegradeApplyResponse,
+  type RegradeEvidencePage,
+} from "../../services/evals/regrade-run.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Error, v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
@@ -181,4 +189,123 @@ router.post(
     }
   },
 );
+/**
+ * Persisted re-grade from stored traces. The inspector grades (the backend
+ * cannot evaluate a predicate); the backend persists under a per-iteration
+ * revision guard and re-decides the run. No model calls, no fee. `dryRun`
+ * returns the same report without writing.
+ */
+router.post("/projects/:projectId/eval-runs/:runId/regrade", async (c) => {
+  const raw = await c.req.text();
+  if (Buffer.byteLength(raw) > 128 * 1024)
+    return v1Error(c, "VALIDATION_ERROR", "Re-grade request exceeds 128 KiB");
+  let value: unknown = {};
+  if (raw.trim()) {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return v1Error(c, "VALIDATION_ERROR", "Re-grade request must be JSON");
+    }
+  }
+  const parsed = evalRegradeRequestSchema.safeParse(value);
+  if (!parsed.success)
+    return v1Error(
+      c,
+      "VALIDATION_ERROR",
+      "Invalid re-grade request; supply an optional assertions mode and list, and an optional dryRun",
+    );
+  const token = await getConvexBearerForRequest(c);
+  if (!process.env.CONVEX_URL)
+    return v1Error(c, "INTERNAL_ERROR", "Re-grade service is unavailable");
+  const client = new ConvexHttpClient(process.env.CONVEX_URL);
+  client.setAuth(token);
+  let scopeVerified = false;
+  try {
+    const run = (await client.query(
+      "testSuites:getTestSuiteRun" as never,
+      { runId: c.req.param("runId") } as never,
+    )) as { projectId?: string; suiteId?: string } | null;
+    if (!run || run.projectId !== c.req.param("projectId") || !run.suiteId)
+      return v1Error(c, "NOT_FOUND", "Eval run not found");
+    scopeVerified = true;
+    const report = await runRegrade({
+      runId: c.req.param("runId"),
+      suiteId: run.suiteId,
+      // Absent ⇒ the frozen rules, re-graded by today's evaluators.
+      draft: {
+        assertions: parsed.data.assertions ?? { mode: "inherit", list: [] },
+      },
+      dryRun: parsed.data.dryRun === true,
+      signal: c.req.raw.signal,
+      readPage: (args) =>
+        client.action(
+          "evalRegrade:readRegradeEvidence" as never,
+          args as never,
+        ) as Promise<RegradeEvidencePage>,
+      applyBatch: (args) =>
+        client.mutation(
+          "evalRegrade:applyRunRegrade" as never,
+          args as never,
+        ) as Promise<RegradeApplyResponse>,
+    });
+    return v1Resource(c, report);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const data =
+      error && typeof error === "object" && "data" in error
+        ? error.data
+        : undefined;
+    const code =
+      data && typeof data === "object" && "code" in data
+        ? data.code
+        : undefined;
+    const detail =
+      data && typeof data === "object" && "message" in data
+        ? String(data.message)
+        : message;
+    if (detail.includes("EVAL_REGRADE_STALE"))
+      return v1Error(
+        c,
+        "CONFLICT",
+        "An iteration changed while it was being re-graded; run the re-grade again",
+      );
+    if (detail.includes("EVAL_RUN_NOT_REGRADABLE"))
+      return v1Error(
+        c,
+        "CONFLICT",
+        "Re-grade requires a completed run that was not SDK-reported",
+      );
+    if (code === "CONFLICT")
+      return v1Error(c, "CONFLICT", "The run changed; run the re-grade again");
+    if (code === "VALIDATION_ERROR")
+      return v1Error(c, "VALIDATION_ERROR", "Invalid re-grade request");
+    if (code === "NOT_FOUND")
+      return v1Error(
+        c,
+        "NOT_FOUND",
+        "Eval run not found or re-grade is not authorized",
+      );
+    if (message.includes("EVAL_REGRADE_TOO_LARGE"))
+      return v1Error(
+        c,
+        "VALIDATION_ERROR",
+        "The run has too many iterations to re-grade in one request",
+      );
+    if (
+      message.includes("Re-grade deadline") ||
+      message.includes("Re-grade cancelled")
+    )
+      return v1Error(
+        c,
+        "TIMEOUT",
+        "Re-grade did not complete within its deadline",
+      );
+    throw translateConvexReadError(error, {
+      scope: "v1.eval-regrade",
+      notFoundMessage: "Eval run not found or re-grade is not authorized",
+      // Only the initial run lookup can be a masked scope refusal.
+      redactedIsRefusal: !scopeVerified,
+    });
+  }
+});
 export default router;

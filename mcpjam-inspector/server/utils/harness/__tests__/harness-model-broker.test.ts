@@ -111,6 +111,31 @@ describe("startHarnessModelBroker", () => {
     }
   });
 
+  it("keeps the backend's machine code on a typed refusal (a killed box is a 404 sandbox failure)", async () => {
+    mockFetch(() =>
+      Response.json(
+        {
+          ok: false,
+          error: "The sandbox no longer exists.",
+          code: "sandbox_not_found",
+        },
+        { status: 404 }
+      )
+    );
+    const result = await startHarnessModelBroker({
+      box: { kind: "sandbox", sandboxRowId: "row1" },
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      bearer: "t",
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 404,
+      error: "The sandbox no longer exists.",
+      code: "sandbox_not_found",
+    });
+  });
+
   it("carries the reasoning effort when the turn has one, and omits it otherwise", async () => {
     const bodies: any[] = [];
     mockFetch((_url, init) => {
