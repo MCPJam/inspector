@@ -129,6 +129,7 @@ import {
 } from "./local/local-turn.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
 import { localPermissionModeFor, localSandboxPolicyFor } from "./local/compatibility.js";
+import { HOSTED_APPROVAL_SANDBOX_POLICY } from "./codex-appserver/hosted-sandbox-policy.js";
 import { sandboxPolicyFingerprint } from "./codex-appserver/shared/sandbox-policy.js";
 import {
   resolveWorkingDirectory,
@@ -757,9 +758,7 @@ export async function runHarnessTurn(
   // Venue-aware, and decided ONCE: the fingerprint's `transport`, the
   // approval mode and the tool catalog all come from this adapter, so a local
   // Codex turn must see the app-server arm here exactly as its preflight did.
-  const harnessAdapter = getHarnessAdapter(harness, {
-    localExecution: harnessExecutionTarget != null,
-  });
+  const harnessAdapter = getHarnessAdapter(harness);
   // The effort this turn asked for: the typed field, else the saved selection it
   // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
   // refusal below and `createHarness` further down cannot disagree.
@@ -1720,6 +1719,17 @@ export async function runHarnessTurn(
           : requireToolApproval && harnessAdapter.supportsNativeToolApproval
             ? harnessAdapter.approvalPermissionMode
             : harnessAdapter.defaultPermissionMode;
+      // The command sandbox the runtime applies: the local unattended policy,
+      // or, for a hosted turn that pauses for approval, one as wide as the box
+      // (see `HOSTED_APPROVAL_SANDBOX_POLICY`) so an approved command can do
+      // what the same command does with approval off.
+      const commandSandboxPolicy =
+        localSandboxPolicy ??
+        (harnessExecutionTarget == null &&
+        harnessAdapter.acceptsSandboxPolicy &&
+        permissionMode !== "allow-all"
+          ? HOSTED_APPROVAL_SANDBOX_POLICY
+          : null);
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
@@ -1774,8 +1784,8 @@ export async function runHarnessTurn(
               },
             }
           : {}),
-        ...(localSandboxPolicy !== null
-          ? { commandSandbox: sandboxPolicyFingerprint(localSandboxPolicy) }
+        ...(commandSandboxPolicy !== null
+          ? { commandSandbox: sandboxPolicyFingerprint(commandSandboxPolicy) }
           : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
@@ -2354,8 +2364,8 @@ export async function runHarnessTurn(
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
-              ...(localSandboxPolicy !== null
-                ? { sandboxPolicy: localSandboxPolicy }
+              ...(commandSandboxPolicy !== null
+                ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
       if (localPrepared) {
