@@ -3600,23 +3600,24 @@ describe("mcpjam-stream-handler", () => {
     });
 
     it("drops backend chunks the browser's AI SDK would reject, and reports each type once", async () => {
-      // The 2026-10-05 P1: an AI SDK 7 backend streamed this on every step,
-      // the default branch forwarded it, and the AI SDK 6 browser failed the
-      // whole turn with "Type validation failed".
-      const custom = {
-        type: "custom",
-        kind: "anthropic.message_start",
+      // A chunk type the browser's AI SDK does not know. On 2026-10-05 that was
+      // `{type:"custom"}` (an AI SDK 7 backend, an AI SDK 6 browser); this
+      // build's AI SDK accepts `custom`, so a made-up type stands in for the
+      // next drift.
+      const unknownChunk = {
+        type: "future-chunk",
+        kind: "provider.event",
         providerMetadata: { anthropic: { id: "msg_1" } },
       };
       (global.fetch as any).mockReset();
       (global.fetch as any) = vi.fn().mockResolvedValue(
         createSseResponse([
           { type: "start-step" },
-          custom,
+          unknownChunk,
           { type: "text-start", id: "t1" },
           { type: "text-delta", id: "t1", delta: "hello" },
           { type: "text-end", id: "t1" },
-          custom,
+          unknownChunk,
           { type: "finish-step" },
           { type: "finish", finishReason: "stop" },
         ]),
@@ -3637,7 +3638,7 @@ describe("mcpjam-stream-handler", () => {
       const types = writtenChunks
         .filter((chunk) => chunk?.type !== "data-trace-event")
         .map((chunk) => chunk.type);
-      expect(types).not.toContain("custom");
+      expect(types).not.toContain("future-chunk");
       expect(types).toEqual(
         expect.arrayContaining(["start-step", "text-delta", "finish-step"]),
       );
@@ -3647,7 +3648,7 @@ describe("mcpjam-stream-handler", () => {
       );
       expect(rejected).toHaveLength(1);
       expect(rejected[0][2]).toEqual({
-        chunkType: "custom",
+        chunkType: "future-chunk",
         fields: ["type", "kind", "providerMetadata"],
       });
     });

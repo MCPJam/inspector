@@ -246,11 +246,14 @@ async function consumeDirectChatTurnViaFullStream(
       await handle.result.consumeStream();
     }
     const response = await handle.result.response;
+    // Every step's messages. In AI SDK 7 `response` is the final step's, so
+    // `response.messages` would drop the earlier tool calls and results.
+    const responseMessages = await handle.result.responseMessages;
     const steps = await handle.result.steps;
     const totalUsage = await handle.result.totalUsage;
     const finishReason = await handle.result.finishReason;
-    const messages = Array.isArray(response?.messages)
-      ? (response.messages as ModelMessage[])
+    const messages = Array.isArray(responseMessages)
+      ? (responseMessages as ModelMessage[])
       : [];
     const upstreamModel =
       typeof (response as { modelId?: unknown } | undefined)?.modelId ===
@@ -284,11 +287,6 @@ export async function driveLocalEvalTurn(
     llmModel,
     test,
     runStartedAt,
-    runIndex,
-    iterationId,
-    suiteId,
-    runId,
-    testCaseId,
     abortSignal,
     turnTimeoutMs,
     turnRetries,
@@ -430,22 +428,14 @@ export async function driveLocalEvalTurn(
     ...(toolChoice
       ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
       : {}),
+    // No `metadata`: AI SDK 7's telemetry options dropped it. It only ever
+    // became attributes on the SDK's OpenTelemetry spans, and nothing here
+    // exports those (Sentry tracing is off, no AI SDK OTel integration).
     experimentalTelemetry: {
       isEnabled: true,
       functionId: "evals.streamText",
       recordInputs: false,
       recordOutputs: false,
-      metadata: {
-        source: "evals",
-        ...(suiteId ? { suiteId } : {}),
-        ...(runId ? { runId } : {}),
-        ...(testCaseId ? { testCaseId } : {}),
-        ...(iterationId ? { iterationId } : {}),
-        iterationNumber: runIndex + 1,
-        provider: test.provider,
-        model: test.model,
-        promptIndex,
-      },
     },
     traceEvents: {
       onRequestPayload: (request) => {

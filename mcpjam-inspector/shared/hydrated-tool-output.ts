@@ -9,6 +9,8 @@
  * value must be computed by one implementation on both sides — this one.
  */
 
+import { readModelOutputImage } from "@mcpjam/sdk/browser";
+
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -55,11 +57,7 @@ export function isModelVisibleImageOutput(value: unknown): boolean {
         partRecord.text.startsWith("[embedded image resource omitted:")
       );
     }
-    return (
-      (partRecord.type === "media" || partRecord.type === "image-data") &&
-      typeof partRecord.mediaType === "string" &&
-      partRecord.mediaType.startsWith("image/")
-    );
+    return readModelOutputImage(partRecord) !== undefined;
   });
 }
 
