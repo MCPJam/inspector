@@ -145,6 +145,10 @@ MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes yo
 | Protocol name | `mcpjam` | `MCPJam MCP` |
 | Title | `MCPJam CLI` | `MCPJam MCP` |
 
+Sign-in is required for every request to `mcp.mcpjam.com`. A client without a token receives a `401` with a `WWW-Authenticate` header that MCP clients use to start the OAuth flow automatically.
+
+Some tools are temporarily held off the hosted catalog while their feature is in beta — they are not offered to any caller on this surface until the tool list can be resolved per organization. The REST API, the SDK, and the CLI are unaffected. Tools currently held include those for conformance and readiness checks, the registry directory, the hosted browser, Cloud Skills, Computers, Agent Plugins, GitHub checks, description experiments, and scheduled eval runs. If a tool you expect is missing, check `get_capabilities` — it reports which betas your organization has access to.
+
 ## Troubleshooting
 
 - **Client says the server failed to start** — run `npx -y @mcpjam/cli@latest mcp` in a terminal; you should see `MCPJam CLI MCP server listening on stdio` on stderr. First runs may be slow while `npx` downloads the package; pre-install with `npm i -g @mcpjam/cli` and use `mcpjam mcp` to avoid the download.
