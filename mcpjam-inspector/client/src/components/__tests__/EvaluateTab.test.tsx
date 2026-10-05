@@ -199,14 +199,6 @@ vi.mock("../evals/evals-suite-list-sidebar", () => ({
   EvalsSuiteListSidebar: () => <div data-testid="suite-sidebar" />,
 }));
 
-vi.mock("../evals/use-playground-project-executions", () => ({
-  usePlaygroundProjectExecutions: () => ({
-    status: "ready" as const,
-    cases: [],
-    iterations: [],
-    iterationToSuiteId: new Map<string, string>(),
-  }),
-}));
 
 vi.mock("../evaluate/create-suite-page", () => ({
   CreateSuitePage: (props: Record<string, unknown>) => {
@@ -533,14 +525,6 @@ describe("EvaluateTab", () => {
       await props.onRerun(props.suite);
     });
     expect(mocks.useQuery.mock.calls.some(([name]) => name === "testSuites:getTestSuiteRun")).toBe(false);
-  });
-
-  it("keeps handler-driven navigation on /evaluate", () => {
-    render(<EvaluateTab projectId="ws-1" />);
-
-    expect(mocks.useEvalHandlers.mock.calls.at(-1)?.[0]).toMatchObject({
-      evalsNavigationContext: "evaluate",
-    });
   });
 
   it("defaults the bare Evaluate route to Runs, with Runs first", () => {

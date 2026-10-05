@@ -278,13 +278,6 @@ export const navigationSections: NavSection[] = [
         billingFeature: "scenarios",
       },
       {
-        title: "Evaluate (Legacy)",
-        url: "/evals",
-        featureFlag: "evaluate-enabled",
-        icon: FlaskConical,
-        billingFeature: "evals",
-      },
-      {
         title: "Evaluate",
         url: "/evaluate",
         icon: FlaskConical,

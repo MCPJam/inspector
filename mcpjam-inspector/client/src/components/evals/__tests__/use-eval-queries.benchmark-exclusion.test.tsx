@@ -6,7 +6,7 @@ const { mockUseQuery } = vi.hoisted(() => ({ mockUseQuery: vi.fn() }));
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
-  // Per-run metrics and live-run rows; idle unless `perRunMetrics` is on.
+  // Per-run metrics and live-run rows; idle in these tests.
   useQueries: () => ({}),
   useConvex: () => ({ query: async () => null }),
 }));

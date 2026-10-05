@@ -277,25 +277,20 @@ describe("declared nav flags are actually resolved", () => {
     expect(on).toContain("Sessions");
   });
 
-  it("shows Evaluate publicly and gates only Evaluate (Legacy)", () => {
+  // The legacy Evals tab is gone: `/evals` URLs redirect to Evaluate, and the
+  // sidebar offers Evaluate alone, ungated.
+  it("shows Evaluate publicly and no legacy Evals item", () => {
     const items = navigationSections.flatMap((section) => section.items);
     expect(items.find((item) => item.url === "/evaluate")).toMatchObject({
       title: "Evaluate", billingFeature: "evals",
     });
     expect(items.find((item) => item.url === "/evaluate")?.featureFlag).toBeUndefined();
-    expect(items.find((item) => item.url === "/evals")).toMatchObject({
-      title: "Evaluate (Legacy)", featureFlag: "evaluate-enabled",
-    });
-    for (const enabled of [undefined, false, true]) {
-      const titles = filterByFeatureFlags(
-        navigationSections,
-        enabled === undefined ? {} : { "evaluate-enabled": enabled },
-      )
-        .flatMap((section) => section.items).map((item) => item.title);
-      expect(titles).toContain("Evaluate");
-      expect(titles.includes("Evaluate (Legacy)")).toBe(enabled === true);
-      expect(titles).not.toContain("Ding Dong");
-    }
+    expect(items.find((item) => item.url === "/evals")).toBeUndefined();
+    const titles = filterByFeatureFlags(navigationSections, {})
+      .flatMap((section) => section.items).map((item) => item.title);
+    expect(titles).toContain("Evaluate");
+    expect(titles).not.toContain("Evaluate (Legacy)");
+    expect(titles).not.toContain("Ding Dong");
   });
 });
 

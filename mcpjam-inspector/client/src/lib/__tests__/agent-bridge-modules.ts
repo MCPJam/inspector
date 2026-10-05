@@ -12,13 +12,10 @@
  */
 export const BRIDGE_MODULES: Record<string, string> = {
   registry: "client/src/components/RegistryTab.tsx",
-  // Evaluate has two lenses and both register the "evals" surface, but only
-  // ONE of them carries the tool group: EvalsTab (Suites). CiEvalsTab (Runs)
-  // registers a snapshot only — it is read-only review of results CI already
-  // produced. The bridge call must stay in each tab's OWN component, NEVER in
-  // the eval state hooks both mount, which would register the authoring tools
-  // on the Runs lens too.
-  evals: "client/src/components/EvalsTab.tsx",
+  // Evaluate owns the "evals" surface since the legacy Evals and CI Evals tabs
+  // were removed. The bridge call stays in the tab's OWN component, never in
+  // the eval state hooks, so the group can't be mis-scoped.
+  evals: "client/src/components/EvaluateTab.tsx",
   // SwarmsTab owns its personas/journeys and the launch path; it does not
   // share state hooks with another surface, so the bridge lives here.
   swarms: "client/src/components/swarms/SwarmsTab.tsx",

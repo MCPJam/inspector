@@ -5,8 +5,6 @@ import { convexErrMessage } from "@/lib/convex-error";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
-  buildEvalsRunsPath,
-  buildEvalsPath,
   buildEvaluatePath,
   navigateApp,
 } from "@/lib/app-navigation";
@@ -78,16 +76,11 @@ export type EvalRerunLaunch = {
   failedCount: number;
 };
 
-type EvalsNavigationContext = "evals" | "ci-evals" | "evaluate";
-
-function navigateEvalRoute(route: EvalRoute, context: EvalsNavigationContext) {
-  navigateApp(
-    context === "ci-evals"
-      ? buildEvalsRunsPath(route)
-      : context === "evaluate"
-      ? buildEvaluatePath(route)
-      : buildEvalsPath(route),
-  );
+// Every handler-driven landing (create case, duplicate, replay, post-run) is
+// on Evaluate. The legacy Evals and CI Evals tabs, which had their own
+// prefixes, are gone.
+function navigateEvalRoute(route: EvalRoute) {
+  navigateApp(buildEvaluatePath(route));
 }
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
@@ -259,12 +252,6 @@ interface UseEvalHandlersProps {
     options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
-  /**
-   * Prefix for handler-driven navigation (create case, duplicate, post-run
-   * landing). `ci-evals` stays on Runs (`/evals/runs/...`); `evaluate` stays
-   * on Evaluate (New) (`/evaluate/...`). Defaults to Suites (`/evals/...`).
-   */
-  evalsNavigationContext?: EvalsNavigationContext;
   /** For user-facing server labels (names instead of raw Convex ids). */
   projectServers?: RemoteServer[];
   /** When true, this uses the direct-guest eval playground flow. */
@@ -303,7 +290,6 @@ export function useEvalHandlers({
   connectedServerNames,
   ensureServersReady,
   latestRunBySuiteId,
-  evalsNavigationContext = "evals",
   projectServers,
   isDirectGuest = false,
   availableModels,
@@ -407,9 +393,9 @@ export function useEvalHandlers({
             view?: SuiteOverviewView;
           },
     ) => {
-      navigateEvalRoute(route as EvalRoute, evalsNavigationContext);
+      navigateEvalRoute(route as EvalRoute);
     },
-    [evalsNavigationContext],
+    [],
   );
 
   // Query to get test cases for a suite
@@ -679,7 +665,6 @@ export function useEvalHandlers({
               runId: result.runId,
               insightsFocus: true,
             },
-            "ci-evals",
           );
         }
 
@@ -1014,7 +999,6 @@ export function useEvalHandlers({
                 openedRun = true;
                 navigateEvalRoute(
                   { type: "run-detail", suiteId: suite._id, runId },
-                  evalsNavigationContext,
                 );
               }
               return response;
@@ -1196,7 +1180,6 @@ export function useEvalHandlers({
       labeledProjectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
-      evalsNavigationContext,
       openEvalIterationWall,
     ],
   );
@@ -1608,7 +1591,7 @@ export function useEvalHandlers({
 
       // If we're viewing this suite, go back to the list
       if (selectedSuiteId === suiteToDelete._id) {
-        navigateEvalRoute({ type: "list" }, "evals");
+        navigateEvalRoute({ type: "list" });
       }
 
       setSuiteToDelete(null);
@@ -1656,7 +1639,6 @@ export function useEvalHandlers({
               type: "suite-overview",
               suiteId: newSuite._id,
             },
-            "evals",
           );
         }
       } catch (error) {
@@ -1872,18 +1854,10 @@ export function useEvalHandlers({
 
       // If we're viewing this test case, navigate back to suite overview
       if (selectedTestId === testCaseToDelete.id && selectedSuiteId) {
-        navigateAfterTestCaseMutation(
-          evalsNavigationContext === "ci-evals"
-            ? {
-                type: "suite-overview",
-                suiteId: selectedSuiteId,
-                view: "test-cases",
-              }
-            : {
-                type: "suite-overview",
-                suiteId: selectedSuiteId,
-              },
-        );
+        navigateAfterTestCaseMutation({
+          type: "suite-overview",
+          suiteId: selectedSuiteId,
+        });
       }
 
       setTestCaseToDelete(null);
@@ -1899,7 +1873,6 @@ export function useEvalHandlers({
     mutations.deleteTestCaseMutation,
     selectedTestId,
     selectedSuiteId,
-    evalsNavigationContext,
     navigateAfterTestCaseMutation,
   ]);
 

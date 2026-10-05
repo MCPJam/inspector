@@ -5,13 +5,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
   isUserReady: true,
+  liveRunIterations: [] as any[],
 }));
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mocks.useQuery(...args),
-  // Per-run metrics and live-run rows; idle unless `perRunMetrics` is on.
+  // Per-run metrics; idle in these tests.
   useQueries: () => ({}),
   useConvex: () => ({ query: async () => null }),
+}));
+
+// Rows of the runs seen in flight: the only iterations the hook reads now.
+vi.mock("../use-runs-iterations", () => ({
+  useRunsIterations: () => ({
+    iterations: mocks.liveRunIterations,
+    byRun: new Map(),
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -24,6 +34,7 @@ describe("useEvalQueries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isUserReady = true;
+    mocks.liveRunIterations = [];
     mocks.useQuery.mockReturnValue(undefined);
   });
 
@@ -46,7 +57,7 @@ describe("useEvalQueries", () => {
       "skip"
     );
     expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:getAllTestCasesAndIterationsBySuite",
+      "testSuites:listTestCases",
       "skip"
     );
     expect(mocks.useQuery).toHaveBeenCalledWith(
@@ -74,7 +85,7 @@ describe("useEvalQueries", () => {
     );
   });
 
-  it("queries details and runs when a selected suite is ready", () => {
+  it("queries cases and runs when a selected suite is ready", () => {
     renderHook(() =>
       useEvalQueries({
         isAuthenticated: true,
@@ -82,28 +93,6 @@ describe("useEvalQueries", () => {
         deletingSuiteId: null,
         projectId: "ws-1",
         organizationId: null,
-      }),
-    );
-
-    expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:getAllTestCasesAndIterationsBySuite",
-      { suiteId: "suite-1" }
-    );
-    expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:listTestSuiteRuns",
-      { suiteId: "suite-1", limit: 100 }
-    );
-  });
-
-  it("reads cases only, never the whole suite's iterations, in per-run mode", () => {
-    const { result } = renderHook(() =>
-      useEvalQueries({
-        isAuthenticated: true,
-        selectedSuiteId: "suite-1",
-        deletingSuiteId: null,
-        projectId: "ws-1",
-        organizationId: null,
-        perRunMetrics: true,
       }),
     );
 
@@ -111,19 +100,15 @@ describe("useEvalQueries", () => {
       suiteId: "suite-1",
     });
     expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:getAllTestCasesAndIterationsBySuite",
-      "skip"
+      "testSuites:listTestSuiteRuns",
+      { suiteId: "suite-1", limit: 100 }
     );
-    expect(mocks.useQuery).not.toHaveBeenCalledWith(
-      "testSuites:getAllTestCasesAndIterationsBySuite",
-      { suiteId: "suite-1" }
-    );
-    expect(result.current.sortedIterations).toEqual([]);
-    expect(result.current.metricsByRun.size).toBe(0);
   });
 
-  it("keeps the whole-suite read for the legacy surfaces", () => {
-    renderHook(() =>
+  // The whole-suite read loaded every iteration of every run and hit Convex's
+  // 16 MiB read limit on large suites. Nothing may subscribe to it now.
+  it("never reads the whole suite's iterations", () => {
+    const { result } = renderHook(() =>
       useEvalQueries({
         isAuthenticated: true,
         selectedSuiteId: "suite-1",
@@ -133,7 +118,13 @@ describe("useEvalQueries", () => {
       }),
     );
 
-    expect(mocks.useQuery).toHaveBeenCalledWith("testSuites:listTestCases", "skip");
+    expect(
+      mocks.useQuery.mock.calls.some(
+        ([name]) => name === "testSuites:getAllTestCasesAndIterationsBySuite"
+      )
+    ).toBe(false);
+    expect(result.current.suiteDetails).toBeUndefined();
+    expect(result.current.metricsByRun.size).toBe(0);
   });
 
   it("uses empty overview args when ready with no project or organization", () => {
@@ -188,7 +179,7 @@ describe("useEvalQueries", () => {
     expect(result.current.enableOverviewQuery).toBe(false);
     expect(result.current.enableSuiteDetailsQuery).toBe(false);
     // Skipped, but still LOADING: an answer is coming once the row lands, and
-    // EvalsTab reads "not loading + no matching suite" as a deleted suite and
+    // Evaluate reads "not loading + no matching suite" as a deleted suite and
     // bounces the deep link.
     expect(result.current.isOverviewLoading).toBe(true);
     expect(result.current.isSuiteDetailsLoading).toBe(true);
@@ -198,7 +189,7 @@ describe("useEvalQueries", () => {
       "skip"
     );
     expect(mocks.useQuery).toHaveBeenCalledWith(
-      "testSuites:getAllTestCasesAndIterationsBySuite",
+      "testSuites:listTestCases",
       "skip"
     );
     expect(mocks.useQuery).toHaveBeenCalledWith(
@@ -234,7 +225,7 @@ describe("useEvalQueries", () => {
   });
 });
 
-it("opens the credit wall for a live iteration failure once and preserves completed rows", () => {
+it("opens the credit wall once for a live run's iteration failure", () => {
   const store = useMCPJamLimitDialogStore;
   store.setState({
     authStatus: "signedIn",
@@ -247,14 +238,12 @@ it("opens the credit wall for a live iteration failure once and preserves comple
     suiteRunId: "live-eval",
     status: "completed",
   };
-  let iterations: any[] = [completed];
+  mocks.liveRunIterations = [completed];
   mocks.useQuery.mockImplementation((query: string) => {
     if (query === "testSuites:listTestSuiteRuns") return runs;
-    if (query === "testSuites:getAllTestCasesAndIterationsBySuite")
-      return { iterations, testCases: [] };
     return [];
   });
-  const { result, rerender } = renderHook(() =>
+  const { rerender } = renderHook(() =>
     useEvalQueries({
       isAuthenticated: true,
       selectedSuiteId: "suite",
@@ -264,16 +253,15 @@ it("opens the credit wall for a live iteration failure once and preserves comple
     }),
   );
   expect(store.getState().isOpen).toBe(false);
-  iterations = [
-    ...iterations,
+  mocks.liveRunIterations = [
+    ...mocks.liveRunIterations,
     { _id: "blocked", suiteRunId: "live-eval", error: "Credits exhausted" },
   ];
   runs = [{ _id: "live-eval", status: "failed" }];
   rerender();
   expect(store.getState().isOpen).toBe(true);
-  expect(result.current.sortedIterations).toContain(completed);
   store.getState().close();
-  iterations = [...iterations];
+  mocks.liveRunIterations = [...mocks.liveRunIterations];
   rerender();
   expect(store.getState().isOpen).toBe(false);
 });

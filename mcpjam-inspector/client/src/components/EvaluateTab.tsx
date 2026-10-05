@@ -6,8 +6,8 @@ import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
 /**
- * Public Evaluate experience. Reuses the shared eval data and mutation layer;
- * legacy Evaluate remains available separately behind evaluate-enabled.
+ * Public Evaluate experience. Reuses the shared eval data and mutation layer.
+ * The legacy Evals tabs are gone; their `/evals` URLs redirect here.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -303,9 +303,6 @@ function EvaluateTabContent({
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
-    // Shared handlers default to `/evals`. Without this, Add case / Record /
-    // post-run landing would dump the reader onto the old tab.
-    evalsNavigationContext: "evaluate",
     projectServers,
     isDirectGuest,
     availableModels,
@@ -379,7 +376,6 @@ function EvaluateTabContent({
     projectId: projectId ?? null,
     organizationId: null,
     isDirectGuest,
-    perRunMetrics: true,
   });
 
   const selectedSuite = queries.selectedSuite;

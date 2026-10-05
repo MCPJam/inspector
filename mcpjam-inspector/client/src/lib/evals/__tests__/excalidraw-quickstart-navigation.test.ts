@@ -7,7 +7,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const navigateEvals = vi.hoisted(() => vi.fn());
-vi.mock("@/components/evals/create-suite-navigation", () => ({
+vi.mock("@/components/evaluate/create-suite-navigation", () => ({
   navigatePlaygroundEvalsRoute: navigateEvals,
 }));
 
