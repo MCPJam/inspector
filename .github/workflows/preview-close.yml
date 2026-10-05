@@ -13,7 +13,11 @@ permissions:
 
 jobs:
   destroy-preview:
-    if: github.repository == 'MCPJam/inspector'
+    # The deploy workflow excludes Dependabot PRs, and Dependabot-triggered
+    # closes cannot access the Actions secrets needed for cleanup.
+    if: >-
+      github.repository == 'MCPJam/inspector' &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     concurrency:
       group: preview-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: true
