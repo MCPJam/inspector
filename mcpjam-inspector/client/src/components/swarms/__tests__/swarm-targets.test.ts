@@ -137,6 +137,10 @@ describe("a target that ran the client's own model", () => {
     expect(columnsFor("Prod")[0]!.label).toBe("Prod");
   });
 
+  it("keeps a custom name when the client is later renamed to it", () => {
+    expect(columnsFor("Prod", "Prod")[0]!.label).toBe("Prod");
+  });
+
   it("does not repeat a model the saved name already carries", () => {
     expect(columnsFor("MCPJam · claude-haiku-4.5")[0]!.label).toBe(
       "MCPJam · claude-haiku-4.5",
