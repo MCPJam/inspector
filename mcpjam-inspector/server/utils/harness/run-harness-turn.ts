@@ -129,6 +129,7 @@ import {
 } from "./local/local-turn.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
 import { localPermissionModeFor, localSandboxPolicyFor } from "./local/compatibility.js";
+import { HOSTED_APPROVAL_SANDBOX_POLICY } from "./codex-appserver/hosted-sandbox-policy.js";
 import { sandboxPolicyFingerprint } from "./codex-appserver/shared/sandbox-policy.js";
 import {
   resolveWorkingDirectory,
@@ -689,6 +690,7 @@ export async function runHarnessTurn(
     failureReporter: failureReporterOption,
     onLiveTextDelta,
     requireToolApproval,
+    approvalMode,
     modelVisibleMcpToolResults,
     respectToolVisibility,
     tasks,
@@ -756,9 +758,7 @@ export async function runHarnessTurn(
   // Venue-aware, and decided ONCE: the fingerprint's `transport`, the
   // approval mode and the tool catalog all come from this adapter, so a local
   // Codex turn must see the app-server arm here exactly as its preflight did.
-  const harnessAdapter = getHarnessAdapter(harness, {
-    localExecution: harnessExecutionTarget != null,
-  });
+  const harnessAdapter = getHarnessAdapter(harness);
   // The effort this turn asked for: the typed field, else the saved selection it
   // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
   // refusal below and `createHarness` further down cannot disagree.
@@ -1252,6 +1252,9 @@ export async function runHarnessTurn(
         adapter: harnessAdapter,
         requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        // Every caller with nobody to answer (evals, swarms, synthetic
+        // sessions, API turns) says so this way.
+        unattended: approvalMode === "auto-deny",
       });
       if (approvalRefusal) {
         throw new Error(`Can't run this turn: ${approvalRefusal}.`);
@@ -1716,6 +1719,17 @@ export async function runHarnessTurn(
           : requireToolApproval && harnessAdapter.supportsNativeToolApproval
             ? harnessAdapter.approvalPermissionMode
             : harnessAdapter.defaultPermissionMode;
+      // The command sandbox the runtime applies: the local unattended policy,
+      // or, for a hosted turn that pauses for approval, one as wide as the box
+      // (see `HOSTED_APPROVAL_SANDBOX_POLICY`) so an approved command can do
+      // what the same command does with approval off.
+      const commandSandboxPolicy =
+        localSandboxPolicy ??
+        (harnessExecutionTarget == null &&
+        harnessAdapter.acceptsSandboxPolicy &&
+        permissionMode !== "allow-all"
+          ? HOSTED_APPROVAL_SANDBOX_POLICY
+          : null);
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
@@ -1770,8 +1784,8 @@ export async function runHarnessTurn(
               },
             }
           : {}),
-        ...(localSandboxPolicy !== null
-          ? { commandSandbox: sandboxPolicyFingerprint(localSandboxPolicy) }
+        ...(commandSandboxPolicy !== null
+          ? { commandSandbox: sandboxPolicyFingerprint(commandSandboxPolicy) }
           : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
@@ -1809,6 +1823,10 @@ export async function runHarnessTurn(
               computerId: string;
               awaitingApproval?: boolean;
             } | null;
+            /** This chat had a committed session under a different runtime
+             *  fingerprint (model, servers, skills, permission mode,
+             *  transport…), so this turn starts fresh. */
+            runtimeChanged: boolean;
           }
         | undefined;
       if (
@@ -1881,6 +1899,9 @@ export async function runHarnessTurn(
             // fresh start (it skips writes on resume). Enforce here rather than
             // trusting the endpoint to null `state` on mismatch.
             state: claim.fingerprintChanged ? null : claim.state,
+            // `stateVersion` only moves on a commit, so > 0 means there was a
+            // session to lose, not just a lane a failed first turn created.
+            runtimeChanged: claim.fingerprintChanged && claim.stateVersion > 0,
           };
           // Bounded: every caller of this is on the terminal path, and a
           // stalled release would hold the turn open exactly like the broker
@@ -2349,8 +2370,8 @@ export async function runHarnessTurn(
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
-              ...(localSandboxPolicy !== null
-                ? { sandboxPolicy: localSandboxPolicy }
+              ...(commandSandboxPolicy !== null
+                ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
       if (localPrepared) {
@@ -2756,7 +2777,9 @@ export async function runHarnessTurn(
         ? "resume-failed"
         : eligibility.reason === "sandbox-replaced"
           ? "sandbox-replaced"
-          : undefined;
+          : continuity?.runtimeChanged
+            ? "runtime-changed"
+            : undefined;
       if (eligibility.reason === "legacy-cold-resume") {
         logger.warn(
           "[harness] resuming a pre-detach sidecar (cold/disk resume; continuity not guaranteed)",

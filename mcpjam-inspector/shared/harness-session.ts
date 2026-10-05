@@ -55,13 +55,17 @@ export function isHarnessSessionDataPart(
  *                           continuity isn't guaranteed. (Logged, not necessarily
  *                           shown — it's an attempt, not a hard reset.)
  *  - `resume-failed`      — reattaching to the saved session threw; fell back fresh.
+ *  - `runtime-changed`    — the chat's saved session was built for a different
+ *                           runtime (model, servers, skills, permission mode or
+ *                           transport), so it can't be resumed.
  *
  * NEVER carries raw E2B sandbox ids — only the categorical reason.
  */
 export type HarnessResetReason =
   | "sandbox-replaced"
   | "legacy-cold-resume"
-  | "resume-failed";
+  | "resume-failed"
+  | "runtime-changed";
 
 export interface HarnessResetInfo {
   reason: HarnessResetReason;
@@ -76,6 +80,7 @@ const HARNESS_RESET_REASONS: ReadonlySet<HarnessResetReason> = new Set([
   "sandbox-replaced",
   "legacy-cold-resume",
   "resume-failed",
+  "runtime-changed",
 ]);
 
 export function isHarnessResetDataPart(

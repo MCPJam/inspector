@@ -1229,9 +1229,7 @@ export async function streamWebChatTurn(
   // helper without one.
   if (persist.harness && !usesMcpjamFreePath) {
     const { refusal } = harnessModelRefusal({
-      adapter: getHarnessAdapter(persist.harness, {
-        localExecution: persist.harnessExecutionTarget != null,
-      }),
+      adapter: getHarnessAdapter(persist.harness),
       model: {
         id: String(prepare.modelDefinition.id),
         provider: prepare.modelDefinition.provider,

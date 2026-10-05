@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
-import { createCodex } from "@ai-sdk/harness-codex";
 import claudeAdapterPkg from "@ai-sdk/harness-claude-code/package.json" with { type: "json" };
 import { createCodexAppServer } from "../../codex-appserver/index.js";
 import {
@@ -19,6 +18,7 @@ import {
   LOCAL_PERMISSION_PROFILES,
   SUPPORTED_LOCAL_HARNESS_IDS,
 } from "../targets.js";
+import { EXPECTED_PACK_VERSIONS, PACK_RECORDS } from "../pack-digests.generated.js";
 
 /** The version each manifest was reviewed against. Supplied on every query
  *  because the pin is mandatory — a caller that cannot state the installed
@@ -44,18 +44,37 @@ function conformed(
 }
 
 describe("the shipped manifest", () => {
-  it("enables nothing until conformance evidence is recorded", () => {
+  // Before a release this said "enables nothing"; what must hold either side
+  // of one is that conformance is recorded only for a harness whose reviewed
+  // pack covers every target it advertises, and that a harness without it
+  // still enables nothing.
+  it("records conformance only where a reviewed pack covers every advertised target", () => {
+    const allTargets = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"] as const;
     for (const harnessId of ["claude-code", "codex"] as const) {
-      const result = resolveLocalCompatibility({
-        harnessId,
-        platform: "linux",
-        targetKind: "local-native",
-        installedAdapterVersion:
-          LOCAL_HARNESS_MANIFEST[harnessId].adapterVersion,
-        permissionProfile: "workspace-edits",
-      });
-      expect(result.ok).toBe(false);
-      expect(result).toMatchObject({ status: "conformance-missing" });
+      const manifest = LOCAL_HARNESS_MANIFEST[harnessId];
+      if (manifest.lifecycleConformanceVersion === "") {
+        const result = resolveLocalCompatibility({
+          harnessId,
+          platform: "linux",
+          targetKind: "local-native",
+          installedAdapterVersion: manifest.adapterVersion,
+          permissionProfile: "workspace-edits",
+        });
+        expect(result).toMatchObject({ ok: false, status: "conformance-missing" });
+        continue;
+      }
+      const advertised =
+        manifest.nativeTargets ??
+        allTargets.filter((target) =>
+          manifest.nativePlatforms.includes(target.split("-")[0] as never),
+        );
+      expect(advertised.length).toBeGreaterThan(0);
+      expect(EXPECTED_PACK_VERSIONS[harnessId]).not.toBe("");
+      for (const target of advertised) {
+        expect(PACK_RECORDS[harnessId]?.[target]?.packVersion).toBe(
+          EXPECTED_PACK_VERSIONS[harnessId],
+        );
+      }
     }
   });
 
@@ -110,13 +129,11 @@ describe("the shipped manifest", () => {
     expect(
       LOCAL_HARNESS_MANIFEST["claude-code"].supportsBuiltinToolApprovals,
     ).toBe(createClaudeCode().supportsBuiltinToolApprovals);
-    // LOCAL Codex is MCPJam's app-server adapter, never the published exec
-    // one — which still cannot surface approvals at all.
+    // Codex is MCPJam's app-server adapter.
     expect(LOCAL_HARNESS_MANIFEST.codex.supportsBuiltinToolApprovals).toBe(
       createCodexAppServer().supportsBuiltinToolApprovals,
     );
     expect(createCodexAppServer().supportsBuiltinToolApprovals).toBe(true);
-    expect(createCodex().supportsBuiltinToolApprovals).toBe(false);
   });
 
   it("pins the exact adapter versions the evidence was gathered against", () => {

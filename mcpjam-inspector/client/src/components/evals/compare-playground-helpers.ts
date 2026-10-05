@@ -13,6 +13,7 @@ import { computeIterationResult } from "./pass-criteria";
 import {
   comparisonKey,
   selectionConfigKey,
+  type ModelSelection,
   type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type {
@@ -22,6 +23,7 @@ import type {
   EvalIteration,
 } from "./types";
 import type { TraceEnvelope } from "./trace-viewer-adapter";
+import { modelTarget, modelTargetKey } from "@/lib/model-target";
 
 /**
  * The provider names a trace's snapshot may legitimately carry.
@@ -91,8 +93,31 @@ export function createCompareSessionId() {
     .slice(2, 10)}`;
 }
 
+/**
+ * A quick-run pick's key. A pick with no selection, or a default one, keys as
+ * its model value (`provider/model`), exactly as before efforts; any other
+ * pick adds its `comparisonKey` after a NUL. So Sonnet·Low, Sonnet·Medium and
+ * Sonnet·High are three picks, three runs and three columns. Model values
+ * never contain a NUL, so {@link quickRunModelValue} always recovers one.
+ */
+export function quickRunKey(
+  modelValue: string,
+  selection?: ModelSelection,
+): string {
+  const target = modelTarget(parseModelValue(modelValue).model, selection);
+  const key = modelTargetKey(target);
+  return key === target.modelId ? modelValue : `${modelValue}\u0000${key}`;
+}
+
+/** The model value (`provider/model`) a quick-run key runs. */
+export function quickRunModelValue(key: string): string {
+  const nul = key.indexOf("\u0000");
+  return nul < 0 ? key : key.slice(0, nul);
+}
+
 export function parseModelValue(modelValue: string) {
-  const [provider, ...modelParts] = modelValue.split("/");
+  const [provider, ...modelParts] =
+    quickRunModelValue(modelValue).split("/");
   return {
     provider,
     model: modelParts.join("/"),

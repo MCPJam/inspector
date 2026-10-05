@@ -13,6 +13,8 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "../resolve";
 import { WebRouteError } from "../../../routes/web/errors";
+import { machineUnattendedLocalHarnesses } from "../../../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities } from "../../evals/runner-capabilities.js";
 
 const RESOLVED: ResolvedEnvironmentForLaunch = {
   environmentRef: { environmentId: "env-1", name: "Staging", revision: 4 },
@@ -496,11 +498,18 @@ describe("explicit local execution context", () => {
       environmentId: "env-1",
       runtimeVenue: "local",
     });
-    // A local preview names the harnesses this machine can run, so the backend
-    // narrows the venue exactly as the launch will. None in this checkout.
+    // A local preview names the harnesses this machine can run unattended, so
+    // the backend narrows the venue exactly as the launch will. Which ones that
+    // is depends on the released packs and this machine's target, so the
+    // expectation is the same derivation, not a hard-coded list.
     expect(query).toHaveBeenCalledWith(
       "projectEnvironments:resolveEnvironmentForLaunch",
-      { projectId: "project", environmentId: "env-1", runtimeVenue: "local", runnerCapabilities: [] },
+      {
+        projectId: "project",
+        environmentId: "env-1",
+        runtimeVenue: "local",
+        runnerCapabilities: localHarnessCapabilities(machineUnattendedLocalHarnesses()),
+      },
     );
     expect(resolved.runtimeVenue).toBe("local");
   });

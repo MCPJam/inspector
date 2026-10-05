@@ -66,7 +66,10 @@ vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: [], isLoading: false }),
 }));
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useAction: () => vi.fn(),
   useConvexAuth: () => ({
     isAuthenticated: mocks.isAuthenticated,
