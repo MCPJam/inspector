@@ -7,7 +7,10 @@ import {
   type MCPCheckId,
   type MCPCheckResult,
 } from "../../src/mcp-conformance/index.js";
-import { createFixtureHandler } from "../support/dual-era-fixture.js";
+import {
+  createFixtureHandler,
+  type BuildFixtureServerOptions,
+} from "../support/dual-era-fixture.js";
 
 /**
  * Exit gate for Phase 3 §11.5 (conformance era-awareness): pointing the
@@ -26,8 +29,10 @@ interface ServedFixture {
   close: () => Promise<void>;
 }
 
-async function serveFixtureOnPort(): Promise<ServedFixture> {
-  const handler = createFixtureHandler();
+async function serveFixtureOnPort(
+  options: BuildFixtureServerOptions = {},
+): Promise<ServedFixture> {
+  const handler = createFixtureHandler(options);
   const httpServer = http.createServer(toNodeHandler(handler));
   await new Promise<void>((resolve) =>
     httpServer.listen(0, "127.0.0.1", resolve)
@@ -54,6 +59,7 @@ const ERA_SKIP = /Not applicable to the .* era/;
 const LEGACY_ONLY: MCPCheckId[] = [
   "server-initialize",
   "ping",
+  "logging-set-level",
   "server-sse-polling-session",
   "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
@@ -260,13 +266,34 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     // thing readiness could have broken: it never turns the verdict red.
     expect(result.outcome).not.toBe("failed");
 
-    // The fixture advertises no logging/completions capability, so these
-    // both-era checks self-skip on capability (NOT the era gate).
-    for (const id of ["logging-set-level", "completion-complete"] as const) {
+    // Completion still self-skips on capability, rather than the era gate.
+    for (const id of ["completion-complete"] as const) {
       const check = byId(result.checks, id);
       expect(check.status).toBe("skipped");
       expect(check.error?.message).not.toMatch(ERA_SKIP);
     }
+  });
+
+  it("era-skips logging/setLevel even when a modern server advertises logging", async () => {
+    await served.close();
+    served = await serveFixtureOnPort({ logging: true });
+
+    const result = await new MCPConformanceTest({
+      serverUrl: served.url,
+      protocolVersion: "2026-07-28",
+      checkTimeout: 10_000,
+      checkIds: ["logging-set-level", "modern-server-discover"],
+    }).run();
+
+    expect(
+      byId(result.checks, "modern-server-discover").details?.capabilities,
+    ).toContain("logging");
+    expect(byId(result.checks, "modern-server-discover").status).toBe("passed");
+    const check = byId(result.checks, "logging-set-level");
+    expect(check.status).toBe("skipped");
+    expect(check.skipReason).toBe("not-applicable");
+    expect(check.error?.message).toMatch(ERA_SKIP);
+    expect(result.passed).toBe(true);
   });
 
   it("auto run (no protocolVersion): detects the modern era", async () => {

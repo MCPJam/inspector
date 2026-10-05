@@ -173,7 +173,7 @@ export const MCP_PROTOCOL_VERSION_ERA_IDS = Object.keys(
  *     and consistency/health probes (`capabilities-consistent`, `ping`) whose
  *     modern equivalents are Phase 7 work.
  *   - Both-era checks either self-skip on an unadvertised capability
- *     (`logging-set-level`, `completion-complete`) or assert primitive
+ *     (`completion-complete`) or assert primitive
  *     surface / generic JSON-RPC behavior that is era-agnostic
  *     (`tools-list`, `tools-input-schemas-valid`, `prompts-list`,
  *     `resources-list`, `protocol-invalid-method-error`).
@@ -232,7 +232,9 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "tools-x-mcp-header-declarations-valid": ["modern"],
   "prompts-list": ["legacy", "modern"],
   "resources-list": ["legacy", "modern"],
-  "logging-set-level": ["legacy", "modern"],
+  // logging/setLevel was removed in 2026-07-28; advertising logging does not
+  // make this legacy method applicable to a modern server.
+  "logging-set-level": ["legacy"],
   "completion-complete": ["legacy", "modern"],
   "protocol-invalid-method-error": ["legacy", "modern"],
   "modern-client-handshake": ["modern"],
