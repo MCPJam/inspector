@@ -37,17 +37,18 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex: MCP servers arrive as HOST-EXECUTED tools (the CLI never makes an
-    // MCP tool model-callable in the mode the SDK drives), no native plugin
-    // install, can't pause for tool approval — and skills ARE delivered
-    // (INS-8), under its own root.
+    // Codex: MCP servers arrive as HOST-EXECUTED tools (MCPJam's gate is the
+    // single authority), no native plugin install, pauses for tool approval on
+    // the app-server adapter — and skills ARE delivered (INS-8), under its own
+    // root.
+    expect(a.transport).toBe("app-server");
     expect(a.mcpDelivery).toBe("host-executed");
     expect(a.supportsSkills).toBe(true);
     expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
-    expect(a.supportsNativeToolApproval).toBe(false);
+    expect(a.supportsNativeToolApproval).toBe(true);
     expect(a.requiresComputer).toBe(true);
-    expect(a.fileChangeToolName).toBe("fileChange");
+    expect(a.fileChangeToolName).toBeUndefined();
   });
 
   it("every adapter that advertises a capability carries its strategy", () => {
@@ -330,10 +331,7 @@ describe("harness registry", () => {
         "@anthropic-ai/claude-code"
       ],
     ).toBe(HARNESS_PINNED_VERSIONS["claude-code"]);
-    expect(
-      bridgePkg("@ai-sdk/harness-codex").dependencies["@openai/codex-sdk"],
-    ).toBe(HARNESS_PINNED_VERSIONS.codex);
-    // The app-server transport pins the same CLI.
+    // Codex's app-server bootstrap pins its CLI itself.
     expect(PINNED_CODEX_VERSION).toBe(HARNESS_PINNED_VERSIONS.codex);
   });
 
@@ -948,18 +946,18 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
   });
 });
 
-describe("the local Codex arm and the unattended command sandbox (D2)", () => {
+describe("the Codex adapter and its command sandbox policy (D2)", () => {
   const auth = buildBrokerDummyAuth("codex", "https://broker.example/openai/v1");
 
-  it("is the app-server transport, and the only arm that applies a sandbox policy", () => {
-    const local = getHarnessAdapter("codex", { localExecution: true });
+  it("is the app-server transport, and the only adapter that applies a sandbox policy", () => {
+    const local = getHarnessAdapter("codex");
     expect(local.transport).toBe("app-server");
     expect(local.acceptsSandboxPolicy).toBe(true);
     expect(getHarnessAdapter("claude-code").acceptsSandboxPolicy).toBeFalsy();
   });
 
   it("hands the policy to the runtime when, and only when, the turn sets one", () => {
-    const local = getHarnessAdapter("codex", { localExecution: true });
+    const local = getHarnessAdapter("codex");
     vi.mocked(createCodexAppServer).mockClear();
     local.createHarness({
       modelId: "openai/gpt-5.5",

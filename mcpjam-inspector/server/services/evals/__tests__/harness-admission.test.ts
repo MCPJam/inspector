@@ -132,9 +132,8 @@ describe("checkEvalHarnessAdmission", () => {
     expect(verdict.reason).not.toContain("hosted case");
   });
 
-  // Codex, not Claude Code: Claude Code can pause on every surface now, so an
-  // approval host is admissible there. Codex cannot pause at all, which is the
-  // host-level refusal this test is about.
+  // An approval host is a HOST-level refusal (no eval can answer one), so it is
+  // reported once rather than repeated for every case.
   it("reports a HOST-level refusal once, not per case", () => {
     const verdict = checkEvalHarnessAdmission({
       hostConfig: { harness: "codex", requireToolApproval: true },
@@ -350,29 +349,42 @@ describe("checkEvalHarnessStaticAdmission", () => {
     expect(hasSelectedMcpServersForAdmission({})).toBe(false);
   });
 
-  // The end-to-end half that IS still observable: a plugin-only host reaches
-  // the gate and is admitted on a harness that can approve MCP tools. If
-  // plugin servers were dropped on the way in, this would pass for the wrong
-  // reason — so it is a companion to the direct assertion above, not a
-  // replacement for it.
-  it("admits a plugin-only approval host on a harness that can approve MCP tools", () => {
-    expect(
-      checkEvalHarnessStaticAdmission({
-        hostConfig: harnessHost({ requireToolApproval: true }),
-        serverIds: [],
-        pluginServerIds: ["plugin-server-1"],
-      })
-    ).toEqual({ ok: true, harness: "claude-code" });
+  // Nobody can answer an approval in an eval, so an approval host is refused
+  // up front on EVERY harness, including Claude Code, which can pause. Admitted,
+  // its first gated call threw mid-run, because an eval turn has no session to
+  // park in. Plugin-only and server-less hosts are refused the same way.
+  it.each([
+    ["plugin-only", { serverIds: [], pluginServerIds: ["plugin-server-1"] }],
+    ["server-less", { serverIds: [] }],
+    ["with servers", { serverIds: ["s1"] }],
+  ])("refuses a Claude Code approval host in an eval (%s)", (_label, servers) => {
+    const verdict = checkEvalHarnessStaticAdmission({
+      hostConfig: harnessHost({ requireToolApproval: true }),
+      ...servers,
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("unattended run");
   });
 
-  it("an approval host with NO servers at all is not caught by that gate", () => {
-    // The control for the case above: without the plugin servers the same host
-    // passes, so the refusal really did come from counting them.
+  it("refuses the same approval host at the full, per-case check", () => {
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: harnessHost({ requireToolApproval: true }),
+      serverIds: ["s1"],
+      cases: [{ title: "a", ...HOSTED_MODEL }],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("unattended run");
+    expect(verdict.reason).not.toContain("Ineligible cases");
+  });
+
+  it("still admits the same host with approval off", () => {
     expect(
       checkEvalHarnessStaticAdmission({
-        hostConfig: { harness: "claude-code", requireToolApproval: true },
-        serverIds: [],
-      })
+        hostConfig: harnessHost({ requireToolApproval: false }),
+        serverIds: ["s1"],
+      }),
     ).toEqual({ ok: true, harness: "claude-code" });
   });
 });

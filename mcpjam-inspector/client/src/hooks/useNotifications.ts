@@ -1,4 +1,5 @@
-import { useQuery, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
+import { useSoftQuery } from "@/hooks/use-soft-query";
 
 export type NotificationType =
   | "project_added"
@@ -36,17 +37,19 @@ export function useNotifications({
 }: {
   isAuthenticated: boolean;
 }) {
-  const notifications = useQuery(
-    "notifications:getMyNotifications" as any,
-    isAuthenticated ? ({} as any) : "skip",
-  ) as Notification[] | undefined;
+  // Soft: the sidebar's unread badge reads this on every page, and a failed
+  // read must not replace the app. A failure reads as an empty inbox.
+  const { data: notifications, error } = useSoftQuery<Notification[]>(
+    "notifications:getMyNotifications",
+    isAuthenticated ? {} : "skip",
+  );
 
-  const unreadCount = useQuery(
-    "notifications:getUnreadCount" as any,
-    isAuthenticated ? ({} as any) : "skip",
-  ) as number | undefined;
+  const { data: unreadCount } = useSoftQuery<number>(
+    "notifications:getUnreadCount",
+    isAuthenticated ? {} : "skip",
+  );
 
-  const isLoading = isAuthenticated && notifications === undefined;
+  const isLoading = isAuthenticated && notifications === undefined && !error;
 
   return {
     notifications: notifications ?? [],
