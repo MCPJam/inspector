@@ -379,7 +379,12 @@ export function RunPreflightNotices({
   onConnectingChange?: (connecting: boolean) => void;
 }) {
   const [connecting, setConnecting] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  // Kept with its server, so it goes away once that server connects, from
+  // here or anywhere else.
+  const [failure, setFailure] = useState<{
+    ref: string;
+    message: string;
+  } | null>(null);
   const { disconnected, removed, refused, disabledProviders, serverName } =
     preflight;
   if (
@@ -405,10 +410,11 @@ export function RunPreflightNotices({
     onConnectingChange?.(true);
     setFailure(null);
     try {
-      setFailure(await preflight.connect(ref));
+      const message = await preflight.connect(ref);
+      setFailure(message ? { ref, message } : null);
     } catch (error) {
       console.warn("[Setup Run] Connect failed.", error);
-      setFailure(`${serverName(ref)} didn't connect.`);
+      setFailure({ ref, message: `${serverName(ref)} didn't connect.` });
     } finally {
       setConnecting(null);
       onConnectingChange?.(false);
@@ -463,9 +469,9 @@ export function RunPreflightNotices({
           )}
         </div>
       ))}
-      {failure && (
+      {failure && disconnected.includes(failure.ref) && (
         <p role="alert" className="text-destructive">
-          {failure} {openServers}
+          {failure.message} {openServers}
         </p>
       )}
       {disabledProviders.map((provider) => (

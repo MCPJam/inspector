@@ -365,6 +365,25 @@ describe("RunPreflightNotices", () => {
     ).toBeInTheDocument();
   });
 
+  it("drops a connect failure once the server connects some other way", async () => {
+    const preflight = {
+      disconnected: ["crm"],
+      removed: [],
+      refused: [],
+      disabledProviders: ["anthropic"],
+      serverName: (ref: string) => ref,
+      connect: vi.fn().mockResolvedValue("crm didn't connect."),
+    };
+    const { rerender } = render(<RunPreflightNotices preflight={preflight} />);
+    await userEvent.click(screen.getByRole("button", { name: "Connect crm" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("crm didn't connect.");
+    // Connected from the Servers page; the provider notice keeps the box up.
+    rerender(
+      <RunPreflightNotices preflight={{ ...preflight, disconnected: [] }} />,
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("links a disabled provider to the org's model settings", async () => {
     const manageModels = vi.fn();
     render(
