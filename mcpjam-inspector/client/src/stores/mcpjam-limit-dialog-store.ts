@@ -236,19 +236,37 @@ const refreshOpenDialog = (
 // cleared, and an older shortfall would clear one a later exhaustion just set.
 // Either way it learns the organization and surface it lacked, or the dialog
 // would open for no organization. A notice with no new report leaves the held
-// one's evidence as it is.
+// one's evidence as it is, and the held notice itself when it learns nothing.
 const heldWith = (
   held: MCPJamLimitNotifyInput | null,
   input: MCPJamLimitNotifyInput,
   withEvidence: boolean,
 ): MCPJamLimitNotifyInput => {
   const base = withEvidence || !held ? input : held;
-  return {
-    ...base,
-    organizationId:
-      base.organizationId ?? input.organizationId ?? held?.organizationId,
-    surface: base.surface ?? input.surface ?? held?.surface,
-  };
+  const organizationId =
+    base.organizationId ?? input.organizationId ?? held?.organizationId;
+  const surface = base.surface ?? input.surface ?? held?.surface;
+  if (
+    held &&
+    base === held &&
+    organizationId === held.organizationId &&
+    surface === held.surface
+  ) {
+    return held;
+  }
+  return { ...base, organizationId, surface };
+};
+
+// What `next` changes in `state`, or `state` itself when it changes nothing: a
+// replay that teaches nothing must not notify the views that subscribe.
+const onlyChanges = <T extends object>(
+  state: T,
+  next: Partial<T>,
+): Partial<T> | T => {
+  const changed = Object.entries(next).filter(
+    ([key, value]) => state[key as keyof T] !== value,
+  );
+  return changed.length ? (Object.fromEntries(changed) as Partial<T>) : state;
 };
 
 export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
@@ -322,14 +340,6 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
                   ...wavesLearnedStale,
                 ])
               : state.staleWaveKeys;
-          // A replay, every key already known, changes nothing. The views
-          // that show a run replay its notice on every Convex push; setting
-          // the latch again would undo what a top-up or a daily reset cleared.
-          if (!newKeys.length) {
-            return staleWaveKeys === state.staleWaveKeys
-              ? state
-              : { staleWaveKeys };
-          }
           // A new run, or a run reporting something new, still carries new
           // evidence: a wave's first run may report a shortfall and a later one
           // real exhaustion, so the exhaustion latch follows it, and so does a
@@ -347,7 +357,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
                 pendingInput: heldWith(state.pendingInput, input, withEvidence),
               }
             : {};
-          return {
+          const next = {
             notifiedKeys,
             staleWaveKeys,
             waveOrganizations,
@@ -355,6 +365,15 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
             ...pending,
             ...refreshOpenDialog(state, input, withEvidence),
           };
+          // A replay, every key already known, brings no report either. The
+          // views that show a run replay its notice on every Convex push, and
+          // setting the latch again would undo what a top-up or a daily reset
+          // cleared, so only what the replay teaches that was not known
+          // changes: an organization the first notice lacked (it was processed
+          // before the organization loaded) belongs to the wave, a dialog that
+          // is open and a notice held for auth. A replay that teaches nothing
+          // returns the state itself.
+          return newKeys.length ? next : onlyChanges(state, next);
         }
         // Not suppressed, so this notice speaks for its waves again: one that
         // was stale is announced anew, and its next run is quiet as before.

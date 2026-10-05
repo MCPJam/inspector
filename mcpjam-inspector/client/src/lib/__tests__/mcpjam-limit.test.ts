@@ -1282,6 +1282,133 @@ describe("one dialog per swarm wave", () => {
     });
   });
 
+  // A notice can be processed before the organization has loaded and replayed
+  // after it. The replay brings no new key, but it still says whose the run is:
+  // dropping that left the wave unowned, and another organization's purchase
+  // then treated it as news for them too.
+  describe("a replay that names an organization the first notice lacked", () => {
+    const first = { runId: "run-a", swarmRunGroupId: "wave-1" };
+    const replay = { ...first, organizationId: "org-a" };
+
+    it("teaches the wave its organization, so another organization's purchase leaves it alone", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify(first);
+      store.getState().close();
+      notify(replay);
+      expect(store.getState().waveOrganizations).toEqual({
+        "wave:wave-1": "org-a",
+      });
+
+      store.getState().forgetNotifiedWaves("org-b");
+
+      notify({
+        runId: "run-b",
+        swarmRunGroupId: "wave-1",
+        organizationId: "org-a",
+      });
+      expect(store.getState().isOpen).toBe(false);
+    });
+
+    it("teaches an open dialog its organization, and leaves what it reports alone", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall(first);
+      expect(store.getState().organizationId).toBeNull();
+
+      shortfall(replay);
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        organizationId: "org-a",
+        period: null,
+        shortfall: { creditsRemaining: 23, creditsRequired: 30 },
+        outOfCreditsHit: false,
+      });
+    });
+
+    it("teaches a held notice its organization", () => {
+      const store = useMCPJamLimitDialogStore;
+
+      notify(first);
+      notify(replay);
+
+      store.getState().setAuthStatus("signedIn");
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        organizationId: "org-a",
+      });
+    });
+
+    it("does not set again a latch that a top-up cleared", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify(first);
+      store.getState().close();
+      store.getState().clearOutOfCreditsHit();
+
+      notify(replay);
+      expect(store.getState()).toMatchObject({
+        isOpen: false,
+        outOfCreditsHit: false,
+        waveOrganizations: { "wave:wave-1": "org-a" },
+      });
+    });
+
+    it("learns the wave's organization but leaves another organization's dialog alone", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-b1", swarmRunGroupId: "wave-b" });
+      store.getState().close();
+      notify({
+        runId: "run-a1",
+        swarmRunGroupId: "wave-a",
+        organizationId: "org-a",
+      });
+
+      notify({
+        runId: "run-b1",
+        swarmRunGroupId: "wave-b",
+        organizationId: "org-b",
+      });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        organizationId: "org-a",
+        waveOrganizations: { "wave:wave-a": "org-a", "wave:wave-b": "org-b" },
+      });
+    });
+
+    it("changes nothing when the replay teaches nothing", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify(replay);
+      store.getState().close();
+      const before = store.getState();
+
+      // The same notice again, and the older one that did not know the
+      // organization.
+      notify(replay);
+      notify(first);
+      expect(store.getState()).toBe(before);
+    });
+
+    it("changes nothing for a held notice when the replay teaches nothing", () => {
+      const store = useMCPJamLimitDialogStore;
+
+      notify(replay);
+      const before = store.getState();
+      expect(before.hasPendingLimit).toBe(true);
+
+      notify(replay);
+      notify(first);
+      expect(store.getState()).toBe(before);
+    });
+  });
+
   it("starts over at the next purchase: a run announced between two purchases is old news at the second", () => {
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
     const store = useMCPJamLimitDialogStore;
