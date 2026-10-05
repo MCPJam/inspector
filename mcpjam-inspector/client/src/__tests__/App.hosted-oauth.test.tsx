@@ -252,7 +252,10 @@ function mockUnseenOnboardingState() {
   localStorage.removeItem("mcp-first-run-server-choice-state");
 }
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: (ref: string, ...args: unknown[]) => {
     const result = mockUseQuery(ref, ...args);
@@ -1112,10 +1115,11 @@ describe("App hosted OAuth callback handling", () => {
       ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(bundleCalls.length).toBeGreaterThan(0);
-    for (const [, bundleArgs] of bundleCalls) {
-      expect(bundleArgs).toBe("skip");
-    }
+    // The bundle is a soft read (useSoftQuery), and a skipped soft read sends
+    // no request at all. So "skipped" here means the unvalidated org never
+    // reached the bundle. The tests below pin that it does subscribe once the
+    // org is valid.
+    expect(bundleCalls).toEqual([]);
   });
 
   it("skips billing queries while a project org id is still unvalidated", () => {
@@ -1142,10 +1146,11 @@ describe("App hosted OAuth callback handling", () => {
       ([name]) => name === "billing:getOrganizationBillingBundle",
     );
 
-    expect(bundleCalls.length).toBeGreaterThan(0);
-    for (const [, bundleArgs] of bundleCalls) {
-      expect(bundleArgs).toBe("skip");
-    }
+    // The bundle is a soft read (useSoftQuery), and a skipped soft read sends
+    // no request at all. So "skipped" here means the unvalidated org never
+    // reached the bundle. The tests below pin that it does subscribe once the
+    // org is valid.
+    expect(bundleCalls).toEqual([]);
   });
 
   it("skips project billing and clears stale synced selection when the active project is missing", async () => {

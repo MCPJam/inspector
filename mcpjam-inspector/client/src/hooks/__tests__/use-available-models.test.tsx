@@ -31,7 +31,10 @@ const PROJECT_VISIBLE_CONFIG = {
 
 const queryCalls: Array<{ name: string; args: unknown }> = [];
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string, args: unknown) => {
     queryCalls.push({ name, args });
