@@ -168,12 +168,18 @@ export function buildSwarmRunTargets(args: {
       snap?.hostName ??
       summary.hostId.slice(0, 8);
     const model = snap ? modelLabels.get(snap) : undefined;
+    // A target that ran the client's own model is saved under the bare client
+    // name. Name the model it RAN (recorded at launch), never the client's
+    // current default, which can change after the run.
+    const isClientName =
+      label === trimOrUndefined(snap?.hostName) ||
+      label === hostName(summary.hostId);
     return {
       key: summaryTargetKey(summary),
       hostId: summary.hostId,
       ...(summary.targetId !== undefined ? { targetId: summary.targetId } : {}),
       ...(environmentId !== undefined ? { environmentId } : {}),
-      label,
+      label: isClientName && model ? `${label} · ${model}` : label,
       ...(model ? { model } : {}),
       identity: {
         hostId: summary.hostId,
@@ -189,7 +195,9 @@ export function buildSwarmRunTargets(args: {
   }
   return disambiguateLabels(
     columns.map((column) =>
-      (counts.get(column.label) ?? 0) > 1 && column.model
+      (counts.get(column.label) ?? 0) > 1 &&
+      column.model &&
+      !column.label.endsWith(` · ${column.model}`)
         ? { ...column, label: `${column.label} · ${column.model}` }
         : column,
     ),
