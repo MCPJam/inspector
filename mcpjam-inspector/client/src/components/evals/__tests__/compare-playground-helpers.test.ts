@@ -6,6 +6,9 @@ import {
   caseModelEntriesForCompareValues,
   caseModelEntriesUnchanged,
   mergeAdvancedConfigWithOverride,
+  parseModelValue,
+  quickRunKey,
+  quickRunModelValue,
   resolveIterationModelValue,
   resolveInitialCompareModelValues,
   resolveLatestCompareRunId,
@@ -1043,5 +1046,35 @@ describe("case-editor compare: models[] by selection", () => {
       { provider: "openai", model: "gpt-5" },
     ]);
     expect(caseModelEntriesUnchanged(current, next.slice(0, 2))).toBe(true);
+  });
+});
+
+describe("quick-run pick keys", () => {
+  const selection = (reasoningEffort?: string) =>
+    ({
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+      ...(reasoningEffort ? { settings: { reasoningEffort } } : {}),
+    }) as never;
+  const value = "anthropic/anthropic/claude-sonnet-4.5";
+
+  it("keeps a plain or default pick's model value as its key", () => {
+    expect(quickRunKey(value)).toBe(value);
+    expect(quickRunKey(value, selection())).toBe(value);
+  });
+
+  it("gives Low, Medium and High of one model three keys that parse back", () => {
+    const keys = ["low", "medium", "high"].map((effort) =>
+      quickRunKey(value, selection(effort)),
+    );
+    expect(new Set(keys).size).toBe(3);
+    for (const key of keys) {
+      expect(quickRunModelValue(key)).toBe(value);
+      expect(parseModelValue(key)).toEqual({
+        provider: "anthropic",
+        model: "anthropic/claude-sonnet-4.5",
+      });
+    }
   });
 });
