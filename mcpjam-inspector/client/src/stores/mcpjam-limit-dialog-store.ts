@@ -158,6 +158,30 @@ const latchFor = (
   return { outOfCreditsHit: false, outOfCreditsOrganizationId: null };
 };
 
+// A dialog already on screen follows newer evidence too, in place and never
+// reopened: a wave's first run may report a shortfall (the dialog says credits
+// remain and suggests a cheaper request) and a later one real exhaustion. A
+// dialog that has an organization keeps it, one that had none learns it, and
+// one for another organization is left alone, as its latch is.
+const refreshOpenDialog = (
+  state: Pick<MCPJamLimitDialogState, "isOpen" | "organizationId">,
+  input: MCPJamLimitNotifyInput,
+) => {
+  if (!state.isOpen) return {};
+  if (
+    input.organizationId &&
+    state.organizationId &&
+    input.organizationId !== state.organizationId
+  ) {
+    return {};
+  }
+  return {
+    organizationId: state.organizationId ?? input.organizationId ?? null,
+    period: input.period ?? null,
+    shortfall: input.shortfall ?? null,
+  };
+};
+
 export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
   (set) => ({
     notifiedKeys: new Set<string>(),
@@ -216,7 +240,8 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           }
           // A notice that brings a new key still carries new evidence: a
           // wave's first run may report a shortfall and a later one real
-          // exhaustion, so the exhaustion latch follows it.
+          // exhaustion, so the exhaustion latch follows it, and so does a
+          // dialog that is already open.
           const latch = latchFor(state, input, true);
           // A notice held for auth keeps the NEWEST evidence, whichever it is:
           // an older exhaustion would re-set at sign-in a latch that a later
@@ -240,6 +265,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
             waveOrganizations,
             ...latch,
             ...pending,
+            ...refreshOpenDialog(state, input),
           };
         }
         // Not suppressed, so this notice speaks for its waves again: one that

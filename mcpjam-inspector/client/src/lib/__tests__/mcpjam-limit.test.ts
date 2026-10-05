@@ -25,6 +25,8 @@ beforeEach(() => {
     isOpen: false,
     intent: null,
     organizationId: null,
+    surface: null,
+    period: null,
     shortfall: null,
     pendingInput: null,
   });
@@ -654,6 +656,150 @@ describe("one dialog per swarm wave", () => {
     notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
     expect(store.getState().isOpen).toBe(false);
     expect(store.getState().outOfCreditsHit).toBe(true);
+  });
+
+  // The dialog on screen opened on the first run's evidence. A sibling that
+  // reports something else has to be heard, or the modal keeps telling the user
+  // that credits remain and a cheaper request would fit after the wallet is
+  // empty.
+  describe("a dialog that is already open", () => {
+    const shortfall = (keys: {
+      runId: string;
+      swarmRunGroupId: string;
+      organizationId?: string;
+    }) =>
+      notifyMCPJamLimitError({
+        ...keys,
+        message: INSUFFICIENT_BODY,
+        surface: "swarm",
+      });
+
+    it("follows a sibling's real exhaustion after it opened on a shortfall", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        period: null,
+        shortfall: { creditsRemaining: 23, creditsRequired: 30 },
+        outOfCreditsHit: false,
+      });
+
+      notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        period: "daily",
+        shortfall: null,
+        outOfCreditsHit: true,
+      });
+    });
+
+    it("follows a sibling's shortfall after it opened on exhaustion", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      notify({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        period: "daily",
+        shortfall: null,
+        outOfCreditsHit: true,
+      });
+
+      shortfall({ runId: "run-b", swarmRunGroupId: "wave-1" });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        period: null,
+        shortfall: { creditsRemaining: 23, creditsRequired: 30 },
+        outOfCreditsHit: false,
+      });
+    });
+
+    it("stays closed when the user closed it before the sibling reported", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      store.getState().close();
+
+      notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+      expect(store.getState()).toMatchObject({
+        isOpen: false,
+        period: null,
+        shortfall: null,
+        outOfCreditsHit: true,
+      });
+    });
+
+    it("keeps what a sibling reported when the first run's notice is replayed", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+      const first = { runId: "run-a", swarmRunGroupId: "wave-1" };
+
+      shortfall(first);
+      notify({ runId: "run-b", swarmRunGroupId: "wave-1" });
+      const before = store.getState();
+
+      shortfall(first);
+      expect(store.getState()).toBe(before);
+      expect(store.getState().shortfall).toBeNull();
+    });
+
+    it("keeps its organization when a sibling names none and learns one it lacked", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      shortfall({ runId: "run-a", swarmRunGroupId: "wave-1" });
+      expect(store.getState().organizationId).toBeNull();
+
+      notify({
+        runId: "run-b",
+        swarmRunGroupId: "wave-1",
+        organizationId: "org-a",
+      });
+      expect(store.getState().organizationId).toBe("org-a");
+
+      notify({ runId: "run-c", swarmRunGroupId: "wave-1" });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        organizationId: "org-a",
+        period: "daily",
+      });
+    });
+
+    it("leaves a dialog for another organization alone", () => {
+      useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+      const store = useMCPJamLimitDialogStore;
+
+      // Organization B's wave was announced and closed. Organization A's wave
+      // then opens the dialog.
+      notify({
+        runId: "run-b1",
+        swarmRunGroupId: "wave-b",
+        organizationId: "org-b",
+      });
+      store.getState().close();
+      notify({
+        runId: "run-a1",
+        swarmRunGroupId: "wave-a",
+        organizationId: "org-a",
+      });
+
+      // A later run of B's wave reports a shortfall for B's wallet, which says
+      // nothing about the one A's dialog is showing.
+      shortfall({
+        runId: "run-b2",
+        swarmRunGroupId: "wave-b",
+        organizationId: "org-b",
+      });
+      expect(store.getState()).toMatchObject({
+        isOpen: true,
+        organizationId: "org-a",
+        period: "daily",
+        shortfall: null,
+      });
+    });
   });
 
   it("keeps a later exhaustion when auth was still loading", () => {
