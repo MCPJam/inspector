@@ -353,8 +353,12 @@ Add files to the conversation in any of these ways:
 
 Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other common formats. Invalid file types show an error message below the input.
 
-**System Prompt & Temperature**
+**System Prompt, Temperature & Reasoning Effort**
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
+
+When the selected model supports reasoning effort, a **Reasoning effort** chip appears beside the model picker. The chip opens a slider popover with a Faster ↔ Smarter track and one stop per supported level. Picking **Default** sends no effort and lets the provider decide. The short level name (for example, **Med**) is shown on the chip. Your choice is remembered per model and restored when you reopen a chat.
+
+While a reasoning effort is set, the temperature slider is disabled — an effort replaces the temperature for that turn. The chip is hidden when the model's capability is unknown and is never offered for a harness turn (Claude Code, Codex).
 
 **Tool Approval**
 When on, pauses the model before tool calls so you can approve or deny each one. Each approval answers one call and is valid for 15 minutes; answered later, the call does not run, the tool card says the approval expired, and the model can ask again.
