@@ -155,13 +155,17 @@ const ENV_2 = {
   revision: 1,
 };
 
-function renderStep(
+function renderStep(...args: Parameters<typeof stepElement>) {
+  return render(stepElement(...args));
+}
+
+function stepElement(
   columns: Array<{ key: string; label: string }> = [
     { key: "environment:env-1", label: "Prod-like" },
   ],
   environments: Array<typeof ENV_1> = [ENV_1],
 ) {
-  return render(
+  return (
     <div className="h-[40rem]">
       <NewSwarmRunningStep
         organizationId="org-1"
@@ -181,7 +185,7 @@ function renderStep(
         onLeave={vi.fn()}
         onOpenSession={vi.fn()}
       />
-    </div>,
+    </div>
   );
 }
 
@@ -206,13 +210,16 @@ async function openTheSession() {
 }
 
 describe("NewSwarmRunningStep — provider rate-limit card", () => {
-  it("targets the swarm organization when an attempt automatically opens recovery", () => {
+  it("targets the swarm organization when a run watched live opens recovery", () => {
     useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    runFixture.status = "running";
+    const view = renderStep();
+
+    runFixture.status = "completed";
     attempt.errorCode = "user_rate_limit";
     attempt.errorMessage = "Credits exhausted";
-
-    renderStep();
+    view.rerender(stepElement());
 
     expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
       isOpen: true,
@@ -222,6 +229,22 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       surface: "swarm",
     });
     useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
+  });
+
+  it("does not open recovery for a run that had already settled when shown", () => {
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage = "Credits exhausted";
+
+    renderStep();
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
   });
 
   beforeEach(() => {
@@ -235,6 +258,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     attempt.status = "rate_limited";
     attempt.errorCode = null;
     attempt.errorMessage = null;
+    runFixture.status = "completed";
     runFixture.summary = { total: 1, succeeded: 0, failed: 0, rateLimited: 1 };
     streamState.cellStatus = { "environment:env-1:0": "rate_limited" };
     streamState.sessions = {

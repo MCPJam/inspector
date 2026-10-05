@@ -356,7 +356,12 @@ function RunLiveBridge({
     { journeyRunId: runId } as any,
     { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 32) },
   );
+  // The run tab of a settled wave mounts this bridge too; its stored credit
+  // refusals are history and must not reopen the dialog on every visit.
+  const observedLive = useRef(false);
   useEffect(() => {
+    if (run?.status === "running") observedLive.current = true;
+    if (!observedLive.current) return;
     for (const attempt of run?.attempts ?? []) {
       notifyMCPJamLimitError({
         runId,
@@ -366,7 +371,7 @@ function RunLiveBridge({
         surface: "swarm",
       });
     }
-  }, [runId, organizationId, run?.attempts]);
+  }, [runId, organizationId, run?.status, run?.attempts]);
   const runStatus = run?.status ?? "running";
   // Convex supplies the whole matrix's progress over its shared connection.
   // Only the selected trace needs SSE: one stream per row exhausts the
