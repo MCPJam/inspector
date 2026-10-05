@@ -586,6 +586,7 @@ A dash (`—`) means **no cost was observed**, never that the trial was free:
 | Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
 | A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
 | No token usage reported | Nothing to price. |
+| Infrastructure failure (see below) | The trial's eval fee is refunded — MCPJam's own infrastructure failed it, so no measurement was made. |
 
 A cost your own SDK runner reported is shown but labelled **runner** — it is
 real, but MCPJam neither computed nor verified it.
