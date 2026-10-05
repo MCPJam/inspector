@@ -120,6 +120,9 @@ jobs:
       - name: Build shared contracts and adapter fixtures
         run: npm run pretest -w @mcpjam/inspector
 
+      - name: Verify source conformance setup
+        run: node --test mcpjam-inspector/scripts/__tests__/prepare-source-harness-conformance.test.mjs
+
       - name: Run the local harness suite
         working-directory: mcpjam-inspector
         run: npx vitest run server/utils/harness/local
@@ -206,6 +209,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/conformance/runtime"
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
+          node scripts/prepare-source-harness-conformance.mjs \
+            "$RUNNER_TEMP/conformance" claude-code "${{ matrix.platform_key }}" \
+            "${{ inputs.pack_version || 'conformance' }}"
 
       - name: Build Inspector adapter dependencies
         run: |
@@ -421,6 +427,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/conformance/runtime"
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
+          node scripts/prepare-source-harness-conformance.mjs \
+            "$RUNNER_TEMP/conformance" claude-code "win32-x64" \
+            "${{ inputs.pack_version || 'conformance' }}"
 
       - name: Build Inspector adapter dependencies
         run: |
@@ -598,6 +607,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/conformance/runtime"
           cp -R "$RUNNER_TEMP/conformance/runtime-src/codex" \
             "$RUNNER_TEMP/conformance/runtime/codex"
+          node scripts/prepare-source-harness-conformance.mjs \
+            "$RUNNER_TEMP/conformance" codex "${{ matrix.platform_key }}" \
+            "${{ inputs.pack_version || 'conformance' }}"
 
       - name: Build Inspector adapter dependencies
         run: |
