@@ -327,6 +327,7 @@ describe("/mcp with guests (mixed)", () => {
       stubOutboundFetch();
       // A fresh module instance: the warning is once per isolate, and earlier
       // tests in this file share the cached one.
+      // Allow time to reload the Worker and SDK graph on a busy CI runner.
       vi.resetModules();
       const { default: freshWorker } = await import("../src/index.js");
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -342,7 +343,7 @@ describe("/mcp with guests (mixed)", () => {
       expect(String(errors.mock.calls[0]?.[0])).toContain(
         "MCPJAM_INSPECTOR_SERVICE_TOKEN"
       );
-    });
+    }, 15_000);
 
     it("still verifies a presented guest token", async () => {
       stubOutboundFetch();

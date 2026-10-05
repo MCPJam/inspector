@@ -288,13 +288,14 @@ describe("EffortControl", () => {
     });
     const trigger = screen.getByTestId("effort-control-trigger");
     expect(trigger).toBeDisabled();
-    await userEvent.click(trigger);
-    expect(screen.queryByRole("slider")).toBeNull();
-    expect(onChange).not.toHaveBeenCalled();
+    // Check keyboard focus before the click, which closes Radix's tooltip.
     const wrapper = screen.getByTestId("effort-control-disabled");
     act(() => wrapper.focus());
     expect(
       (await screen.findAllByText("Pick a saved model first")).length,
     ).toBeGreaterThan(0);
+    await userEvent.click(trigger);
+    expect(screen.queryByRole("slider")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
