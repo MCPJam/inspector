@@ -133,16 +133,14 @@ async function loadCodexAppServerRecipe() {
   return { bootstrap: getCodexAppServerBootstrap() };
 }
 
-function readPins() {
+function readToolchainNode() {
   const pins = JSON.parse(
     readFileSync(join(here, "local-harness-toolchain.json"), "utf8"),
   );
-  for (const name of ["node", "pnpm"]) {
-    if (!/^\d+\.\d+\.\d+$/.test(pins[name] ?? "")) {
-      throw new Error(`local-harness-toolchain.json has no valid ${name} pin`);
-    }
+  if (!/^\d+\.\d+\.\d+$/.test(pins.node ?? "")) {
+    throw new Error("local-harness-toolchain.json has no valid node pin");
   }
-  return { node: pins.node, pnpm: pins.pnpm };
+  return pins.node;
 }
 
 /**
@@ -154,19 +152,20 @@ export async function resolveHarnessBake() {
   const { HARNESS_PINNED_VERSIONS } = await tsModule(
     "../shared/harness-model-support.ts",
   );
-  const pins = readPins();
-  // The template and the inspector's own pnpm fallback must agree with the
-  // toolchain file; a drift here would bake one pnpm and fall back to another.
-  if (
-    pins.node !== bake.HARNESS_TEMPLATE_NODE_VERSION ||
-    pins.pnpm !== bake.HARNESS_TEMPLATE_PNPM_VERSION
-  ) {
+  // Node is the toolchain file's; pnpm is the template's own pin (see
+  // `HARNESS_TEMPLATE_PNPM_VERSION`), which the inspector's pnpm fallback also
+  // installs, so the bake and the fallback can never disagree.
+  const toolchainNode = readToolchainNode();
+  if (toolchainNode !== bake.HARNESS_TEMPLATE_NODE_VERSION) {
     throw new Error(
-      `harness-bake.ts pins node ${bake.HARNESS_TEMPLATE_NODE_VERSION} / pnpm ` +
-        `${bake.HARNESS_TEMPLATE_PNPM_VERSION}, but local-harness-toolchain.json ` +
-        `pins ${pins.node} / ${pins.pnpm}`,
+      `harness-bake.ts pins node ${bake.HARNESS_TEMPLATE_NODE_VERSION}, but ` +
+        `local-harness-toolchain.json pins ${toolchainNode}`,
     );
   }
+  const pins = {
+    node: bake.HARNESS_TEMPLATE_NODE_VERSION,
+    pnpm: bake.HARNESS_TEMPLATE_PNPM_VERSION,
+  };
 
   const { createClaudeCode } = await import("@ai-sdk/harness-claude-code");
   const vendorClaudeBootstrap = await createClaudeCode().getBootstrap();

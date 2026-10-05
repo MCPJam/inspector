@@ -17,8 +17,8 @@
 # The build context is the bake context's PARENT: it must hold `harness-bake/`.
 #
 # `harness-bake.test.ts` asserts the Node and pnpm pins below equal
-# `harness-bake.ts` (and so `scripts/local-harness-toolchain.json`), and that
-# the base stays pinned by digest. `BASE_IMAGE` is overridable only so a
+# `harness-bake.ts` (whose Node is `scripts/local-harness-toolchain.json`'s),
+# and that the base stays pinned by digest. `BASE_IMAGE` is overridable only so a
 # developer behind a TLS-intercepting proxy can layer a CA onto the SAME digest.
 ARG BASE_IMAGE=debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 FROM ${BASE_IMAGE}
@@ -46,7 +46,7 @@ RUN set -eu; \
     test "$(node --version)" = "v24.20.0"
 
 # pnpm by exact version, into /usr/local/bin so every shell finds it.
-RUN npm install -g pnpm@10.18.1 && test "$(pnpm --version)" = "10.18.1"
+RUN npm install -g pnpm@10.34.6 && test "$(pnpm --version)" = "10.34.6"
 
 # The runtime user. E2B provisions `user` itself; a plain Docker build has to.
 RUN id -u user >/dev/null 2>&1 || useradd --create-home --shell /bin/bash --uid 1000 user

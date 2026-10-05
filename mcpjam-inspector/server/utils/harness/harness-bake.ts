@@ -64,13 +64,22 @@ export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
 export const HARNESS_BAKED_MARKER_AUTHOR = "mcpjam-harness-bake";
 
 /**
- * The toolchain the template pins and the bake is verified against. Equal to
- * `scripts/local-harness-toolchain.json` (asserted in `harness-bake.test.ts`),
- * which is the toolchain the local packs and the conformance suite already
- * run on — one set of versions the recipes are known to install with.
+ * The toolchain the template pins and the bake is verified against.
+ *
+ * Node equals `scripts/local-harness-toolchain.json` (asserted in
+ * `harness-bake.test.ts`), the toolchain the local packs and the conformance
+ * suite already run on.
+ *
+ * pnpm is the template's OWN pin, deliberately ahead of the local packs'
+ * 10.18.1: that release vendors node-tar 7.5.1 (CVE-2026-59873, gzip-bomb
+ * DoS), and the template ships pnpm itself into every sandbox, where the
+ * backend's image scan blocks it. The local packs only run pnpm at pack-build
+ * time, and moving their pin would republish every pack. Same 10.x line, same
+ * lockfile format; the bake installs every recipe frozen with this version
+ * and fails the image build if one does not.
  */
 export const HARNESS_TEMPLATE_NODE_VERSION = "24.20.0";
-export const HARNESS_TEMPLATE_PNPM_VERSION = "10.18.1";
+export const HARNESS_TEMPLATE_PNPM_VERSION = "10.34.6";
 
 /**
  * The idempotent pnpm guard a provider runs before the framework's bootstrap.

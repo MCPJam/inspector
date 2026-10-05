@@ -31,7 +31,7 @@ const bakedMarker = JSON.stringify({
   harnessId: "claude-code",
   identity: ID,
   bakeId: "abc123def456",
-  versions: { "claude-code": "2.1.245", node: "24.20.0", pnpm: "10.18.1" },
+  versions: { "claude-code": "2.1.245", node: "24.20.0", pnpm: "10.34.6" },
 });
 
 function fakeProvider(opts: { cwd?: string; files: Record<string, string> }) {
@@ -105,7 +105,7 @@ describe("observeHarnessBootstrap", () => {
       bootstrapDir: ".harness-bootstrap/claude-code",
       identity: ID,
       bakeId: "abc123def456",
-      bakedVersions: "claude-code@2.1.245,node@24.20.0,pnpm@10.18.1",
+      bakedVersions: "claude-code@2.1.245,node@24.20.0,pnpm@10.34.6",
     });
     // A hit costs nothing extra: no manifest probe.
     expect(fake.reads).not.toContain(HARNESS_BAKE_MANIFEST_PATH);

@@ -152,7 +152,7 @@ describe("harnessRecipeIdentity", () => {
 });
 
 describe("the toolchain pins", () => {
-  it("are the toolchain the local packs and conformance run on", () => {
+  it("share Node with the local packs and conformance; pnpm is the template's own", () => {
     const toolchain = JSON.parse(
       readFileSync(
         join(PACKAGE_ROOT, "scripts/local-harness-toolchain.json"),
@@ -160,7 +160,15 @@ describe("the toolchain pins", () => {
       ),
     );
     expect(HARNESS_TEMPLATE_NODE_VERSION).toBe(toolchain.node);
-    expect(HARNESS_TEMPLATE_PNPM_VERSION).toBe(toolchain.pnpm);
+    // Same pnpm line as the packs (same lockfile format), never older: the
+    // packs' 10.18.1 vendors a node-tar the template scan blocks.
+    const [major] = HARNESS_TEMPLATE_PNPM_VERSION.split(".");
+    expect(major).toBe(toolchain.pnpm.split(".")[0]);
+    const order = (v: string) =>
+      v.split(".").reduce((acc, part) => acc * 1000 + Number(part), 0);
+    expect(order(HARNESS_TEMPLATE_PNPM_VERSION)).toBeGreaterThanOrEqual(
+      order(toolchain.pnpm),
+    );
   });
 
   it("pin the providers' pnpm fallback too", () => {
