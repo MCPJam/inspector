@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -714,7 +714,7 @@ export function useEvalHandlers({
   );
 
   // Rerun handler
-  const handleRerun = useCallback(
+  const runSuiteRerun = useCallback(
     async (
       suite: EvalSuite,
       options?: {
@@ -1225,6 +1225,27 @@ export function useEvalHandlers({
       evalsNavigationContext,
       openEvalIterationWall,
     ],
+  );
+
+  // `rerunningSuiteId` is state set only after the server readiness awaits,
+  // so a second click while servers connect would pass its check and launch
+  // twice. This lock is taken synchronously and released on every exit.
+  const rerunInFlightRef = useRef(false);
+  const handleRerun = useCallback(
+    async (...args: Parameters<typeof runSuiteRerun>) => {
+      if (rerunInFlightRef.current) {
+        if (args[1]?.stayOnPage)
+          throw new Error("Another suite run is already starting.");
+        return;
+      }
+      rerunInFlightRef.current = true;
+      try {
+        return await runSuiteRerun(...args);
+      } finally {
+        rerunInFlightRef.current = false;
+      }
+    },
+    [runSuiteRerun],
   );
 
   const handleRunTestCase = useCallback(

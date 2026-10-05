@@ -349,6 +349,40 @@ describe("useEvalHandlers", () => {
           JSON.parse(runRequests()[0]![1]!.body as string).environmentId,
         ).toBe("env-a");
       });
+
+      it("launches once when a second rerun starts while servers connect", async () => {
+        const connect = createDeferred<{
+          readyServerNames: string[];
+          missingServerNames: string[];
+          failedServerNames: string[];
+          reauthServerNames: string[];
+        }>();
+        const ensureServersReady = vi.fn().mockReturnValue(connect.promise);
+        const { result } = renderHook(() =>
+          useEvalHandlers({
+            ...defaultProps,
+            connectedServerNames: new Set(),
+            ensureServersReady,
+          }),
+        );
+        let first!: Promise<unknown>;
+        let second!: Promise<unknown>;
+        act(() => {
+          first = result.current.handleRerun(envSuite);
+          second = result.current.handleRerun(envSuite);
+        });
+        await act(async () => {
+          connect.resolve({
+            readyServerNames: ["billing"],
+            missingServerNames: [],
+            failedServerNames: [],
+            reauthServerNames: [],
+          });
+          await Promise.all([first, second]);
+        });
+        expect(ensureServersReady).toHaveBeenCalledOnce();
+        expect(runRequests()).toHaveLength(1);
+      });
     });
 
     it("still refuses a model-less case on a non-environment suite whose default model is not in the picker", async () => {
