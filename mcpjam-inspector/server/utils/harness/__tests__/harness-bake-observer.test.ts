@@ -190,10 +190,10 @@ describe("observeHarnessBootstrap", () => {
     expect(logged.warn).not.toHaveBeenCalled();
   });
 
-  it("classifies a recipe the template does not bake (Codex exec, Cursor)", async () => {
+  it("classifies a recipe the template does not bake (e.g. Cursor)", async () => {
     const fake = fakeProvider({ files: {} });
     const observed = observeHarnessBootstrap(fake.provider);
-    await frameworkBootstrap(observed, ".harness-bootstrap/codex");
+    await frameworkBootstrap(observed, ".harness-bootstrap/cursor");
     expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "installed",
       expectation: "unbaked-recipe",

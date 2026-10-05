@@ -20,8 +20,8 @@
  *
  * ── Why a closed grammar is enough ────────────────────────────────────────
  * The grammar is small and finite because the framework and adapters are
- * pinned exactly (`@ai-sdk/harness@1.0.96`,
- * `@ai-sdk/harness-claude-code@1.0.100`, `@ai-sdk/harness-codex@1.0.98`) and
+ * pinned exactly (`@ai-sdk/harness@1.0.117`,
+ * `@ai-sdk/harness-claude-code@1.0.121`, `@ai-sdk/harness-codex@1.0.119`) and
  * every command they emit is a literal in their own source, not model- or
  * repo-derived text. The shapes are enumerated in `ADAPTER_COMMAND_SHAPES`
  * below. An adapter upgrade that changes one of them fails CLOSED — the

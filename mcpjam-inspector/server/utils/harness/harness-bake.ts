@@ -45,8 +45,8 @@ export const HARNESS_BAKE_MANIFEST_PATH = `${HARNESS_BAKE_HOME}/.harness-bootstr
 
 /**
  * Bootstrap directories (relative to the working directory) the template
- * bakes: the PATCHED Claude Code recipe and the Codex app-server recipe. Codex
- * on the exec transport and Cursor are not baked and always install.
+ * bakes: the PATCHED Claude Code recipe and the Codex app-server recipe.
+ * Cursor is not baked and always installs.
  */
 export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
   ".harness-bootstrap/claude-code",
