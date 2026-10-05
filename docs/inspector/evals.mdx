@@ -130,6 +130,15 @@ Click the **Model**, **Trials**, or **Host** chip above the form to open the **N
 
 Click **Suite settings** in the sheet to configure hosts and other suite-level defaults.
 
+**Reasoning effort picks (environment suites only)**
+
+On environment suites, the model menu in the sheet offers reasoning effort options — **Low**, **Medium**, and **High** — for models that support them. Each effort you pick runs as its own separate run, labelled with the effort level (for example, "· Low"). This lets you run the same model at several efforts from a single test case without changing the suite's configuration.
+
+- A plain pick (no effort chosen) reuses the suite environment's saved effort, if any, and the effort menu starts there.
+- Picking an effort creates or reuses the environment at that effort.
+- Effort picks reset when you reopen the test case.
+- Suites without a server group do not show effort options, because their runs cannot carry an effort.
+
 ## Case attachments
 
 <Note>
