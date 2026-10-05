@@ -3652,6 +3652,9 @@ export function useChatSession(
     addToolOutput,
   } = useChat({
     id: chatSessionId,
+    // Buffered stream chunks can otherwise publish enough synchronous store
+    // updates to exhaust React's update-depth limit before it drains effects.
+    experimental_throttle: 50,
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,
