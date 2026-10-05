@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ALL_OPERATIONS,
+  expandComposeModelChoices,
   getPluginVersionOperation,
   listProjectPluginsOperation,
   listProjectServersOperation,
@@ -1394,6 +1395,36 @@ describe("the worker's declared launcher", () => {
     // A missing user-agent leaves the launcher UNNAMED, never guessed: the
     // kind is what the worker knows for itself.
     expect(JSON.parse(launch![RUN_LAUNCH_HEADER]!)).toEqual({ kind: "mcp" });
+  });
+
+  it("accepts several selections of one model as per-target compose cells", () => {
+    const effort = (reasoningEffort: "low" | "high") => ({
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "hosted",
+      settings: { reasoningEffort },
+      fallback: { provider: "none", model: "none" },
+    });
+    const schema = runEvalSuiteOperation.inputSchema as unknown as {
+      safeParse(value: unknown): {
+        success: boolean;
+        data?: { compose?: Parameters<typeof expandComposeModelChoices>[0] };
+      };
+    };
+    const parsed = schema.safeParse({
+      project: "p1",
+      suite: "s1",
+      compose: {
+        host: "Claude Code",
+        serverGroup: "group-1",
+        modelSelections: [effort("low"), effort("high")],
+      },
+    });
+    expect(parsed.success).toBe(true);
+    expect(
+      expandComposeModelChoices(parsed.data!.compose!).map(
+        (choice) => choice.selection?.settings?.reasoningEffort
+      )
+    ).toEqual(["low", "high"]);
   });
 
   it("is not a field an agent can set through the tool's own input", async () => {

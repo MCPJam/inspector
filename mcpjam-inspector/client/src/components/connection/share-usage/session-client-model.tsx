@@ -18,6 +18,8 @@ import {
 } from "@/shared/types";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { compactModelIdTail } from "@/lib/environment-label";
+import { comparisonKey, type RequestedModelSelection } from "@mcpjam/sdk/browser";
+import { targetKeySuffix } from "@/lib/eval-target-key";
 import { findHostStyle } from "@/lib/client-styles";
 import type { HostStyleId } from "@/lib/client-styles";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
@@ -110,6 +112,39 @@ export function modelLabelForSession(
 }
 
 /**
+ * A finished session's model as a reader sees it: the catalog name plus the
+ * effort its LAST turn ran at ("Claude Haiku 4.5 · High"), from the selection
+ * the session recorded. A session that recorded none (older ones) reads as its
+ * model alone. The name comes from `modelId` first: an own-key session stores
+ * its row id there (`gpt-5`) beside the selection's canonical id.
+ */
+export function sessionModelLabel(
+  session: {
+    modelId?: string | null;
+    modelSelection?: RequestedModelSelection | null;
+  },
+  hostedCatalog: readonly ModelDefinition[] = [],
+): string | null {
+  const model = modelLabelForSession(
+    session.modelId ?? session.modelSelection?.modelId,
+    hostedCatalog,
+  );
+  return model ? `${model}${sessionEffortSuffix(session.modelSelection)}` : null;
+}
+
+/**
+ * `" · High"` for a session's recorded selection that carries an effort, else
+ * `""` — the same label every other model surface uses.
+ */
+export function sessionEffortSuffix(
+  selection: RequestedModelSelection | null | undefined,
+): string {
+  if (!selection) return "";
+  const key = comparisonKey(selection);
+  return targetKeySuffix(key, [key]);
+}
+
+/**
  * The single string both products print. `Client · Model` when both are known;
  * whichever one is known otherwise. Never a placeholder — an invented "Unknown
  * model" would be a claim about the session, and the point of this label is
@@ -134,10 +169,13 @@ export function sessionClientModelLabel(
 export function SessionClientModelChip({
   sessionId,
   modelId,
+  modelSelection,
   className,
 }: {
   sessionId: string;
   modelId?: string | null;
+  /** The session's last-turn selection; its effort is shown when present. */
+  modelSelection?: RequestedModelSelection | null;
   className?: string;
 }) {
   const { config } = useSessionHistoricalHostConfig({ sessionId });
@@ -148,7 +186,14 @@ export function SessionClientModelChip({
     hostName: config?.currentHostName,
   });
   const resolvedModelId = modelId ?? config?.modelId ?? null;
-  const model = modelLabelForSession(resolvedModelId, hostedCatalog);
+  // The session row's own selection, else the pin's (same fallback as the id).
+  const model = sessionModelLabel(
+    {
+      modelId: resolvedModelId,
+      modelSelection: modelId ? modelSelection : config?.modelSelection,
+    },
+    hostedCatalog,
+  );
   const label = sessionClientModelLabel(client, model);
   if (!label) return null;
 

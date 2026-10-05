@@ -834,8 +834,10 @@ export interface MCPJamHandlerOptions {
   temperature?: number;
   /**
    * The reasoning effort this turn asked for. Read by `runHarnessTurn`, which
-   * refuses an effort its adapter has not verified (refuse, never drop); the
-   * hosted `/stream` path takes its effort from `extraBodyFields` today.
+   * refuses an effort its adapter has not verified (refuse, never drop). On the
+   * hosted rails (`/stream`, `/stream/org`) it is sent as the top-level
+   * `reasoningEffort` body field, which the backend prefers over a forwarded
+   * selection's saved effort.
    */
   reasoningEffort?: ModelReasoningEffort;
   tools: ToolSet;
@@ -4739,7 +4741,7 @@ export async function runChatEngineLoop(
     onStreamWriterReady,
     endpointPath,
     extraHeaders,
-    extraBodyFields,
+    extraBodyFields: callerExtraBodyFields,
     chatSessionId,
     sourceType,
     clientIp,
@@ -4761,6 +4763,13 @@ export async function runChatEngineLoop(
     progressivePlan,
     discoveryState,
   } = options;
+  // The turn's effort rides every per-step hosted body as the top-level field
+  // (which the backend prefers over a forwarded selection's). Set last so a
+  // caller-supplied extra field cannot contradict the typed one.
+  const extraBodyFields: Record<string, unknown> | undefined =
+    options.reasoningEffort !== undefined
+      ? { ...(callerExtraBodyFields ?? {}), reasoningEffort: options.reasoningEffort }
+      : callerExtraBodyFields;
   // One typed route.operation.failed per turn, whatever combination of the
   // three failure sites fires; the system fallback covers eval/swarm runs
   // that have no request context. Later failures in the same turn still get

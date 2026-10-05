@@ -3,6 +3,7 @@ import {
   buildSwarmRunTargets,
   buildUnrunJourneyTargets,
   findTargetCellForChatSessionId,
+  snapshotTargetModelLabels,
   summaryTargetKey,
 } from "../swarm-targets";
 
@@ -64,6 +65,46 @@ describe("buildSwarmRunTargets", () => {
     expect(targets.map((t) => t.key)).toEqual(["hostA", "hostB"]);
     expect(targets[0]!.label).toBe("Alpha");
     expect(targets[0]!.identity).toEqual({ hostId: "hostA" });
+  });
+});
+
+describe("swarm target models with effort", () => {
+  const hosted = (effort?: "low" | "high") => ({
+    modelId: "openai/gpt-5.4-nano",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+  });
+  const snapshotHosts = [
+    { hostId: "h1", hostName: "MCPJam", targetId: "t-low", modelId: "openai/gpt-5.4-nano", resolvedSelection: hosted("low") },
+    { hostId: "h1", hostName: "MCPJam", targetId: "t-high", modelId: "openai/gpt-5.4-nano", resolvedSelection: hosted("high") },
+  ];
+
+  it("labels each target's model with its effort", () => {
+    const labels = snapshotTargetModelLabels(snapshotHosts);
+    expect(snapshotHosts.map((host) => labels.get(host))).toEqual([
+      "gpt-5.4-nano · Low",
+      "gpt-5.4-nano · High",
+    ]);
+  });
+
+  it("tells two targets of one client apart by model, not #n", () => {
+    const columns = buildSwarmRunTargets({
+      hostSummaries: [
+        { hostId: "h1", targetId: "t-low" },
+        { hostId: "h1", targetId: "t-high" },
+      ],
+      snapshotHosts,
+      hostName: () => "MCPJam",
+    });
+    expect(columns.map((column) => column.label)).toEqual([
+      "MCPJam · gpt-5.4-nano · Low",
+      "MCPJam · gpt-5.4-nano · High",
+    ]);
+    expect(columns.map((column) => column.model)).toEqual([
+      "gpt-5.4-nano · Low",
+      "gpt-5.4-nano · High",
+    ]);
   });
 });
 

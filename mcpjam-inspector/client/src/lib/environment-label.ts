@@ -1,4 +1,13 @@
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import {
+  selectionDistinguishers,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
+import {
+  environmentModelTarget,
+  targetIdentitySelection,
+  type ModelTarget,
+} from "@/lib/model-target";
 
 /**
  * THE display vocabulary for project environments.
@@ -41,6 +50,7 @@ export type EnvironmentLabelRow = Pick<
       | "pluginVersionIds"
       | "computerEnvironmentId"
       | "modelId"
+      | "modelSelection"
     >
   >;
 
@@ -62,6 +72,13 @@ export interface EnvironmentLabelContext {
   computersEnabled?: boolean;
   /** Catalog display name for a stored model override. Omit when unused. */
   modelName?: (modelId: string) => string | undefined;
+  /**
+   * The model targets this row's label must tell it apart from (other rows
+   * on its client). A row whose model has siblings at another effort (or
+   * source, temperature) gets only what differs: "· High" vs "· Low". Omit
+   * and the label carries no distinguisher.
+   */
+  modelSiblings?: (environment: EnvironmentLabelRow) => readonly ModelTarget[];
 }
 
 /** Shown when a row's host has been deleted out from under it. */
@@ -133,9 +150,66 @@ export function environmentLabel(
     trimOrUndefined(ctx.hostName(environment.hostId)) ?? UNKNOWN_HOST_LABEL;
   const modelId = trimOrUndefined(environment.modelId);
   if (!modelId) return host;
+  const target = environmentModelTarget({
+    modelId,
+    modelSelection: environment.modelSelection,
+  })!;
+  return `${host} · ${modelTargetLabel(
+    target,
+    ctx.modelSiblings?.(environment) ?? [],
+    ctx.modelName,
+  )}`;
+}
+
+/**
+ * A model target's label: the model's display name (or id tail) plus only
+ * what tells it apart from its siblings of the same model
+ * (`selectionDistinguishers`): "Sonnet 4.5 · High" beside "Sonnet 4.5 · Low".
+ * A lone model, or one whose siblings are other models, has no suffix.
+ */
+export function modelTargetLabel(
+  target: ModelTarget,
+  siblings: readonly ModelTarget[],
+  modelName?: (modelId: string) => string | undefined,
+): string {
   const model =
-    trimOrUndefined(ctx.modelName?.(modelId)) ?? compactModelIdTail(modelId);
-  return `${host} · ${model}`;
+    trimOrUndefined(modelName?.(target.modelId)) ??
+    compactModelIdTail(target.modelId);
+  const all = [target, ...siblings];
+  const distinguishers = selectionDistinguishers(
+    labelSelection(target, all),
+    siblings.map((sibling) => labelSelection(sibling, all)),
+  );
+  return [model, ...distinguishers].join(" · ");
+}
+
+/**
+ * The selection a target is labelled by. An unlabelled target (no stored
+ * selection) runs on whatever today's hosted-list check picks, so it claims no
+ * source of its own: it borrows the connection of a labelled sibling of the
+ * same model, without settings, and reads "Default" beside "High" rather than
+ * "Your key · Default" beside "MCPJam · High".
+ */
+function labelSelection(
+  target: ModelTarget,
+  all: readonly ModelTarget[],
+): RequestedModelSelection {
+  const own = targetIdentitySelection(target);
+  if (target.selection?.modelId === target.modelId) return own;
+  const peer = all.find(
+    (candidate) =>
+      candidate.modelId === target.modelId &&
+      candidate.selection?.modelId === candidate.modelId,
+  )?.selection;
+  if (!peer) return own;
+  const {
+    settings: _settings,
+    nativeModelId: _nativeModelId,
+    ...connection
+  } = peer;
+  void _settings;
+  void _nativeModelId;
+  return connection;
 }
 
 /** Segment after the last `/` — mirrors backend `environmentLabel`. */
@@ -280,9 +354,25 @@ export function environmentLabelsById(
   environments: readonly (EnvironmentLabelRow & { archivedAt?: number })[],
   ctx: EnvironmentLabelContext = {},
 ): Map<string, string> {
+  // Rows on one client that run two efforts of one model read "· High" /
+  // "· Low" rather than colliding into "#1" / "#2".
+  const labelCtx: EnvironmentLabelContext = {
+    modelSiblings: (row) =>
+      environments.flatMap((environment) => {
+        const target =
+          environment.hostId === row.hostId
+            ? environmentModelTarget(environment)
+            : undefined;
+        return target ? [target] : [];
+      }),
+    ...ctx,
+  };
   const labels = new Map<string, string>();
   for (const environment of environments) {
-    labels.set(environment.environmentId, environmentLabel(environment, ctx));
+    labels.set(
+      environment.environmentId,
+      environmentLabel(environment, labelCtx),
+    );
   }
   const live = environments.filter(
     (environment) => environment.archivedAt === undefined,
@@ -294,7 +384,7 @@ export function environmentLabelsById(
     const numbered = disambiguateLabels(
       group.map((environment) => ({
         environmentId: environment.environmentId,
-        label: environmentLabel(environment, ctx),
+        label: environmentLabel(environment, labelCtx),
       })),
     );
     for (const entry of numbered) {

@@ -32,7 +32,7 @@ a mode gets a user-facing name.
 | ----------------------------- | ----------------- | -------------------------------- | -------------------------------------- |
 | Runs on the user's machine    | No                | Yes                              | Yes                                    |
 | Outer host containment        | Cloud sandbox     | **No**                           | Backend-dependent, verified            |
-| Vendor permission controls    | Adapter-dependent | Required                         | Required where compatible              |
+| Vendor permission controls    | Adapter-dependent | Attended: always ask mode; Off pre-approves native requests after separate consent | Required where compatible |
 | Inspector process supervision | Cloud provider    | Required                         | Required                               |
 | Workspace path restriction    | Cloud mount       | Inspector file API + policy only | OS/backend enforced                    |
 | Network restriction           | Cloud policy      | **No Inspector guarantee**       | Backend policy + gateway allowlist     |
@@ -52,7 +52,7 @@ Per harness:
 | Harness     | Native                   | Why                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
-| codex       | **Never**                | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
+| codex       | Eligible (darwin-arm64, linux-x64), dark until conformance is recorded | Only on MCPJam's app-server adapter (`codex-appserver/`), never `@ai-sdk/harness-codex` (which refuses every mode but `allow-all`). Attended: `allow-reads`/`allow-edits` → Codex `untrusted`, real approval requests. Unattended: `allow-all` only inside Codex's own command sandbox with the explicit D2 policy, and only on targets in `unattendedSandboxTargets` (none yet). |
 | cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
 `isolatedBackends` is empty for every harness: no backend has passed escape
@@ -452,3 +452,16 @@ Deliberately out of scope for this change, and none of it is faked:
   a turn for the cancelled flow);
 - reclaiming old verified runtime versions;
 - **I8's** rollout gating and the full cross-platform conformance run.
+
+## Attended Tool Approval
+
+On pauses for native commands (including `ls` and `pwd`), file changes and MCP
+calls. Off requires a separate **Run without asking** confirmation per signed-in
+user, machine, project, harness and current policy. MCPJam then answers native
+approval requests through the runtime's normal approval control. The runtime
+keeps `allow-reads`; switching the toggle preserves the conversation and any
+pending user decision. Host-executed `always` tools still ask.
+
+The attended grant lasts 15 minutes and renews automatically. Forgetting the
+local authorization clears Off consent. Unattended eval and swarm profiles
+retain their existing behavior.

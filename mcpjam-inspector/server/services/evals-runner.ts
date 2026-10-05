@@ -1,5 +1,6 @@
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
-import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities } from "../utils/harness/local/run-resources.js";
+import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
 import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
 import {
@@ -26,6 +27,7 @@ import {
   mergeToolCalls,
 } from "../../shared/eval-tool-call-projection";
 import {
+  copyUsageTotals,
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -124,8 +126,12 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import { isHostedModelDefinition } from "./hosted-model-catalog.js";
-import type { ModelSelection } from "@mcpjam/sdk";
+import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import {
+  decideTurnRail,
+  routingSelectionForModel,
+  withSelectionRouting,
+} from "../utils/selection-rail.js";
 import {
   backendModelSelection,
   ModelResolutionRefusalError,
@@ -390,6 +396,15 @@ export type EvalTestCase = {
    * here (`readStoredModelSelection`).
    */
   selection?: ModelSelection;
+  /**
+   * A STORED legacy selection behind `model` (`{ source: "legacy" }`, written
+   * by a save of a bare id outside the hosted catalog, or by the backfill):
+   * "own key only". Read only when `selection` is absent. The case runs on the
+   * own-key path (org BYOK, else the request's keys) and NEVER on MCPJam
+   * credits, however the id looks. Absent with `selection` absent ⇒ an
+   * unlabelled row: today's hosted-first read, unchanged.
+   */
+  legacySelection?: LegacyModelSelection;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -1554,6 +1569,26 @@ type ResolvedEvalTestCase = {
   advancedConfig?: Record<string, unknown>;
 };
 
+/**
+ * `advancedConfig.reasoningEffort` was a claim nothing ever applied (the runner
+ * reads only `temperature`), and the v1 API no longer accepts it. A value still
+ * stored on an older case is REFUSED rather than run as if it had been applied:
+ * the effort a case runs at is `models[].selection.settings.reasoningEffort`.
+ */
+export function assertNoStoredAdvancedReasoningEffort(
+  advancedConfig: Record<string, unknown> | undefined,
+): void {
+  if (advancedConfig?.reasoningEffort === undefined) return;
+  throw new ModelResolutionRefusalError([
+    {
+      code: "capability_missing",
+      reason:
+        "advancedConfig.reasoningEffort is not applied by the runner. Save the effort on the case's model instead (models[].selection.settings.reasoningEffort).",
+      evidence: { setting: "reasoningEffort", source: "advancedConfig" },
+    },
+  ]);
+}
+
 function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
   // Backend + route now emit `steps` (no promptTurns). The legacy per-turn
   // execution loops still consume `PromptTurn[]`, so bridge steps → turns here
@@ -1816,6 +1851,8 @@ async function createIterationDirectly(
   params: {
     namedHostId?: string;
     runtimeVenue?: "hosted" | "local";
+    /** The harness this quick run executes locally, when it does. */
+    localHarnessId?: string | null;
     testCaseId?: string;
     testCaseSnapshot: {
       title: string;
@@ -1847,6 +1884,18 @@ async function createIterationDirectly(
       {
         ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
         ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
+        // A local quick run declares the one harness it runs here, so the
+        // backend stamps it local exactly when this runner executes it locally
+        // (quick runs declared nothing before, which the backend reads as a
+        // runner for which "local" means Claude Code alone).
+        ...(params.runtimeVenue === "local" && params.localHarnessId
+          ? {
+              runnerCapabilities: [
+                ...runnerCapabilities(),
+                ...localHarnessCapabilities([params.localHarnessId]),
+              ],
+            }
+          : {}),
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
           snapshotWithStepsForConvex(params.testCaseSnapshot),
@@ -2498,8 +2547,10 @@ type EvalEffectiveSettings = EffectiveModelSettings & {
 /**
  * The settings a case with a saved selection runs with, resolved ONCE for
  * all of its iterations, on the route it takes. Precedence, highest first:
- * the case's own `advancedConfig` (per-run override) > the saved selection's
- * `settings` > the suite host's defaults. A setting the route cannot honour
+ * the case's own `advancedConfig` temperature (per-run override) > the saved
+ * selection's `settings` > the suite host's defaults. `advancedConfig` carries
+ * no effort: a stored `advancedConfig.reasoningEffort` is refused, and the
+ * effort is only ever the selection's `settings.reasoningEffort`. A setting the route cannot honour
  * throws the refusal (the case fails with that reason) instead of running a
  * different configuration.
  */
@@ -2512,6 +2563,7 @@ export function resolveEvalCaseSettings(args: {
   harnessRuntimeVenue?: "local" | "hosted";
 }): EvalEffectiveSettings {
   const { advancedConfig } = resolveEvalTestCase(args.test);
+  assertNoStoredAdvancedReasoningEffort(advancedConfig);
   const host = resolveExecutionContext({
     hostConfig: args.suiteHostConfig ?? null,
     precedence: "override-wins",
@@ -2693,7 +2745,14 @@ const runHostedIteration = async (
     const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
     if (params.harnessRuntimeVenue === "local") {
       if (!project || !("projectId" in project)) throw new Error("Local harness evals require a project");
-      const resources = await prepareLocalHarnessRun({ bearer: params.convexAuthToken, projectId: project.projectId });
+      // The run is prepared for the harness the suite's host selects: each
+      // local harness has its own runtime, authorization and grant, and a
+      // target minted for one is never valid for another.
+      const resources = await prepareLocalHarnessRun({
+        bearer: params.convexAuthToken,
+        projectId: project.projectId,
+        harnessId: localHarnessIdOf(harnessOfHostConfig(params.suiteHostConfig)) ?? "claude-code",
+      });
       try { return await runHostedIterationWithBrowser({ ...params, harnessExecutionTarget: resources.target }, browser); }
       finally { await resources.cleanup(); }
     }
@@ -3393,17 +3452,33 @@ const executeTestCase = async (params: {
     forwardedSelection?.source === "hosted" ? forwardedSelection : undefined;
   const orgSelection =
     forwardedSelection?.source === "org" ? forwardedSelection : undefined;
-  const modelDefinition = selectionRoute?.modelDefinition ?? promotedModel;
+  // A stored legacy selection (own key only) for the model that runs. Same
+  // gate as `selectionRoute`: a promoted host model is not the case's.
+  const legacySelection =
+    !selectionRoute && promotedModel === caseModel
+      ? routingSelectionForModel(test.legacySelection, caseModel)
+      : undefined;
+  // `hosted: false` on a legacy one, so every check downstream (harness
+  // admission included) agrees it is not MCPJam-paid.
+  const modelDefinition =
+    selectionRoute?.modelDefinition ??
+    withSelectionRouting(promotedModel, legacySelection);
   const resolvedModelId = selectionRoute
     ? selectionRoute.wireModelId
     : getCanonicalModelId(String(modelDefinition.id), modelDefinition.provider);
+  // Who pays: the saved selection's rail; a legacy one is never `hosted`;
+  // without either, today's hosted-list check on the canonical id
+  // (`decideTurnRail` with no selection IS that check).
   const isJamModel = selectionRoute
     ? selectionRoute.rail === "hosted"
-    : isHostedModelDefinition({
-        id: resolvedModelId,
-        provider: modelDefinition.provider,
-        hosted: modelDefinition.hosted,
-      });
+    : decideTurnRail({
+        selection: legacySelection,
+        model: {
+          id: resolvedModelId,
+          provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
+        },
+      }) === "hosted";
   const orgByokRuntime =
     isJamModel || selectionRoute?.rail === "local"
       ? undefined
@@ -3488,7 +3563,9 @@ const executeTestCase = async (params: {
       try {
         const iterationParams = {
           namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
           testCaseSnapshot: {
             title: test.title,
@@ -3860,7 +3937,8 @@ export const runEvalSuiteWithAiSdk = async ({
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
-      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined) ? "local" : "hosted");
+      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -4642,6 +4720,16 @@ const runLocalIteration = async ({
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  // A stored effort matters only to a case that invokes a model: a pinned-only
+  // case never does, so a legacy value on it is inert, not refused.
+  if (
+    turnsNeedModel({
+      caseType: test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    })
+  ) {
+    assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
+  }
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
@@ -4810,7 +4898,9 @@ const runLocalIteration = async ({
   };
   const iterationParamsBase = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -5522,11 +5612,7 @@ const runLocalIteration = async ({
       evaluation,
       turnCheckResults,
     );
-    const usageFinal: UsageTotals = {
-      inputTokens: acc.accumulatedUsage.inputTokens,
-      outputTokens: acc.accumulatedUsage.outputTokens,
-      totalTokens: acc.accumulatedUsage.totalTokens,
-    };
+    const usageFinal: UsageTotals = copyUsageTotals(acc.accumulatedUsage);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
@@ -5797,11 +5883,7 @@ const runLocalIteration = async ({
           actualToolCalls: extractToolCallsFromConversation({
             messages: failMessages,
           }),
-          usage: {
-            inputTokens: acc.accumulatedUsage.inputTokens,
-            outputTokens: acc.accumulatedUsage.outputTokens,
-            totalTokens: acc.accumulatedUsage.totalTokens,
-          },
+          usage: copyUsageTotals(acc.accumulatedUsage),
           prompts: promptTraceSummaries,
         }),
       );
@@ -5829,11 +5911,7 @@ const runLocalIteration = async ({
       ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
-      usage: {
-        inputTokens: acc.accumulatedUsage.inputTokens,
-        outputTokens: acc.accumulatedUsage.outputTokens,
-        totalTokens: acc.accumulatedUsage.totalTokens,
-      },
+      usage: copyUsageTotals(acc.accumulatedUsage),
       messages: failMessages,
       // Gated exactly as on the success path: a model-free case carries a
       // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be
@@ -6017,6 +6095,7 @@ const runHostedIterationWithBrowser = async (
   browser: BrowserSessionContext,
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
@@ -6144,7 +6223,9 @@ const runHostedIterationWithBrowser = async (
 
   const iterationParams = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
@@ -6443,11 +6524,11 @@ const runHostedIterationWithBrowser = async (
       runId,
     });
     if (harnessExecutionTarget) {
-      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy });
+      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
       if (runId) {
         const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
         if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
-        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0) });
+        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0), harnessId: resolvedExecution.harness });
       }
     }
     if (sandboxNeed.needed && !harnessExecutionTarget) {
@@ -7325,7 +7406,8 @@ export const streamTestCase = async (
   const target = params.orgModelConfigTarget;
   const harnessRuntimeVenue = params.harnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), params.convexAuthToken,
-      target && "projectId" in target ? target.projectId : undefined) ? "local" : "hosted");
+      target && "projectId" in target ? target.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
   const pinned = { ...params, harnessRuntimeVenue };
   return harnessRuntimeVenue === "local"
     ? withLocalHarnessSlot(() => executeCommittedTestCase(pinned), params.abortSignal)

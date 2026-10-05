@@ -14,6 +14,7 @@ import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { cn } from "@/lib/utils";
 import { HostChip } from "@/components/hosts/host-chip";
 import { compactModelIdTail } from "@/lib/environment-label";
+import { runTargetKey, targetKeySuffix } from "@/lib/eval-target-key";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
   runEnvironmentRef,
@@ -26,6 +27,8 @@ import {
 
 type RunAttributionSource = RunContextSource & {
   effectiveModelId?: string;
+  /** The run's target, which carries its effort (`runTargetKey`). */
+  targetKey?: string | null;
   modelSource?: "client_default" | "override" | "case";
 };
 
@@ -75,6 +78,7 @@ export function RunContextChip({
   fallbackName,
   className,
   modelLabel,
+  modelSuffix,
 }: {
   run: RunAttributionSource;
   /** namedHostId → display name, for legacy host-backed runs. */
@@ -84,6 +88,11 @@ export function RunContextChip({
   className?: string;
   /** Catalog display name for `effectiveModelId`. Falls back to the id tail. */
   modelLabel?: string | null;
+  /**
+   * What tells this run's target apart from the others in view (`" · High"`,
+   * from `targetKeySuffix`). Omitted, the run's own effort is shown.
+   */
+  modelSuffix?: string | null;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const environmentRef = projectEnvironmentsEnabled
@@ -91,9 +100,14 @@ export function RunContextChip({
     : null;
   const modelId = run.effectiveModelId;
   const modelSource = run.modelSource;
+  const ownKey = runTargetKey(run);
+  const suffix =
+    modelSuffix ?? (ownKey ? targetKeySuffix(ownKey, [ownKey]) : "");
   const resolvedModelLabel = modelId
-    ? (modelLabel && compactModelLabel(modelLabel)) ||
-      compactModelIdTail(modelId)
+    ? `${
+        (modelLabel && compactModelLabel(modelLabel)) ||
+        compactModelIdTail(modelId)
+      }${suffix}`
     : null;
 
   if (environmentRef) {

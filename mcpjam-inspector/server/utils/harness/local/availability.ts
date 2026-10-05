@@ -155,7 +155,10 @@ export function localHarnessManifestsForDevelopment(
   return Object.fromEntries(
     Object.entries(manifests).map(([id, manifest]) => [
       id,
-      manifest.lifecycleConformanceVersion || id !== "claude-code"
+      // Every harness the manifest names, not only Claude Code: an unpublished
+      // Codex pack has to be exercisable through the same override before its
+      // conformance is recorded. Development builds only (see above).
+      manifest.lifecycleConformanceVersion
         ? manifest
         : { ...manifest, lifecycleConformanceVersion: version },
     ]),
@@ -235,6 +238,9 @@ export async function resolveLocalHarnessAvailability(
       targetKind: target.kind,
       permissionProfile: target.permissionProfile,
       ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
+      // The exact pack target, so a manifest certified per architecture (D8)
+      // refuses an uncertified one rather than trusting the OS alone.
+      packTarget: localPackTarget(platform),
       installedAdapterVersion: query.installedAdapterVersion,
     },
     query.manifests ?? localHarnessManifestsForDevelopment(),

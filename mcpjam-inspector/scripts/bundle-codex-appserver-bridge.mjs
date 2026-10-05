@@ -20,7 +20,8 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const adapterDir = join(__dirname, "../server/utils/harness/codex-appserver");
+const inspectorRoot = join(__dirname, "..");
+const adapterDir = join(inspectorRoot, "server/utils/harness/codex-appserver");
 const outputPath = join(
   adapterDir,
   "bootstrap/generated/codex-appserver-bridge.bundled.ts",
@@ -52,6 +53,11 @@ const EXTERNAL = CODEX_APPSERVER_BRIDGE_EXTERNALS;
 async function bundleEntry(relativeEntry) {
   const result = await build({
     entryPoints: [join(adapterDir, relativeEntry)],
+    // esbuild names each inlined module in a comment relative to its working
+    // directory. Pinned, so the bytes are the same whoever runs this from
+    // wherever: a local pack's `bridge.mjs` must equal the bridge this
+    // Inspector carries byte for byte, and the pack-input fingerprint hashes it.
+    absWorkingDir: inspectorRoot,
     bundle: true,
     platform: "node",
     format: "esm",
@@ -71,7 +77,8 @@ async function bundleEntry(relativeEntry) {
   return output.text;
 }
 
-export async function bundleCodexAppServerBridge() {
+/** The two shipped entrypoints, bundled, without writing anything. */
+export async function bundleCodexAppServerBridgeSources() {
   // Both entrypoints guard their module-level start on an env flag so importing
   // the source in a unit test cannot bind a socket or spawn a process. The
   // shipped artifacts are the ones that actually run, so the call is appended
@@ -82,8 +89,21 @@ export async function bundleCodexAppServerBridge() {
   const hostToolsSource = `${await bundleEntry(
     "bridge/host-tools-mcp.ts",
   )}\nstartHostToolMcpServer();\n`;
+  return { bridgeSource, hostToolsSource };
+}
+
+export async function bundleCodexAppServerBridge() {
+  const { bridgeSource, hostToolsSource } =
+    await bundleCodexAppServerBridgeSources();
   const packageJson = readFileSync(
     join(adapterDir, "bootstrap/package.json"),
+    "utf8",
+  );
+  // Committed (see `bootstrap/README.md`) so the framework can install with
+  // `--frozen-lockfile`: the vendor binary is then fixed by the lockfile's
+  // registry integrity, not by whatever the registry serves today.
+  const pnpmLock = readFileSync(
+    join(adapterDir, "bootstrap/pnpm-lock.yaml"),
     "utf8",
   );
 
@@ -91,6 +111,7 @@ export async function bundleCodexAppServerBridge() {
     .update(bridgeSource, "utf8")
     .update(hostToolsSource, "utf8")
     .update(packageJson, "utf8")
+    .update(pnpmLock, "utf8")
     .digest("hex")
     .slice(0, 32);
 
@@ -110,12 +131,23 @@ export const CODEX_APPSERVER_BOOTSTRAP_PACKAGE_JSON = ${JSON.stringify(
       packageJson,
     )};
 
+export const CODEX_APPSERVER_BOOTSTRAP_PNPM_LOCK = ${JSON.stringify(
+      pnpmLock,
+    )};
+
 /** sha256 over everything above, truncated. Feeds the bootstrap identity. */
 export const CODEX_APPSERVER_BUNDLE_VERSION = ${JSON.stringify(version)};
 `,
   );
 
-  return { bridgeSource, hostToolsSource, packageJson, version, outputPath };
+  return {
+    bridgeSource,
+    hostToolsSource,
+    packageJson,
+    pnpmLock,
+    version,
+    outputPath,
+  };
 }
 
 // Run as a script (the `bundle:*` npm task); importable as a module (the test).

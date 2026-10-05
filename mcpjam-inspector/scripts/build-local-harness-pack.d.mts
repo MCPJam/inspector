@@ -2,9 +2,10 @@
  * Types for the pack build script's exported build and digest helpers.
  *
  * The script itself is plain ESM — it runs under a bare Node in CI without a
- * compilation step — so it carries a hand-written declaration. Recipe staging
- * loads the shared TypeScript bootstrap leaf through tsx; digest helpers stay
- * independent of that import. The full build runs only at the process entry.
+ * compilation step — so it carries a hand-written declaration. Per-harness
+ * recipe staging lives in `local-harness-pack-recipes/<harnessId>.mjs`; the
+ * digest helpers here stay independent of any recipe. The full build runs
+ * only at the process entry.
  */
 export declare function computeTreeDigest(root: string): {
   digest: string;
@@ -18,8 +19,8 @@ export declare function computeTreeDigest(root: string): {
  */
 export declare function flattenHardLinks(root: string): number;
 
-/** Install the patched recipe, adding the runtime .npmrc only after install. */
-export declare function installClaudeCodePackRecipe(
-  packRoot: string,
-  installDependencies: () => void | Promise<void>,
-): Promise<{ bridgeDigest: string }>;
+/** Arguments that list an archive; GNU tar needs `--force-local` on Windows paths. */
+export declare function archiveListArgs(
+  tar: { bin: string; gnu: boolean },
+  archivePath: string,
+): string[];

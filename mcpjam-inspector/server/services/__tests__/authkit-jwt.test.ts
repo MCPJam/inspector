@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { SignJWT, generateKeyPair, type KeyLike } from "jose";
+import { SignJWT, generateKeyPair, type CryptoKey } from "jose";
 import {
   verifyAuthKitToken,
   AuthKitVerificationError,
@@ -18,9 +18,9 @@ const ISSUER = "https://login.mcpjam.com";
 const CLIENT_ID = "client_test_123";
 const SUB = "user_workos_42";
 
-let trustedPrivate: KeyLike;
-let trustedPublic: KeyLike;
-let attackerPrivate: KeyLike;
+let trustedPrivate: CryptoKey;
+let trustedPublic: CryptoKey;
+let attackerPrivate: CryptoKey;
 
 beforeAll(async () => {
   const trusted = await generateKeyPair("RS256");
@@ -39,7 +39,7 @@ function deps(): AuthKitVerifyDeps {
 }
 
 async function sign(
-  key: KeyLike,
+  key: CryptoKey,
   opts: {
     iss?: string;
     aud?: string;

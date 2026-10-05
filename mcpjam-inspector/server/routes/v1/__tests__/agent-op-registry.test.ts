@@ -329,6 +329,24 @@ describe("agent op registry", () => {
     ).toBe(
       "Start 3 paid eval runs of suite smoke (Claude Code): 1 client × 3 model choices = 3 runs, without attaching them to the suite",
     );
+    // Two efforts of one model are two runs.
+    const effort = (reasoningEffort: string) => ({
+      modelId: "anthropic/claude-sonnet-4.5",
+      source: "hosted",
+      settings: { reasoningEffort },
+      fallback: { provider: "none", model: "none" },
+    });
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: {
+          host: "Claude Code",
+          modelSelections: [effort("low"), effort("high")],
+        },
+      }),
+    ).toBe(
+      "Start 2 paid eval runs of suite smoke (Claude Code): 1 client × 2 model choices = 2 runs, without attaching them to the suite",
+    );
     expect(
       describeRun({
         suite: "smoke",

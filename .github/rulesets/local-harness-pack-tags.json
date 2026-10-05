@@ -2,7 +2,7 @@
   "name": "Local harness pack tags",
   "target": "tag",
   "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["refs/tags/local-harness-pack-v*"], "exclude": [] } },
+  "conditions": { "ref_name": { "include": ["refs/tags/local-harness-pack-*"], "exclude": [] } },
   "rules": [{ "type": "update" }, { "type": "deletion" }],
   "bypass_actors": []
 }

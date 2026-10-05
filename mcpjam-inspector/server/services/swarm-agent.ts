@@ -8,7 +8,7 @@ import type {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
-import { runnerCapabilities } from "./evals/runner-capabilities.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
 
 /**
  * Inspector-side adapter for the backend swarm (journey-execution)
@@ -446,6 +446,12 @@ export async function createJourneyRun(
   bearer: string,
   args: {
     runtimeVenue?: "hosted" | "local";
+    /**
+     * The harnesses this runner will execute locally for this wave, checked
+     * by the launch. Declared as `local-harness:<id>` so the backend stamps
+     * exactly those targets local.
+     */
+    localHarnessIds?: readonly string[];
     projectId: string;
     journeyRefId: string;
     launchKey: string;
@@ -495,7 +501,13 @@ export async function createJourneyRun(
         : {}),
       // Asserted by this process, never a caller: the runner is the only
       // honest source for what it can execute.
-      runnerCapabilities: [...runnerCapabilities(), "swarm-standard-checks-v1"],
+      runnerCapabilities: [
+        ...runnerCapabilities(),
+        "swarm-standard-checks-v1",
+        ...(args.runtimeVenue === "local"
+          ? localHarnessCapabilities(args.localHarnessIds)
+          : []),
+      ],
     },
     NON_LLM_TIMEOUT_MS,
   );

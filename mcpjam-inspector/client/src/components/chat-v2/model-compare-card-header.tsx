@@ -70,6 +70,7 @@ export function ModelCompareCardHeader({
   onSelectBrowser,
   tabsInline = false,
   actionsSlot,
+  titleAccessory,
   className,
 }: {
   /** Full model definition (used in Chat multi-model). Optional when `modelLabel` is provided. */
@@ -132,6 +133,11 @@ export function ModelCompareCardHeader({
   tabsInline?: boolean;
   /** Extra action buttons placed to the right of the inline tab strip. */
   actionsSlot?: ReactNode;
+  /**
+   * Controls beside the title in the comparison chrome (a compare card's
+   * effort chip).
+   */
+  titleAccessory?: ReactNode;
   className?: string;
 }) {
   if (!showComparisonChrome && !showTraceTabs && !showIdentityHeader) {
@@ -352,6 +358,7 @@ export function ModelCompareCardHeader({
                 </div>
               ) : null}
             </div>
+            {titleAccessory}
             {showStatusDot ? (
               <span
                 role="img"

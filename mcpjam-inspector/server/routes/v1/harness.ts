@@ -22,6 +22,7 @@
 import { Hono } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 
@@ -37,9 +38,9 @@ harness.use("/harness/:harnessId/builtin-tools", requireVerifiedAuth());
 harness.use("/harness/:harnessId/capabilities", requireVerifiedAuth());
 
 /** Resolve the adapter or answer 404 — never a 500 for an unknown id. */
-function readAdapter(harnessId: string) {
+function readAdapter(harnessId: string, options: { localExecution?: boolean } = {}) {
   try {
-    return getHarnessAdapter(harnessId);
+    return getHarnessAdapter(harnessId, options);
   } catch {
     throw new WebRouteError(
       404,
@@ -56,9 +57,16 @@ harness.get("/harness/:harnessId/builtin-tools", async (c) => {
 
 // GET /v1/harness/:harnessId/capabilities
 harness.get("/harness/:harnessId/capabilities", async (c) => {
-  const adapter = readAdapter(c.req.param("harnessId"));
+  // Where THIS Inspector would run the harness's turns. A harness that can run
+  // on this machine runs on its local arm (local Codex is always the
+  // app-server transport, which can pause for approval), so the answer is that
+  // arm's — the editor would otherwise gray out a switch that works here.
+  const harnessId = c.req.param("harnessId");
+  const localExecution = isLocalHarnessVenue(harnessId);
+  const adapter = readAdapter(harnessId, { localExecution });
   return v1Resource(c, {
     harnessId: adapter.id,
+    ...(localExecution ? { localExecution: true } : {}),
     // Absent for a harness with one transport; the client only needs it to
     // explain WHY a capability is or is not there.
     ...(adapter.transport ? { transport: adapter.transport } : {}),
