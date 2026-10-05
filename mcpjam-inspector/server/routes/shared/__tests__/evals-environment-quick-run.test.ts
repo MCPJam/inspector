@@ -362,6 +362,68 @@ describe("environment quick runs", () => {
     );
     expect(actionCalls("testSuites:startQuickRunIterations")).toHaveLength(0);
     expect(streamTestCaseMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      "testSuites:findQuickRunByIdempotencyKey",
+      expect.anything(),
+    );
+  });
+
+  describe("a keyed retry against a disconnected server", () => {
+    const fallingRequest = () => {
+      clientManager.listTools.mockRejectedValueOnce(
+        new Error('MCP server "srv-1" is not connected.'),
+      );
+      clientManager.getConnectionStatus.mockReturnValueOnce("disconnected");
+      return streamEvalTestCaseWithManager(
+        clientManager as never,
+        baseRequest({ idempotencyKey: "click-123456" }),
+      );
+    };
+    const answerLookup = (answer: (args: unknown) => Promise<unknown>) => {
+      const fallback = queryMock.getMockImplementation()!;
+      queryMock.mockImplementation(async (name: string, args: unknown) =>
+        name === "testSuites:findQuickRunByIdempotencyKey"
+          ? answer(args)
+          : fallback(name, args),
+      );
+    };
+
+    it("replays the committed attempts instead of refusing", async () => {
+      answerLookup(async () => ({ iterationIdGroups: [["iter-1", "iter-2"]] }));
+      actionMock.mockImplementation(async (name: string) =>
+        name === "testSuites:startQuickRunIterations"
+          ? commitResponse({ replayed: true })
+          : null,
+      );
+
+      const text = await drain(await fallingRequest());
+
+      expect(queryMock).toHaveBeenCalledWith(
+        "testSuites:findQuickRunByIdempotencyKey",
+        { idempotencyKey: "click-123456" },
+      );
+      expect(actionCalls("testSuites:startQuickRunIterations")).toHaveLength(1);
+      expect(streamTestCaseMock).not.toHaveBeenCalled();
+      expect(text).toContain('"iterationId":"iter-1"');
+    });
+
+    it("still refuses when nothing was committed under the key", async () => {
+      answerLookup(async () => null);
+
+      await expect(fallingRequest()).rejects.toMatchObject({ status: 409 });
+      expect(actionCalls("testSuites:startQuickRunIterations")).toHaveLength(0);
+    });
+
+    it("still refuses when the backend has no lookup", async () => {
+      answerLookup(async () => {
+        throw new Error(
+          "Could not find public function for 'testSuites:findQuickRunByIdempotencyKey'",
+        );
+      });
+
+      await expect(fallingRequest()).rejects.toMatchObject({ status: 409 });
+      expect(actionCalls("testSuites:startQuickRunIterations")).toHaveLength(0);
+    });
   });
 
   it("fails closed when the backend commits no environment", async () => {

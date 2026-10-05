@@ -88,6 +88,65 @@ describe("eval launch server preflight", () => {
     });
     expect(mocks.mutation).not.toHaveBeenCalled();
     expect(mocks.action).not.toHaveBeenCalled();
+    expect(mocks.query).not.toHaveBeenCalledWith(
+      "testSuites:findSuiteRunByIdempotencyKey",
+      expect.anything(),
+    );
+  });
+
+  describe("a keyed retry", () => {
+    const answerLookup = (answer: () => Promise<unknown>) => {
+      const fallback = mocks.query.getMockImplementation()!;
+      mocks.query.mockImplementation(async (name: string, args: unknown) =>
+        name === "testSuites:findSuiteRunByIdempotencyKey"
+          ? answer()
+          : fallback(name, args),
+      );
+    };
+
+    it("whose run already exists reaches the dedupe instead of a refusal", async () => {
+      answerLookup(async () => ({ runId: "run-1" }));
+
+      // The mocked mutation returns no run, so preparation fails after the
+      // start call; what matters is that the start call is made.
+      await launch(disconnected(), { idempotencyKey: "trigger-1" }).catch(
+        () => undefined,
+      );
+
+      expect(mocks.query).toHaveBeenCalledWith(
+        "testSuites:findSuiteRunByIdempotencyKey",
+        { idempotencyKey: "trigger-1", suiteId: "suite-1" },
+      );
+      expect(mocks.mutation).toHaveBeenCalledWith(
+        "testSuites:startTestSuiteRun",
+        expect.objectContaining({
+          suiteId: "suite-1",
+          idempotencyKey: "trigger-1",
+        }),
+      );
+    });
+
+    it("with no run under its key is still refused", async () => {
+      answerLookup(async () => null);
+
+      await expect(
+        launch(disconnected(), { idempotencyKey: "trigger-1" }),
+      ).rejects.toMatchObject({ status: 409, code: "SERVER_UNREACHABLE" });
+      expect(mocks.mutation).not.toHaveBeenCalled();
+    });
+
+    it("is still refused when the backend has no lookup", async () => {
+      answerLookup(async () => {
+        throw new Error(
+          "Could not find public function for 'testSuites:findSuiteRunByIdempotencyKey'",
+        );
+      });
+
+      await expect(
+        launch(disconnected(), { idempotencyKey: "trigger-1" }),
+      ).rejects.toMatchObject({ status: 409, code: "SERVER_UNREACHABLE" });
+      expect(mocks.mutation).not.toHaveBeenCalled();
+    });
   });
 
   it("refuses a connected server whose tools cannot be listed", async () => {

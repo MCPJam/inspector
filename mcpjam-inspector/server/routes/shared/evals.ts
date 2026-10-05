@@ -2375,6 +2375,42 @@ export async function fetchRunPinnedSkillsWithRetry(
  */
 
 /**
+ * Whether a keyed launch that failed the server preflight was already started
+ * by an earlier attempt with the same key.
+ *
+ * The backend dedupes a keyed launch inside the start mutation, which the
+ * preflight runs before. Without this a retry of a started launch — a
+ * redelivered scheduled trigger, say — is refused as SERVER_UNREACHABLE
+ * instead of being handed its run, and the caller reads the refusal as "no run
+ * was created". When this is true the preflight gives way and the start
+ * mutation returns the existing run.
+ *
+ * A failed lookup, including against a backend that predates these queries,
+ * keeps the refusal: that was the behaviour before the lookup existed, and a
+ * refusal never creates or charges anything.
+ */
+async function keyedLaunchAlreadyStarted(
+  convexClient: ReturnType<typeof createConvexClients>["convexClient"],
+  query:
+    | "testSuites:findSuiteRunByIdempotencyKey"
+    | "testSuites:findQuickRunByIdempotencyKey",
+  args: { idempotencyKey: string; suiteId?: string },
+): Promise<boolean> {
+  try {
+    return (await convexClient.query(query as any, args)) !== null;
+  } catch (error) {
+    logger.warn(
+      "[evals] Idempotent launch lookup failed; keeping the refusal",
+      {
+        query,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return false;
+  }
+}
+
+/**
  * Prepare phase of a suite run: validate, upsert suite + cases, create the
  * run record (status 'running'), store replay configs, and resolve model
  * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
@@ -2618,18 +2654,31 @@ export async function prepareEvalRun(
   // benchmark scores as a failed child run, where a refusal here would leave
   // the cell unattached and read as a coverage gap.
   if (provenance.source !== "benchmark") {
-    throwIfEvalToolSnapshotFailed({
-      toolSnapshot,
-      mcpClientManager: clientManager,
-      environment: buildPersistedSuiteEnvironment({
-        resolvedServerIds,
-        persistedServerRefs,
-        serverNames:
-          environmentLaunch && !githubCheckEnvironmentLaunch
-            ? environmentServerNames(environmentLaunch)
-            : serverNames,
-      }),
-    });
+    try {
+      throwIfEvalToolSnapshotFailed({
+        toolSnapshot,
+        mcpClientManager: clientManager,
+        environment: buildPersistedSuiteEnvironment({
+          resolvedServerIds,
+          persistedServerRefs,
+          serverNames:
+            environmentLaunch && !githubCheckEnvironmentLaunch
+              ? environmentServerNames(environmentLaunch)
+              : serverNames,
+        }),
+      });
+    } catch (refusal) {
+      if (
+        !idempotencyKey ||
+        !(await keyedLaunchAlreadyStarted(
+          convexClient,
+          "testSuites:findSuiteRunByIdempotencyKey",
+          { idempotencyKey, ...(suiteId ? { suiteId } : {}) },
+        ))
+      ) {
+        throw refusal;
+      }
+    }
   }
 
   // Persist suite + cases (create or upsert). The suite/case persistence is
@@ -3635,15 +3684,28 @@ export async function prepareSingleCaseExecution(
       resolvedServerIds,
       { logPrefix: "evals" },
     );
-    throwIfEvalToolSnapshotFailed({
-      toolSnapshot,
-      mcpClientManager: clientManager,
-      environment: buildPersistedSuiteEnvironment({
-        resolvedServerIds,
-        persistedServerRefs: resolvedServerIds,
-        serverNames: environmentServerNames(environmentLaunch),
-      }),
-    });
+    try {
+      throwIfEvalToolSnapshotFailed({
+        toolSnapshot,
+        mcpClientManager: clientManager,
+        environment: buildPersistedSuiteEnvironment({
+          resolvedServerIds,
+          persistedServerRefs: resolvedServerIds,
+          serverNames: environmentServerNames(environmentLaunch),
+        }),
+      });
+    } catch (refusal) {
+      if (
+        !idempotencyKey ||
+        !(await keyedLaunchAlreadyStarted(
+          convexClient,
+          "testSuites:findQuickRunByIdempotencyKey",
+          { idempotencyKey },
+        ))
+      ) {
+        throw refusal;
+      }
+    }
     const committed = await commitEnvironmentQuickRun(convexClient, {
       testCaseId,
       testCaseSnapshot: buildQuickRunCommitSnapshot(
