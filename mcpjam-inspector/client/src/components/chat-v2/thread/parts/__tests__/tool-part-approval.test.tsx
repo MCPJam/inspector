@@ -328,6 +328,55 @@ describe("ToolPart approval expansion", () => {
     );
   });
 
+  it("shows an omitted-only image warning in the expanded panel", async () => {
+    const user = userEvent.setup();
+    const output = {
+      type: "content",
+      value: [
+        { type: "text", text: "[image omitted: image/png exceeds 10 MB limit]" },
+      ],
+    };
+
+    render(
+      <ToolPart
+        part={{ ...basePart, input: undefined, output } as any}
+        uiType="mcp-apps"
+        mcpToolResultImageRendering={{ placement: "collapsed" }}
+      />
+    );
+
+    const headerButton = getHeaderButton();
+    expect(headerButton).toBeTruthy();
+    if (headerButton) await user.click(headerButton);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 image was omitted because image size or count limits were exceeded."
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("shows an omitted-only image warning in the inline preview", async () => {
+    const output = {
+      type: "content",
+      value: [
+        { type: "text", text: "[image omitted: image/png exceeds 10 MB limit]" },
+      ],
+    };
+
+    render(
+      <ToolPart
+        part={{ ...basePart, input: undefined, output } as any}
+        uiType="mcp-apps"
+        mcpToolResultImageRendering={{ placement: "inline" }}
+      />
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 image was omitted because image size or count limits were exceeded."
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
   it("renders raw embedded MCP image resources in the expanded panel even when part output is absent", async () => {
     const user = userEvent.setup();
     const rawEmbeddedResult = {
