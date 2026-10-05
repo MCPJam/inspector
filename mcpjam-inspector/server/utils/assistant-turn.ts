@@ -681,9 +681,7 @@ export async function runAssistantTurn(
   if (harnessRequested) {
     // Venue-aware: a local target runs the local arm (app-server for Codex),
     // and this backstop must judge the adapter that will actually run.
-    const harnessAdapter = getHarnessAdapter(opts.harness as string, {
-      localExecution: opts.harnessExecutionTarget != null,
-    });
+    const harnessAdapter = getHarnessAdapter(opts.harness as string);
     // The turn's effort, else the saved selection's. Refused here too so a
     // path that never runs the pre-flight cannot start a paid box for it.
     const harnessEffort = turnReasoningEffortOf(opts);

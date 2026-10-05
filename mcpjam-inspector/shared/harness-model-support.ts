@@ -66,9 +66,8 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
  *
  *  - `claude-code`: `@anthropic-ai/claude-code` in the bridge package the
  *    installed `@ai-sdk/harness-claude-code` bootstraps.
- *  - `codex`: `@openai/codex-sdk` in the `@ai-sdk/harness-codex` bridge (the
- *    exec transport) and `@openai/codex` in the app-server bootstrap
- *    (`PINNED_CODEX_VERSION`); both transports pin the same CLI.
+ *  - `codex`: `@openai/codex` in the app-server bootstrap
+ *    (`PINNED_CODEX_VERSION`).
  *  - `cursor`: `null` — Cursor's bootstrap installs whatever build
  *    `cursor.com/install` serves, so the version is only knowable by asking the
  *    box (`runtimeVersionCommand`). Its rows are all version-independent.

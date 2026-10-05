@@ -7,8 +7,9 @@
  * `sandboxMode: 'danger-full-access'`, and whose `doStart` rejects any
  * permission mode but `allow-all`. That is not a mode we failed to select: exec
  * is a batch transport with no channel to interrupt and no way to ask. Every
- * capability gap in MCPJam's Codex host traces back to it — no approvals, two
- * attributable tools, MCP through a shell shim.
+ * capability gap in MCPJam's Codex host traced back to it — no approvals, two
+ * attributable tools, MCP through a shell shim — so this adapter replaced it
+ * for every Codex turn, hosted and local.
  *
  * `codex app-server` is the long-lived JSON-RPC transport the editor
  * integrations use, and it carries all of it: real approval requests, typed
@@ -91,7 +92,7 @@ export const CODEX_APPSERVER_HARNESS_ID = "codex";
  */
 export const DEFAULT_CODEX_APPSERVER_MODEL = "gpt-5.5";
 
-/** Skills live where Codex reads them, the same root the exec transport uses. */
+/** Skills live where Codex reads them, the same root the retired exec transport used. */
 const CODEX_SKILLS_SUBDIR = ".agents/skills";
 
 export type CodexAppServerSettings = {
