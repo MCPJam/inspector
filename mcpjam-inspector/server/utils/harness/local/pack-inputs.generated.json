@@ -2,9 +2,9 @@
   "schema": 2,
   "harnesses": {
     "claude-code": {
-      "fingerprint": "sha256:3527869d9f6c58685f6d8fb002dc2a40c51bfe47f6662a3d4052cd4c7dbc72a6",
+      "fingerprint": "sha256:b1af42d64632874f66e7beabdab7e7e4f88723977eff5835a423b3e33b646954",
       "inputs": {
-        "pack-dependency-closure": "sha256:068c73ccaf6fa1c19f8f8f68c40435e00092835f41b30554689b353e851a0a27",
+        "pack-dependency-closure": "sha256:47a69f3fdfbbb2dd3516291719459b1f69e11ec1700be0cfaa55c5d875bc3554",
         ".github/workflows/local-harness-pack.yml": "sha256:908613dca516c645a7eec457b931428cedd25b3229636299e705fe85e0ae7c2e",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:8da98ac3550e62c6e60473159e2d3de88837e7fc4a03880cd54a3f9c1f9e3dfd",
         "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:ebf73ce26f3ac0580170328a4c60dadba985a45b6ba723747f3a5d70951d88a1",
@@ -27,9 +27,9 @@
       }
     },
     "codex": {
-      "fingerprint": "sha256:575ad44f6c3d9176fb1d33d8993168eae946eacf03b741df3e694ca1ab4c5abf",
+      "fingerprint": "sha256:a65b7c2e3a730ac3139d12b687c1d5ec1a6de8644dd73a46e2dd09e0996d1096",
       "inputs": {
-        "pack-dependency-closure": "sha256:ee9e08dce7ebe76eded241cf78cb14b5a93ba331cae9bcd6d62384fb059916e2",
+        "pack-dependency-closure": "sha256:dbc8d1bc34effc7afd2cf71b7f086efd36fb41c24f061e4b8a5a91ea6c82dc52",
         ".github/workflows/local-harness-pack.yml": "sha256:908613dca516c645a7eec457b931428cedd25b3229636299e705fe85e0ae7c2e",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:8da98ac3550e62c6e60473159e2d3de88837e7fc4a03880cd54a3f9c1f9e3dfd",
         "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs": "sha256:b410d4aef45fea00155670822a09aa98a71c0d836bef9e62b02b17d6f479dac7",

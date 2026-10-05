@@ -45,6 +45,11 @@ const agentConstruction = vi.hoisted(() => ({
   last: undefined as Record<string, unknown> | undefined,
 }));
 
+/** The adapter's `toNativeModel` answer (Cursor-style adapters map none). */
+const toNativeModel = vi.hoisted(() =>
+  vi.fn((_modelId: string): string | undefined => "gpt-5")
+);
+
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     constructor(options: Record<string, unknown>) {
@@ -82,6 +87,7 @@ vi.mock("../registry.js", () => ({
     // host-executed tools MCPJam builds itself.
     mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
+    toNativeModel,
     createHarness: vi.fn(() => ({ harnessId: "codex" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
@@ -431,10 +437,37 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
       expect(agentConstruction.last?.tools ?? {}).not.toHaveProperty("bash");
     });
   });
+
+  describe("the native model", () => {
+    afterEach(() => {
+      toNativeModel.mockReset();
+      toNativeModel.mockImplementation(() => "gpt-5");
+      agentConstruction.last = undefined;
+    });
+
+    it("hands the adapter's native model to HarnessAgent", async () => {
+      // The AI SDK adapters stopped reading a construction-time `model`
+      // setting, so the agent is the only place the selected model reaches
+      // the runtime. Without it Codex runs its own default model and Claude
+      // Code its CLI default, under the selected model's name.
+      await runHarnessTurn(baseOptions() as never, "none");
+      expect(toNativeModel).toHaveBeenCalledWith("openai/gpt-5");
+      expect(agentConstruction.last?.model).toBe("gpt-5");
+    });
+
+    it("passes no model when the adapter maps none", async () => {
+      // Cursor's `toNativeModel` answers undefined: Cursor Auto picks on the
+      // customer's account, so the agent must not carry a model at all.
+      toNativeModel.mockImplementation(() => undefined);
+      await runHarnessTurn(baseOptions() as never, "none");
+      expect(agentConstruction.last).toBeDefined();
+      expect(agentConstruction.last).not.toHaveProperty("model");
+    });
+  });
 });
 
 it("refuses hosted approval resumes with no paused state instead of replaying a prompt", async () => {
-  harnessState.continuations = [{ approvalResponse: { approvalId: "old", approved: true } }];
+  harnessState.continuations = [{ type: "tool-approval-response", approvalId: "old", approved: true }];
   harnessState.create.mockClear(); harnessState.stream.mockClear();
   const result = await runHarnessTurn(baseOptions({ sourceType: "direct", chatSessionId: "chat", selectedServers: [] }) as never, "ui");
   expect(await result.response!.text()).toContain("pending action will not run");
