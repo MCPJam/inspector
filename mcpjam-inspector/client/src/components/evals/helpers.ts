@@ -11,7 +11,10 @@ import {
   SuiteAggregate,
   TagGroupAggregate,
 } from "./types";
-import { computeIterationResult } from "./pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -575,7 +578,9 @@ export function aggregateSuite(
   // Backend already filters iterations by suite, so we use them directly
   const totals = iterations.reduce(
     (acc, it) => {
-      const result = computeIterationResult(it);
+      // Measured result: an infra row is counted in no bucket, matching the
+      // backend's rates (see `computeMeasuredIterationResult`).
+      const result = computeMeasuredIterationResult(it);
       if (result === "pending") {
         acc.pending += 1;
       } else if (result === "passed") {
@@ -676,7 +681,7 @@ export function aggregateSuite(
       });
     }
     const entry = byCaseMap.get(id)!;
-    const result = computeIterationResult(it);
+    const result = computeMeasuredIterationResult(it);
     if (result === "pending") {
       // do not count pending/running
     } else if (result === "passed") {

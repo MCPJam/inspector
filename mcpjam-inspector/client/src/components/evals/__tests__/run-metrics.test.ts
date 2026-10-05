@@ -94,8 +94,41 @@ describe("runMetricsFromIterations", () => {
       setupFailed: 1,
       skipped: 1,
       unscored: 0,
+      infraError: 0,
     });
     expect(metrics.iterationCount).toBe(8);
+  });
+
+  it("counts an infra-error row in its own bucket and in no verdict", () => {
+    // Stored `failed` + `failed` + reported: trusting `result` is exactly how
+    // a provider outage used to be counted against the server.
+    const metrics = runMetricsFromIterations([
+      iteration({}),
+      iteration({
+        status: "failed",
+        result: "failed",
+        resultSource: "reported",
+        infraError: {
+          class: "provider_unavailable",
+          layer: "model",
+          retryable: true,
+        },
+      }),
+    ]);
+    expect(metrics.results).toMatchObject({
+      passed: 1,
+      failed: 0,
+      infraError: 1,
+    });
+    expect(metrics.models).toEqual([
+      expect.objectContaining({ model: "claude", passed: 1, failed: 0 }),
+    ]);
+    // The rate a run row shows from this fold leaves the outage out.
+    expect(computeRunEffectiveStatsFromMetrics(run(), metrics)).toMatchObject({
+      effectivePassed: 1,
+      effectiveTotal: 1,
+      passRate: 100,
+    });
   });
 
   it("sums tokens, tool calls, and cost with their coverage", () => {

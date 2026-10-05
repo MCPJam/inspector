@@ -331,6 +331,8 @@ const SESSION_SUMMARIES = [
 type FixtureOverrides = {
   servers?: unknown[];
   suites?: unknown[];
+  /** The run's iteration page. Default: {@link ITERATIONS}. */
+  iterations?: unknown[];
   /**
    * Replaces the sessions envelope wholesale, so a test can model an OLD
    * backend: one that ignored the unknown `scope` param, ran a title search,
@@ -524,7 +526,10 @@ function makeClient(overrides: FixtureOverrides = {}): {
     if (
       /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/.test(path)
     ) {
-      return Response.json({ items: ITERATIONS, nextCursor: "cursor-2" });
+      return Response.json({
+        items: overrides.iterations ?? ITERATIONS,
+        nextCursor: "cursor-2",
+      });
     }
     if (
       /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/.test(
@@ -1664,6 +1669,31 @@ describe("eval run polling operations", () => {
         iterationId: "iter-1",
       }).success
     ).toBe(false);
+  });
+
+  it("passes an infra-failed iteration's infraError through untouched", async () => {
+    // What `mcpjam eval iterations --json` prints: the page as the API sent
+    // it, so a trial MCPJam's own infrastructure failed says so.
+    const infraFailed = {
+      ...ITERATIONS[0],
+      id: "iter-2",
+      status: "failed",
+      result: "failed",
+      error: "The AI provider is temporarily unavailable.",
+      infraError: {
+        class: "provider_unavailable",
+        layer: "model",
+        retryable: true,
+        code: "provider_error",
+        httpStatus: 503,
+      },
+    };
+    const { client } = makeClient({ iterations: [infraFailed] });
+    const result = await listEvalRunIterationsOperation.execute(
+      { project: "new", runId: "run-1" },
+      { client }
+    );
+    expect(result.items[0]?.infraError).toEqual(infraFailed.infraError);
   });
 
   it("forwards iteration pagination params and surfaces nextCursor", async () => {

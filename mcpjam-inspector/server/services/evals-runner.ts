@@ -47,6 +47,13 @@ import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
+import { classifyEvalInfraError } from "./evals/infra-error-classification";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
+import {
+  byokEndpointOwnership,
+  type InfraFailureEvidence,
+  type ModelEndpointOwnership,
+} from "../utils/infra-failure-evidence.js";
 import {
   buildLocalStepHandlers,
   buildHostedStepHandlers,
@@ -779,7 +786,38 @@ export type EvalIterationOutcome = {
   iterationId?: string;
   policyBlockCount?: number;
   creditsExhausted?: boolean;
+  /**
+   * OUR infrastructure failed this trial. The run summary leaves it out of
+   * `total`/`passed`/`failed`, as the backend's legacy header does.
+   */
+  infraError?: EvalInfraError;
 };
+
+/**
+ * Did OUR infrastructure fail this iteration? Classifies the failed turn's
+ * structured evidence (`evals/infra-error-classification.ts`), stamping a
+ * model-call failure with who owns the endpoint this iteration called. Never
+ * for a timeout: a budget is the user's ceiling.
+ */
+export function resolveIterationInfraError(
+  result: {
+    iterationError?: string;
+    timeout?: unknown;
+    errorInfra?: InfraFailureEvidence;
+  },
+  modelEndpoint: ModelEndpointOwnership,
+): EvalInfraError | undefined {
+  if (!result.iterationError || result.timeout) return undefined;
+  const evidence = result.errorInfra;
+  return classifyEvalInfraError(
+    evidence &&
+      !evidence.endpoint &&
+      (evidence.source === "backend_model" ||
+        evidence.source === "provider_call")
+      ? { ...evidence, endpoint: modelEndpoint }
+      : evidence,
+  );
+}
 
 /**
  * D7: narrow a turn's full tool registry down to the subset the model was
@@ -4470,7 +4508,10 @@ export const runEvalSuiteWithAiSdk = async ({
     for (const [resultIndex, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const outcomes = result.value;
-        for (const { evaluation } of outcomes) {
+        for (const { evaluation, infraError } of outcomes) {
+          // An infra trial measured nothing about the server: in no count,
+          // matching the backend's legacy header.
+          if (infraError) continue;
           summary.total += 1;
           if (evaluation.passed) {
             summary.passed += 1;
@@ -5624,6 +5665,20 @@ const runLocalIteration = async ({
     // closure above still applies the prefix to LIVE SSE
     // `trace_snapshot` events for the test-runner UI (different
     // consumer than the stored transcript).
+    // OUR infrastructure (the model provider) failed the turn? Typed evidence
+    // only; a pinned setup failure is the server's, never infra.
+    const localInfraError = acc.pinnedSetupFailure
+      ? undefined
+      : resolveIterationInfraError(
+          {
+            iterationError: acc.iterationError,
+            timeout: acc.timeout,
+            errorInfra: acc.stepErrorEvidence,
+          },
+          // A direct call on the caller's own key: ours to exclude only when
+          // it reached a first-party hosted provider.
+          byokEndpointOwnership(modelDefinition.provider),
+        );
     const finishParams = buildIterationFinishParams({
       iterationId,
       // The layer that failed, when this driver could tell — the local twin of
@@ -5661,10 +5716,15 @@ const runLocalIteration = async ({
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
       // A model-free pinned setup failure (server not connected) records as
-      // `setup_failed` — it never reached the question; everything else
-      // completes (a failed verdict is still a completed run). Mirrors the
-      // former runIterationWithAiSdk.
-      status: acc.pinnedSetupFailure ? "setup_failed" : "completed",
+      // `setup_failed` — it never reached the question; an infra failure as
+      // `failed` + `infraError`; everything else completes (a failed verdict
+      // is still a completed run). Mirrors the former runIterationWithAiSdk.
+      status: acc.pinnedSetupFailure
+        ? "setup_failed"
+        : localInfraError
+          ? "failed"
+          : "completed",
+      ...(localInfraError ? { infraError: localInfraError } : {}),
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
       // via the failure-detection branch, surface it on the persisted
@@ -5757,6 +5817,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(localInfraError ? { infraError: localInfraError } : {}),
     };
   } catch (error) {
     // Rethrown, not swallowed: this iteration ran out of its own budget, and
@@ -5894,6 +5955,26 @@ const runLocalIteration = async ({
       });
     }
 
+    const failStatus =
+      iterationMetadataBase.timeout &&
+      typeof iterationMetadataBase.timeout === "object" &&
+      "clock" in iterationMetadataBase.timeout &&
+      iterationMetadataBase.timeout.clock === "sandboxCapacity"
+        ? ("setup_failed" as const)
+        : ("failed" as const);
+    // The throw already records `failed`; a typed provider failure also
+    // carries `infraError`, which is what excludes and refunds it.
+    const failInfraError =
+      failStatus === "failed"
+        ? resolveIterationInfraError(
+            {
+              iterationError: errorMessage ?? acc.iterationError,
+              timeout: iterationMetadataBase.timeout,
+              errorInfra: acc.stepErrorEvidence,
+            },
+            byokEndpointOwnership(modelDefinition.provider),
+          )
+        : undefined;
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
     // success path.
@@ -5928,13 +6009,8 @@ const runLocalIteration = async ({
       // PR 9: browser artifacts collected before the failure still persist.
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
-      status:
-        iterationMetadataBase.timeout &&
-        typeof iterationMetadataBase.timeout === "object" &&
-        "clock" in iterationMetadataBase.timeout &&
-        iterationMetadataBase.timeout.clock === "sandboxCapacity"
-          ? "setup_failed"
-          : "failed",
+      status: failStatus,
+      ...(failInfraError ? { infraError: failInfraError } : {}),
       startedAt: runStartedAt,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
@@ -6001,6 +6077,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(failInfraError ? { infraError: failInfraError } : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -7122,6 +7199,22 @@ const runHostedIterationWithBrowser = async (
   // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
   // below, mirroring the local runner.
   const pinnedSetupFailure = result.setupFailure;
+  // Did OUR infrastructure fail the turn? Structured evidence only; a setup
+  // failure of the server under test is never re-labelled as infra.
+  const infraError = pinnedSetupFailure
+    ? undefined
+    : resolveIterationInfraError(
+        result,
+        // `/stream` runs on MCPJam's own keys; `/stream/org` on the org's
+        // connection, ours to exclude only for a first-party hosted provider.
+        endpointPath === "/stream/org"
+          ? byokEndpointOwnership(
+              typeof extraBodyFields?.providerKey === "string"
+                ? extraBodyFields.providerKey
+                : undefined,
+            )
+          : "platform",
+      );
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
   hostedStepScriptedFailures = buildStepScriptedCheckFailures(stepState);
@@ -7309,9 +7402,15 @@ const runHostedIterationWithBrowser = async (
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
     // A model-free pinned setup failure (server not connected) records as
-    // `setup_failed` — it never reached the question; everything else completes
-    // (a failed verdict is still a completed run). Mirrors the local runner.
-    status: pinnedSetupFailure ? "setup_failed" : "completed",
+    // `setup_failed` — it never reached the question; an infra failure as
+    // `failed` + `infraError`; everything else completes (a failed verdict is
+    // still a completed run). Mirrors the local runner.
+    status: pinnedSetupFailure
+      ? "setup_failed"
+      : infraError
+        ? "failed"
+        : "completed",
+    ...(infraError ? { infraError } : {}),
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
@@ -7393,6 +7492,7 @@ const runHostedIterationWithBrowser = async (
     ...(toolPolicyGate?.blocks.length
       ? { policyBlockCount: toolPolicyGate.blocks.length }
       : {}),
+    ...(infraError ? { infraError } : {}),
   };
 };
 
