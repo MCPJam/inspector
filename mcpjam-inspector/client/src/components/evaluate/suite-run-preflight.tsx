@@ -33,6 +33,8 @@ export type RunPreflight = {
   removed: string[];
   /** The backend's own launch refusals (`ENV_*`): the run cannot start. */
   refused: string[];
+  /** Each refusal by the environment that answered it. */
+  refusalByEnvironment?: Readonly<Record<string, string>>;
   /** Org provider keys a run model needs that the org has not enabled. */
   disabledProviders: string[];
 };
@@ -54,6 +56,7 @@ export function runPreflight(input: {
   /** Absent while loading: no provider reads as disabled. */
   orgConfig?: { providers: { providerKey: string; enabled: boolean }[] };
   refused?: readonly string[];
+  refusalByEnvironment?: Readonly<Record<string, string>>;
   /**
    * Skip a server neither the browser nor the project lists. An environment's
    * resolution includes its pinned plugins' servers, which the project's list
@@ -97,6 +100,9 @@ export function runPreflight(input: {
     disconnected,
     removed,
     refused: [...(input.refused ?? [])],
+    ...(input.refusalByEnvironment
+      ? { refusalByEnvironment: input.refusalByEnvironment }
+      : {}),
     disabledProviders: [...disabledProviders],
   };
 }
@@ -184,9 +190,14 @@ export function readEnvironmentResolutions(
   results: Readonly<Record<string, unknown>>,
   /** Environments the run only copies a setup from, never launches. */
   templateOnly: ReadonlySet<string> = new Set(),
-): { serverRefs: string[]; refusals: string[] } {
+): {
+  serverRefs: string[];
+  refusals: string[];
+  refusalByEnvironment: Record<string, string>;
+} {
   const serverRefs: string[] = [];
   const refusals = new Set<string>();
+  const refusalByEnvironment: Record<string, string> = {};
   for (const [environmentId, resolved] of Object.entries(results)) {
     if (resolved instanceof Error) {
       const code = (resolved as { data?: { code?: unknown } }).data?.code;
@@ -198,7 +209,12 @@ export function readEnvironmentResolutions(
           templateOnly.has(environmentId) && CLIENT_AND_MODEL_REFUSALS.has(code)
         )
       )
-        refusals.add(convexErrMessage(resolved, resolved.message));
+        refusals.add(
+          (refusalByEnvironment[environmentId] = convexErrMessage(
+            resolved,
+            resolved.message,
+          )),
+        );
       else if (typeof code !== "string" || !code.startsWith("ENV_"))
         console.warn(
           "[Setup Run] Could not preflight an environment; the launch will check it.",
@@ -214,7 +230,7 @@ export function readEnvironmentResolutions(
       }>)
         serverRefs.push(server.name?.trim() || server.serverId);
   }
-  return { serverRefs, refusals: [...refusals] };
+  return { serverRefs, refusals: [...refusals], refusalByEnvironment };
 }
 
 export function useEnvironmentResolutions(
@@ -300,6 +316,7 @@ export function useSuiteRunPreflight({
       targets: planned?.targets,
     }),
     refused: environment.refusals,
+    refusalByEnvironment: environment.refusalByEnvironment,
     servers: appState?.servers ?? {},
     projectServers,
     knownOnly: Boolean(planned ?? suite.environmentIds?.length),
@@ -328,6 +345,25 @@ export function useSuiteRunPreflight({
 }
 
 /** A legacy suite's server problems, kept only for the clients selected. */
+/** An environment suite's refusals, kept only for the environments selected. */
+export function scopePreflightToEnvironments<T extends RunPreflight>(
+  preflight: T,
+  selectedEnvironmentIds: readonly string[],
+): T {
+  const byEnvironment = preflight.refusalByEnvironment;
+  if (!byEnvironment) return preflight;
+  return {
+    ...preflight,
+    refused: [
+      ...new Set(
+        selectedEnvironmentIds.flatMap((id) =>
+          byEnvironment[id] ? [byEnvironment[id]] : [],
+        ),
+      ),
+    ],
+  };
+}
+
 export function scopePreflightToHosts<T extends RunPreflight>(
   preflight: T,
   suite: EvalSuite,

@@ -17,9 +17,11 @@ const {
   useQueries,
   projectServers,
   userReady,
+  composeCapable,
 } = vi.hoisted(() => ({
   projectServers: { value: undefined as unknown[] | undefined },
   userReady: { value: true },
+  composeCapable: { value: true },
   useQueries: vi.fn((_queries: Record<string, unknown>) => ({})),
   ensure: vi.fn(),
   query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
@@ -66,7 +68,10 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => projectEnvironments.value,
 }));
 vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
-  useEvalComposeCapable: () => ({ capable: true, pending: false }),
+  useEvalComposeCapable: () => ({
+    capable: composeCapable.value,
+    pending: false,
+  }),
 }));
 vi.mock("../eval-target-matrix", () => ({
   EvalTargetMatrix: ({
@@ -440,6 +445,36 @@ describe("with the backend's answer", () => {
     expect(useQueries).toHaveBeenLastCalledWith({});
   });
 
+  // An older deployment picks environments with checkboxes, not the matrix.
+  it("lets an older deployment start once the refused environment is deselected", () => {
+    composeCapable.value = false;
+    useQueries.mockImplementation(() => ({
+      env: new ConvexError({
+        code: "ENV_SERVERS_UNRESOLVED",
+        message: "env refused",
+      }),
+      "env-opus": { servers: [] },
+    }));
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={{ ...suite, environmentIds: ["env", "env-opus"] }}
+        cases={cases}
+        environments={[
+          environments[0],
+          { ...environments[0], environmentId: "env-opus", modelId: "opus" },
+        ]}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const start = () => screen.getByRole("button", { name: "Start run" });
+    expect(start()).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /sonnet/ }));
+    expect(start()).toHaveProperty("disabled", false);
+  });
+
   it("lets Start through while the resolution is still loading", () => {
     useQueries.mockImplementation(() => ({ env: undefined }));
     renderReview();
@@ -536,6 +571,7 @@ beforeEach(() => {
   useQueries.mockClear();
   projectServers.value = undefined;
   userReady.value = true;
+  composeCapable.value = true;
   ensure.mockReset();
   query.mockReset();
   query.mockResolvedValue({ ephemeralEnvironmentLaunch: true });

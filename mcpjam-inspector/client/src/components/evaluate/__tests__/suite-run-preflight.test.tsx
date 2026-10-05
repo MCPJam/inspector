@@ -206,7 +206,20 @@ describe("readEnvironmentResolutions", () => {
         "env-b": { servers: [{ serverId: "srv-2" }] },
         "env-c": undefined,
       }),
-    ).toEqual({ serverRefs: ["billing", "srv-2"], refusals: [] });
+    ).toEqual({
+      serverRefs: ["billing", "srv-2"],
+      refusals: [],
+      refusalByEnvironment: {},
+    });
+  });
+
+  it("remembers which environment each refusal came from", () => {
+    expect(
+      readEnvironmentResolutions({
+        "env-a": deletedServer,
+        "env-b": { servers: [] },
+      }).refusalByEnvironment,
+    ).toEqual({ "env-a": deletedServer.data.message });
   });
 
   it("reports a launch refusal once, in the backend's words", () => {
@@ -263,7 +276,7 @@ describe("readEnvironmentResolutions", () => {
           message: "Slow down",
         }),
       }),
-    ).toEqual({ serverRefs: [], refusals: [] });
+    ).toEqual({ serverRefs: [], refusals: [], refusalByEnvironment: {} });
   });
 });
 
@@ -469,6 +482,42 @@ describe("Setup Run with a preflight", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: /^B/ }));
     expect(screen.getByRole("button", { name: /Start run/ })).toBeEnabled();
     expect(screen.queryByText(/gone is no longer/)).not.toBeInTheDocument();
+  });
+
+  // An older deployment picks environments with checkboxes, not the matrix.
+  it("starts once the environment the backend refuses is deselected", async () => {
+    render(
+      <SuiteRunReviewContent
+        suite={
+          {
+            _id: "suite",
+            name: "Checkout",
+            environment: { servers: [] },
+            environmentIds: ["env-a", "env-b"],
+          } as unknown as EvalSuite
+        }
+        cases={cases}
+        environments={[
+          { environmentId: "env-a", hostId: "h1", modelId: "model-a" },
+          { environmentId: "env-b", hostId: "h1", modelId: "model-b" },
+        ]}
+        hostNamesById={new Map([["h1", "Claude"]])}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+        preflight={{
+          disconnected: [],
+          removed: [],
+          refused: ["env-a refused"],
+          refusalByEnvironment: { "env-a": "env-a refused" },
+          disabledProviders: [],
+          serverName: (ref) => ref,
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: /model-a/ }));
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeEnabled();
+    expect(screen.queryByText("env-a refused")).not.toBeInTheDocument();
   });
 
   it("blocks Start on an environment the backend refuses to launch", () => {

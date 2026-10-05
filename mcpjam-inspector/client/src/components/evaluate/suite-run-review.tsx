@@ -17,6 +17,7 @@ import { ConfiguredSuiteRunReview } from "./suite-run-matrix";
 import {
   hasBlockingPreflight,
   RunPreflightNotices,
+  scopePreflightToEnvironments,
   scopePreflightToHosts,
   type RunPreflightState,
 } from "./suite-run-preflight";
@@ -192,18 +193,17 @@ export function SuiteRunReviewContent({
     selected.includes(target.id),
   );
   const selectionCount = matrix?.count ?? activeTargets.length;
-  // A legacy suite's clients are picked here, so only theirs count.
+  // Without the matrix, the clients or environments are picked here, so only
+  // theirs count.
+  const selectedIds = activeTargets.map((target) => target.id);
   const scopedPreflight =
-    preflight &&
-    !matrix &&
-    !suite.environmentIds?.length &&
-    suite.hostAttachments?.length
-      ? scopePreflightToHosts(
-          preflight,
-          suite,
-          activeTargets.map((target) => target.id),
-        )
-      : preflight;
+    !preflight || matrix
+      ? preflight
+      : suite.environmentIds?.length
+        ? scopePreflightToEnvironments(preflight, selectedIds)
+        : suite.hostAttachments?.length
+          ? scopePreflightToHosts(preflight, suite, selectedIds)
+          : preflight;
   // The notices say which server; this only has to stop the launch.
   const disabledReason =
     blockedReason ??
