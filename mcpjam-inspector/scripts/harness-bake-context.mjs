@@ -4,20 +4,21 @@
 //
 //   node scripts/harness-bake-context.mjs --out <dir>
 //   node scripts/harness-bake-context.mjs --write-lock
+//   (either takes --lock <path> to read or write a lock elsewhere)
 //
 // <dir> then holds:
 //   claude-code/      the PATCHED Claude Code recipe, byte-identical to what a
-//                     hosted turn hands the framework (`createClaudeCodeHarness`
-//                     in `claude-code-bootstrap.ts`, which the registry's
-//                     hosted adapter builds)
-//   codex-appserver/  the Codex app-server recipe (`codex-appserver-bootstrap.ts`)
+//                     hosted turn hands the framework
+//   codex-appserver/  the Codex app-server recipe
 //   manifest.json     recipe identities, file digests, the toolchain pins and
 //                     `HARNESS_PINNED_VERSIONS`
 //   bake.mjs          the in-image installer/verifier (`scripts/harness-bake/bake.mjs`)
 //
 // `--write-lock` rewrites `harness-bake.lock.json` (next to package.json) from
 // the same resolution: the recipe identities, runtime versions and toolchain
-// pins the computer template is expected to carry.
+// pins the computer template is expected to carry. `--out` REFUSES to write a
+// context whose identities differ from the committed lock, so a template can
+// only be baked from a commit whose lock describes it.
 //
 // Consumers: the computer template (mcpjam-backend `templates/computer/`,
 // which checks out this repository at the commit in its `inspector-bake-ref`
@@ -26,10 +27,14 @@
 // directory's CONTENTS to `/home/user/.harness-bootstrap/` and run `bake.mjs`
 // as the runtime user.
 //
-// The recipes come from the builders the application itself uses, so there is
-// one place a recipe is defined. This file only IMPORTS those: the recipe
-// sources are signed local-pack inputs (`check-local-harness-inputs.mjs`) and
-// nothing here may change their bytes. The Codex bridge is read from the
+// Both recipes come from the harness REGISTRY, through the same
+// `getHarnessAdapter(id).createHarness(...)` call a hosted turn makes in
+// `run-harness-turn.ts`, so the bake follows whatever the hosted adapters build
+// (a wrapper added around a recipe is baked the moment the registry uses it).
+// This file only IMPORTS those: the recipe sources are signed local-pack
+// inputs (`check-local-harness-inputs.mjs`) and nothing here may change their
+// bytes. The registry is loaded with the server's tsconfig aliases and the
+// SDK's TypeScript sources, so no SDK build is needed. The Codex bridge is read from the
 // GENERATED bundle (what the inspector itself imports), after checking it
 // equals a fresh bundle of the sources — without rewriting it, since tests may
 // be importing it. Identities are computed with `harnessRecipeIdentity`
@@ -41,10 +46,10 @@
 // fails when they differ, so a recipe change cannot merge without the lock
 // moving with it. The lock moving is the signal to rebuild the computer
 // template from that commit and roll it out (mcpjam-backend
-// `templates/computer/README.md`). No check can see whether that rollout
-// happened: until it does, hosted turns on the old template install at turn
-// time, and say so in the `[harness][timing]` line and as
-// `[harness][bake-drift]`.
+// `templates/computer/README.md`, whose `build.ts` only builds from a commit on
+// inspector `main`). No check can see whether that rollout happened: until it
+// does, hosted turns on the old template install at turn time, and say so in
+// their `[harness][timing]` / `[harness][bootstrap]` log fields.
 //
 // Nothing here depends on the commit or the clock: the same recipes give the
 // same bytes, so the template's content hash only moves when something baked
@@ -58,8 +63,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -114,16 +120,83 @@ function recipeFiles(recipe) {
   });
 }
 
-/** The patched Claude Code recipe exactly as the hosted adapter builds it. */
-async function loadClaudeCodeRecipe() {
-  const { createClaudeCodeHarness } = await tsModule(
-    "../server/utils/harness/claude-code-bootstrap.ts",
-  );
-  return { bootstrap: await createClaudeCodeHarness().getBootstrap() };
+const SDK_SOURCE = join(here, "..", "..", "sdk", "src");
+
+let registryPromise;
+/**
+ * The harness registry, loaded the way the server resolves it: the server
+ * tsconfig's aliases, and `@mcpjam/sdk/*` read from the SDK's TypeScript
+ * sources (the server tsconfig maps it there too) rather than a built `dist/`.
+ */
+function loadHarnessRegistry() {
+  registryPromise ??= (async () => {
+    if (typeof registerHooks !== "function") {
+      throw new Error(
+        "the bake context generator needs Node >= 22.15 (module.registerHooks)",
+      );
+    }
+    registerHooks({
+      resolve(specifier, context, nextResolve) {
+        const match = /^@mcpjam\/sdk(?:\/(.+))?$/.exec(specifier);
+        if (match) {
+          const sub = match[1] ?? "index";
+          for (const candidate of [
+            join(SDK_SOURCE, `${sub}.ts`),
+            join(SDK_SOURCE, sub, "index.ts"),
+          ]) {
+            if (existsSync(candidate)) {
+              return { url: pathToFileURL(candidate).href, shortCircuit: true };
+            }
+          }
+        }
+        return nextResolve(specifier, context);
+      },
+    });
+    const { tsImport } = await import("tsx/esm/api");
+    return tsImport("../server/utils/harness/registry.ts", {
+      parentURL: import.meta.url,
+      tsconfig: join(here, "..", "server", "tsconfig.json"),
+    });
+  })();
+  return registryPromise;
 }
 
 /**
- * The Codex app-server recipe exactly as the inspector builds it, refusing a
+ * The arguments a hosted turn hands `createHarness`. The values are
+ * placeholders: `harness-bake.test.ts` proves no recipe depends on the model,
+ * the credentials, the MCP servers, the effort or the command sandbox policy.
+ */
+const HOSTED_HARNESS_ARGS = {
+  "claude-code": {
+    modelId: "anthropic/claude-sonnet-4-5",
+    auth: {
+      ANTHROPIC_AUTH_TOKEN: "bake",
+      ANTHROPIC_BASE_URL: "http://bake.invalid",
+    },
+    mcpJson: { mcpServers: {} },
+  },
+  codex: {
+    modelId: "openai/gpt-5.5",
+    auth: { CODEX_API_KEY: "bake", OPENAI_BASE_URL: "http://bake.invalid" },
+  },
+};
+
+/** A recipe exactly as the registry's hosted adapter builds it. */
+async function loadHostedRecipe(harnessId) {
+  const registry = await loadHarnessRegistry();
+  const harness = registry
+    .getHarnessAdapter(harnessId)
+    .createHarness(HOSTED_HARNESS_ARGS[harnessId]);
+  return { bootstrap: await harness.getBootstrap() };
+}
+
+/** The patched Claude Code recipe exactly as a hosted turn builds it. */
+async function loadClaudeCodeRecipe() {
+  return loadHostedRecipe("claude-code");
+}
+
+/**
+ * The Codex app-server recipe exactly as a hosted turn builds it, refusing a
  * generated bridge bundle that has drifted from its sources (it is a build
  * product, gitignored, and a stale one would bake a bridge nobody reviewed).
  */
@@ -153,10 +226,7 @@ async function loadCodexAppServerRecipe() {
         "`npm run bundle:codex-appserver-bridge` and try again",
     );
   }
-  const { getCodexAppServerBootstrap } = await tsModule(
-    "../server/utils/harness/codex-appserver/codex-appserver-bootstrap.ts",
-  );
-  return { bootstrap: getCodexAppServerBootstrap() };
+  return loadHostedRecipe("codex");
 }
 
 function readPins() {
@@ -371,29 +441,58 @@ export async function writeHarnessBakeContext(outDir, resolved) {
   return manifest;
 }
 
+/**
+ * Throw unless `lock` (from {@link harnessBakeLockFor}) is what the committed
+ * lock at `lockPath` records: a context that differs would bake a template
+ * the lock does not describe.
+ */
+export function assertMatchesCommittedLock(lock, lockPath) {
+  const committed = existsSync(lockPath)
+    ? JSON.parse(readFileSync(lockPath, "utf8"))
+    : undefined;
+  const recorded = JSON.stringify({
+    pins: committed?.pins,
+    recipes: committed?.recipes,
+  });
+  const resolved = JSON.stringify({ pins: lock.pins, recipes: lock.recipes });
+  if (recorded !== resolved) {
+    throw new Error(
+      `the recipes this commit resolves do not match ${lockPath}; refusing to ` +
+        "write a bake context the lock does not describe.\n" +
+        `  lock:     ${recorded}\n  resolved: ${resolved}\n` +
+        "Run `node scripts/harness-bake-context.mjs --write-lock`, commit the " +
+        "lock, and rebuild the computer template from the merged commit.",
+    );
+  }
+}
+
+function argValue(name) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
 async function main() {
-  const outIndex = process.argv.indexOf("--out");
-  const out = outIndex >= 0 ? process.argv[outIndex + 1] : undefined;
+  const out = argValue("--out");
+  const lockPath = resolve(argValue("--lock") ?? HARNESS_BAKE_LOCK_PATH);
   const writeLock = process.argv.includes("--write-lock");
   if (!out && !writeLock) {
     throw new Error(
-      "usage: node scripts/harness-bake-context.mjs [--out <dir>] [--write-lock]",
+      "usage: node scripts/harness-bake-context.mjs [--out <dir>] [--write-lock] [--lock <path>]",
     );
   }
   const resolved = await resolveHarnessBake();
   const { manifest } = resolved;
+  const lock = harnessBakeLockFor(manifest);
+  if (writeLock) {
+    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    process.stdout.write(`lock written to ${lockPath}\n`);
+  }
   if (out) {
+    assertMatchesCommittedLock(lock, lockPath);
     await writeHarnessBakeContext(out, resolved);
     process.stdout.write(
       `harness bake ${manifest.bakeId} written to ${resolve(out)}\n`,
     );
-  }
-  if (writeLock) {
-    writeFileSync(
-      HARNESS_BAKE_LOCK_PATH,
-      `${JSON.stringify(harnessBakeLockFor(manifest), null, 2)}\n`,
-    );
-    process.stdout.write(`lock written to ${HARNESS_BAKE_LOCK_PATH}\n`);
   }
   process.stdout.write(
     manifest.recipes

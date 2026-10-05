@@ -144,6 +144,7 @@ import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
 import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
+  logHarnessBootstrapOnFailure,
 } from "./harness-bake-observer.js";
 import {
   prepareLocalHarnessTurn,
@@ -1036,6 +1037,9 @@ export async function runHarnessTurn(
    * itself rather than a successful one.
    */
   let modelInvoked = false;
+  /** The turn's cloud sandbox provider (bootstrap-observed), once built — so a
+   *  FAILED turn can still report whether its runtime install failed. */
+  let bakeObservedSandbox: unknown = null;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -2293,6 +2297,7 @@ export async function runHarnessTurn(
                   }
                 : {}),
             });
+      if (localPrepared === null) bakeObservedSandbox = sandbox;
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own
@@ -3776,7 +3781,8 @@ export async function runHarnessTurn(
         // installed this turn (and if so why), plus the pinned versions —
         // empty on the local path. Inlined for the console, and passed as
         // context too: Axiom keeps the context, and the bake-miss monitor
-        // reads those fields (mcpjam-backend templates/computer/OPS.md).
+        // reads those fields (mcpjam-backend templates/computer/OPS.md). A
+        // failed turn reports the same fields as `[harness][bootstrap]`.
         const bootstrapLog = harnessBootstrapLogFields(
           await harnessBootstrapObservation(sandbox),
           harnessAdapter.pinnedRuntimeVersion,
@@ -3999,6 +4005,14 @@ export async function runHarnessTurn(
         transport: "http_stream",
         context: { promptIndex },
       });
+      // A turn-time install that failed (the pnpm 11 / deny-all egress class)
+      // never reaches the timing line, so the failure path reports the
+      // bootstrap too. Not awaited: the bounded manifest probe must not delay
+      // the error the client is waiting for.
+      void logHarnessBootstrapOnFailure(
+        bakeObservedSandbox,
+        harnessAdapter.pinnedRuntimeVersion,
+      );
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
       if (textId !== undefined) emitTextEnd(writer, textId);

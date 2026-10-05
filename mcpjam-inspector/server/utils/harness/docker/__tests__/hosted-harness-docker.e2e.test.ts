@@ -28,10 +28,10 @@
  *     runtime process left in the box and exactly one broker revoke after each.
  *
  * Skipped unless `HARNESS_DOCKER_IMAGE` names a built test image (the
- * `hosted-harness-docker` workflow builds one and sets it). These are test
- * inputs read only by this file, not settings of the application:
- * `HARNESS_DOCKER_E2E_HARNESS` limits the run to one harness (the CI matrix)
- * and `UPDATE_HARNESS_GOLDENS=1` rewrites the goldens. Locally, from
+ * `hosted-harness-docker` workflow builds one and sets it). That and
+ * `UPDATE_HARNESS_GOLDENS=1` (rewrite the goldens) are test inputs read only by
+ * this file, not settings of the application. One harness at a time is
+ * `-t claude-code` / `-t codex` (the CI matrix). Locally, from
  * `mcpjam-inspector/` on a Linux Docker host (`--network host`):
  *
  *   node scripts/harness-bake-context.mjs --out /tmp/hh/harness-bake
@@ -57,7 +57,6 @@ import { jsonSchema, tool } from "ai";
 const IMAGE = process.env.HARNESS_DOCKER_IMAGE?.trim() ?? "";
 const ENABLED = IMAGE.length > 0;
 const UPDATE = process.env.UPDATE_HARNESS_GOLDENS === "1";
-const ONLY = process.env.HARNESS_DOCKER_E2E_HARNESS;
 const HERE = __dirname;
 const GOLDENS = join(HERE, "goldens");
 const CONFORMANCE = resolve(HERE, "../../local/conformance");
@@ -424,9 +423,7 @@ function assertGolden(name: string, actual: unknown) {
 const TERMINAL = new Set(["finish", "error", "abort"]);
 
 describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
-  for (const harness of (Object.keys(HARNESSES) as HarnessId[]).filter(
-    (h) => !ONLY || ONLY === h,
-  )) {
+  for (const harness of Object.keys(HARNESSES) as HarnessId[]) {
     const spec = HARNESSES[harness];
     describe(harness, () => {
       let upstream: { url: string; child: ChildProcess };

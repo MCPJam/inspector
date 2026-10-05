@@ -33,9 +33,10 @@
  * fails when a recipe change moves an identity without the lock being
  * updated. Updating the lock is the reviewable signal that the template has
  * to be rebuilt from that commit; nothing in CI can check that the rebuilt
- * template was actually rolled out. At runtime a miss on a box that carries a
- * bake is logged as `[harness][bake-drift]`, and the bake-miss monitor
- * (mcpjam-backend `ops/axiom-monitors`) watches the `[harness][timing]` line.
+ * template was actually rolled out. At runtime every hosted turn reports its
+ * bootstrap (`[harness][timing]` on success, `[harness][bootstrap]` on
+ * failure), and the bake-miss monitor (mcpjam-backend `ops/axiom-monitors`)
+ * watches both, grouped by whether the box carries a bake at all.
  *
  * Everything here is a constant on purpose: the template, the generator and
  * the observer must agree on these values, so none of them is configurable.

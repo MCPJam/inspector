@@ -349,42 +349,22 @@ describe("infra surface", () => {
     );
   });
 
-  it("resolves the container's bridge IP when the container is not on the host network", async () => {
-    // Read off the container, not configured: nothing has to be set for a
-    // bridge-networked container to be reached at its own address.
-    const docker = fakeDocker((args) => {
-      if (args[0] === "inspect" && args.includes(STATE_FORMAT)) {
-        return { stdout: "true bridge\n" };
-      }
-      if (
-        args[0] === "inspect" &&
-        args.includes(
-          "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
-        )
-      ) {
-        return { stdout: "172.17.0.5 \n" };
-      }
-      return baseReply(args) ?? {};
-    });
-    const s = await createDockerHarnessSandboxProvider({
-      containerId: "harness-ci",
-      spawnProcess: docker.spawnProcess,
-    }).createSession();
-    const calls = docker.calls;
+  it("refuses a container that is not on the host network, whose bridge loopback cannot reach", async () => {
+    const docker = fakeDocker((args) =>
+      args[0] === "inspect" && args.includes(STATE_FORMAT)
+        ? { stdout: "true bridge\n" }
+        : (baseReply(args) ?? {}),
+    );
     await expect(
-      s.getPortEndpoint({ port: 39271, protocol: "ws" }),
-    ).resolves.toEqual({
-      url: "ws://172.17.0.5:39271",
-    });
-    await s.getPortEndpoint({ port: 39271 });
-    // Cached: one inspect for the IP, however many endpoints.
-    expect(
-      calls.filter((c) =>
-        c.args.includes(
-          "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
-        ),
-      ),
-    ).toHaveLength(1);
+      createDockerHarnessSandboxProvider({
+        containerId: "harness-ci",
+        spawnProcess: docker.spawnProcess,
+      }).createSession(),
+    ).rejects.toThrow(
+      /runs on the "bridge" network; start it with `--network host`/,
+    );
+    // Refused before anything ran in it.
+    expect(docker.calls.some((c) => c.args[0] === "exec")).toBe(false);
   });
 
   it("never stops or removes the container, and hands tools a narrowed view", async () => {

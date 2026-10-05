@@ -34,9 +34,8 @@
  *   run / spawn     → `docker exec -u <user> -w <cwd> <c> bash -c <command>`
  *   kill            → the spawned command's process GROUP inside the container
  *                     (killing the `docker exec` client alone leaves it running)
- *   getPortEndpoint → loopback when the container runs with `--network host`
- *                     (the CI job), otherwise the container's bridge IP —
- *                     read from the container, never configured
+ *   getPortEndpoint → loopback: the container must run with `--network host`
+ *                     (the CI job does), and attaching refuses one that does not
  *
  * `docker cp` is deliberately NOT used for writes: it writes as the archive's
  * owner (root here), and a root-owned file in the user's home is one the
@@ -58,17 +57,9 @@ export interface DockerHarnessSandboxProviderOptions {
   /** User every command and file operation runs as. Defaults to the
    *  template's runtime user, which is what the bake installed as. */
   user?: string;
-  /** Port the in-container bridge binds to; surfaced via `session.ports`. */
+  /** Port the in-container bridge binds to; surfaced via `session.ports`.
+   *  Reached on loopback, so the container runs with `--network host`. */
   bridgePort?: number;
-  /**
-   * How this process reaches a container port. Unset, it is read from the
-   * container when the session attaches:
-   *  - `host-network`: the container runs with `--network host`, so its ports
-   *    are this machine's loopback ports (the CI job's mode).
-   *  - `container-ip`: the container's bridge-network IP from `docker inspect`
-   *    (reachable from a Linux host; not from Docker Desktop's VM).
-   */
-  portAccess?: "host-network" | "container-ip";
   /** Per-command timeout for `run`. Matches the E2B provider's default. */
   commandTimeoutMs?: number;
   /** Session-wide env merged under each command's own env (see the E2B provider). */
@@ -326,37 +317,6 @@ export function createDockerHarnessSandboxProvider(
     });
   };
 
-  /** Set when a session attaches: the option, or what the container runs with. */
-  let portAccess: "host-network" | "container-ip" =
-    opts.portAccess ?? "host-network";
-
-  const resolveHost = (() => {
-    let cached: Promise<string> | undefined;
-    return (): Promise<string> => {
-      if (portAccess === "host-network") return Promise.resolve("127.0.0.1");
-      cached ??= execDocker([
-        "inspect",
-        "-f",
-        "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
-        container,
-      ]).then((result) => {
-        const ip = result.stdout
-          .toString("utf8")
-          .split(/\s+/)
-          .find((value) => value.length > 0);
-        if (result.exitCode !== 0 || !ip) {
-          cached = undefined;
-          throw new Error(
-            `container ${container} has no bridge-network IP; start it with ` +
-              "`--network host` and use portAccess `host-network`",
-          );
-        }
-        return ip;
-      });
-      return cached;
-    };
-  })();
-
   const connectSession = async (
     signal?: AbortSignal,
   ): Promise<HarnessV1NetworkSandboxSession> => {
@@ -379,11 +339,15 @@ export function createDockerHarnessSandboxProvider(
           "provider only attaches to a container someone else started",
       );
     }
-    // Read off the container rather than configured: a container on the host
-    // network IS reachable on loopback, and one that is not never is.
-    portAccess =
-      opts.portAccess ??
-      (networkMode === "host" ? "host-network" : "container-ip");
+    // The bridge is reached on loopback, which is the container's own only
+    // when it shares the host's network.
+    if (networkMode !== "host") {
+      throw new Error(
+        `docker container ${container} runs on the "${networkMode ?? "?"}" ` +
+          "network; start it with `--network host` so its bridge port is " +
+          "reachable on loopback",
+      );
+    }
     // The same pinned guard the E2B provider runs, for the same reason.
     const guard = await execDocker(
       [
@@ -414,7 +378,7 @@ export function createDockerHarnessSandboxProvider(
       port: number,
       protocol?: "http" | "https" | "ws",
     ): Promise<string> =>
-      `${protocol === "ws" ? "ws" : (protocol ?? "http")}://${await resolveHost()}:${port}`;
+      `${protocol === "ws" ? "ws" : (protocol ?? "http")}://127.0.0.1:${port}`;
 
     const session: HarnessV1NetworkSandboxSession = {
       id: container,

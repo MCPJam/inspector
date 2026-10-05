@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -423,6 +424,35 @@ describe("the generated bake context", () => {
     );
     expect(again.bakeId).toBe(manifest.bakeId);
     expect(manifest.bakeId).toMatch(/^[0-9a-f]{12}$/);
+  }, 120_000);
+
+  it("refuses to write a context the committed lock does not describe", () => {
+    // A template can only be baked from a commit whose lock records what it
+    // bakes; the backend's build pins such a commit.
+    const lock = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as HarnessBakeLock;
+    const stale = join(out, "stale-lock.json");
+    writeFileSync(
+      stale,
+      JSON.stringify({
+        ...lock,
+        recipes: lock.recipes.map((r) => ({ ...r, identity: "0".repeat(16) })),
+      }),
+    );
+    const run = spawnSync(
+      process.execPath,
+      [
+        "scripts/harness-bake-context.mjs",
+        "--out",
+        join(out, "refused"),
+        "--lock",
+        stale,
+      ],
+      { cwd: PACKAGE_ROOT, encoding: "utf8" },
+    );
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/do not match .*stale-lock\.json/);
+    expect(run.stderr).toMatch(/--write-lock/);
+    expect(existsSync(join(out, "refused"))).toBe(false);
   }, 120_000);
 
   it("refuses to overwrite a directory it did not write", () => {

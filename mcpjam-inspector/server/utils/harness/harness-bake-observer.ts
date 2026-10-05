@@ -1,7 +1,9 @@
 /**
  * Observes the framework's bootstrap marker traffic on a hosted turn's box and
- * turns it into the bootstrap fields of the `[harness][timing]` line. See
- * `harness-bake.ts` for what the bake is and why a miss is worth recording.
+ * turns it into the bootstrap fields of the turn's log line — the
+ * `[harness][timing]` line when the turn succeeds, the `[harness][bootstrap]`
+ * line when it fails. See `harness-bake.ts` for what the bake is and why a
+ * miss is worth recording.
  */
 import { posix } from "node:path";
 import type {
@@ -20,11 +22,15 @@ import {
  * What the framework's bootstrap step did on this turn's box:
  *  - `baked`: the marker was there and the TEMPLATE wrote it;
  *  - `installed`: the marker was missing and the framework ran the recipe;
+ *  - `install-failed`: the marker was missing and no marker was ever written —
+ *    the install did not complete (only seen on a failed turn: the pnpm 11 and
+ *    deny-all-egress outages looked exactly like this);
  *  - `reused`: the marker was there because an EARLIER turn installed it (a
  *    persistent computer from an unbaked template, or after drift);
  *  - `none`: no recipe was applied (no observed marker access).
  */
-export type HarnessBootstrapOutcome = "baked" | "installed" | "reused" | "none";
+export type HarnessBootstrapOutcome =
+  "baked" | "installed" | "install-failed" | "reused" | "none";
 
 /**
  * Whether this turn should have hit a baked marker, and if not, why not.
@@ -34,7 +40,12 @@ export type HarnessBootstrapOutcome = "baked" | "installed" | "reused" | "none";
 export type HarnessBakeExpectation =
   "baked" | "custom-workdir" | "unbaked-recipe" | "none";
 
-/** Whether the box carries a bake manifest at all (checked only on a miss). */
+/**
+ * Whether the box carries a harness bake at all. A template marker is proof
+ * (`present`, no extra read); anything else is answered by one read of the
+ * bake manifest. `present` + a miss is drift; `absent` is a box from a
+ * pre-bake template or a custom environment image.
+ */
 export type HarnessBakeOnBox = "present" | "absent" | "unknown" | "not-checked";
 
 export interface HarnessBootstrapObservation {
@@ -70,9 +81,10 @@ const observations = new WeakMap<
  * Wrap a provider so the framework's bootstrap marker traffic is observed.
  *
  * Purely passive: every call is forwarded unchanged and in order, and the only
- * extra I/O is ONE read of the bake manifest after a miss — off the critical
- * path (not awaited), and on a turn that is about to spend minutes installing
- * anyway. Read the result with {@link harnessBootstrapObservation}.
+ * extra I/O is ONE read of the bake manifest when the marker is not the
+ * template's — off the critical path (not awaited), and on a turn that is
+ * about to spend minutes installing anyway. Read the result with
+ * {@link harnessBootstrapObservation}.
  */
 export function observeHarnessBootstrap(
   provider: HarnessV1SandboxProvider,
@@ -82,11 +94,12 @@ export function observeHarnessBootstrap(
     bootstrapDir?: string;
     identity?: string;
     found?: "baked" | "reused";
+    missed: boolean;
     installed: boolean;
     bakedVersions?: string;
     bakeId?: string;
     bakeOnBox: Promise<HarnessBakeOnBox> | null;
-  } = { installed: false, bakeOnBox: null };
+  } = { missed: false, installed: false, bakeOnBox: null };
 
   const noteMarker = (path: string, cwd: string) => {
     const match = MARKER_PATH.exec(path);
@@ -95,6 +108,16 @@ export function observeHarnessBootstrap(
     state.bootstrapDir = posix.relative(cwd, match[1]!) || ".";
     state.identity = match[2];
     return match;
+  };
+
+  const probeBake = (probe: SandboxSession) => {
+    state.bakeOnBox ??= Promise.resolve(
+      probe.readTextFile({ path: HARNESS_BAKE_MANIFEST_PATH }),
+    ).then(
+      (manifest): HarnessBakeOnBox =>
+        manifest === null ? "absent" : "present",
+      (): HarnessBakeOnBox => "unknown",
+    );
   };
 
   const wrapSession = <S extends SandboxSession>(
@@ -108,20 +131,16 @@ export function observeHarnessBootstrap(
         const result = await session.readTextFile(options);
         if (noteMarker(options.path, cwd)) {
           if (result === null) {
-            if (state.bakeOnBox === null) {
-              state.bakeOnBox = Promise.resolve(
-                probe.readTextFile({ path: HARNESS_BAKE_MANIFEST_PATH }),
-              ).then(
-                (manifest): HarnessBakeOnBox =>
-                  manifest === null ? "absent" : "present",
-                (): HarnessBakeOnBox => "unknown",
-              );
-            }
+            state.missed = true;
+            probeBake(probe);
           } else {
             const baked = parseBakedMarker(result);
             state.found = baked ? "baked" : "reused";
             if (baked?.versions) state.bakedVersions = baked.versions;
             if (baked?.bakeId) state.bakeId = baked.bakeId;
+            // The template's own marker proves the bake; anything else needs
+            // the manifest to tell a pre-bake box from a drifted one.
+            if (!baked) probeBake(probe);
           }
         }
         return result;
@@ -161,7 +180,7 @@ export function observeHarnessBootstrap(
   observations.set(observed, () => {
     const outcome: HarnessBootstrapOutcome = state.installed
       ? "installed"
-      : (state.found ?? "none");
+      : (state.found ?? (state.missed ? "install-failed" : "none"));
     let expectation: HarnessBakeExpectation = "none";
     if (state.bootstrapDir !== undefined) {
       expectation = !HARNESS_BAKED_BOOTSTRAP_DIRS.includes(state.bootstrapDir)
@@ -173,7 +192,7 @@ export function observeHarnessBootstrap(
     return {
       outcome,
       expectation,
-      bakeOnBox: "not-checked",
+      bakeOnBox: state.found === "baked" ? "present" : "not-checked",
       ...(state.bootstrapDir !== undefined
         ? { bootstrapDir: state.bootstrapDir }
         : {}),
@@ -200,9 +219,9 @@ const bakeOnBoxProbes = new WeakMap<
  * undefined for one that was not (the local path supervises its own process
  * tree and has no template to hit).
  *
- * Awaits the post-miss manifest probe for at most `probeTimeoutMs`: it was
- * started when the miss happened, so by the time a turn logs it has long
- * settled; the bound only keeps a wedged box from holding the log line.
+ * Awaits the manifest probe for at most `probeTimeoutMs`: it was started when
+ * the marker was read, so by the time a turn logs it has long settled; the
+ * bound only keeps a wedged box from holding the log line.
  */
 export async function harnessBootstrapObservation(
   provider: unknown,
@@ -228,14 +247,11 @@ export async function harnessBootstrapObservation(
 }
 
 /**
- * The bootstrap fields of the `[harness][timing]` line: inline `key=value`
- * text (the console drops the context argument) and the same values as a
- * structured context for Axiom, plus the pinned runtime version.
- *
- * A miss on a box that HAS a bake manifest, for a recipe and working directory
- * the template covers, is drift — the template baked a different identity than
- * this inspector resolves — and is logged as its own warning so it does not
- * have to be computed out of the timing line to be seen.
+ * The bootstrap fields of a turn's log line: inline `key=value` text (the
+ * console drops the context argument) and the same values as a structured
+ * context for Axiom, plus the pinned runtime version. The bake-miss monitor
+ * (mcpjam-backend `ops/axiom-monitors/monitors/harness-bake-miss-rate.json`)
+ * reads the context: a miss on a box with `bakeOnBox=present` is drift.
  */
 export function harnessBootstrapLogFields(
   observation: HarnessBootstrapObservation | undefined,
@@ -272,17 +288,30 @@ export function harnessBootstrapLogFields(
       ? ` bakedVersions=${observation.bakedVersions}`
       : "") +
     (observation.bakeId ? ` bakeId=${observation.bakeId}` : "");
-  if (
-    observation.expectation === "baked" &&
-    observation.outcome !== "baked" &&
-    observation.bakeOnBox === "present"
-  ) {
-    logger.warn(
-      `[harness][bake-drift] box carries a harness bake but not this recipe's marker; recipe=${
-        observation.bootstrapDir ?? "?"
-      }@${observation.identity ?? "?"} bootstrap=${observation.outcome}`,
-      context,
-    );
-  }
   return { text, context };
+}
+
+/**
+ * The failure-path counterpart of the `[harness][timing]` fields: logs
+ * `[harness][bootstrap] turn=failed …` with the same structured context plus
+ * `harnessTurn: "failed"`, so an install that never completed
+ * (`bootstrap=install-failed`) is counted by the bake-miss monitor. Silent when
+ * the provider was never observed or the turn failed before any bootstrap.
+ * Never throws: a diagnostic must not escalate the failure it describes.
+ */
+export async function logHarnessBootstrapOnFailure(
+  provider: unknown,
+  pinnedRuntimeVersion: string | undefined,
+): Promise<void> {
+  try {
+    const observation = await harnessBootstrapObservation(provider);
+    if (!observation || observation.outcome === "none") return;
+    const fields = harnessBootstrapLogFields(observation, pinnedRuntimeVersion);
+    logger.info(`[harness][bootstrap] turn=failed${fields.text}`, {
+      ...fields.context,
+      harnessTurn: "failed",
+    });
+  } catch {
+    // Best-effort diagnostics.
+  }
 }

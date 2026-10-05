@@ -14,6 +14,7 @@ vi.mock("../../logger.js", () => ({
 import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
+  logHarnessBootstrapOnFailure,
   observeHarnessBootstrap,
 } from "../harness-bake-observer.js";
 import {
@@ -22,10 +23,12 @@ import {
 } from "../harness-bake.js";
 
 // The observer is what turns "did this turn hit the baked template?" into a
-// log field the bake-miss alert can read. It must classify every way a turn
-// can bootstrap — and never change what the framework sees.
+// log field the bake-miss monitor can read. It must classify every way a turn
+// can bootstrap — including an install that never finished — and never change
+// what the framework sees.
 
 const ID = "0123456789abcdef";
+const MARKER = `/home/user/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`;
 const bakedMarker = JSON.stringify({
   bakedBy: HARNESS_BAKED_MARKER_AUTHOR,
   harnessId: "claude-code",
@@ -63,13 +66,21 @@ function fakeProvider(opts: { cwd?: string; files: Record<string, string> }) {
   return { provider, session, reads, files };
 }
 
-/** What the framework's `applyBootstrapRecipe` does, through the restricted view. */
+/**
+ * What the framework's `applyBootstrapRecipe` does, through the restricted
+ * view: read the marker, and on a miss write the recipe, run its install, and
+ * write the marker only when the install succeeded.
+ */
 async function frameworkBootstrap(
   provider: HarnessV1SandboxProvider,
-  bootstrapDir = ".harness-bootstrap/claude-code",
-  resume = false,
+  options: {
+    bootstrapDir?: string;
+    resume?: boolean;
+    installFails?: boolean;
+  } = {},
 ) {
-  const session = resume
+  const bootstrapDir = options.bootstrapDir ?? ".harness-bootstrap/claude-code";
+  const session = options.resume
     ? await provider.resumeSession!({ sessionId: "s" })
     : await provider.createSession();
   const restricted = session.restricted();
@@ -80,28 +91,28 @@ async function frameworkBootstrap(
     path: `${session.defaultWorkingDirectory}/${bootstrapDir}/package.json`,
     content: "{}",
   });
+  if (options.installFails) {
+    throw new Error("pnpm install exited 1");
+  }
   await restricted.writeTextFile({ path: marker, content: "" });
 }
 
 afterEach(() => {
   logged.warn.mockClear();
+  logged.info.mockClear();
 });
 
 describe("observeHarnessBootstrap", () => {
   it("reports a box the template baked, with what it baked", async () => {
-    const fake = fakeProvider({
-      files: {
-        [`/home/user/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`]:
-          bakedMarker,
-      },
-    });
+    const fake = fakeProvider({ files: { [MARKER]: bakedMarker } });
     const observed = observeHarnessBootstrap(fake.provider);
     await frameworkBootstrap(observed);
     const o = await harnessBootstrapObservation(observed);
     expect(o).toMatchObject({
       outcome: "baked",
       expectation: "baked",
-      bakeOnBox: "not-checked",
+      // The template's own marker is proof of the bake.
+      bakeOnBox: "present",
       bootstrapDir: ".harness-bootstrap/claude-code",
       identity: ID,
       bakeId: "abc123def456",
@@ -111,7 +122,7 @@ describe("observeHarnessBootstrap", () => {
     expect(fake.reads).not.toContain(HARNESS_BAKE_MANIFEST_PATH);
   });
 
-  it("reports an install, and that the box carries a DIFFERENT bake (drift)", async () => {
+  it("reports an install on a box that carries a DIFFERENT bake (drift)", async () => {
     const fake = fakeProvider({
       files: { [HARNESS_BAKE_MANIFEST_PATH]: "{}" },
     });
@@ -138,38 +149,47 @@ describe("observeHarnessBootstrap", () => {
       harnessBakeOnBox: "present",
       harnessRecipeIdentity: ID,
     });
-    expect(logged.warn).toHaveBeenCalledWith(
-      expect.stringContaining("[harness][bake-drift]"),
-      expect.objectContaining({ harnessRecipeIdentity: ID }),
-    );
+    // Drift is a field the monitor groups by, not a log line of its own.
+    expect(logged.warn).not.toHaveBeenCalled();
   });
 
-  it("reports an install on a box with no bake at all (old template / custom image) without crying drift", async () => {
+  it("reports an install on a box with no bake at all (old template / custom image)", async () => {
     const fake = fakeProvider({ files: {} });
     const observed = observeHarnessBootstrap(fake.provider);
     await frameworkBootstrap(observed);
-    const o = await harnessBootstrapObservation(observed);
-    expect(o).toMatchObject({
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "installed",
       expectation: "baked",
       bakeOnBox: "absent",
     });
-    harnessBootstrapLogFields(o, "2.1.245");
-    expect(logged.warn).not.toHaveBeenCalled();
   });
 
-  it("reports a marker an EARLIER turn installed as reused, not baked", async () => {
-    const fake = fakeProvider({
-      files: {
-        [`/home/user/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`]: "",
-      },
-    });
+  it("reports an install that never finished as install-failed", async () => {
+    // The pnpm 11 and deny-all-egress outages: the marker was missing, the
+    // recipe was written, the install failed, and no marker ever appeared.
+    const fake = fakeProvider({ files: {} });
     const observed = observeHarnessBootstrap(fake.provider);
-    await frameworkBootstrap(observed, ".harness-bootstrap/claude-code", true);
+    await expect(
+      frameworkBootstrap(observed, { installFails: true }),
+    ).rejects.toThrow(/pnpm install/);
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
+      outcome: "install-failed",
+      expectation: "baked",
+      bakeOnBox: "absent",
+      identity: ID,
+    });
+  });
+
+  it("reports a marker an EARLIER turn installed as reused, and checks the box for a bake", async () => {
+    const fake = fakeProvider({ files: { [MARKER]: "" } });
+    const observed = observeHarnessBootstrap(fake.provider);
+    await frameworkBootstrap(observed, { resume: true });
     expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "reused",
       expectation: "baked",
+      bakeOnBox: "absent",
     });
+    expect(fake.reads).toContain(HARNESS_BAKE_MANIFEST_PATH);
   });
 
   it("classifies a custom working directory as an INTENTIONAL fallback", async () => {
@@ -179,15 +199,12 @@ describe("observeHarnessBootstrap", () => {
     });
     const observed = observeHarnessBootstrap(fake.provider);
     await frameworkBootstrap(observed);
-    const o = await harnessBootstrapObservation(observed);
-    expect(o).toMatchObject({
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "installed",
       expectation: "custom-workdir",
       bakeOnBox: "present",
       defaultWorkingDirectory: "/home/user/project",
     });
-    harnessBootstrapLogFields(o, undefined);
-    expect(logged.warn).not.toHaveBeenCalled();
   });
 
   it("classifies a recipe the template does not bake as an intentional fallback", async () => {
@@ -195,7 +212,9 @@ describe("observeHarnessBootstrap", () => {
     // without a bake, or an older recipe layout.
     const fake = fakeProvider({ files: {} });
     const observed = observeHarnessBootstrap(fake.provider);
-    await frameworkBootstrap(observed, ".harness-bootstrap/not-baked");
+    await frameworkBootstrap(observed, {
+      bootstrapDir: ".harness-bootstrap/not-baked",
+    });
     expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "installed",
       expectation: "unbaked-recipe",
@@ -214,6 +233,7 @@ describe("observeHarnessBootstrap", () => {
     expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "none",
       expectation: "none",
+      bakeOnBox: "not-checked",
     });
   });
 
@@ -237,5 +257,39 @@ describe("observeHarnessBootstrap", () => {
     await frameworkBootstrap(observed);
     const o = await harnessBootstrapObservation(observed, 10);
     expect(o?.bakeOnBox).toBe("unknown");
+  });
+});
+
+describe("logHarnessBootstrapOnFailure", () => {
+  it("reports a failed turn's install so the bake-miss monitor counts it", async () => {
+    const fake = fakeProvider({
+      files: { [HARNESS_BAKE_MANIFEST_PATH]: "{}" },
+    });
+    const observed = observeHarnessBootstrap(fake.provider);
+    await frameworkBootstrap(observed, { installFails: true }).catch(() => {});
+    await logHarnessBootstrapOnFailure(observed, "2.1.245");
+    expect(logged.info).toHaveBeenCalledTimes(1);
+    expect(logged.info).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[harness\]\[bootstrap\] turn=failed bootstrap=install-failed bakeExpected=baked bakeOnBox=present/,
+      ),
+      expect.objectContaining({
+        harnessTurn: "failed",
+        harnessBootstrap: "install-failed",
+        harnessBakeExpected: "baked",
+        harnessBakeOnBox: "present",
+        harnessRecipeIdentity: ID,
+        harnessRuntimePinned: "2.1.245",
+      }),
+    );
+  });
+
+  it("stays silent when the turn failed before any bootstrap, or off the cloud path", async () => {
+    const fake = fakeProvider({ files: {} });
+    const observed = observeHarnessBootstrap(fake.provider);
+    await logHarnessBootstrapOnFailure(observed, "2.1.245");
+    await logHarnessBootstrapOnFailure(null, "2.1.245");
+    await logHarnessBootstrapOnFailure({}, "2.1.245");
+    expect(logged.info).not.toHaveBeenCalled();
   });
 });
