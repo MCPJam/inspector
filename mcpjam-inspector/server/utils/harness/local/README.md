@@ -130,13 +130,16 @@ path under the bootstrap directory into exactly three outcomes:
 
 | Path                                                 | Outcome                                                                                                                |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| a file the manifest lists in `adapterBootstrapFiles` | served from the verified bundle; a write is **compared** against the bundle's bytes and fails closed on any difference |
+| a file the manifest lists in `adapterBootstrapFiles` | served from the verified Inspector layer (or a legacy pack's copy); a write is **compared** against those bytes and fails closed on any difference |
 | the framework's `.bootstrap-<identity>.ok` marker    | written to session-owned state, so nothing is left behind in the workspace                                             |
 | anything else                                        | rejected — the recipe changed and the manifest needs re-review                                                         |
 
-Comparing rather than writing is the point: if the adapter's `bridge.mjs`
-differs from the bundle's, the session would be running bytes the adapter did
-not bootstrap. That is a bundle rebuild, not something to paper over.
+Comparing rather than writing is the point: if the recipe's `bridge.mjs`
+differs from the layer's, the session would be running bytes the recipe did
+not name. A local session's recipe is built from the same constants the layer
+is written from (`pack-bootstrap.ts`), so the two agree by construction, and the
+adapter's sandbox install files (`package.json`, the lockfile, `.npmrc`) are
+not in it at all: a recipe that names them fails closed.
 
 Every Inspector file operation is capped at 16 MiB by default. Reads stream
 through the cap (and detect a file that grows after its initial `stat`), while

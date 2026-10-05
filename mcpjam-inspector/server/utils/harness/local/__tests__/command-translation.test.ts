@@ -172,6 +172,53 @@ describe("the pinned command grammar", () => {
     });
   });
 
+  describe("claude-code over the Inspector layer", () => {
+    const LAYER = "/home/dev/.mcpjam/harness-local/runtime/inspector-layer/cc";
+    const launch =
+      `node '${BOOT}/bridge.mjs' --workdir '${SESSION}/w' ` +
+      `--bridge-state-dir '${SESSION}/.harness-bridge'`;
+
+    it("hands the launcher the verified pack to resolve the agent SDK from, ahead of the bridge's flags", async () => {
+      const result = await translateAdapterCommand(
+        { command: launch },
+        ctx({
+          layerRoot: LAYER,
+          layerFiles: ["bridge.mjs", "launcher.mjs", "layer.json"],
+          bridgeLauncherPath: `${LAYER}/launcher.mjs`,
+          launcherVendorRoot: BUNDLE,
+        }),
+      );
+      expect(result).toEqual({
+        kind: "exec",
+        executable: "/usr/local/bin/node",
+        workingDirectory: SESSION,
+        args: [
+          `${LAYER}/launcher.mjs`,
+          "--mcpjam-vendor-root",
+          BUNDLE,
+          "--workdir",
+          `${SESSION}/w`,
+          "--bridge-state-dir",
+          `${SESSION}/.harness-bridge`,
+        ],
+      });
+    });
+
+    it("never passes the launcher's flag to a bridge launched without a launcher", async () => {
+      const result = await translateAdapterCommand(
+        { command: launch },
+        ctx({ layerRoot: LAYER, layerFiles: ["bridge.mjs"], launcherVendorRoot: BUNDLE }),
+      );
+      expect(result.kind === "exec" && result.args).toEqual([
+        `${LAYER}/bridge.mjs`,
+        "--workdir",
+        `${SESSION}/w`,
+        "--bridge-state-dir",
+        `${SESSION}/.harness-bridge`,
+      ]);
+    });
+  });
+
   describe("codex (app-server adapter)", () => {
     const CODEX_BOOT = `${SESSION}/.harness-bootstrap/codex-appserver`;
     const CODEX_BUNDLE = "/opt/mcpjam/runtimes/codex";

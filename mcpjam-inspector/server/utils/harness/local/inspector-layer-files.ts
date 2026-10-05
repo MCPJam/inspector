@@ -5,9 +5,11 @@
  * a build will verify against without loading the server.
  */
 import {
+  CLAUDE_CODE_LAYER_BRIDGE_SOURCE,
   CODEX_LAYER_BRIDGE_SOURCE,
   CODEX_LAYER_HOST_TOOLS_MCP_SOURCE,
   LOCAL_HARNESS_LAUNCHER_SOURCE,
+  LOCAL_HARNESS_LAYER_RECIPES,
 } from "./layer/generated/local-harness-layer.bundled.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
 import { digestFileSet } from "./tree-digest.js";
@@ -23,8 +25,9 @@ export interface InspectorLayerFile {
 }
 
 /**
- * The files of one harness's layer, from the bytes compiled into this build,
- * or `null` for a harness whose bridge still ships inside its pack.
+ * The files of one harness's layer, from the bytes compiled into this build
+ * (`null` would be a harness whose bridge still shipped inside its pack —
+ * none does).
  *
  * `layer.json` names the harness so that two harnesses can never share a
  * layer directory, even if their bridges were ever byte-identical.
@@ -43,8 +46,44 @@ export function inspectorLayerFiles(
         { path: "layer.json", content: manifest(harnessId) },
       ];
     case "claude-code":
+      return [
+        { path: "bridge.mjs", content: CLAUDE_CODE_LAYER_BRIDGE_SOURCE },
+        { path: "launcher.mjs", content: LOCAL_HARNESS_LAUNCHER_SOURCE },
+        { path: "layer.json", content: manifest(harnessId) },
+      ];
+    default:
+      // An id off the wire that names no harness this build ships a layer for.
       return null;
   }
+}
+
+/**
+ * The bootstrap recipe a LOCAL session hands the framework: the adapter's
+ * declared directory and commands (captured when the layer was bundled) and
+ * the layer's own bridge files. Built entirely from constants compiled into
+ * this build — never by asking the adapter package, which a packaged Electron
+ * app has no unpacked copy of.
+ */
+export function inspectorLayerRecipe(harnessId: SupportedLocalHarnessId): {
+  harnessId: string;
+  bootstrapDir: string;
+  files: Array<{ path: string; content: string }>;
+  commands: Array<{ command: string }>;
+} | null {
+  const files = inspectorLayerRecipeFiles(harnessId);
+  const meta = Object.prototype.hasOwnProperty.call(LOCAL_HARNESS_LAYER_RECIPES, harnessId)
+    ? LOCAL_HARNESS_LAYER_RECIPES[harnessId]
+    : undefined;
+  if (files === null || meta === undefined) return null;
+  return {
+    harnessId: meta.harnessId,
+    bootstrapDir: meta.bootstrapDir,
+    files: files.map((file) => ({
+      path: `${meta.bootstrapDir}/${file.path}`,
+      content: file.content,
+    })),
+    commands: meta.commands.map((command) => ({ ...command })),
+  };
 }
 
 /** The files of a layer the ADAPTER's bootstrap recipe names — the ones a

@@ -4,21 +4,21 @@
  * Never the adapter's own recipe as-is: that one installs a vendor graph into
  * a sandbox, and locally the verified runtime already is that graph.
  *
- *  - A harness with an Inspector layer (Codex): the recipe's files are the
- *    layer's (`inspectorLayerRecipeFiles`), from the bytes compiled into this
- *    build, so the framework's writes compare equal to the layer copy by
- *    construction. Its commands are the adapter's, which the translator turns
- *    into no-ops. Nothing is read from the pack, so a bridge change needs no
- *    new pack.
- *  - A harness whose bridge still ships in its pack (`launcherSource: "pack"`):
- *    the recipe the pack build recorded in `bootstrap.json`, read from the
- *    reserved, digest-verified pack — including in Electron, which has no
- *    unpacked adapter `node_modules` to ask.
+ *  - A harness with an Inspector layer (both, now): the recipe is built from
+ *    constants compiled into this build (`inspectorLayerRecipe`) — the layer's
+ *    bridge files, so the framework's writes compare equal to the layer copy
+ *    by construction, and the adapter's declared directory and commands, which
+ *    the translator turns into no-ops. Nothing is read from the pack or from
+ *    the adapter package, so a bridge change needs no new pack and Electron
+ *    needs no unpacked adapter.
+ *  - A runtime whose bridge ships in its pack (`launcherSource: "pack"` — a
+ *    pack from before the split, kept resolvable for tests and tools): the
+ *    recipe the pack build recorded in `bootstrap.json`.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import { inspectorLayerRecipeFiles } from "./inspector-layer.js";
+import { inspectorLayerRecipe } from "./inspector-layer.js";
 import type { ResolvedRuntime } from "./runtime-identity.js";
 
 type BootstrapRecipe = Awaited<ReturnType<NonNullable<HarnessAgentAdapter["getBootstrap"]>>>;
@@ -49,27 +49,10 @@ export async function withLocalRuntimeBootstrap(
   if (runtime.layer === undefined) {
     return withLocalPackBootstrap(adapter, runtime.rootPath);
   }
-  const files = inspectorLayerRecipeFiles(runtime.harnessId);
-  const original = adapter.getBootstrap?.bind(adapter);
-  if (files === null || original === undefined) {
+  const recipe = inspectorLayerRecipe(runtime.harnessId) as BootstrapRecipe | null;
+  if (recipe === null) {
     throw new Error(`${runtime.harnessId} has no Inspector-layer bootstrap recipe`);
   }
-  let cached: BootstrapRecipe | undefined;
-  return {
-    ...adapter,
-    getBootstrap: async (...args) => {
-      if (cached) return cached;
-      const upstream = await original(...args);
-      const recipe: BootstrapRecipe = {
-        ...upstream,
-        files: files.map((file) => ({
-          path: `${upstream.bootstrapDir}/${file.path}`,
-          content: file.content,
-        })),
-      };
-      assertRecipe(recipe);
-      cached = recipe;
-      return recipe;
-    },
-  };
+  assertRecipe(recipe);
+  return { ...adapter, getBootstrap: async () => recipe };
 }

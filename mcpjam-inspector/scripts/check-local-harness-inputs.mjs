@@ -17,9 +17,9 @@
  *     toolchain pins, the tree-digest module, the Job Object launcher). A
  *     change here invalidates EVERY harness's pack, and must: those bytes are
  *     in, or decide, every pack. Never drop a real input from this list to
- *     keep CI green — publish the affected packs. (The bridge launcher is not
- *     here: it is the Inspector layer's, shipped with the Inspector, and a
- *     recipe that still copies it into its pack lists it as its own input.)
+ *     keep CI green — publish the affected packs. (The bridge and its
+ *     launcher are not here: they are the Inspector layer's, shipped with the
+ *     Inspector, and no pack carries them.)
  *   - PER-HARNESS inputs: the harness's recipe module, the sources its recipe
  *     declares, the locked dependency closure of its declared roots, and the
  *     recipe bytes it actually emits. Nothing another harness reads.

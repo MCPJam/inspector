@@ -679,7 +679,13 @@ export function createSupervisedLocalHarnessProvider(
       ),
       managedBundleRoot: opts.runtime.rootPath,
       ...(opts.runtime.layer !== undefined
-        ? { layerRoot: opts.runtime.layer.root, layerFiles: opts.runtime.layer.files }
+        ? {
+            layerRoot: opts.runtime.layer.root,
+            layerFiles: opts.runtime.layer.files,
+            // The layer's launcher resolves a vendor SDK import into the
+            // verified pack and nowhere else.
+            launcherVendorRoot: opts.runtime.rootPath,
+          }
         : {}),
       adapterBootstrapFiles: opts.manifest.adapterBootstrapFiles,
       bootstrapOverlayDir: bootstrapOverlay,

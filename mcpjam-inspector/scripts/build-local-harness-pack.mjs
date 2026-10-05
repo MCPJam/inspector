@@ -27,8 +27,7 @@
 //
 // MCPJam's own code — the bridge and its loopback launcher — is the Inspector
 // layer, shipped with the Inspector (`server/utils/harness/local/inspector-layer.ts`)
-// rather than in a pack. A recipe that still ships its bridge in the pack
-// (`packLauncher = true`) also gets `launcher.mjs` copied in here.
+// rather than in a pack. A pack is vendor bytes only.
 //
 // ── What comes out ───────────────────────────────────────────────────────
 //   <stem>.tar.gz, <stem>.tar.gz.sha256, <stem>.manifest.json (+ .sig),
@@ -520,18 +519,7 @@ async function main() {
   const adapterVersion = recipe.adapterVersion();
   const packVersion = String(args["pack-version"] ?? adapterVersion);
 
-  // 2. A recipe whose bridge still ships in its pack also needs the
-  //    Inspector-owned loopback launcher beside it (digest-covered, reviewed in
-  //    a diff like any other source file). Every other harness's launcher is
-  //    the Inspector layer's and stays out of the pack.
-  if (recipe.packLauncher === true) {
-    copyFileSync(
-      join(inspectorRoot, "server/utils/harness/local/pack/launcher.mjs"),
-      join(packRoot, "launcher.mjs"),
-    );
-  }
-
-  // 3. Verify the vendor binary, then prune. `.bin` shims are symlinks and
+  // 2. Verify the vendor binary, then prune. `.bin` shims are symlinks and
   //    nothing in the pack invokes them; what else a harness drops is its
   //    recipe's call.
   let vendor;

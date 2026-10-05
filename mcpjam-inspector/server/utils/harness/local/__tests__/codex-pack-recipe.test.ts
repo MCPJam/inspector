@@ -40,7 +40,6 @@ describe("the Codex pack recipe", () => {
     ]);
     // The bridge kit and the bundler produce the Inspector layer now.
     expect(recipe.dependencyRoots).toEqual([]);
-    expect((recipe as { packLauncher?: boolean }).packLauncher).toBeUndefined();
   });
 
   it("stages the install manifests, then leaves only the vendor graph behind", async () => {

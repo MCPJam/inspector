@@ -128,8 +128,12 @@ A local runtime has two halves, and they come from the only two trusted sources
   compiled into the Inspector before every exec. A bridge change is therefore an
   ordinary Inspector change: it needs no new pack.
 
-Codex is split this way today; Claude Code's bridge still ships inside its pack
-until its own split lands.
+Both harnesses are split this way. Claude Code's layer bridge is the adapter's
+bridge as the application patches it, bundled with the MCP SDK, `zod` and `ws`
+compiled in; its one external import, `@anthropic-ai/claude-agent-sdk` (which
+shares a version with its native CLI), stays in the pack, and the layer's
+launcher resolves it there with a `module.registerHooks` hook. An adapter bump
+therefore ships as an Inspector change unless it moves the agent SDK version.
 
 Each harness's pack installs under its own root (Claude Code keeps
 `<runtime>/<target>/<version>`; other harnesses use
@@ -144,8 +148,8 @@ replaces the `lifecycleConformanceVersion` that used to be typed into
 `compatibility.ts`). `pack-digests.generated.ts` and `compatibility.ts` read it.
 Inspector never builds or installs a vendor runtime from a mutable dependency
 range on the user's machine. Electron reads the bootstrap from the verified pack
-(Claude Code) or from the Inspector layer (Codex), and does not require an
-unpackaged `node_modules` tree.
+Electron builds a local session's bootstrap recipe from constants compiled into
+the Inspector layer, and does not require an unpackaged `node_modules` tree.
 
 Toolchain versions are pinned in `scripts/local-harness-toolchain.json`.
 `scripts/check-local-harness-inputs.mjs` fingerprints each harness's pack
@@ -209,6 +213,16 @@ layer. An Inspector version bump alone does not require a new runtime version.
 
 To install a pack from the command line, `mcpjam-inspector harness install`
 (or `status`) takes `--harness <id>`; without it, it means Claude Code.
+
+### Claude Code pack
+
+Claude Code's pack (`--harness claude-code`) carries vendor bytes only:
+`@anthropic-ai/claude-agent-sdk` and this target's platform package (its native
+CLI is checked against the SDK's own `manifest.json` checksums), the SDK's
+declared peers, `bin/node`, and on Windows the Job Object launcher. It is
+installed from `scripts/local-harness-pack-recipes/claude-code-vendor/`, which is
+the pack's only recipe input; the layer bundler refuses to build a bridge whose
+adapter expects a different agent SDK than that directory pins.
 
 ### Codex pack
 

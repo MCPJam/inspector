@@ -105,7 +105,7 @@ beforeAll(async () => {
   await mkdir(join(bundleRoot, "bin"), { recursive: true });
   await writeFile(
     join(bundleRoot, "launcher.mjs"),
-    await readFile(join(import.meta.dirname, "..", "pack", "launcher.mjs")),
+    await readFile(join(import.meta.dirname, "..", "layer", "launcher.mjs")),
   );
   // A pack carries its own Node, and resolution refuses one that is missing or
   // not executable. Copying a 110 MB binary into every fixture would cost more
@@ -153,13 +153,19 @@ async function buildSession(
   await writeFile(
     join(bundleRoot, "launcher.mjs"),
     launcherSource ??
-      (await readFile(join(import.meta.dirname, "..", "pack", "launcher.mjs"))),
+      (await readFile(join(import.meta.dirname, "..", "layer", "launcher.mjs"))),
   );
   const digest = await computeTreeDigest(bundleRoot);
   const manifest = {
     ...LOCAL_HARNESS_MANIFEST["claude-code"],
+    // A pack that carries its own launcher and bridge (the layout before the
+    // split): these tests are about the PROVIDER's mechanics — confinement,
+    // the bootstrap grammar, the exposure probe — over a fake bridge, and the
+    // shipped Claude Code bridge would need a real agent SDK to start.
+    adapterBootstrapFiles: ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "bridge.mjs"],
     runtime: {
       ...LOCAL_HARNESS_MANIFEST["claude-code"].runtime,
+      launcherSource: "pack",
       bundleDigest: {
         // Every target, so a fixture built on one machine resolves on any
         // other: the lookup is by `<os>-<arch>` and a partial map would

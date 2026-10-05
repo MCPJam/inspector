@@ -134,6 +134,13 @@ export interface CommandTranslationContext {
   /** Relative names of the files `layerRoot` holds. */
   layerFiles?: readonly string[];
   /**
+   * The verified pack the layer's launcher may resolve bare imports into
+   * (`--mcpjam-vendor-root`, consumed by the launcher before the bridge reads
+   * argv). Claude Code's bridge imports the agent SDK from it; for a bridge
+   * that bundles everything it is simply unused.
+   */
+  launcherVendorRoot?: string;
+  /**
    * The pinned adapter's declared bootstrap files, relative to
    * `adapterBootstrapDir`. Straight from the manifest — an adapter cannot
    * widen its own list.
@@ -647,6 +654,11 @@ async function matchBridgeLaunch(
       (ctx.layerRoot !== undefined
         ? `${ctx.layerRoot}${sep}bridge.mjs`
         : remapBootstrapPath(expectedBridge, ctx)),
+    // The launcher's own argument, never the bridge's: only where a launcher
+    // is in front, and only the verified pack.
+    ...(ctx.bridgeLauncherPath !== undefined && ctx.launcherVendorRoot !== undefined
+      ? ["--mcpjam-vendor-root", ctx.launcherVendorRoot]
+      : []),
   ];
   for (let i = 0; i < flags.length; i += 1) {
     const flag = tokens[1 + i * 2]!;

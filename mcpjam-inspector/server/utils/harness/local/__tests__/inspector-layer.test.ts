@@ -93,9 +93,17 @@ describe("the layer's contents", () => {
     }
   });
 
-  it("is absent for a harness whose bridge still ships in its pack", () => {
-    expect(inspectorLayerFiles("claude-code")).toBeNull();
-    expect(inspectorLayerDigest("claude-code")).toBeNull();
+  it("is Claude Code's patched bridge and the launcher, leaving only the agent SDK external", () => {
+    const files = inspectorLayerFiles("claude-code")!;
+    expect(files.map((file) => file.path).sort()).toEqual(["bridge.mjs", "launcher.mjs", "layer.json"]);
+    const bridge = files.find((file) => file.path === "bridge.mjs")!.content;
+    const bare = [...bridge.matchAll(/(?:^|\n)\s*import\s[^;]*?from\s*"([^"]+)"/g)]
+      .map((match) => match[1]!)
+      .filter((specifier) => !specifier.startsWith("node:") && !specifier.startsWith("."))
+      .filter((specifier) => !["crypto", "fs", "fs/promises", "process", "path", "os", "url", "events", "http", "https", "net", "stream", "zlib", "buffer", "tls", "util", "child_process"].includes(specifier));
+    expect([...new Set(bare)]).toEqual(["@anthropic-ai/claude-agent-sdk"]);
+    // Two harnesses never share a content address.
+    expect(inspectorLayerDigest("claude-code")).not.toBe(inspectorLayerDigest("codex"));
   });
 });
 
@@ -139,9 +147,19 @@ describe("ensureInspectorLayer", () => {
     expect(await readFile(join(second.layer.root, "bridge.mjs"), "utf8")).not.toBe("process.exit(0)\n");
   });
 
-  it("refuses a harness with no layer", async () => {
-    const result = await ensureInspectorLayer("claude-code", { runtimeRoot: root });
+  it("refuses a harness this build has no layer for", async () => {
+    const result = await ensureInspectorLayer("cursor" as never, { runtimeRoot: root });
     expect(result).toEqual({ ok: false, message: expect.stringMatching(/no Inspector layer/) });
+  });
+
+  it("gives each harness its own directory under one runtime root", async () => {
+    const codex = await ensureInspectorLayer("codex", { runtimeRoot: root });
+    const claude = await ensureInspectorLayer("claude-code", { runtimeRoot: root });
+    if (!codex.ok || !claude.ok) throw new Error("both write");
+    expect(codex.layer.root).not.toBe(claude.layer.root);
+    expect((await readdir(inspectorLayerBase(root))).sort()).toEqual(
+      [codex.layer.digest.slice(7), claude.layer.digest.slice(7)].sort(),
+    );
   });
 });
 

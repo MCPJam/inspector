@@ -720,7 +720,10 @@ describe("verification cost", () => {
     // very file it was turned on for.
     delete process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY;
     clearRuntimeVerificationCache();
-    const root = await writeBundle("baseline", { "bridge.mjs": "x" });
+    const root = await writeBundle("baseline", {
+      "bridge.mjs": "x",
+      "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs": "export {};",
+    });
     const verification = await verifyRuntime(
       root,
       await computeTreeDigest(root),
@@ -729,8 +732,11 @@ describe("verification cost", () => {
     expect(verification.ok).toBe(true);
     if (!verification.ok) return;
     expect(Object.keys(verification.snapshot.executableDigests)).toEqual(
-      expect.arrayContaining(["bin/node", "launcher.mjs", "bridge.mjs"]),
+      expect.arrayContaining(["bin/node", "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"]),
     );
+    // The bridge and its launcher are not pack files any more: the Inspector
+    // layer re-hashes them in full before every exec.
+    expect(Object.keys(verification.snapshot.executableDigests)).not.toContain("bridge.mjs");
   });
 });
 

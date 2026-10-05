@@ -57,7 +57,7 @@ const EXTERNAL = CODEX_APPSERVER_BRIDGE_EXTERNALS;
  * (invariant 1). They are compiled to a module that throws, which `ws` already
  * treats as "not installed".
  */
-const stubOptionalNatives = {
+export const stubOptionalNatives = {
   name: "mcpjam-stub-optional-natives",
   setup(build) {
     build.onResolve({ filter: /^(bufferutil|utf-8-validate)$/ }, (args) => ({
@@ -76,7 +76,7 @@ const stubOptionalNatives = {
  * esbuild's shim calls the ambient `require` for Node builtins and throws
  * "Dynamic require … is not supported" without one.
  */
-const LAYER_REQUIRE_BANNER =
+export const LAYER_REQUIRE_BANNER =
   'import { createRequire as __mcpjamCreateRequire } from "node:module";\n' +
   "const require = __mcpjamCreateRequire(import.meta.url);";
 

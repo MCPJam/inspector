@@ -5,14 +5,24 @@
 // harness. This file is a pack input of Claude Code's pack ONLY, so editing
 // another harness's recipe never changes Claude Code's fingerprint.
 //
-// What goes in a Claude Code pack:
-//   - the Inspector-patched adapter recipe (`package.json`, `pnpm-lock.yaml`,
-//     `pnpm-workspace.yaml`, `.npmrc`, and `bridge.mjs`) — byte-identical to
-//     the recipe used at runtime. The provider byte-compares the bridge, so a
-//     single changed byte fails the session closed, which is the point;
-//   - a hoisted, symlink-free `node_modules`, pruned of the unused
-//     `@anthropic-ai/claude-code` wrapper (the SDK spawns its own platform
-//     package's native CLI).
+// What goes in a Claude Code pack — VENDOR BYTES ONLY:
+//   - `@anthropic-ai/claude-agent-sdk` and its platform package's native CLI,
+//     which share a version and are checked against the SDK's own manifest;
+//   - the SDK's declared peers (`@anthropic-ai/sdk`, the MCP SDK, `zod`), at
+//     the versions the adapter's own lockfile resolves them to;
+//   - `bin/node` and, on Windows, the Job Object launcher (the shared build).
+//
+// What does NOT: the adapter's bridge (patched by `claude-code-bootstrap.ts`),
+// with the MCP SDK, `zod` and `ws` it uses compiled in, and the loopback
+// launcher. They are the Inspector layer (`server/utils/harness/local/
+// inspector-layer.ts`), shipped with the Inspector; the launcher resolves the
+// bridge's one external import, the agent SDK, to this pack.
+//
+// So an adapter bump ships as an Inspector change, and makes a new pack only
+// when it moves the agent SDK version: the vendor graph is installed from the
+// committed `claude-code-vendor/` manifest and lockfile, and the layer bundler
+// refuses to build a bridge whose adapter expects a different SDK than that
+// manifest pins (see `vendorSdkVersion`).
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -23,34 +33,31 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createRequire } from "node:module";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const harnessId = "claude-code";
 
-/**
- * Claude Code's bridge still ships INSIDE its pack, so the pack build copies
- * the loopback launcher in beside it (see `build-local-harness-pack.mjs`).
- */
-export const packLauncher = true;
+const here = dirname(fileURLToPath(import.meta.url));
+const VENDOR_DIR_NAME = "claude-code-vendor";
+const VENDOR_DIR = join(here, VENDOR_DIR_NAME);
 
 /**
- * Repo-relative sources whose bytes shape this recipe. The recipe's EMITTED
- * bytes are fingerprinted too; these are listed so a change to the code that
- * produces them is visible in the input diff rather than only in its output.
+ * Repo-relative sources whose bytes shape this pack: the vendor graph's
+ * manifest and frozen lockfile. Nothing about the bridge, the adapter or the
+ * Inspector's own dependencies.
  */
 export const recipeSources = [
-  "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts",
-  // Copied into this pack (`packLauncher`), so an input of THIS pack only.
-  "mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs",
+  `mcpjam-inspector/scripts/local-harness-pack-recipes/${VENDOR_DIR_NAME}/package.json`,
+  `mcpjam-inspector/scripts/local-harness-pack-recipes/${VENDOR_DIR_NAME}/pnpm-lock.yaml`,
 ];
 
 /**
  * Packages whose locked closure (from the repo's package-lock) produces this
- * pack. Only these: an unrelated Inspector dependency bump must not
- * republish the pack.
+ * pack. None: the adapter no longer reaches the pack, and the vendor graph is
+ * pinned by its own lockfile above.
  */
-export const dependencyRoots = ["@ai-sdk/harness-claude-code"];
+export const dependencyRoots = [];
 
 /** Vendor platform package suffix per pack target. */
 const VENDOR_SUFFIX = {
@@ -61,63 +68,49 @@ const VENDOR_SUFFIX = {
   "win32-x64": "win32-x64",
 };
 
+/** The packages a Claude Code pack's `@anthropic-ai` scope may hold. */
+const ALLOWED_SCOPE = new Set(["claude-agent-sdk", "sdk"]);
+
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-/**
- * The patched bootstrap recipe exactly as the application writes it.
- *
- * Loaded through tsx only when asked for, so importing this module (for the
- * fingerprint's dependency roots, say) stays independent of TypeScript.
- */
+/** The agent SDK version the vendor manifest pins. */
+export function vendorSdkVersion() {
+  const pkg = JSON.parse(readFileSync(join(VENDOR_DIR, "package.json"), "utf8"));
+  const version = pkg.dependencies?.["@anthropic-ai/claude-agent-sdk"];
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error("claude-code-vendor/package.json pins no exact @anthropic-ai/claude-agent-sdk version");
+  }
+  return version;
+}
+
+/** The files the pack build installs the vendor graph from. */
 export async function loadRecipe() {
-  const { tsImport } = await import("tsx/esm/api");
-  const { createClaudeCodeHarness } = await tsImport(
-    "../../server/utils/harness/claude-code-bootstrap.ts",
-    { parentURL: import.meta.url, tsconfig: false },
-  );
-  const bootstrap = await createClaudeCodeHarness().getBootstrap();
-  return { bootstrapDir: bootstrap.bootstrapDir, files: bootstrap.files, bootstrap };
+  return {
+    bootstrapDir: VENDOR_DIR_NAME,
+    files: ["package.json", "pnpm-lock.yaml"].map((name) => ({
+      path: `${VENDOR_DIR_NAME}/${name}`,
+      content: readFileSync(join(VENDOR_DIR, name), "utf8"),
+    })),
+  };
 }
 
 /**
- * Stage exactly the recipe the application writes, installing dependencies
- * before adding its runtime-only .npmrc. The pack install must not inherit
- * dangerously-allow-all-builds from that file in the signing job.
+ * Install the frozen vendor graph, then remove the install manifests: they
+ * describe the graph, they are not part of what runs.
  */
 export async function stageRecipe(packRoot, installDependencies) {
-  const { bootstrapDir, files: recipeFiles, bootstrap } = await loadRecipe();
-  const prefix = `${bootstrapDir}/`;
-  const files = recipeFiles.map((file) => {
-    const name = file.path.slice(prefix.length);
-    if (
-      !file.path.startsWith(prefix) ||
-      !name ||
-      name === "." ||
-      name === ".." ||
-      name.includes("/") ||
-      name.includes("\\")
-    ) {
-      throw new Error(`Unexpected Claude Code bootstrap path: ${file.path}`);
-    }
-    return { name, content: file.content };
-  });
-  const npmrc = files.find((file) => file.name === ".npmrc");
-  if (!npmrc) throw new Error("Claude Code bootstrap is missing .npmrc");
-
+  const { bootstrapDir, files } = await loadRecipe();
   mkdirSync(packRoot, { recursive: true });
-  // Also safe when called again after an interrupted build.
-  rmSync(join(packRoot, ".npmrc"), { force: true });
   for (const file of files) {
-    if (file.name !== ".npmrc") {
-      writeFileSync(join(packRoot, file.name), file.content);
-    }
+    writeFileSync(join(packRoot, file.path.slice(bootstrapDir.length + 1)), file.content);
   }
-  writeFileSync(join(packRoot, "bootstrap.json"), JSON.stringify(bootstrap));
   await installDependencies();
-  writeFileSync(join(packRoot, ".npmrc"), npmrc.content);
-  return { bridgeDigest: `sha256:${sha256File(join(packRoot, "bridge.mjs"))}` };
+  for (const name of ["package.json", "pnpm-lock.yaml", ".npmrc", "pnpm-workspace.yaml"]) {
+    rmSync(join(packRoot, name), { force: true });
+  }
+  return {};
 }
 
 /**
@@ -137,10 +130,17 @@ export function verifyVendorBinary(packRoot, platformKey) {
     throw new Error(`no Claude Code vendor package is known for ${platformKey}`);
   }
   const sdkDir = join(packRoot, "node_modules", "@anthropic-ai", "claude-agent-sdk");
+  const sdkVersion = JSON.parse(readFileSync(join(sdkDir, "package.json"), "utf8")).version;
+  if (sdkVersion !== vendorSdkVersion()) {
+    throw new Error(
+      `@anthropic-ai/claude-agent-sdk ${sdkVersion} is installed but the vendor ` +
+        `manifest pins ${vendorSdkVersion()}`,
+    );
+  }
   const manifestPath = join(sdkDir, "manifest.json");
   if (!existsSync(manifestPath)) {
     throw new Error(
-      `the adapter's installed SDK has no manifest.json at ${manifestPath}, ` +
+      `the installed SDK has no manifest.json at ${manifestPath}, ` +
         `so the vendor binary cannot be checksum-verified`,
     );
   }
@@ -191,16 +191,28 @@ export function verifyVendorBinary(packRoot, platformKey) {
 }
 
 /**
- * Remove what the pack must not carry. The `@anthropic-ai/claude-code`
- * wrapper exists only for the adapter's `--version` probe, which the
- * translator answers as a no-op; the SDK resolves its OWN platform package.
+ * Remove what the pack must not carry — other platforms' SDK packages, and
+ * the `@anthropic-ai/claude-code` wrapper if a future graph pulls it in (the
+ * SDK spawns its OWN platform package's CLI) — then refuse anything else in
+ * the `@anthropic-ai` scope.
  */
-export function prunePack(packRoot) {
-  const scope = join(packRoot, "node_modules/@anthropic-ai");
+export function prunePack(packRoot, platformKey) {
+  const scope = join(packRoot, "node_modules", "@anthropic-ai");
+  const suffix = platformKey === undefined ? undefined : VENDOR_SUFFIX[platformKey];
   for (const entry of readdirSync(scope)) {
     if (entry === "claude-code" || entry.startsWith("claude-code-")) {
       rmSync(join(scope, entry), { recursive: true, force: true });
+    } else if (entry.startsWith("claude-agent-sdk-") && entry !== `claude-agent-sdk-${suffix}`) {
+      rmSync(join(scope, entry), { recursive: true, force: true });
     }
+  }
+  const unexpected = readdirSync(scope).filter(
+    (entry) => !ALLOWED_SCOPE.has(entry) && entry !== `claude-agent-sdk-${suffix}`,
+  );
+  if (unexpected.length > 0) {
+    throw new Error(
+      `unexpected packages in the pack's @anthropic-ai scope: ${unexpected.join(", ")}`,
+    );
   }
 }
 
@@ -217,10 +229,10 @@ export function vendorPackages(packRoot) {
   return packages;
 }
 
-/** The pinned adapter's version, as recorded in the pack manifest. */
+/**
+ * The identity recorded in the pack manifest: the agent SDK it carries. The
+ * adapter is not in the pack, so its version is not part of what a pack is.
+ */
 export function adapterVersion() {
-  const required = createRequire(import.meta.url);
-  return JSON.parse(
-    readFileSync(required.resolve("@ai-sdk/harness-claude-code/package.json"), "utf8"),
-  ).version;
+  return `@anthropic-ai/claude-agent-sdk@${vendorSdkVersion()}`;
 }

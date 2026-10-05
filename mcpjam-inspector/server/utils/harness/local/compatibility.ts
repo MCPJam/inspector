@@ -245,12 +245,17 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
       // been built for linux-x64"). Both fail closed; only the second names a
       // pack a user could go looking for.
       bundleDigest: PACK_TREE_DIGESTS["claude-code"],
-      launcherSource: "pack",
+      // The patched bridge (with the MCP SDK, `zod` and `ws` compiled in) and
+      // the launcher are the Inspector layer's. The pack is `bin/node`, the
+      // agent SDK with its platform CLI and declared peers, and the Windows
+      // job launcher; the launcher resolves the bridge's one external import,
+      // the agent SDK, into it.
+      launcherSource: "inspector-layer",
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
       jobLauncherRelativePath: "bin/mcpjam-job-launcher.exe",
       vendorPackages: {
-        "@anthropic-ai/claude-code": "pinned-by-adapter-bridge-lockfile",
+        "@anthropic-ai/claude-agent-sdk": "pinned-by-claude-code-vendor-lockfile",
       },
     },
     argvPolicy: { requiredFlags: [], deniedFlags: [] },
@@ -284,13 +289,12 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     // the pin that the evidence was gathered against — never typed by hand.
     lifecycleConformanceVersion: conformanceVersionFor("claude-code"),
     adapterBootstrapDir: ".harness-bootstrap/claude-code",
-    adapterBootstrapFiles: [
-      "package.json",
-      "pnpm-lock.yaml",
-      "pnpm-workspace.yaml",
-      "bridge.mjs",
-      ".npmrc",
-    ],
+    // A local session's recipe is the Inspector layer's (`pack-bootstrap.ts`):
+    // the bridge, compared against the layer's copy. The adapter's install
+    // files (`package.json`, the lockfile, `.npmrc`, `pnpm-workspace.yaml`)
+    // install a vendor graph in a sandbox; locally the pack already is it, and
+    // a recipe naming them fails closed.
+    adapterBootstrapFiles: ["bridge.mjs"],
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },
   codex: {

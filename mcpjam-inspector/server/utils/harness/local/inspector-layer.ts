@@ -9,7 +9,8 @@
  * vendor bytes only (`bin/node`, the vendor CLI/SDK, the Windows job launcher)
  * and the layer — the launcher, the bridge, Codex's host-tools MCP entrypoint
  * — is compiled into the Inspector (`layer/generated/*.bundled.ts`) and
- * written here at run time. A bridge change is an ordinary Inspector change.
+ * written here at run time. A bridge change is an ordinary Inspector change,
+ * for Claude Code and Codex alike.
  *
  * ── Two trusted sources (invariant 1) ────────────────────────────────────
  * Every executable byte comes from a verified vendor pack (signature, archive
@@ -52,6 +53,7 @@ export {
   INSPECTOR_LAYER_SCHEMA,
   inspectorLayerDigest,
   inspectorLayerFiles,
+  inspectorLayerRecipe,
   inspectorLayerRecipeFiles,
   type InspectorLayerFile,
 } from "./inspector-layer-files.js";
