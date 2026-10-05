@@ -375,6 +375,32 @@ describe("effect dispatch gate", () => {
     expect(mutation).toHaveBeenCalledTimes(1);
   });
 
+  it("a missing function AFTER a start of unknown outcome still requires the marker", async () => {
+    const { beginEffectDispatchGate } = await import("../effect-dispatch-gate");
+    let starts = 0;
+    const mutation = vi.fn(async (name: string) => {
+      if (name === "testSuites:beginTrialAttempt") {
+        starts += 1;
+        // The first write may have landed; then the backend rolls back.
+        throw new Error(
+          starts === 1
+            ? "fetch failed"
+            : "Could not find public function for 'testSuites:beginTrialAttempt'",
+        );
+      }
+      throw new Error("Could not find public function for 'testSuites:markTrialEffectDispatch'");
+    });
+    const gate = await beginEffectDispatchGate({
+      convexClient: { mutation } as never,
+      iterationId: "it-1",
+      attempt: 1,
+      attemptId: "a1",
+    });
+    await expect(gate.admit("tool")).rejects.toBeInstanceOf(
+      EffectDispatchRefusedError,
+    );
+  });
+
   it("wrapping is a no-op without a gate", () => {
     const tools = { t: { execute: async () => 1 } };
     expect(wrapToolSetWithEffectGate(tools, undefined)).toBe(tools);

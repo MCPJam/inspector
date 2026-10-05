@@ -133,7 +133,10 @@ export async function beginEffectDispatchGate(args: {
           "trial attempt refused: this worker no longer owns the iteration",
         );
       }
-      legacyBackend = isMissingFunctionError(error);
+      // Only the FIRST write can conclude "legacy backend": after a write
+      // of unknown outcome, that write may have committed whatever a later
+      // one reports.
+      legacyBackend = write === 1 && isMissingFunctionError(error);
       const unknownOutcome = !legacyBackend && !isStructuredRefusal(error);
       if (unknownOutcome && write < BEGIN_WRITE_ATTEMPTS) {
         await new Promise((resolve) =>
