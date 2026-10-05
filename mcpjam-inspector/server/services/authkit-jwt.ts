@@ -4,7 +4,7 @@ import {
   jwtVerify,
   type JWTPayload,
   type JWTVerifyGetKey,
-  type KeyLike,
+  type CryptoKey,
 } from "jose";
 import { resolveWorkosApiBaseUrl } from "./workos-api-base.js";
 
@@ -148,7 +148,12 @@ export interface VerifiedSession {
   sid?: string;
 }
 
-type KeyResolver = ReturnType<typeof createRemoteJWKSet> | KeyLike;
+// A remote JWKS getter, or a static key (jose 6 dropped the `KeyLike` alias;
+// static keys are `CryptoKey | Uint8Array`).
+type KeyResolver =
+  | ReturnType<typeof createRemoteJWKSet>
+  | CryptoKey
+  | Uint8Array;
 
 export interface AuthKitVerifyDeps {
   /** Expected `aud` of the access token. */

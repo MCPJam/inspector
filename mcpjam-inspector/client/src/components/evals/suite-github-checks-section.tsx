@@ -1,7 +1,8 @@
 import { GithubForkCredentialsToggle } from "@/components/settings/github-fork-credentials-toggle";
 import { GithubPrServerOAuthControl } from "@/components/settings/github-pr-server-oauth-control";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Github, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
+import { GitHubIcon } from "@/components/ui/github-icon";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -257,7 +258,7 @@ export function SuiteGithubChecksSection({
               data-testid={`suite-github-repo-${row.repoFullName}`}
             >
               <div className="flex items-center gap-2">
-                <Github
+                <GitHubIcon
                   className="size-3.5 text-muted-foreground"
                   aria-hidden
                 />
