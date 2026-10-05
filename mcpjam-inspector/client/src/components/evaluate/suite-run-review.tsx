@@ -1,5 +1,6 @@
 import { DEFAULTS } from "../evals/constants";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { convexErrMessage } from "@/lib/convex-error";
 import { Loader2, Play, Settings2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -155,7 +156,12 @@ export function SuiteRunReviewContent({
   preflight,
   matrix,
 }: SuiteRunReviewProps & {
-  matrix?: { count: number; render: (disabled: boolean) => ReactNode };
+  matrix?: {
+    count: number;
+    render: (disabled: boolean) => ReactNode;
+    /** Changes whenever the matrix selection does. */
+    signature?: string;
+  };
 }) {
   const targets = suiteReviewTargets(suite, environments, hostNamesById);
   const [selected, setSelected] = useState(() =>
@@ -175,6 +181,10 @@ export function SuiteRunReviewContent({
   );
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  // A failed start's reason is about that setup; a different one gets a
+  // fresh try.
+  useEffect(() => setError(null), [iterations, selected, matrix?.signature]);
   const lock = useRef(false);
   const count = Number(iterations);
   const validCount = Number.isInteger(count) && count >= 1 && count <= 10;
@@ -208,6 +218,7 @@ export function SuiteRunReviewContent({
   const start = async () => {
     if (
       lock.current ||
+      connecting ||
       !validCount ||
       !selectionCount ||
       disabledReason ||
@@ -230,10 +241,10 @@ export function SuiteRunReviewContent({
       );
       onClose();
     } catch (failure) {
+      // A ConvexError keeps its reason in `data`; its message is the raw
+      // "[CONVEX M(…)] Server Error".
       setError(
-        failure instanceof Error
-          ? failure.message
-          : "Could not start this run. Try again.",
+        convexErrMessage(failure, "Could not start this run. Try again."),
       );
     } finally {
       lock.current = false;
@@ -328,6 +339,7 @@ export function SuiteRunReviewContent({
             <RunPreflightNotices
               preflight={scopedPreflight}
               disabled={starting}
+              onConnectingChange={setConnecting}
               onEditSettings={
                 onEditSettings
                   ? () => {
@@ -393,6 +405,7 @@ export function SuiteRunReviewContent({
             className="w-full"
             disabled={
               starting ||
+              connecting ||
               !validCount ||
               !selectionCount ||
               !cases.length ||

@@ -16,10 +16,7 @@ import {
   emptyModelSelection,
   type ModelSelection,
 } from "@/components/environment-composer/environment-stack";
-import {
-  dedupeModelTargets,
-  environmentModelTarget,
-} from "@/lib/model-target";
+import { dedupeModelTargets, environmentModelTarget } from "@/lib/model-target";
 import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
 import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
@@ -337,6 +334,7 @@ export function ConfiguredSuiteRunReview(
       disabledReason={blocked}
       matrix={{
         count: plan.length,
+        signature: JSON.stringify(selections),
         render: (starting) => (
           <EvalTargetMatrix
             hostIds={Object.keys(selections)}
@@ -481,6 +479,7 @@ export function SdkSuiteRunReview(
       disabledReason={blocked}
       matrix={{
         count: pickedEnvironment ? 1 : 0,
+        signature: picked,
         render: (starting) => (
           <section data-testid="sdk-suite-run-environment">
             <h3 className="text-sm font-semibold">Environment</h3>

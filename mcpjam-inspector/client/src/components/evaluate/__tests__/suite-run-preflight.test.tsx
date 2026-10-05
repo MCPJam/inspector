@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConvexError } from "convex/values";
 import {
+  connectOutcome,
   preflightTargets,
   readEnvironmentResolutions,
   runPreflight,
@@ -38,6 +39,20 @@ describe("runPreflight", () => {
         models: [],
       }),
     ).toMatchObject({ disconnected: ["crm", "local"], removed: ["gone"] });
+  });
+
+  // An environment's resolution also lists its pinned plugins' servers, which
+  // neither the browser nor the project's server list knows.
+  it("leaves a server nobody here knows to the run when told to", () => {
+    expect(
+      runPreflight({
+        serverRefs: ["billing", "plugin-tools"],
+        servers: { billing: { connectionStatus: "disconnected" } },
+        projectServers: [{ _id: "srv-1", name: "billing" }],
+        models: [],
+        knownOnly: true,
+      }),
+    ).toMatchObject({ disconnected: ["billing"], removed: [] });
   });
 
   it("calls nothing removed while the project's servers are unknown", () => {
@@ -282,6 +297,34 @@ describe("scopePreflightToHosts", () => {
   });
 });
 
+describe("connectOutcome", () => {
+  const result = (over: Record<string, string[]>) => ({
+    readyServerNames: [],
+    missingServerNames: [],
+    failedServerNames: [],
+    reauthServerNames: [],
+    ...over,
+  });
+
+  it("says nothing once the server is ready", () => {
+    expect(connectOutcome("crm", result({ readyServerNames: ["crm"] }))).toBe(
+      null,
+    );
+  });
+
+  it("names a server that needs authorizing", () => {
+    expect(connectOutcome("crm", result({ reauthServerNames: ["crm"] }))).toBe(
+      "crm needs authorizing before it can connect.",
+    );
+  });
+
+  it("names a server that didn't connect", () => {
+    expect(connectOutcome("crm", result({ failedServerNames: ["crm"] }))).toBe(
+      "crm didn't connect.",
+    );
+  });
+});
+
 describe("RunPreflightNotices", () => {
   it("connects a disconnected server from the sheet", async () => {
     const connect = vi.fn().mockResolvedValue(undefined);
@@ -302,6 +345,26 @@ describe("RunPreflightNotices", () => {
     expect(connect).toHaveBeenCalledWith("crm");
   });
 
+  it("says why a connect failed, with a way to fix it", async () => {
+    render(
+      <RunPreflightNotices
+        preflight={{
+          disconnected: ["crm"],
+          removed: [],
+          refused: [],
+          disabledProviders: [],
+          serverName: (ref) => ref,
+          connect: vi.fn().mockResolvedValue("crm didn't connect."),
+        }}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Connect crm" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("crm didn't connect.");
+    expect(
+      screen.getByRole("button", { name: "Open Servers" }),
+    ).toBeInTheDocument();
+  });
+
   it("links a disabled provider to the org's model settings", async () => {
     const manageModels = vi.fn();
     render(
@@ -317,7 +380,7 @@ describe("RunPreflightNotices", () => {
       />,
     );
     expect(
-      screen.getByText(/Anthropic isn't enabled for this project/),
+      screen.getByText(/Anthropic isn't enabled in your organization/),
     ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Manage models" }),
@@ -410,6 +473,68 @@ describe("Setup Run with a preflight", () => {
     expect(
       screen.getByText(/Environment "Claude" has a deleted server "crm"/),
     ).toBeInTheDocument();
+  });
+
+  it("holds Start while a server is connecting from the sheet", async () => {
+    let finish!: (value: string | null) => void;
+    render(
+      <SuiteRunReviewContent
+        suite={suite}
+        cases={cases}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+        preflight={{
+          disconnected: ["crm"],
+          removed: [],
+          refused: [],
+          disabledProviders: [],
+          serverName: (ref) => ref,
+          connect: () => new Promise((resolve) => (finish = resolve)),
+        }}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Connect crm" }));
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeDisabled();
+    await act(async () => finish(null));
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeEnabled();
+  });
+
+  it("shows the backend's reason, not the raw Convex error", async () => {
+    render(
+      <SuiteRunReviewContent
+        suite={suite}
+        cases={cases}
+        hostNamesById={new Map()}
+        onStart={vi
+          .fn()
+          .mockRejectedValue(
+            new ConvexError({ code: "X", message: "Pick a model first." }),
+          )}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Start run/ }));
+    expect(await screen.findByText("Pick a model first.")).toBeInTheDocument();
+    expect(screen.queryByText(/CONVEX/)).not.toBeInTheDocument();
+  });
+
+  it("drops a failed start's error once the run is set up differently", async () => {
+    render(
+      <SuiteRunReviewContent
+        suite={suite}
+        cases={cases}
+        hostNamesById={new Map()}
+        onStart={vi.fn().mockRejectedValue(new Error("Model unavailable"))}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Start run/ }));
+    expect(await screen.findByText("Model unavailable")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "More iterations" }),
+    );
+    expect(screen.queryByText("Model unavailable")).not.toBeInTheDocument();
   });
 
   it("blocks Start on a server the project no longer has", () => {

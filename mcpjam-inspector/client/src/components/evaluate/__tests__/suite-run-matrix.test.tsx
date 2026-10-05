@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { ConvexError } from "convex/values";
 import { SuiteRunReview } from "../suite-run-review";
 import {
   plannedPreflight,
@@ -14,7 +15,11 @@ const {
   capabilities,
   projectEnvironments,
   useQueries,
+  projectServers,
+  userReady,
 } = vi.hoisted(() => ({
+  projectServers: { value: undefined as unknown[] | undefined },
+  userReady: { value: true },
   useQueries: vi.fn((_queries: Record<string, unknown>) => ({})),
   ensure: vi.fn(),
   query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
@@ -30,14 +35,15 @@ const {
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
-  // The run preflight's reactive reads; nothing here is under test.
-  useQuery: () => undefined,
+  // The run preflight's reactive reads: only the project's servers matter here.
+  useQuery: (name: string) =>
+    name === "servers:getProjectServers" ? projectServers.value : undefined,
   useQueries: (queries: Record<string, unknown>) => useQueries(queries),
 }));
 // A signed-in, ready user: the preflight only resolves environments then.
 vi.mock("@/contexts/db-user-ready-context", async (original) => ({
   ...(await original<typeof import("@/contexts/db-user-ready-context")>()),
-  useDbUserReady: () => true,
+  useDbUserReady: () => userReady.value,
 }));
 // The mount-time capabilities probe; `query` then only sees launch probes.
 vi.mock("@/hooks/use-environment-capabilities", () => ({
@@ -103,7 +109,10 @@ const cases = [{ _id: "case", runs: 1, models: [] }] as unknown as EvalCase[];
 it("seeds model overrides and preserves existing environment ids", () => {
   const selection = seedRunMatrix(suite, environments);
   expect(selection).toEqual({
-    claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "sonnet" }] },
+    claude: {
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "sonnet" }],
+    },
   });
   expect(planRunMatrix(suite, environments, selection)[0].environmentId).toBe(
     "env",
@@ -116,7 +125,10 @@ it("keeps inherited models and preserves server scope for a new model", () => {
   ).toBe(true);
   expect(
     planRunMatrix(suite, environments, {
-      claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] },
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
     })[0].stack,
   ).toEqual({
     hostId: "claude",
@@ -156,8 +168,16 @@ describe("reasoning effort in the run matrix", () => {
 
   it("seeds two efforts of one model as two cells, each reusing its own environment", () => {
     const siblings = [
-      { ...environments[0], environmentId: "env-low", modelSelection: selectionWith("low") },
-      { ...environments[0], environmentId: "env-high", modelSelection: selectionWith("high") },
+      {
+        ...environments[0],
+        environmentId: "env-low",
+        modelSelection: selectionWith("low"),
+      },
+      {
+        ...environments[0],
+        environmentId: "env-high",
+        modelSelection: selectionWith("high"),
+      },
     ] as typeof environments;
     const siblingSuite = { ...suite, environmentIds: ["env-low", "env-high"] };
     const selection = seedRunMatrix(siblingSuite, siblings as never);
@@ -213,18 +233,25 @@ describe("reasoning effort in the run matrix", () => {
       },
     });
     expect(
-      planRunMatrix(plainSuite, plain, selection, { modelSelections: true }).map(
-        (cell) => cell.environmentId,
-      ),
+      planRunMatrix(plainSuite, plain, selection, {
+        modelSelections: true,
+      }).map((cell) => cell.environmentId),
     ).toEqual(["a", "b"]);
   });
 
   it("keeps both environments that differ only by effort (High and default)", () => {
     const siblings = [
-      { ...environments[0], environmentId: "env-high", modelSelection: selectionWith("high") },
+      {
+        ...environments[0],
+        environmentId: "env-high",
+        modelSelection: selectionWith("high"),
+      },
       { ...environments[0], environmentId: "env-default" },
     ] as typeof environments;
-    const siblingSuite = { ...suite, environmentIds: ["env-high", "env-default"] };
+    const siblingSuite = {
+      ...suite,
+      environmentIds: ["env-high", "env-default"],
+    };
     const selection = seedRunMatrix(siblingSuite, siblings as never);
     const cells = planRunMatrix(siblingSuite, siblings as never, selection, {
       modelSelections: true,
@@ -304,7 +331,12 @@ it("never derives a new cell's servers from the suite's legacy group", () => {
   const [cell] = planRunMatrix(
     { ...suite, serverAttachmentId: "legacy-group" },
     [{ ...environments[0], serverAttachmentId: undefined }],
-    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
+    {
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
+    },
   );
   expect(cell.stack).not.toHaveProperty("serverAttachmentId");
   expect(cell.missingGroup).toBe(true);
@@ -317,7 +349,12 @@ it("blocks a new cell when the client's setups disagree", () => {
       environments[0],
       { ...environments[0], environmentId: "env-2", serverAttachmentId: "b" },
     ],
-    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
+    {
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
+    },
   );
   expect(plan).toHaveLength(1);
   expect(plan[0].blocked).toMatch(/setups differ/);
@@ -332,13 +369,21 @@ it("blocks a new cell whose template carries what a one-run change can't copy", 
         secretSelection: { mode: "explicit", secretIds: ["secret"] },
       },
     ],
-    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
+    {
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
+    },
   );
   expect(cell.blocked).toMatch(/grants project secrets/);
 });
 it("preflights the cells a run launches, and the setup a new cell copies", () => {
   const plan = planRunMatrix(suite, environments, {
-    claude: { includeClientDefaults: true, explicitModelIds: ["sonnet"] },
+    claude: {
+      includeClientDefaults: true,
+      explicitTargets: [{ modelId: "sonnet" }],
+    },
   });
   expect(plannedPreflight(plan)).toEqual({
     environmentIds: ["env"],
@@ -348,11 +393,75 @@ it("preflights the cells a run launches, and the setup a new cell copies", () =>
   });
   // A new cell alone still brings the setup it copies.
   const newOnly = planRunMatrix(suite, environments, {
-    claude: { includeClientDefaults: false, explicitModelIds: ["opus"] },
+    claude: {
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "opus" }],
+    },
   });
   expect(plannedPreflight(newOnly)).toMatchObject({
     environmentIds: ["env"],
     templateOnlyIds: ["env"],
+  });
+});
+
+describe("with the backend's answer", () => {
+  const renderReview = () =>
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={suite}
+        cases={cases}
+        environments={environments}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+  it("blocks Start on an environment the backend refuses", () => {
+    useQueries.mockImplementation(() => ({
+      env: new ConvexError({
+        code: "ENV_SERVERS_UNRESOLVED",
+        message:
+          'Server "crm" in this environment\'s server group was deleted. Pick the servers again before running.',
+      }),
+    }));
+    renderReview();
+    expect(screen.getByText(/Server "crm" in this environment/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
+  it("asks nothing before the user is ready", () => {
+    userReady.value = false;
+    renderReview();
+    expect(useQueries).toHaveBeenLastCalledWith({});
+  });
+
+  it("lets Start through while the resolution is still loading", () => {
+    useQueries.mockImplementation(() => ({ env: undefined }));
+    renderReview();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  // The project's server list leaves plugin components out, so a pinned
+  // plugin's server is neither connected nor listed, and is not "removed".
+  it("does not call a pinned plugin's server removed", () => {
+    projectServers.value = [];
+    useQueries.mockImplementation(() => ({
+      env: { servers: [{ serverId: "srv-plugin", name: "plugin-tools" }] },
+    }));
+    renderReview();
+    expect(screen.queryByText(/plugin-tools/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      false,
+    );
   });
 });
 
@@ -423,6 +532,10 @@ it("resolves changed combinations only at launch without modifying the suite", a
 });
 
 beforeEach(() => {
+  useQueries.mockImplementation(() => ({}));
+  useQueries.mockClear();
+  projectServers.value = undefined;
+  userReady.value = true;
   ensure.mockReset();
   query.mockReset();
   query.mockResolvedValue({ ephemeralEnvironmentLaunch: true });
@@ -569,7 +682,10 @@ it("derives a one-run cell from a pinned setup on the backend instead of blockin
     },
   ];
   const opus = {
-    claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] },
+    claude: {
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "opus" }],
+    },
   };
   expect(planRunMatrix(suite, pinned, opus)[0].blocked).toMatch(
     /pins plugin versions/,

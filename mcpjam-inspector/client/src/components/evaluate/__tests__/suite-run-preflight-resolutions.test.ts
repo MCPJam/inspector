@@ -25,9 +25,10 @@ describe("useEnvironmentResolutions", () => {
     expect(useQueries.mock.calls[2][0]).not.toBe(useQueries.mock.calls[1][0]);
   });
 
-  // Without the opt-in the backend answers OK for a group that still holds a
-  // deleted server, and the launch fails only after Start.
-  it("asks the backend to refuse servers that no longer exist", () => {
+  // Every backend refuses a deleted group server here already; an argument an
+  // older or newer backend doesn't know would fail validation and silently
+  // turn the preflight off.
+  it("asks only with arguments every backend accepts", () => {
     renderHook(() => useEnvironmentResolutions("project-1", ["env-a"]));
     expect(useQueries).toHaveBeenCalledWith({
       "env-a": {
@@ -36,7 +37,6 @@ describe("useEnvironmentResolutions", () => {
           projectId: "project-1",
           environmentId: "env-a",
           serverSource: "environment_only",
-          requireLiveServers: true,
         },
       },
     });

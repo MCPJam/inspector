@@ -24,6 +24,7 @@ import { getEffectiveSuiteServers } from "../evals/helpers";
 import { normalizeSuiteServerRefs } from "../evals/use-eval-handlers";
 import type { EvalCase, EvalSuite } from "../evals/types";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 
 export type RunPreflight = {
   /** Servers the browser has not connected: Start still tries to connect them. */
@@ -53,17 +54,26 @@ export function runPreflight(input: {
   /** Absent while loading: no provider reads as disabled. */
   orgConfig?: { providers: { providerKey: string; enabled: boolean }[] };
   refused?: readonly string[];
+  /**
+   * Skip a server neither the browser nor the project lists. An environment's
+   * resolution includes its pinned plugins' servers, which the project's list
+   * leaves out; the backend already refuses a server that is really gone.
+   */
+  knownOnly?: boolean;
 }): RunPreflight {
   const disconnected: string[] = [];
   const removed: string[] = [];
   for (const ref of new Set(input.serverRefs)) {
     if (input.servers[ref]?.connectionStatus === "connected") continue;
-    const gone =
-      !input.servers[ref] &&
-      input.projectServers !== undefined &&
-      !input.projectServers.some(
-        (server) => server._id === ref || server.name === ref,
+    const known =
+      Boolean(input.servers[ref]) ||
+      Boolean(
+        input.projectServers?.some(
+          (server) => server._id === ref || server.name === ref,
+        ),
       );
+    if (!known && input.knownOnly) continue;
+    const gone = !known && input.projectServers !== undefined;
     (gone ? removed : disconnected).push(ref);
   }
   const disabledProviders = new Set<string>();
@@ -189,6 +199,11 @@ export function readEnvironmentResolutions(
         )
       )
         refusals.add(convexErrMessage(resolved, resolved.message));
+      else if (typeof code !== "string" || !code.startsWith("ENV_"))
+        console.warn(
+          "[Setup Run] Could not preflight an environment; the launch will check it.",
+          resolved,
+        );
       continue;
     }
     const servers = (resolved as { servers?: unknown } | undefined)?.servers;
@@ -218,15 +233,13 @@ export function useEnvironmentResolutions(
           environmentId,
           {
             query: "projectEnvironments:resolveEnvironmentForLaunch" as any,
-            // The rule the run route resolves with. `requireLiveServers`
-            // opts in to refusing a group server that was deleted, which the
-            // launch itself refuses; it is opt-in because GitHub checks
-            // resolve here too and replace every server.
+            // The rule the run route resolves with. Only arguments every
+            // backend accepts: an unknown one fails validation, and the
+            // preflight would go quiet.
             args: {
               projectId,
               environmentId,
               serverSource: "environment_only",
-              requireLiveServers: true,
             },
           },
         ]),
@@ -289,6 +302,7 @@ export function useSuiteRunPreflight({
     refused: environment.refusals,
     servers: appState?.servers ?? {},
     projectServers,
+    knownOnly: Boolean(planned ?? suite.environmentIds?.length),
     availableModelIds: availableModels.map((model) => String(model.id)),
     orgConfig,
   });
@@ -302,11 +316,10 @@ export function useSuiteRunPreflight({
             const name = getMcpServerDisplayName(ref, {
               remoteServers: projectServers,
             });
-            const result = await actions.ensureServersReady([ref]);
-            if (result.readyServerNames.length) return null;
-            return result.reauthServerNames.length
-              ? `${name} needs authorizing before it can connect.`
-              : `${name} didn't connect.`;
+            return connectOutcome(
+              name,
+              await actions.ensureServersReady([ref]),
+            );
           },
         }
       : {}),
@@ -337,6 +350,17 @@ export function scopePreflightToHosts<T extends RunPreflight>(
   };
 }
 
+/** What a Connect from the sheet came to: nothing to say once it's ready. */
+export function connectOutcome(
+  name: string,
+  result: EnsureServersReadyResult,
+): string | null {
+  if (result.readyServerNames.length) return null;
+  return result.reauthServerNames.length
+    ? `${name} needs authorizing before it can connect.`
+    : `${name} didn't connect.`;
+}
+
 export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
   return Boolean(preflight?.removed.length || preflight?.refused.length);
 }
@@ -345,11 +369,14 @@ export function RunPreflightNotices({
   preflight,
   disabled = false,
   onEditSettings,
+  onConnectingChange,
 }: {
   preflight: RunPreflightState;
   disabled?: boolean;
   /** Where an environment's launch refusal is fixed. */
   onEditSettings?: () => void;
+  /** Start must wait: a launch connects the same server again. */
+  onConnectingChange?: (connecting: boolean) => void;
 }) {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -375,13 +402,16 @@ export function RunPreflightNotices({
   const connect = async (ref: string) => {
     if (!preflight.connect) return;
     setConnecting(ref);
+    onConnectingChange?.(true);
     setFailure(null);
     try {
       setFailure(await preflight.connect(ref));
-    } catch {
+    } catch (error) {
+      console.warn("[Setup Run] Connect failed.", error);
       setFailure(`${serverName(ref)} didn't connect.`);
     } finally {
       setConnecting(null);
+      onConnectingChange?.(false);
     }
   };
   return (
@@ -441,8 +471,8 @@ export function RunPreflightNotices({
       {disabledProviders.map((provider) => (
         <div key={`provider:${provider}`} className="flex items-center gap-2">
           <p className="min-w-0 flex-1">
-            {getProviderDisplayName(provider)} isn't enabled for this project,
-            so its models will fail to run.
+            {getProviderDisplayName(provider)} isn't enabled in your
+            organization's AI providers, so its models will fail to run.
           </p>
           {preflight.manageModels && (
             <Button
