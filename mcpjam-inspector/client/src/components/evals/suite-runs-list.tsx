@@ -20,7 +20,7 @@ import {
   hasEnvironmentRun,
   runContextKeys,
 } from "./helpers";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import {
   evalSurfaceCardClass,
@@ -54,7 +54,10 @@ export function computeRunEffectiveStats(
   effectiveTotal: number;
   passRate: number | null;
 } {
-  const iterationResults = runIterations.map((i) => computeIterationResult(i));
+  // Measured results: infra rows count in neither the rate nor its total.
+  const iterationResults = runIterations.map((i) =>
+    computeMeasuredIterationResult(i),
+  );
   const passed = iterationResults.filter((r) => r === "passed").length;
   const failed = iterationResults.filter((r) => r === "failed").length;
   const completedTotal = passed + failed;

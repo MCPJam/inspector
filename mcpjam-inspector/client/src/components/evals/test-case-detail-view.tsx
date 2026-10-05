@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Code2, Loader2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { computeIterationResult } from "./pass-criteria";
+import { computeMeasuredIterationResult } from "./pass-criteria";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { findRunInsightForCase } from "./run-insight-helpers";
@@ -66,8 +66,9 @@ export function TestCaseDetailView({
       const snapshot = iteration.testCaseSnapshot;
       if (!snapshot) return;
 
-      // Only count terminal pass/fail iterations - exclude pending/cancelled.
-      const result = computeIterationResult(iteration);
+      // Only count terminal pass/fail iterations - exclude pending/cancelled
+      // and infra rows.
+      const result = computeMeasuredIterationResult(iteration);
       if (
         result !== "passed" &&
         result !== "failed" &&
@@ -120,7 +121,7 @@ export function TestCaseDetailView({
 
   // Compute overall stats
   const overallStats = useMemo(() => {
-    const results = iterations.map((i) => computeIterationResult(i));
+    const results = iterations.map((i) => computeMeasuredIterationResult(i));
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter(
       (r) => r === "failed" || r === "timed_out",

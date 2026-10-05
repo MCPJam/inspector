@@ -71,6 +71,8 @@ import {
 } from "./eval-trace-capture";
 import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
+import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
+import { harnessFailureEvidenceOf } from "../../utils/harness/harness-provider-error.js";
 
 type ToolCall = {
   toolName: string;
@@ -110,6 +112,12 @@ export type HostedEvalTurnOutcome =
       errorCode?: string;
       /** HTTP status, when the failure came from a non-OK response. */
       errorHttpStatus?: number;
+      /**
+       * The producer's STRUCTURED evidence that one of OUR layers failed,
+       * copied from the engine's event or a typed throw — never derived from
+       * the message. Read only by the eval infra-error classifier.
+       */
+      errorInfra?: InfraFailureEvidence;
     };
 
 /** Stream-runner SSE concerns, layered over the shared skeleton per turn. */
@@ -674,6 +682,10 @@ export async function driveHostedEvalTurn(
       ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
     };
     sinks.onTurnFailure?.(failure);
+    // Structured evidence ONLY from a typed thrower (a harness setup step, a
+    // bridge's typed provider error) — an arbitrary object with a status
+    // could be the customer's server talking.
+    const errorInfra = harnessFailureEvidenceOf(error);
     // `failedStage` already names the layer; "pre-turn setup" is the one call
     // site that never reached the model.
     return {
@@ -683,6 +695,7 @@ export async function driveHostedEvalTurn(
         failedStage === "pre-turn setup"
           ? ("setup" as const)
           : ("model" as const),
+      ...(errorInfra ? { errorInfra } : {}),
     };
   };
 
@@ -1077,6 +1090,9 @@ export async function driveHostedEvalTurn(
       ...(typeof lastEngineError?.httpStatus === "number"
         ? { errorHttpStatus: lastEngineError.httpStatus }
         : {}),
+      // The producer's own typed evidence, passed through untouched: the
+      // classifier, not this call site, decides what it means.
+      ...(lastEngineError?.infra ? { errorInfra: lastEngineError.infra } : {}),
     };
   };
 

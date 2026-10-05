@@ -1,5 +1,8 @@
 import { compactModelIdTail } from "@/lib/environment-label";
-import { computeIterationResult } from "../evals/pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "../evals/pass-criteria";
 import {
   iterationLatencyP95,
   sumIterationCost,
@@ -43,6 +46,20 @@ export function resultCounts(iterations: readonly EvalIteration[]) {
     else counts.pending++;
   }
   return counts;
+}
+
+/**
+ * {@link resultCounts} over the rows a PASS RATE may count: a row OUR
+ * infrastructure failed is left out (`computeMeasuredIterationResult`).
+ * Labels (`cellResult`) keep reading every row.
+ */
+export function measuredResultCounts(iterations: readonly EvalIteration[]) {
+  return resultCounts(
+    iterations.filter(
+      (iteration) =>
+        computeMeasuredIterationResult(iteration) !== "infra_error",
+    ),
+  );
 }
 
 /** Match the overall result displayed for a case/client/model cell. */
