@@ -1,7 +1,22 @@
 import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+// These tests are about the gates, against a fixture bundle they build and
+// digest themselves. A RELEASED pack record would replace that fixture's
+// digest with the published pack's (`manifestWithExpectedBundleDigest`), and
+// the fixture would then resolve as the wrong runtime. The released table is
+// release data, covered by the release gate, not by these tests.
+vi.mock("../pack-digests.generated.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../pack-digests.generated.js")>();
+  return {
+    ...real,
+    PACK_RECORDS: Object.fromEntries(
+      Object.keys(real.PACK_RECORDS).map((harnessId) => [harnessId, {}]),
+    ),
+  };
+});
 import {
   LOCAL_HARNESS_MANIFEST,
   type LocalHarnessCompatibility,

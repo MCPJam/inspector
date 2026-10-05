@@ -114,14 +114,30 @@ describe("the derived offer", () => {
     ).toEqual([]);
   });
 
-  it("says nothing is offered on the reviewed checkout", () => {
+  it("offers on the reviewed checkout only what its packs and evidence support", () => {
     // Reads the REAL committed table and manifest, so this fails the day
     // somebody records conformance evidence without shipping packs — which is
-    // the inconsistent release the gate exists to stop.
-    expect(advertisedLocalPlatforms("claude-code")).toEqual([]);
-    expect(
-      localExecutionReleasedForThisMachine({ harnessId: "claude-code" }),
-    ).toBe(false);
+    // the inconsistent release the gate exists to stop. Before a release that
+    // meant "nothing is offered"; after one, every offered platform must be
+    // backed by a reviewed pack record at the expected version.
+    for (const harnessId of ["claude-code", "codex"] as const) {
+      const offered = advertisedLocalPlatforms(harnessId);
+      if (LOCAL_HARNESS_MANIFEST[harnessId].lifecycleConformanceVersion === "") {
+        expect(offered).toEqual([]);
+        expect(localExecutionReleasedForThisMachine({ harnessId })).toBe(false);
+        continue;
+      }
+      expect(offered.length).toBeGreaterThan(0);
+      for (const platform of offered) {
+        expect(
+          Object.entries(PACK_RECORDS[harnessId] ?? {}).some(
+            ([target, record]) =>
+              target.startsWith(`${platform}-`) &&
+              record?.packVersion === EXPECTED_PACK_VERSIONS[harnessId],
+          ),
+        ).toBe(true);
+      }
+    }
   });
 
   // A digest record is ONE of the three facts a release needs. On its own it
