@@ -402,6 +402,7 @@ describe("local runner — the provider's own typed answer", () => {
         yield { type: "error", error };
       })(),
       response: Promise.resolve({ messages: [] }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({}),
       finishReason: Promise.resolve("error"),
