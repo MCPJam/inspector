@@ -30,10 +30,18 @@ on:
         required: false
         type: string
         default: conformance
+      codex_published_pack_version:
+        description: Verify and run a pinned published Codex pack instead of building one.
+        required: false
+        type: string
+        default: ""
     outputs:
       conformance_version:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
         value: ${{ jobs.summarize.outputs.conformance_version }}
+      codex_conformance_version:
+        description: The identifier to stamp into Codex's `lifecycleConformanceVersion`.
+        value: ${{ jobs.codex-summarize.outputs.conformance_version }}
   workflow_dispatch:
     inputs:
       published_pack_version:
@@ -41,10 +49,19 @@ on:
         required: false
         type: string
         default: ""
+      codex_published_pack_version:
+        description: Pinned published Codex pack version to verify (empty builds source).
+        required: false
+        type: string
+        default: ""
   pull_request:
     paths:
       - "mcpjam-inspector/server/utils/harness/local/**"
       - "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts"
+      - "mcpjam-inspector/server/utils/harness/codex-appserver/**"
+      - "mcpjam-inspector/scripts/local-harness-pack-recipes/**"
+      - "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs"
+      - "mcpjam-inspector/server/utils/harness/auto-approve-harness.ts"
       - "mcpjam-inspector/server/utils/harness/registry.ts"
       - "mcpjam-inspector/package.json"
       - "package-lock.json"
@@ -204,6 +221,14 @@ jobs:
         run: |
           mkdir -p "$HOME" "$CONFORMANCE_ROOT/workspace"
           npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      - name: Attended Tool Approval off
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: npx tsx server/utils/harness/local/conformance/run-native-turn.ts attended-off
 
       - name: Workspace and MCP delivery
         working-directory: mcpjam-inspector
@@ -412,6 +437,15 @@ jobs:
           HOME="$CONFORMANCE_ROOT/home" \
             npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
 
+      - name: Attended Tool Approval off
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          HOME="$CONFORMANCE_ROOT/home" \
+            npx tsx server/utils/harness/local/conformance/run-native-turn.ts attended-off
+
       - name: Workspace and MCP delivery
         working-directory: mcpjam-inspector
         env:
@@ -478,6 +512,162 @@ jobs:
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
+  # Local Codex: its own pack (MCPJam's app-server bridge + the pinned
+  # `@openai/codex` platform binary), its own adapter and its own sandbox
+  # claims, so its own legs — against a mock OpenAI Responses upstream behind
+  # the same loopback gateway. Only the model is fake.
+  #
+  # D8: the targets Codex's manifest certifies (`nativeTargets`) block; the
+  # others run so their evidence stays visible without holding up a certified
+  # target's release. Windows has no leg: it is not a Codex native target, and
+  # its sandbox (`windowsSandbox/setupStart`) has no evidence yet.
+  codex-scenarios:
+    name: codex ${{ matrix.platform_key }}
+    needs: unit
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ !matrix.certified }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: linux-x64
+            runner: ubuntu-latest
+            node_dist: linux-x64
+            certified: true
+          - platform_key: darwin-arm64
+            runner: macos-latest
+            node_dist: darwin-arm64
+            certified: true
+          - platform_key: linux-arm64
+            runner: ubuntu-24.04-arm
+            node_dist: linux-arm64
+            certified: false
+          - platform_key: darwin-x64
+            runner: macos-15-intel
+            node_dist: darwin-x64
+            certified: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+
+      - name: Download the bundled Node runtime
+        run: |
+          set -euo pipefail
+          url="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
+          expected=$(awk -v name="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          test -n "$expected"
+          actual=$(shasum -a 256 "$RUNNER_TEMP/node-runtime.tar.gz" | awk '{print $1}')
+          test "$actual" = "$expected"
+
+      - name: Prepare the pinned published Codex pack
+        if: inputs.codex_published_pack_version != ''
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.codex_published_pack_version }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key }}" "$RUNNER_TEMP/conformance" codex
+
+      # The recipe regenerates the bridge bundle from source and checks every
+      # file of the platform package against `codex-vendor-checksums.json`.
+      - name: Build the Codex pack
+        if: inputs.codex_published_pack_version == ''
+        working-directory: mcpjam-inspector
+        run: |
+          node scripts/build-local-harness-pack.mjs \
+            --harness codex \
+            --platform ${{ matrix.platform_key }} \
+            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
+            --out "$RUNNER_TEMP/conformance/runtime-src" \
+            --skip-archive
+          mkdir -p "$RUNNER_TEMP/conformance/runtime"
+          cp -R "$RUNNER_TEMP/conformance/runtime-src/codex" \
+            "$RUNNER_TEMP/conformance/runtime/codex"
+
+      - name: Build Inspector adapter dependencies
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
+
+      # Playground profile: a command pauses for approval and runs only once
+      # approved; a host-executed MCP tool runs through MCPJam's relay; the
+      # thread survives detach + resume; Stop leaves nothing behind.
+      - name: Attended turn
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          mkdir -p "$HOME"
+          npx tsx server/utils/harness/local/conformance/run-codex-turn.ts attended
+
+      - name: Attended turn with Tool Approval off
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: npx tsx server/utils/harness/local/conformance/run-codex-turn.ts attended-off
+
+      # Eval/swarm profile (D2): `allow-all` inside Codex's command sandbox.
+      # EVIDENCE, not yet a gate: no target is recorded in
+      # `unattendedSandboxTargets`, and a runner where the sandbox cannot start
+      # (Ubuntu 24.04's AppArmor user-namespace restriction blocks bubblewrap)
+      # is exactly what this leg exists to surface. A target is recorded only
+      # after this passes on it; until then unattended local Codex is refused
+      # there.
+      - name: Unattended sandboxed turn (evidence)
+        id: unattended
+        continue-on-error: true
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: npx tsx server/utils/harness/local/conformance/run-codex-turn.ts unattended
+
+      - name: Record the unattended outcome
+        if: always()
+        env:
+          OUTCOME: ${{ steps.unattended.outcome }}
+        run: |
+          echo "### Codex unattended sandbox on ${{ matrix.platform_key }}: ${OUTCOME}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No supervised process survived the run
+        if: always()
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          set -euo pipefail
+          survivors=""
+          for pid in $(pgrep -f "$CONFORMANCE_ROOT/runtime/codex/" || true); do
+            case "$pid" in "$$" | "$PPID") continue ;; esac
+            cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+            case "$cmd" in "" | *pgrep*) continue ;; esac
+            survivors="$survivors $pid"
+          done
+          if [ -n "$survivors" ]; then
+            echo "supervised processes survived the Codex conformance run:$survivors" >&2
+            ps -o pid=,command= -p $survivors || true
+            exit 1
+          fi
+
   summarize:
     name: conformance version
     # A conformance version records the evidence behind EVERY platform the
@@ -500,4 +690,24 @@ jobs:
             echo "version=published-${PUBLISHED_PACK_VERSION}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
           else
             echo "version=local-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Codex's own stamp, from Codex's own legs only. A Codex failure must not
+  # withhold Claude Code's version, nor a Claude Code failure Codex's: each
+  # harness's evidence certifies that harness alone (D4).
+  codex-summarize:
+    name: codex conformance version
+    needs: [codex-scenarios]
+    runs-on: ubuntu-latest
+    outputs:
+      conformance_version: ${{ steps.stamp.outputs.version }}
+    steps:
+      - id: stamp
+        env:
+          PUBLISHED_PACK_VERSION: ${{ inputs.codex_published_pack_version }}
+        run: |
+          if [ -n "$PUBLISHED_PACK_VERSION" ]; then
+            echo "version=published-codex-${PUBLISHED_PACK_VERSION}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=local-codex-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
           fi

@@ -208,6 +208,7 @@ function LaneSection({
               <RunContextChip
                 run={lane.run}
                 hostNamesById={hostNamesById}
+                modelSuffix={lane.modelSuffix}
                 fallbackName="Suite default"
                 className="border-border bg-background shadow-none"
               />

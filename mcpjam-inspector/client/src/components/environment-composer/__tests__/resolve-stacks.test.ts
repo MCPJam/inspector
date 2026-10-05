@@ -590,7 +590,7 @@ describe("defaultComposerState", () => {
         serverAttachmentId: "grp-1",
         skillSelection: null,
         computerEnvironmentId: null,
-        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
+        modelSelection: { includeClientDefaults: true, explicitTargets: [] },
       },
       customized: true,
     });
@@ -820,7 +820,7 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1", "h2"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: ["google/gemini-2.5-flash"],
+          explicitTargets: [{ modelId: "google/gemini-2.5-flash" }],
         },
       }),
       liveEnvironments: [],
@@ -848,11 +848,11 @@ describe("resolveComposerEnvironments — model axis", () => {
         modelSelectionsByHost: {
           h1: {
             includeClientDefaults: true,
-            explicitModelIds: ["openai/gpt-5.1"],
+            explicitTargets: [{ modelId: "openai/gpt-5.1" }],
           },
           h2: {
             includeClientDefaults: false,
-            explicitModelIds: ["anthropic/claude-sonnet"],
+            explicitTargets: [{ modelId: "anthropic/claude-sonnet" }],
           },
         },
       }),
@@ -878,10 +878,7 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: [
-            "google/gemini-2.5-flash",
-            "google/gemini-2.5-flash",
-          ],
+          explicitTargets: [{ modelId: "google/gemini-2.5-flash" }, { modelId: "google/gemini-2.5-flash" }],
         },
       }),
       liveEnvironments: [],
@@ -905,7 +902,7 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: ["anthropic/claude-haiku-4.5"],
+          explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
         },
       }),
       liveEnvironments: [],
@@ -926,7 +923,7 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1", "h2", "h3"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: ["m1", "m2", "m3"],
+          explicitTargets: [{ modelId: "m1" }, { modelId: "m2" }, { modelId: "m3" }],
         },
       }),
       liveEnvironments: [],
@@ -965,7 +962,7 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1"],
         modelSelection: {
           includeClientDefaults: false,
-          explicitModelIds: ["google/gemini-2.5-flash"],
+          explicitTargets: [{ modelId: "google/gemini-2.5-flash" }],
         },
       }),
       liveEnvironments: [
@@ -990,7 +987,7 @@ describe("resolveComposerEnvironments — model axis", () => {
         hostIds: ["h1"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: ["google/gemini-2.5-flash"],
+          explicitTargets: [{ modelId: "google/gemini-2.5-flash" }],
         },
       }),
       liveEnvironments: [],
@@ -1093,7 +1090,7 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
     );
     expect(state.stack.modelSelection).toEqual({
       includeClientDefaults: true,
-      explicitModelIds: ["google/gemini-2.5-flash"],
+      explicitTargets: [{ modelId: "google/gemini-2.5-flash" }],
     });
     expect(state.stack.hostIds).toEqual(["h1", "h2"]);
   });
@@ -1108,7 +1105,7 @@ describe("environmentsCarryModels and modelsEnabled gating", () => {
     ]);
     expect(state.stack.modelSelection).toEqual({
       includeClientDefaults: true,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
   });
 });
@@ -1118,11 +1115,7 @@ describe("expandModelChoices — harness × model support", () => {
     const { cells, skipped } = expandModelChoices(
       {
         includeClientDefaults: true,
-        explicitModelIds: [
-          "anthropic/claude-sonnet-4.5",
-          "openai/gpt-5.6-luna",
-          "anthropic/claude-fable-5",
-        ],
+        explicitTargets: [{ modelId: "anthropic/claude-sonnet-4.5" }, { modelId: "openai/gpt-5.6-luna" }, { modelId: "anthropic/claude-fable-5" }],
       },
       { clientId: "h-claude", harness: { harnessId: "claude-code" } },
     );
@@ -1152,7 +1145,7 @@ describe("expandModelChoices — harness × model support", () => {
       const { cells, skipped } = expandModelChoices(
         {
           includeClientDefaults: false,
-          explicitModelIds: ["openai/gpt-5.6-luna"],
+          explicitTargets: [{ modelId: "openai/gpt-5.6-luna" }],
         },
         { clientId: "h", harness },
       );
@@ -1163,7 +1156,7 @@ describe("expandModelChoices — harness × model support", () => {
 
   it("reads the version: an unmeasured Codex runtime is unknown, not unsupported", () => {
     const { skipped } = expandModelChoices(
-      { includeClientDefaults: false, explicitModelIds: ["openai/gpt-5.6"] },
+      { includeClientDefaults: false, explicitTargets: [{ modelId: "openai/gpt-5.6" }] },
       {
         clientId: "h",
         harness: { harnessId: "codex", runtimeVersion: "0.160.0" },
@@ -1183,7 +1176,7 @@ describe("resolveComposerEnvironments — harness-incompatible cells", () => {
         hostIds: ["h-codex", "h-emulated"],
         modelSelection: {
           includeClientDefaults: true,
-          explicitModelIds: ["openai/gpt-5.6-luna"],
+          explicitTargets: [{ modelId: "openai/gpt-5.6-luna" }],
         },
       }),
       liveEnvironments: [],
@@ -1223,7 +1216,7 @@ describe("resolveComposerEnvironments — harness-incompatible cells", () => {
         hostIds: ["h-codex", "h-emulated"],
         modelSelection: {
           includeClientDefaults: false,
-          explicitModelIds: ["openai/gpt-5.6-luna"],
+          explicitTargets: [{ modelId: "openai/gpt-5.6-luna" }],
         },
       }),
       liveEnvironments: [],
@@ -1255,7 +1248,7 @@ describe("resolveComposerEnvironments — harness-incompatible cells", () => {
           hostIds: ["h-claude"],
           modelSelection: {
             includeClientDefaults: false,
-            explicitModelIds: ["openai/gpt-5.5"],
+            explicitTargets: [{ modelId: "openai/gpt-5.5" }],
           },
         }),
         liveEnvironments: [],
@@ -1327,8 +1320,9 @@ describe("resolveComposerEnvironments — reusing a named row across efforts", (
       hostIds: ["h1"],
       modelSelection: {
         includeClientDefaults: false,
-        explicitModelIds: [MODEL],
-        ...(selection ? { explicitModelSelections: { [MODEL]: selection } } : {}),
+        explicitTargets: [
+          selection ? { modelId: MODEL, selection } : { modelId: MODEL },
+        ],
       },
     });
   const run = (
@@ -1370,5 +1364,17 @@ describe("resolveComposerEnvironments — reusing a named row across efforts", (
   it("a cell with no saved selection still reuses a row with no settings", async () => {
     const result = await run(cell(), { modelSelection: saved() });
     expect(result.environmentIds).toEqual(["curated"]);
+  });
+
+  it("a plain hosted cell reuses an unlabelled row of the same id (same comparisonKey)", async () => {
+    const result = await run(cell(saved()), {});
+    expect(result.environmentIds).toEqual(["curated"]);
+  });
+
+  it("a plain hosted cell does not reuse a row stored as own-key (legacy) selection", async () => {
+    const result = await run(cell(saved()), {
+      modelSelection: { source: "legacy", modelId: MODEL } as never,
+    });
+    expect(result.environmentIds).toEqual(["adhoc-1"]);
   });
 });

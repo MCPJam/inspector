@@ -150,6 +150,10 @@ const SCOPED_NAME_DENYLIST = new Set([
   // would point it at any executable; the provider sets it from a path it
   // has verified exists.
   "CLAUDE_CODE_GIT_BASH_PATH",
+  // Codex's config root. The bridge renders a per-session CODEX_HOME (auth,
+  // model provider, the relay's MCP server); an injected one would point Codex
+  // back at a user's real `~/.codex` — its servers, its credentials.
+  "CODEX_HOME",
 ]);
 
 export class LocalHarnessEnvError extends Error {}
@@ -259,13 +263,38 @@ export function validateLocalHarnessScopedEnv(
   }
 }
 
+/**
+ * Prefixes a project secret may not use, PER HARNESS: the names that harness's
+ * runtime reads its model endpoint and credential from.
+ *
+ * Per harness rather than one global list on purpose. A Claude Code project
+ * may legitimately carry an `OPENAI_API_KEY` for its MCP server to use —
+ * refusing it everywhere would break existing local Claude projects for a
+ * conflict that only exists under Codex, where `OPENAI_BASE_URL` and
+ * `CODEX_API_KEY` are exactly what the gateway's capability travels in.
+ */
+const RUNTIME_RESERVED_SECRET_PREFIXES: Readonly<
+  Record<string, RegExp>
+> = {
+  "claude-code": /^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i,
+  codex: /^(CODEX_|OPENAI_|AI_GATEWAY_|BRIDGE_)/i,
+};
+
 /** Project secrets must not impersonate runtime-owned model or bridge credentials. */
 export function validateLocalHarnessSecretEnv(
   scoped: Readonly<Record<string, string>>,
+  harnessId: string = "claude-code",
 ): void {
   validateLocalHarnessScopedEnv(scoped);
+  const reserved = Object.prototype.hasOwnProperty.call(
+    RUNTIME_RESERVED_SECRET_PREFIXES,
+    harnessId,
+  )
+    ? RUNTIME_RESERVED_SECRET_PREFIXES[harnessId]!
+    : // An unknown harness gets the union, never nothing.
+      /^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_|CODEX_|OPENAI_)/i;
   for (const name of Object.keys(scoped)) {
-    if (/^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i.test(name)) {
+    if (reserved.test(name)) {
       throw new LocalHarnessEnvError(
         `Project secret ${name} conflicts with the local harness runtime.`,
       );

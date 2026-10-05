@@ -14,9 +14,11 @@ import {
   startHostToolRelay,
   type HostToolRelay,
 } from "../bridge/host-tool-relay.js";
+import { createServer } from "node:http";
 import {
   createHostToolMcpServer,
   pumpJsonLines,
+  relayFetch,
   toMcpToolResult,
 } from "../bridge/host-tools-mcp.js";
 import {
@@ -322,6 +324,33 @@ describe("host tool relay", () => {
     await relay.close();
     const body = (await (await call).json()) as { ok: boolean };
     expect(body.ok).toBe(false);
+  });
+});
+
+describe("the relay call from the stdio MCP server", () => {
+  it("waits for a slow answer instead of applying a client timeout", async () => {
+    // A gated tool answers only after the human decides. The global fetch's
+    // 300 s headers timeout once failed those calls while the host still ran
+    // the tool; this client sets no timeout of its own and must simply wait.
+    const server = createServer((req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, method: req.method }));
+      }, 750);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as { port: number };
+      const response = await relayFetch(`http://127.0.0.1:${port}/call`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ toolName: "slow" }),
+      });
+      expect(response.ok).toBe(true);
+      expect(await response.json()).toEqual({ ok: true, method: "POST" });
+    } finally {
+      await new Promise((resolve) => server.close(() => resolve(undefined)));
+    }
   });
 });
 

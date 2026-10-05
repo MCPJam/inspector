@@ -292,15 +292,29 @@ describe("where a pack lives", () => {
     // Under a TARGET segment: an arm64 and a Rosetta x64 Inspector share a
     // home directory, and the same version of two different artifacts must not
     // activate at the same path.
-    expect(packVersionRoot("7")).toBe(join(installRoot, PLATFORM_KEY, "7"));
+    expect(packVersionRoot("claude-code", "7")).toBe(
+      join(installRoot, PLATFORM_KEY, "7"),
+    );
   });
 
   it("keeps two architectures of one version apart on disk", () => {
-    expect(packVersionRoot("7", "darwin-arm64")).not.toBe(
-      packVersionRoot("7", "darwin-x64"),
+    expect(packVersionRoot("claude-code", "7", "darwin-arm64")).not.toBe(
+      packVersionRoot("claude-code", "7", "darwin-x64"),
     );
-    expect(packVersionRoot("7", "darwin-arm64")).toBe(
+    expect(packVersionRoot("claude-code", "7", "darwin-arm64")).toBe(
       join(installRoot, "darwin-arm64", "7"),
+    );
+  });
+
+  it("keeps two harnesses' packs of one version apart, with Claude Code where it shipped", () => {
+    // Each harness's pack has its own semver, so Claude Code 1.0.0 and Codex
+    // 1.0.0 are different artifacts. Sharing a version directory would let
+    // installing one replace the other under a running session.
+    expect(packVersionRoot("codex", "1.0.0", "linux-x64")).toBe(
+      join(installRoot, "codex", "linux-x64", "1.0.0"),
+    );
+    expect(packVersionRoot("claude-code", "1.0.0", "linux-x64")).toBe(
+      join(installRoot, "linux-x64", "1.0.0"),
     );
   });
 
@@ -327,11 +341,18 @@ describe("where a pack lives", () => {
     const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
     delete process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
     try {
-      expect(packSourceFor("9", "linux-x64")).toEqual({
+      expect(packSourceFor("claude-code", "9", "linux-x64")).toEqual({
         kind: "url",
         location:
           "https://github.com/MCPJam/inspector/releases/download/local-harness-pack-v9/" +
           "local-harness-pack-linux-x64-9.tar.gz",
+      });
+      // Every other harness carries its id in the tag and the asset name.
+      expect(packSourceFor("codex", "9", "linux-x64")).toEqual({
+        kind: "url",
+        location:
+          "https://github.com/MCPJam/inspector/releases/download/local-harness-pack-codex-v9/" +
+          "local-harness-pack-codex-linux-x64-9.tar.gz",
       });
     } finally {
       if (saved !== undefined) {
@@ -357,13 +378,13 @@ describe("installing a pack", () => {
     expect(progress).toContain("verifying");
 
     // The tree is where `resolveManagedBundle` will look for it…
-    const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+    const packRoot = join(packVersionRoot("claude-code", PACK_VERSION), "claude-code");
     expect(await computeTreeDigest(packRoot)).toBe(realDigest);
     // …and the marker sits OUTSIDE the digested tree, so writing it cannot
     // change the digest of the thing it vouches for.
     const marker = JSON.parse(
       await readFile(
-        join(packVersionRoot(PACK_VERSION), ".mcpjam-pack-installed.json"),
+        join(packVersionRoot("claude-code", PACK_VERSION), ".mcpjam-pack-installed.json"),
         "utf8",
       ),
     );
@@ -421,7 +442,7 @@ describe("installing a pack", () => {
         readRuntimeInstallStatus({ harnessId: "claude-code" }),
       ).resolves.toMatchObject({ state: "failed", reason: "verification" });
       await expect(
-        stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+        stat(join(packVersionRoot("claude-code", PACK_VERSION), "claude-code")),
       ).rejects.toThrow();
     } finally {
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
@@ -453,7 +474,7 @@ describe("installing a pack", () => {
       const result = await installRuntimePack({ harnessId: "claude-code" });
       expect(result.state).toBe("ready");
       // The link did not survive extraction.
-      const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+      const packRoot = join(packVersionRoot("claude-code", PACK_VERSION), "claude-code");
       await expect(readFile(join(packRoot, "sneaky"))).rejects.toThrow();
     } finally {
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
@@ -568,7 +589,7 @@ describe.skipIf(GNU_TAR === null)("GNU tar as the release producer", () => {
       // reaches for GNU tar when it can find one.
       const result = await installRuntimePack({ harnessId: "claude-code" });
       expect(result.state).toBe("ready");
-      const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+      const packRoot = join(packVersionRoot("claude-code", PACK_VERSION), "claude-code");
       await expect(
         readFile(join(packRoot, "linked.json"), "utf8"),
       ).resolves.toContain("pack");
@@ -655,7 +676,7 @@ describe("runtime health, separately from operation state", () => {
     // needs this answer is deciding whether to skip a download and mint
     // consent against the runtime's identity, so it re-verifies.
     await installRuntimePack({ harnessId: "claude-code" });
-    const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+    const packRoot = join(packVersionRoot("claude-code", PACK_VERSION), "claude-code");
     await writeFile(join(packRoot, "bridge.mjs"), "export const bridge = 2;\n");
 
     // The cheap read still believes the marker…
@@ -670,7 +691,7 @@ describe("runtime health, separately from operation state", () => {
 
   it("repairs by reinstalling the same version", async () => {
     await installRuntimePack({ harnessId: "claude-code" });
-    const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+    const packRoot = join(packVersionRoot("claude-code", PACK_VERSION), "claude-code");
     await writeFile(join(packRoot, "bridge.mjs"), "export const bridge = 2;\n");
     await expect(
       readVerifiedRuntimeStatus({ harnessId: "claude-code" }),
@@ -699,14 +720,14 @@ describe("a runtime somebody is using is not replaced", () => {
     };
     const held = await reserveRuntimeUse({
       key,
-      runtimeRoot: packVersionRoot(PACK_VERSION),
+      runtimeRoot: packVersionRoot("claude-code", PACK_VERSION),
       label: "session-1",
     });
     try {
       // Corrupt it so a repair is actually attempted rather than short-circuited
       // by the verified-ready fast path.
       await writeFile(
-        join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+        join(packVersionRoot("claude-code", PACK_VERSION), "claude-code", "bridge.mjs"),
         "export const bridge = 3;\n",
       );
       const result = await installRuntimePack({ harnessId: "claude-code" });
@@ -715,7 +736,7 @@ describe("a runtime somebody is using is not replaced", () => {
       // The tree the running session verified is still there, unchanged.
       await expect(
         readFile(
-          join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+          join(packVersionRoot("claude-code", PACK_VERSION), "claude-code", "bridge.mjs"),
           "utf8",
         ),
       ).resolves.toContain("bridge = 3");
@@ -735,11 +756,11 @@ describe("a runtime somebody is using is not replaced", () => {
     };
     const held = await reserveRuntimeUse({
       key,
-      runtimeRoot: packVersionRoot(PACK_VERSION),
+      runtimeRoot: packVersionRoot("claude-code", PACK_VERSION),
     });
     await held.release();
     await writeFile(
-      join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+      join(packVersionRoot("claude-code", PACK_VERSION), "claude-code", "bridge.mjs"),
       "export const bridge = 3;\n",
     );
     await expect(
@@ -751,14 +772,14 @@ describe("a runtime somebody is using is not replaced", () => {
     // The old install swept every other version after activating, which is how
     // a running session lost the tree it had verified and was executing from.
     await installRuntimePack({ harnessId: "claude-code" });
-    const neighbour = packVersionRoot("some-other-version");
+    const neighbour = packVersionRoot("claude-code", "some-other-version");
     await mkdir(join(neighbour, "claude-code"), { recursive: true });
     await writeFile(
       join(neighbour, ".mcpjam-pack-installed.json"),
       JSON.stringify({ packVersion: "some-other-version" }),
     );
 
-    await rm(packVersionRoot(PACK_VERSION), { recursive: true, force: true });
+    await rm(packVersionRoot("claude-code", PACK_VERSION), { recursive: true, force: true });
     await installRuntimePack({ harnessId: "claude-code" });
 
     await expect(stat(join(neighbour, "claude-code"))).resolves.toBeTruthy();
@@ -770,18 +791,18 @@ describe("an interrupted activation is recovered, not re-downloaded", () => {
     await installRuntimePack({ harnessId: "claude-code" });
     // The crash window: moved aside, never renamed in.
     await rename(
-      packVersionRoot(PACK_VERSION),
-      `${packVersionRoot(PACK_VERSION)}${PREVIOUS_SUFFIX}`,
+      packVersionRoot("claude-code", PACK_VERSION),
+      `${packVersionRoot("claude-code", PACK_VERSION)}${PREVIOUS_SUFFIX}`,
     );
     await expect(
-      stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+      stat(join(packVersionRoot("claude-code", PACK_VERSION), "claude-code")),
     ).rejects.toThrow();
 
     await expect(
       readRuntimeInstallStatus({ harnessId: "claude-code" }),
     ).resolves.toMatchObject({ state: "ready" });
     await expect(
-      stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+      stat(join(packVersionRoot("claude-code", PACK_VERSION), "claude-code")),
     ).resolves.toBeTruthy();
   });
 });

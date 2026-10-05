@@ -51,9 +51,12 @@ import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
 import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { directChatEffort } from "./chat-reasoning-effort.js";
 import type {
   Harness,
   MCPClientManager,
+  RequestedModelSelection,
   ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import type {
@@ -77,7 +80,8 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
+import { decideTurnRail } from "./selection-rail.js";
+import { backendModelSelection } from "./model-resolution-local.js";
 import {
   buildWidgetModelContextSystemPrompt,
   guardPageToolRefresh,
@@ -144,6 +148,7 @@ import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
+import { ranTurnSelection } from "./session-model-selection";
 import {
   resolveWebAuthorizedHarnessStrategy,
   type HarnessMcpProxyStrategy,
@@ -259,6 +264,13 @@ export interface WebChatTurnPersistContext {
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
   harness?: Harness;
+  /**
+   * The server-resolved LOCAL target when this turn runs on the user's own
+   * machine. Forwarded verbatim to the harness turn: dropping it would run a
+   * turn the route resolved as local on the hosted path instead, which a
+   * local launch must never silently do.
+   */
+  harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
   respectToolVisibility?: boolean;
   /**
    * When `false`, skip the `exportConnectedServerToolSnapshotForEvalAuthoring`
@@ -369,8 +381,30 @@ export interface WebChatTurnPersistContext {
 export interface WebChatTurnPrepareInputs {
   selectedServerIds: string[];
   modelDefinition: ModelDefinition;
+  /**
+   * The saved selection for `modelDefinition` that DECIDES THE RAIL
+   * (`decideTurnRail`): `hosted` → MCPJam `/stream`; `org` → the org
+   * connection (forwarded to `/stream/org/resolve` for a re-check); `local`
+   * and a stored legacy one → the org-BYOK path, never MCPJam credits (this
+   * surface holds no key of the caller's machine). Absent → today's
+   * hosted-list check, unchanged.
+   */
+  routingSelection?: RequestedModelSelection;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn runs at (the request's top-level field, else
+   * the host's saved one for this same model). Under an effort the resolved
+   * temperature is omitted. Applied per rail: a top-level body field on the
+   * hosted `/stream` and `/stream/org` rails, provider options on the direct
+   * (local-runtime org) rail, the typed field on a harness turn.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  /**
+   * A temperature the CALLER sent (not a host default). The direct rail
+   * refuses it together with an effort; the hosted rails drop it.
+   */
+  explicitTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   /**
@@ -820,6 +854,9 @@ export async function streamWebChatTurn(
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,
       temperature: prepare.temperature,
+      ...(prepare.reasoningEffort !== undefined
+        ? { reasoningEffort: prepare.reasoningEffort }
+        : {}),
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
       ...(prepare.excludeMcpToolNames
@@ -1158,9 +1195,14 @@ export async function streamWebChatTurn(
   // turn. And the same pair, sent from the picker's "Your providers" row, means
   // the OPPOSITE: the user chose their own key. Only the picker's explicit
   // `hosted: false` tells the two apart; see `isHostedModelDefinition`.
+  //
+  // With a saved selection its `source` decides instead (`decideTurnRail`).
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isHostedModelDefinition(prepare.modelDefinition);
+    decideTurnRail({
+      selection: prepare.routingSelection,
+      model: prepare.modelDefinition,
+    }) === "hosted";
   // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
   // (`cursor/auto`) that is deliberately not MCPJam-hosted.
   //
@@ -1187,7 +1229,9 @@ export async function streamWebChatTurn(
   // helper without one.
   if (persist.harness && !usesMcpjamFreePath) {
     const { refusal } = harnessModelRefusal({
-      adapter: getHarnessAdapter(persist.harness),
+      adapter: getHarnessAdapter(persist.harness, {
+        localExecution: persist.harnessExecutionTarget != null,
+      }),
       model: {
         id: String(prepare.modelDefinition.id),
         provider: prepare.modelDefinition.provider,
@@ -1267,6 +1311,13 @@ export async function streamWebChatTurn(
         // somebody has to remember to extend.
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
+        // What the session records for this turn: the selection it ran,
+        // effort included (last turn wins, like its modelId).
+        modelSelection: ranTurnSelection({
+          selection: prepare.routingSelection,
+          model: prepare.modelDefinition,
+          reasoningEffort: prepare.reasoningEffort,
+        }),
         modelSource,
         projectId: persist.projectId,
         sourceType: persist.sourceType,
@@ -1325,6 +1376,11 @@ export async function streamWebChatTurn(
                   : {}),
                 systemPrompt: persist.systemPrompt,
                 temperature: persist.temperature,
+                // The effort this conversation ran at, so a reopened chat keeps
+                // it. Absent when the turn had none.
+                ...(prepare.reasoningEffort !== undefined
+                  ? { reasoningEffort: prepare.reasoningEffort }
+                  : {}),
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
@@ -1432,6 +1488,15 @@ export async function streamWebChatTurn(
               tools: localTools.tools,
               messages: scrubbedMessages,
             }),
+            // The saved org connection, re-checked by the backend before it
+            // hands back any key.
+            ...(prepare.routingSelection?.source === "org"
+              ? {
+                  modelSelection: backendModelSelection(
+                    prepare.routingSelection,
+                  ),
+                }
+              : {}),
           },
         )
       : { runtimeLocation: "cloud", providerKey };
@@ -1455,6 +1520,21 @@ export async function streamWebChatTurn(
           { toolNames: localTools.removed },
         );
       }
+      // The inspector calls the provider on this runtime, so the effort is
+      // applied here as provider options, or refused before any spend.
+      const localEffort = directChatEffort({
+        providerKey: orgRuntime.provider.providerKey,
+        modelId,
+        effort: prepare.reasoningEffort,
+        explicitTemperature: prepare.explicitTemperature,
+      });
+      if (!localEffort.ok) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          localEffort.reason,
+        );
+      }
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
         ...(historyPresentation ? { historyPresentation } : {}),
@@ -1466,6 +1546,9 @@ export async function streamWebChatTurn(
         messages: scrubbedMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
+        ...(localEffort.providerOptions
+          ? { providerOptions: localEffort.providerOptions }
+          : {}),
         tools: localTools.tools,
         progressivePlan,
         discoveryState,
@@ -1511,6 +1594,9 @@ export async function streamWebChatTurn(
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
+      ...(prepare.reasoningEffort !== undefined
+        ? { reasoningEffort: prepare.reasoningEffort }
+        : {}),
       tools: refreshingEngineTools(),
       progressivePlan,
       discoveryState,
@@ -1608,6 +1694,11 @@ export async function streamWebChatTurn(
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
+    // Hosted `/stream`: the top-level body field. Harness: the typed field its
+    // adapter's declared efforts gate (refused, never dropped).
+    ...(prepare.reasoningEffort !== undefined
+      ? { reasoningEffort: prepare.reasoningEffort }
+      : {}),
     tools: refreshingEngineTools(),
     progressivePlan,
     discoveryState,
@@ -1639,6 +1730,9 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(persist.harness && persist.harnessExecutionTarget
+      ? { harnessExecutionTarget: persist.harnessExecutionTarget }
+      : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.
     ...(persist.runtimeSkillsOverride !== undefined

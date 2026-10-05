@@ -37,6 +37,7 @@ import {
   MAX_EVAL_CASE_AGGREGATIONS,
   evalCaseAggregationKey,
   evalCaseVerdictAggregationSchema,
+  evalExecutionVariantSchema,
   evalFractionSchema,
   evalRateMeasurementSchema,
   evalRunVerdictSchema,
@@ -688,6 +689,29 @@ describe("verdict policy — a case aggregate is identified by case AND executio
         executionVariant: { model: "x", provider: "b" },
       })
     );
+  });
+
+  it("splits two selections of one model only when one is non-default", () => {
+    const base = { model: "anthropic/claude-sonnet-4-5", provider: "anthropic" };
+    // A default selection carries no selectionKey: the key is unchanged.
+    expect(
+      evalCaseAggregationKey({ caseId: "c_a", executionVariant: base })
+    ).toBe("c_a\u0000anthropic\u0000anthropic/claude-sonnet-4-5");
+    const high = evalCaseAggregationKey({
+      caseId: "c_a",
+      executionVariant: { ...base, selectionKey: '{"settings":"high"}' },
+    });
+    const low = evalCaseAggregationKey({
+      caseId: "c_a",
+      executionVariant: { ...base, selectionKey: '{"settings":"low"}' },
+    });
+    expect(new Set([high, low]).size).toBe(2);
+    expect(high).not.toBe(
+      evalCaseAggregationKey({ caseId: "c_a", executionVariant: base })
+    );
+    expect(() =>
+      evalExecutionVariantSchema.parse({ ...base, selectionKey: "" })
+    ).toThrow();
   });
 
   it("holds every fanned-out variant to its own threshold", () => {

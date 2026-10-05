@@ -7,6 +7,7 @@ import {
 } from "../suite-clients-settings";
 import type { EvalSuite } from "../types";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import { seedRunMatrix } from "../../evaluate/suite-run-matrix";
 const mocks = vi.hoisted(() => ({
   ensure: vi.fn(),
   save: vi.fn(),
@@ -59,13 +60,17 @@ vi.mock("../../evaluate/eval-target-matrix", () => ({
     disabled,
   }: any) => (
     <div>
-      <span>{modelSelectionsByHost.chat.explicitModelIds.join(",")}</span>
+      <span>
+        {modelSelectionsByHost.chat.explicitTargets
+          .map((target: { modelId: string }) => target.modelId)
+          .join(",")}
+      </span>
       <button
         disabled={disabled}
         onClick={() =>
           onModelSelectionChange("chat", {
             includeClientDefaults: false,
-            explicitModelIds: ["new-model"],
+            explicitTargets: [{ modelId: "new-model" }],
           })
         }
       >
@@ -96,8 +101,8 @@ const envs = [
   },
 ] as ProjectEnvironmentView[];
 const selections = {
-  chat: { includeClientDefaults: false, explicitModelIds: ["new-model"] },
-  cursor: { includeClientDefaults: false, explicitModelIds: ["sonnet"] },
+  chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "new-model" }] },
+  cursor: { includeClientDefaults: false, explicitTargets: [{ modelId: "sonnet" }] },
 };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -137,14 +142,14 @@ describe("planSuiteClients", () => {
     } as EvalSuite;
     expect(() =>
       planSuiteClients(legacy, [], {
-        chat: { includeClientDefaults: true, explicitModelIds: [] },
+        chat: { includeClientDefaults: true, explicitTargets: [] },
       }),
     ).toThrow(/Pick a server group/);
     expect(
       planSuiteClients(
         legacy,
         [],
-        { chat: { includeClientDefaults: true, explicitModelIds: [] } },
+        { chat: { includeClientDefaults: true, explicitTargets: [] } },
         { group: "picked" },
       ),
     ).toEqual([{ stack: { hostId: "chat", serverAttachmentId: "picked" } }]);
@@ -175,7 +180,7 @@ describe("planSuiteClients", () => {
       { ...suite, environmentIds: [...suite.environmentIds!, "extra"] },
       [...envs, extra],
       {
-        chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+        chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
         cursor: selections.cursor,
       },
     );
@@ -199,8 +204,8 @@ describe("planSuiteClients", () => {
       ],
       {
         ...selections,
-        chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
-        codex: { includeClientDefaults: true, explicitModelIds: [] },
+        chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
+        codex: { includeClientDefaults: true, explicitTargets: [] },
       },
       { group: "servers" },
     );
@@ -218,8 +223,8 @@ describe("planSuiteClients", () => {
         [envs[0], { ...envs[1], serverAttachmentId: "elsewhere" }],
         {
           ...selections,
-          chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
-          codex: { includeClientDefaults: true, explicitModelIds: [] },
+          chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
+          codex: { includeClientDefaults: true, explicitTargets: [] },
         },
       ),
     ).toThrow(/don't share one setup/);
@@ -266,7 +271,7 @@ describe("planSuiteClients", () => {
         suite,
         pinned,
         {
-          chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+          chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
           cursor: selections.cursor,
         },
         { group: "servers" },
@@ -280,7 +285,7 @@ describe("planSuiteClients", () => {
         suite,
         envs,
         {
-          chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+          chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
           cursor: selections.cursor,
         },
         { group: "new-group" },
@@ -311,7 +316,7 @@ describe("planSuiteClients", () => {
       envs[1],
     ] as ProjectEnvironmentView[];
     const keep = {
-      chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+      chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
       cursor: selections.cursor,
     };
     expect(() => planSuiteClients(suite, groupless, keep)).toThrow(
@@ -338,6 +343,127 @@ describe("planSuiteClients", () => {
       serverAttachmentId: "servers",
       computerEnvironmentId: "image",
     });
+  });
+});
+
+describe("planSuiteClients with reasoning effort", () => {
+  const selectionFor = (modelId: string, effort?: string) => ({
+    modelId,
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+  });
+  const withEffort = [
+    { ...envs[0], modelSelection: selectionFor("gpt", "high") },
+    envs[1],
+  ] as ProjectEnvironmentView[];
+  const pick = (effort?: string) => ({
+    chat: {
+      includeClientDefaults: false,
+      explicitTargets: [
+        { modelId: "gpt", selection: selectionFor("gpt", effort) as never },
+      ],
+    },
+    cursor: { includeClientDefaults: false, explicitTargets: [{ modelId: "sonnet" }] },
+  });
+
+  it("keeps an environment whose effort is unchanged", () => {
+    expect(
+      planSuiteClients(suite, withEffort, pick("high"), {
+        group: "servers",
+        modelSelections: true,
+      })[0],
+    ).toEqual({ environmentId: "chat-env" });
+  });
+
+  it("keeps both environments that differ only by effort on a save (seeded as two targets)", () => {
+    const siblings = [
+      { ...envs[0], environmentId: "chat-high", modelSelection: selectionFor("gpt", "high") },
+      { ...envs[0], environmentId: "chat-default" },
+      envs[1],
+    ] as ProjectEnvironmentView[];
+    const siblingSuite = {
+      ...suite,
+      environmentIds: ["chat-high", "chat-default", envs[1].environmentId],
+    };
+    const seeded = seedRunMatrix(siblingSuite, siblings as never);
+    expect(seeded.chat.explicitTargets).toHaveLength(2);
+    const plan = planSuiteClients(siblingSuite, siblings, seeded, {
+      group: "servers",
+      modelSelections: true,
+    });
+    expect(plan.slice(0, 2)).toEqual([
+      { environmentId: "chat-high" },
+      { environmentId: "chat-default" },
+    ]);
+    // Removing one effort's target detaches only that environment.
+    expect(
+      planSuiteClients(siblingSuite, siblings, pick("high"), {
+        group: "servers",
+        modelSelections: true,
+      }).map((item) => item.environmentId),
+    ).toEqual(["chat-high", envs[1].environmentId]);
+  });
+
+  it("saves two efforts of one model as two environments", () => {
+    const plan = planSuiteClients(
+      suite,
+      withEffort,
+      {
+        ...pick("high"),
+        chat: {
+          includeClientDefaults: false,
+          explicitTargets: [
+            { modelId: "gpt", selection: selectionFor("gpt", "high") as never },
+            { modelId: "gpt", selection: selectionFor("gpt", "low") as never },
+            // The same key twice is one target.
+            { modelId: "gpt", selection: selectionFor("gpt", "low") as never },
+          ],
+        },
+      },
+      { group: "servers", modelSelections: true },
+    );
+    expect(plan).toHaveLength(3);
+    expect(plan[0]).toEqual({ environmentId: "chat-env" });
+    expect(plan[1].stack?.modelSelection).toEqual(selectionFor("gpt", "low"));
+  });
+
+  it("composes a new environment carrying the whole selection when the effort changes", () => {
+    const [item] = planSuiteClients(suite, withEffort, pick("low"), {
+      group: "servers",
+      modelSelections: true,
+    });
+    expect(item.environmentId).toBeUndefined();
+    expect(item.stack?.modelSelection).toEqual(selectionFor("gpt", "low"));
+  });
+
+  it("derives it with the selection in the overrides on a lossless backend", () => {
+    const [item] = planSuiteClients(
+      suite,
+      withEffort.map((row) => ({ ...row, revision: 1 })) as never,
+      pick("low"),
+      { group: "servers", modelSelections: true, lossless: true },
+    );
+    expect(item.derive?.overrides).toMatchObject({
+      hostId: "chat",
+      modelId: "gpt",
+      modelSelection: selectionFor("gpt", "low"),
+    });
+  });
+
+  it("clearing the effort is a change too", () => {
+    const [item] = planSuiteClients(suite, withEffort, pick(undefined), {
+      group: "servers",
+      modelSelections: true,
+    });
+    expect(item.environmentId).toBeUndefined();
+    expect(item.stack?.modelSelection?.settings).toBeUndefined();
+  });
+
+  it("keeps the old behavior where the deployment stores no selections", () => {
+    expect(
+      planSuiteClients(suite, withEffort, pick("low"), { group: "servers" })[0],
+    ).toEqual({ environmentId: "chat-env" });
   });
 });
 
@@ -446,7 +572,7 @@ describe("planSuiteClients with backend derivation", () => {
       suite,
       pinned,
       {
-        chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+        chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
         cursor: selections.cursor,
       },
       { group: "new-group", lossless: true },
@@ -477,9 +603,9 @@ describe("planSuiteClients with backend derivation", () => {
       { ...pinned[1], serverAttachmentId: "elsewhere" },
     ] as ProjectEnvironmentView[];
     const newClient = {
-      chat: { includeClientDefaults: false, explicitModelIds: ["gpt"] },
+      chat: { includeClientDefaults: false, explicitTargets: [{ modelId: "gpt" }] },
       cursor: selections.cursor,
-      codex: { includeClientDefaults: true, explicitModelIds: [] },
+      codex: { includeClientDefaults: true, explicitTargets: [] },
     };
     let caught: unknown;
     try {

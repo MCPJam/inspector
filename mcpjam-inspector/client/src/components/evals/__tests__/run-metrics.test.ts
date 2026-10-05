@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeRunEffectiveStatsFromMetrics,
+  iterationReasoningEffort,
   poolLatency,
   resolveRunMetrics,
   runMetricsFromIterations,
@@ -115,8 +116,82 @@ describe("runMetricsFromIterations", () => {
     expect(metrics.costedIterations).toBe(2);
     expect(metrics.hasRunnerReportedCost).toBe(true);
     expect(metrics.models).toEqual([
-      { model: "claude", total: 2, passed: 2, failed: 0, timedOut: 0 },
+      {
+        model: "claude",
+        total: 2,
+        passed: 2,
+        failed: 0,
+        timedOut: 0,
+        costUsd: 0.75,
+        costedIterations: 2,
+      },
     ]);
+  });
+
+  // Same scenario as the backend fold's effort test: one entry per
+  // (model × effective effort), first-seen order; no effort keys apart.
+  it("splits a model by effective reasoning effort, first-seen order", () => {
+    const ran = (effort?: string) =>
+      effort ? { effectiveSettings: { reasoningEffort: effort } } : undefined;
+    const metrics = runMetricsFromIterations([
+      iteration({
+        execution: ran("high"),
+        usage: { reasoningTokens: 40 } as never,
+      }),
+      iteration({ result: "failed" }),
+      iteration({
+        execution: ran("low"),
+        usage: { estimatedCostUsd: 0.1, reasoningTokens: 0 } as never,
+      }),
+      iteration({
+        execution: ran(" high "),
+        usage: { estimatedCostUsd: 0.25, reasoningTokens: 60 } as never,
+      }),
+    ]);
+    expect(metrics.models).toEqual([
+      {
+        model: "claude",
+        reasoningEffort: "high",
+        total: 2,
+        passed: 2,
+        failed: 0,
+        timedOut: 0,
+        costUsd: 0.25,
+        costedIterations: 1,
+        reasoningTokens: 100,
+      },
+      { model: "claude", total: 1, passed: 0, failed: 1, timedOut: 0 },
+      {
+        model: "claude",
+        reasoningEffort: "low",
+        total: 1,
+        passed: 1,
+        failed: 0,
+        timedOut: 0,
+        costUsd: 0.1,
+        costedIterations: 1,
+        reasoningTokens: 0,
+      },
+    ]);
+  });
+});
+
+describe("iterationReasoningEffort", () => {
+  it("reads the effort off the execution record, loosely", () => {
+    expect(
+      iterationReasoningEffort({
+        execution: { effectiveSettings: { reasoningEffort: "xhigh" } },
+      }),
+    ).toBe("xhigh");
+    expect(iterationReasoningEffort({})).toBeUndefined();
+    expect(
+      iterationReasoningEffort({
+        execution: { effectiveSettings: { reasoningEffort: "  " } },
+      }),
+    ).toBeUndefined();
+    expect(
+      iterationReasoningEffort({ execution: { effectiveSettings: null } }),
+    ).toBeUndefined();
   });
 });
 

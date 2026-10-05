@@ -1,5 +1,8 @@
-# Builds the local-harness runtime pack — the per-platform tree the supervised
-# native Claude Code host launches from.
+# Builds a local-harness runtime pack — the per-platform tree a supervised
+# native harness (Claude Code, Codex) launches from. One harness per run: each
+# harness's pack has its own semver and its own release
+# (`local-harness-pack-v<ver>` for Claude Code, which keeps the names it first
+# shipped under; `local-harness-pack-<harness>-v<ver>` for every other one).
 #
 # The pack cannot ship inside the npm package or the DMG (~515 MB on disk, and
 # coupling Electron notarization to a third-party binary of that size is its own
@@ -12,6 +15,13 @@ name: Local harness runtime pack
 on:
   workflow_call:
     inputs:
+      harness:
+        description: >-
+          Harness whose pack to build — a recipe in
+          `mcpjam-inspector/scripts/local-harness-pack-recipes/`.
+        required: false
+        type: string
+        default: claude-code
       pack_version:
         description: Version to stamp the pack and its assets with.
         required: true
@@ -36,6 +46,14 @@ on:
         value: ${{ jobs.collect.outputs.flat }}
   workflow_dispatch:
     inputs:
+      # A free string validated against the recipe directory, not a `choice`:
+      # this file is a pack input of EVERY harness, and a choice list naming
+      # them would make adding a harness republish all the others.
+      harness:
+        description: Harness whose pack to build (e.g. claude-code, codex).
+        required: true
+        type: string
+        default: claude-code
       pack_version:
         description: Version to stamp the pack and its assets with.
         required: true
@@ -45,7 +63,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: local-harness-pack-${{ inputs.pack_version }}
+  group: local-harness-pack-${{ inputs.harness }}-${{ inputs.pack_version }}
   cancel-in-progress: false
 
 jobs:
@@ -56,11 +74,16 @@ jobs:
         uses: actions/github-script@v9
         env:
           PACK_VERSION: ${{ inputs.pack_version }}
+          HARNESS: ${{ inputs.harness }}
         with:
           script: |
             if (context.ref !== 'refs/heads/main') throw new Error('Pack publication requires main');
             if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(process.env.PACK_VERSION)) throw new Error('pack_version must be an independent semver, e.g. 1.0.0');
-            const tag = `local-harness-pack-v${process.env.PACK_VERSION}`;
+            if (!/^[a-z][a-z0-9-]{0,63}$/.test(process.env.HARNESS)) throw new Error('harness must be a harness id, e.g. claude-code');
+            // Mirrors packReleaseTag in scripts/local-harness-pack-harnesses.mjs.
+            const tag = process.env.HARNESS === 'claude-code'
+              ? `local-harness-pack-v${process.env.PACK_VERSION}`
+              : `local-harness-pack-${process.env.HARNESS}-v${process.env.PACK_VERSION}`;
             const releases = await github.paginate(github.rest.repos.listReleases, { ...context.repo, per_page: 100 });
             if (releases.some(release => release.tag_name === tag)) throw new Error(`Release ${tag} already exists (including drafts)`);
             for (const check of [
@@ -74,7 +97,7 @@ jobs:
 
   build:
     needs: preflight
-    name: ${{ matrix.platform_key }}
+    name: ${{ inputs.harness }} ${{ matrix.platform_key }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -121,7 +144,7 @@ jobs:
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
-      # Only the adapter package is needed: the pack build reads its bridge
+      # Only the harness recipe's inputs are needed: the pack build reads the
       # recipe and installs that recipe's own frozen graph inside the pack.
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
@@ -212,6 +235,7 @@ jobs:
           # it would run commands in the build job.
           PACK_VERSION: ${{ inputs.pack_version }}
           PLATFORM_KEY: ${{ matrix.platform_key }}
+          HARNESS: ${{ inputs.harness }}
         run: |
           set -euo pipefail
           # Validated as well as quoted: it also becomes an asset name and a
@@ -221,7 +245,9 @@ jobs:
             *[!A-Za-z0-9._-]* | "")
               echo "pack_version must be a release version" >&2; exit 1;;
           esac
+          # The build refuses a harness with no recipe module.
           node scripts/build-local-harness-pack.mjs \
+            --harness "$HARNESS" \
             --platform "$PLATFORM_KEY" \
             --pack-version "$PACK_VERSION" \
             --node-tarball "$NODE_ARCHIVE" \
@@ -252,17 +278,22 @@ jobs:
         working-directory: mcpjam-inspector
         env:
           MCPJAM_RUNTIME_ROOT: ${{ runner.temp }}/verify-root
-          MCPJAM_LOCAL_HARNESS_PACK_SOURCE: ${{ runner.temp }}/pack-out/local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}.tar.gz
+          PACK_OUT: ${{ runner.temp }}/pack-out
+          PACK_VERSION: ${{ inputs.pack_version }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          HARNESS: ${{ inputs.harness }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
         shell: bash
-        run: >
-          npx tsx scripts/verify-local-harness-pack.ts
-          "${{ steps.digest.outputs.digest }}"
-          "${{ inputs.pack_version }}"
+        run: |
+          set -euo pipefail
+          stem="$(node --input-type=module -e 'import { packAssetStem } from "./scripts/local-harness-pack-harnesses.mjs"; process.stdout.write(packAssetStem(process.env.HARNESS, process.env.PLATFORM_KEY, process.env.PACK_VERSION))')"
+          MCPJAM_LOCAL_HARNESS_PACK_SOURCE="$PACK_OUT/$stem.tar.gz" \
+            npx tsx scripts/verify-local-harness-pack.ts "$DIGEST" "$PACK_VERSION" "$HARNESS"
 
       - name: Upload the pack
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}
+          name: local-harness-pack-${{ inputs.harness }}-${{ matrix.platform_key }}-${{ inputs.pack_version }}
           path: ${{ runner.temp }}/pack-out/local-harness-pack-*
           if-no-files-found: error
           retention-days: 14
@@ -300,7 +331,7 @@ jobs:
           # Printed, because this is the string a human copies into
           # `write-pack-digests.mjs --digests`. A value that exists only in an
           # output variable is not reachable from a dispatch run's log.
-          echo "digest map for scripts/write-pack-digests.mjs --digests:"
+          echo "digest map for scripts/write-pack-digests.mjs --harness ${{ inputs.harness }} --digests:"
           echo "$flat"
           echo "$map"
 
@@ -330,11 +361,12 @@ jobs:
         working-directory: mcpjam-inspector
         env:
           PACK_VERSION: ${{ inputs.pack_version }}
+          HARNESS: ${{ inputs.harness }}
           DIGESTS: ${{ steps.merge.outputs.flat }}
         run: |
           set -euo pipefail
           node scripts/write-pack-digests.mjs \
-            --check --version "$PACK_VERSION" --digests "$DIGESTS"
+            --check --harness "$HARNESS" --version "$PACK_VERSION" --digests "$DIGESTS"
 
   sign:
     needs: [build, collect]
@@ -351,6 +383,7 @@ jobs:
       - name: Sign manifests and verify against the committed public key
         env:
           LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY }}
+          HARNESS: ${{ inputs.harness }}
         run: |
           node --input-type=module <<'JS'
           import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -363,6 +396,8 @@ jobs:
           if (manifests.length !== 5) throw new Error('Expected all five pack manifests');
           for (const name of manifests) {
             const bytes = readFileSync('packs/' + name);
+            // Sign only what this run built: one harness, never a mixture.
+            if (JSON.parse(bytes.toString('utf8')).harnessId !== process.env.HARNESS) throw new Error(`${name} is not a ${process.env.HARNESS} pack`);
             const signature = sign(null, bytes, key);
             if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match Inspector');
             writeFileSync('packs/' + name + '.sig', signature.toString('base64') + '\n');
@@ -392,9 +427,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PACK_VERSION: ${{ inputs.pack_version }}
           PACK_SHA: ${{ github.sha }}
+          HARNESS: ${{ inputs.harness }}
         run: |
           set -euo pipefail
-          tag="local-harness-pack-v$PACK_VERSION"
+          # Mirrors packReleaseTag in scripts/local-harness-pack-harnesses.mjs.
+          if [ "$HARNESS" = "claude-code" ]; then
+            tag="local-harness-pack-v$PACK_VERSION"
+          else
+            tag="local-harness-pack-$HARNESS-v$PACK_VERSION"
+          fi
           # This job has contents:write and can see unpublished drafts.
           releases="$(gh api "repos/$GH_REPO/releases" --paginate --jq '.[].tag_name')"
           if printf '%s\n' "$releases" | grep -Fx "$tag"; then
@@ -403,6 +444,6 @@ jobs:
           fi
           # No upload --clobber or release-edit retry: an existing version is never replaced.
           gh release create "$tag" packs/local-harness-pack-* \
-            --target "$PACK_SHA" --title "Local harness pack $PACK_VERSION" \
-            --notes "Signed local Claude Code runtime for Node and Electron." --draft --latest=false
+            --target "$PACK_SHA" --title "Local harness pack $HARNESS $PACK_VERSION" \
+            --notes "Signed local $HARNESS runtime for Node and Electron." --draft --latest=false
           gh release edit "$tag" --draft=false --latest=false

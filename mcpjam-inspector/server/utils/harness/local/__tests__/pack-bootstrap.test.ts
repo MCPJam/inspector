@@ -7,7 +7,7 @@ import { withLocalPackBootstrap } from "../pack-bootstrap.js";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createClaudeCodeHarness } from "../../claude-code-bootstrap.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
-import { installClaudeCodePackRecipe } from "../../../../../scripts/build-local-harness-pack.mjs";
+import { stageRecipe as installClaudeCodePackRecipe } from "../../../../../scripts/local-harness-pack-recipes/claude-code.mjs";
 
 const directories: string[] = [];
 async function scratch(): Promise<string> {

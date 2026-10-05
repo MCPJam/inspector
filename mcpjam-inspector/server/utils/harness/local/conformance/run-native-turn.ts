@@ -1,3 +1,4 @@
+import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
 import { withLocalPackBootstrap } from "../pack-bootstrap.js";
 import { localDiskResumeState } from "../resume-state.js";
 /**
@@ -11,7 +12,7 @@ import { localDiskResumeState } from "../resume-state.js";
  */
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,7 +72,7 @@ const PACK_TARGET = (() => {
 const CONFORMANCE_VERSION =
   process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION ?? "local-dev";
 
-const MODE = (process.argv[2] ?? "full") as "full" | "no-launcher" | "delivery";
+const MODE = (process.argv[2] ?? "full") as "full" | "no-launcher" | "delivery" | "attended-off";
 const RUNTIME_ROOT = join(ROOT, "runtime");
 const BUNDLE = join(RUNTIME_ROOT, "claude-code");
 const WORKSPACE = join(ROOT, "workspace");
@@ -541,8 +542,9 @@ async function main() {
     },
     startupTimeoutMs: 90_000,
   });
+  const bootstrapped = await withLocalPackBootstrap(harness, plan.runtime.rootPath);
   const agent: any = new HarnessAgent({
-    harness: await withLocalPackBootstrap(harness, plan.runtime.rootPath) as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "You are running a conformance check.",
+    harness: (MODE === "attended-off" ? withAutoApprovedNativeRequests(bootstrapped) : bootstrapped) as any, sandbox: provider, permissionMode: "allow-reads", instructions: "You are running a conformance check.",
     // The model rides on the agent: the adapter no longer reads one at
     // construction. Both branches above are the haiku family.
     model: "haiku",
@@ -629,7 +631,10 @@ async function main() {
   const upstreamKeyInState = stateBlob.includes(UPSTREAM_KEY_CANARY);
   note(`upstream key in session state files: ${upstreamKeyInState ? "LEAKED" : "absent (good)"}; capability persisted in state: ${stateBlob.includes(CAPABILITY) ? "yes" : "no"} (${stateFiles.length} files)`);
 
-  const turn2 = await runTurn("turn2-bash-approval", agent, sessionRef, "BASH pwd");
+  const marker = join(WORKSPACE, "attended-off-marker.txt");
+  const turn2 = await runTurn("turn2-bash-approval", agent, sessionRef, MODE === "attended-off" ? "BASH printf 'run\\n' >> attended-off-marker.txt; pwd" : "BASH pwd");
+  const markerContents = MODE === "attended-off" ? await readFile(marker, "utf8").catch(() => "") : null;
+  if (MODE === "attended-off") await rm(marker, { force: true });
   mark("turn2_done");
 
   const tDetach = performance.now();
@@ -753,7 +758,10 @@ async function main() {
   // being measured.
   const gatewayErrors = gw.stderr.filter((l) => l.includes("upstream error") || l.includes("upstream timeout"));
   if (gatewayErrors.length > 0) failures.push(`the gateway failed ${gatewayErrors.length} upstream call(s): ${JSON.stringify(gatewayErrors.slice(0, 3))}`);
-  if (turn2.approvals < 1) failures.push("turn2 ran Bash without ever requesting approval");
+  if (MODE === "attended-off") {
+    if (turn1.approvals + turn2.approvals + turn3.approvals !== 0) failures.push("attended Off surfaced a native approval request");
+    if (markerContents !== "run\n") failures.push(`attended Off marker must contain exactly one execution: ${JSON.stringify(markerContents)}`);
+  } else if (turn2.approvals < 1) failures.push("turn2 ran Bash without ever requesting approval");
   // EXECUTED, not merely requested. A tool-call part says the model asked for
   // Bash; approving it and having nothing run would satisfy every check above.
   // The mock answers a tool_result with `TOOL RESULT RECEIVED: <output>`, so
