@@ -22,8 +22,13 @@ const streamState = {
   error: null as string | null,
 };
 
+const streamHook = vi.hoisted(() => vi.fn());
+
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
-  useJourneyRunStream: () => streamState,
+  useJourneyRunStream: (...args: unknown[]) => {
+    streamHook(...args);
+    return streamState;
+  },
   liveSessionTrace: () => null,
   swarmCellKey: (targetKey: string, sessionIndex: number) =>
     `${targetKey}:${sessionIndex}`,
@@ -229,6 +234,25 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       outOfCreditsOrganizationId: "org-1",
       surface: "swarm",
     });
+  });
+
+  it("hands the live stream the swarm's organization along with the run's wave", () => {
+    // The stream raises its own limit notices; without the organization the
+    // wave they speak for would belong to nobody.
+    streamHook.mockClear();
+    (runFixture as { swarmRunGroupId?: string }).swarmRunGroupId = "wave-1";
+    try {
+      renderStep();
+    } finally {
+      delete (runFixture as { swarmRunGroupId?: string }).swarmRunGroupId;
+    }
+
+    expect(streamHook).toHaveBeenCalledWith(
+      "run-1",
+      expect.any(Boolean),
+      "wave-1",
+      "org-1",
+    );
   });
 
   beforeEach(() => {

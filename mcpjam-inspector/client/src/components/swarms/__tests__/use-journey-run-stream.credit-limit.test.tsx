@@ -90,3 +90,71 @@ it("opens the dialog once for every run of a wave", () => {
   // The first stream did not reconnect when its wave id arrived.
   expect(mocks.stream).toHaveBeenCalledTimes(2);
 });
+
+// A wave belongs to the organization its notices name. The run detail and the
+// running step both know the active organization, and a wave that no notice
+// attributed is treated as the buyer's by whichever organization starts a
+// checkout next, which reopens the dialog for runs it has nothing to do with.
+it("names the organization it was given, so the wave is that organization's", () => {
+  let emit: (event: SwarmStreamEvent) => void = () => {};
+  mocks.stream.mockImplementation((_id, onEvent) => {
+    emit = onEvent;
+    return new Promise(() => {});
+  });
+  const store = useMCPJamLimitDialogStore;
+  store.setState({
+    authStatus: "signedIn",
+    isOpen: false,
+    notifiedKeys: new Set(),
+    staleWaveKeys: new Set(),
+    waveOrganizations: {},
+  });
+  renderHook(() => useJourneyRunStream("run-org-a", true, "wave-org", "org-a"));
+
+  act(() =>
+    emit({
+      runId: "run-org-a",
+      hostId: "host",
+      sessionIndex: 0,
+      chatSessionId: "blocked",
+      type: "attempt_status",
+      status: "failed",
+      errorMessage: "Daily credit limit reached.",
+    }),
+  );
+  expect(store.getState()).toMatchObject({
+    isOpen: true,
+    organizationId: "org-a",
+    waveOrganizations: { "wave:wave-org": "org-a" },
+  });
+});
+
+it("reads the organization when the notice is raised, as it does the wave, without reconnecting", () => {
+  let emit: (event: SwarmStreamEvent) => void = () => {};
+  mocks.stream.mockClear();
+  mocks.stream.mockImplementation((_id, onEvent) => {
+    emit = onEvent;
+    return new Promise(() => {});
+  });
+  const store = useMCPJamLimitDialogStore;
+  store.setState({
+    authStatus: "signedIn",
+    isOpen: false,
+    notifiedKeys: new Set(),
+    staleWaveKeys: new Set(),
+    waveOrganizations: {},
+  });
+  // The organization loads after the stream is already open.
+  const hook = renderHook(
+    ({ organizationId }: { organizationId?: string }) =>
+      useJourneyRunStream("run-late-org", true, "wave-late", organizationId),
+    { initialProps: {} as { organizationId?: string } },
+  );
+  hook.rerender({ organizationId: "org-a" });
+
+  act(() => emit({ type: "error", message: "Daily credit limit reached." }));
+  expect(store.getState().waveOrganizations).toEqual({
+    "wave:wave-late": "org-a",
+  });
+  expect(mocks.stream).toHaveBeenCalledTimes(1);
+});

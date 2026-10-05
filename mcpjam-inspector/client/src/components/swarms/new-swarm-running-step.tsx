@@ -378,6 +378,7 @@ function RunLiveBridge({
     runId,
     streamEnabled && runStatus === "running",
     swarmRunGroupId,
+    organizationId,
   );
 
   useEffect(() => {
