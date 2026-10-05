@@ -7,11 +7,14 @@ import {
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
 import {
+  composerStateFromEnvironments,
   emptyEnvironmentStack,
+  environmentsExceedOneStack,
   expandModelChoices,
+  parseStoredModelSelection,
   sameModelSelection,
   stackFromEnvironment,
-  syncExplicitModelSelections,
+  syncExplicitTargets,
   type EnvironmentComposerState,
 } from "../environment-stack";
 
@@ -81,74 +84,178 @@ const base = {
   modelMatrixEnabled: true,
 };
 
-describe("syncExplicitModelSelections", () => {
+const withEffort = (
+  selection: SavedModelSelection,
+  effort: "low" | "high",
+): SavedModelSelection => ({
+  ...selection,
+  settings: { reasoningEffort: effort },
+});
+
+describe("syncExplicitTargets", () => {
   it("saves the row the user picked, not the first row with that id", () => {
-    const next = syncExplicitModelSelections(
-      { includeClientDefaults: false, explicitModelIds: [SAME_ID] },
+    const next = syncExplicitTargets(
+      { includeClientDefaults: false, explicitTargets: [{ modelId: SAME_ID }] },
       { models: [hostedRow, orgRow], picked: orgRow },
     );
-    expect(next.explicitModelSelections).toEqual({ [SAME_ID]: ORG });
+    expect(next.explicitTargets).toEqual([{ modelId: SAME_ID, selection: ORG }]);
   });
 
-  it("keeps a saved selection across unrelated edits and drops removed ids", () => {
+  it("keeps a saved selection across unrelated edits and drops removed targets", () => {
     const previous = {
       includeClientDefaults: false,
-      explicitModelIds: [SAME_ID],
-      explicitModelSelections: { [SAME_ID]: ORG },
+      explicitTargets: [{ modelId: SAME_ID, selection: ORG }],
     };
-    const kept = syncExplicitModelSelections(
+    const kept = syncExplicitTargets(
       { ...previous, includeClientDefaults: true },
-      { models: [hostedRow, orgRow], previous },
+      { models: [hostedRow, orgRow] },
     );
-    expect(kept.explicitModelSelections).toEqual({ [SAME_ID]: ORG });
-    const removed = syncExplicitModelSelections(
-      { includeClientDefaults: true, explicitModelIds: [] },
-      { models: [hostedRow, orgRow], previous },
+    expect(kept.explicitTargets).toEqual([{ modelId: SAME_ID, selection: ORG }]);
+    const removed = syncExplicitTargets(
+      { includeClientDefaults: true, explicitTargets: [] },
+      { models: [hostedRow, orgRow] },
     );
-    expect(removed).toEqual({
-      includeClientDefaults: true,
-      explicitModelIds: [],
-    });
+    expect(removed).toEqual({ includeClientDefaults: true, explicitTargets: [] });
   });
 
   it("a checkbox pick by id takes the first listed row (hosted-first)", () => {
-    const next = syncExplicitModelSelections(
-      { includeClientDefaults: false, explicitModelIds: [SAME_ID] },
+    const next = syncExplicitTargets(
+      { includeClientDefaults: false, explicitTargets: [{ modelId: SAME_ID }] },
       { models: [hostedRow, orgRow] },
     );
-    expect(next.explicitModelSelections?.[SAME_ID]?.source).toBe("hosted");
+    expect(next.explicitTargets[0]?.selection?.source).toBe("hosted");
+  });
+
+  it("keeps two efforts of one model as two targets, and dedupes the same key", () => {
+    const low = { modelId: SAME_ID, selection: withEffort(HOSTED, "low") };
+    const high = { modelId: SAME_ID, selection: withEffort(HOSTED, "high") };
+    const next = syncExplicitTargets(
+      { includeClientDefaults: false, explicitTargets: [low, high, { ...low }] },
+      { models: [hostedRow] },
+    );
+    expect(next.explicitTargets).toEqual([low, high]);
+  });
+
+  it("a bare id and its plain hosted selection are one target (same comparisonKey)", () => {
+    const next = syncExplicitTargets(
+      {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: SAME_ID, selection: HOSTED }, { modelId: SAME_ID }],
+      },
+      { models: [hostedRow] },
+    );
+    expect(next.explicitTargets).toEqual([{ modelId: SAME_ID, selection: HOSTED }]);
   });
 
   it("selections take part in equality and expansion", () => {
     const org = {
       includeClientDefaults: false,
-      explicitModelIds: [SAME_ID],
-      explicitModelSelections: { [SAME_ID]: ORG },
+      explicitTargets: [{ modelId: SAME_ID, selection: ORG }],
     };
-    const hosted = { ...org, explicitModelSelections: { [SAME_ID]: HOSTED } };
+    const hosted = {
+      ...org,
+      explicitTargets: [{ modelId: SAME_ID, selection: HOSTED }],
+    };
     expect(sameModelSelection(org, hosted)).toBe(false);
     expect(sameModelSelection(org, { ...org })).toBe(true);
     // An effort-only difference is a different composition.
-    const withEffort = (effort: "low" | "high") => ({
+    const at = (effort: "low" | "high") => ({
       ...org,
-      explicitModelSelections: {
-        [SAME_ID]: { ...ORG, settings: { reasoningEffort: effort } },
-      },
+      explicitTargets: [{ modelId: SAME_ID, selection: withEffort(ORG, effort) }],
     });
-    expect(sameModelSelection(withEffort("low"), withEffort("high"))).toBe(false);
-    expect(sameModelSelection(withEffort("low"), withEffort("low"))).toBe(true);
+    expect(sameModelSelection(at("low"), at("high"))).toBe(false);
+    expect(sameModelSelection(at("low"), at("low"))).toBe(true);
     expect(expandModelChoices(org)).toEqual({
       cells: [{ modelId: SAME_ID, modelSelection: ORG }],
       skipped: [],
     });
   });
 
+  it("expands two efforts of one model into two cells", () => {
+    const low = withEffort(HOSTED, "low");
+    const high = withEffort(HOSTED, "high");
+    expect(
+      expandModelChoices({
+        includeClientDefaults: false,
+        explicitTargets: [
+          { modelId: SAME_ID, selection: low },
+          { modelId: SAME_ID, selection: high },
+        ],
+      }).cells,
+    ).toEqual([
+      { modelId: SAME_ID, modelSelection: low },
+      { modelId: SAME_ID, modelSelection: high },
+    ]);
+  });
+
   it("an environment's stored selection seeds the stack", () => {
     expect(
       stackFromEnvironment(
         env({ environmentId: "e1", modelId: SAME_ID, modelSelection: ORG }),
-      ).modelSelection.explicitModelSelections,
-    ).toEqual({ [SAME_ID]: ORG });
+      ).modelSelection.explicitTargets,
+    ).toEqual([{ modelId: SAME_ID, selection: ORG }]);
+  });
+
+  it("reconstructs one target per comparisonKey from attached environments", () => {
+    const low = withEffort(HOSTED, "low");
+    const high = withEffort(HOSTED, "high");
+    const state = composerStateFromEnvironments(
+      [
+        env({ environmentId: "lo", modelId: SAME_ID, modelSelection: low }),
+        env({ environmentId: "hi", modelId: SAME_ID, modelSelection: high }),
+      ],
+      { skillsEnabled: true, computersEnabled: true, modelsEnabled: true },
+    );
+    expect(state.stack.modelSelection.includeClientDefaults).toBe(false);
+    expect(
+      state.stack.modelSelection.explicitTargets.map(
+        (target) => target.selection?.settings?.reasoningEffort,
+      ),
+    ).toEqual(expect.arrayContaining(["low", "high"]));
+    expect(state.stack.modelSelection.explicitTargets).toHaveLength(2);
+  });
+
+  it("two efforts of one model on one client still round-trip through a stack", () => {
+    const enabled = {
+      skillsEnabled: true,
+      computersEnabled: true,
+      modelsEnabled: true,
+    };
+    const low = env({
+      environmentId: "lo",
+      modelId: SAME_ID,
+      modelSelection: withEffort(HOSTED, "low"),
+    });
+    const high = env({
+      environmentId: "hi",
+      modelId: SAME_ID,
+      modelSelection: withEffort(HOSTED, "high"),
+    });
+    expect(environmentsExceedOneStack([low, high], enabled)).toBe(false);
+    // The same target twice still collapses.
+    expect(
+      environmentsExceedOneStack(
+        [low, { ...low, environmentId: "lo-2" }],
+        enabled,
+      ),
+    ).toBe(true);
+  });
+
+  it("reads a selection stored in the older parallel-id shape", () => {
+    expect(
+      parseStoredModelSelection({
+        includeClientDefaults: false,
+        explicitModelIds: [SAME_ID, "openai/gpt-5"],
+        explicitModelSelections: { [SAME_ID]: ORG },
+      }),
+    ).toEqual({
+      includeClientDefaults: false,
+      explicitTargets: [
+        { modelId: SAME_ID, selection: ORG },
+        { modelId: "openai/gpt-5" },
+      ],
+    });
+    expect(parseStoredModelSelection({ explicitModelIds: [] })).toBeUndefined();
   });
 });
 
@@ -157,8 +264,7 @@ describe("resolveComposerEnvironments — saved selections", () => {
     hostIds: ["h1"],
     modelSelection: {
       includeClientDefaults: false,
-      explicitModelIds: [SAME_ID],
-      explicitModelSelections: { [SAME_ID]: ORG },
+      explicitTargets: [{ modelId: SAME_ID, selection: ORG }],
     },
   });
 
@@ -209,5 +315,93 @@ describe("resolveComposerEnvironments — saved selections", () => {
       ensureAdhocEnvironments: ensure,
     });
     expect(result.environmentIds).toEqual(["minted"]);
+  });
+
+  it("mints two efforts of one model as two environments", async () => {
+    const low = withEffort(HOSTED, "low");
+    const high = withEffort(HOSTED, "high");
+    const ensure = ensureReturning(["lo", "hi"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelSelectionsEnabled: true,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: false,
+          explicitTargets: [
+            { modelId: SAME_ID, selection: low },
+            { modelId: SAME_ID, selection: high },
+          ],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h1", modelId: SAME_ID, modelSelection: low },
+        { hostId: "h1", modelId: SAME_ID, modelSelection: high },
+      ],
+    });
+    expect(result.environmentIds).toEqual(["lo", "hi"]);
+  });
+
+  it("reuses a named row only for the effort it runs", async () => {
+    const low = withEffort(HOSTED, "low");
+    const high = withEffort(HOSTED, "high");
+    const ensure = ensureReturning(["minted-high"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelSelectionsEnabled: true,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: false,
+          explicitTargets: [
+            { modelId: SAME_ID, selection: low },
+            { modelId: SAME_ID, selection: high },
+          ],
+        },
+      }),
+      liveEnvironments: [
+        env({
+          environmentId: "named-low",
+          name: "Low",
+          origin: "named",
+          modelId: SAME_ID,
+          modelSelection: low,
+        } as Partial<ProjectEnvironmentView> & { environmentId: string }),
+      ],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "h1", modelId: SAME_ID, modelSelection: high }],
+    });
+    expect(result.environmentIds).toEqual(["named-low", "minted-high"]);
+  });
+
+  it("without the selections capability two efforts of one model are one cell", async () => {
+    const ensure = ensureReturning(["a"]);
+    await resolveComposerEnvironments({
+      ...base,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: false,
+          explicitTargets: [
+            { modelId: SAME_ID, selection: withEffort(HOSTED, "low") },
+            { modelId: SAME_ID, selection: withEffort(HOSTED, "high") },
+          ],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "h1", modelId: SAME_ID }],
+    });
   });
 });

@@ -1470,7 +1470,9 @@ describe("useServerState OAuth callback failures", () => {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
     });
-    mockConvexQuery.mockResolvedValue(null);
+    mockConvexQuery.mockImplementation(async (path) => path === "servers:getProjectServers" ? [{
+      _id: "srv_demo", projectId: "project_default", name: "demo-server", useOAuth: true,
+    }] : null);
     mockCreateServer.mockReset();
     mockCreateServerWithClientSecret.mockReset();
     mockUpdateServer.mockReset();
@@ -1578,6 +1580,172 @@ describe("useServerState OAuth callback failures", () => {
       })
     );
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+  });
+
+  it.each(["none", "bearer", "xaa", "auto"] as const)(
+    "persists OAuth before importing debugger tokens for a %s server",
+    async (authMethod) => {
+      const appState = createAppState();
+      appState.servers["demo-server"].authMethod = authMethod;
+      appState.servers["demo-server"].useOAuth = authMethod !== "auto";
+      mockHostedMode.mockReturnValue(true);
+      mockConvexQuery.mockResolvedValue([{ _id: "srv_demo", projectId: "project_default", name: "demo-server", authMethod, useOAuth: authMethod !== "auto" }]);
+      const receipt = { expectedUpdatedAt: 10, previous: { authMethod, useOAuth: false, useXaa: false } };
+      let finishSave!: () => void;
+      mockUpdateServer.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishSave = () => resolve(receipt);
+          }),
+      );
+      reconnectServerMock.mockResolvedValueOnce({
+        success: true,
+        initInfo: null,
+      });
+      const { result } = renderUseServerState(vi.fn(), appState);
+
+      let connecting!: Promise<void>;
+      act(() => {
+        connecting = result.current.handleConnectWithTokensFromOAuthFlow(
+          "demo-server",
+          { accessToken: "access-token", clientId: "client-id" },
+          "https://example.com/mcp",
+        );
+      });
+      await waitFor(() =>
+        expect(mockUpdateServer).toHaveBeenCalledWith({
+          serverId: "srv_demo",
+          projectId: "project_default",
+          oauthImportTransition: { kind: "prepare" },
+          authMethod: "oauth",
+          useOAuth: true,
+          useXaa: false,
+        }),
+      );
+      expect(importHostedOAuthTokensMock).not.toHaveBeenCalled();
+      expect(reconnectServerMock).not.toHaveBeenCalled();
+
+      await act(async () => {
+        finishSave();
+        await connecting;
+      });
+      expect(importHostedOAuthTokensMock).toHaveBeenCalledOnce();
+      expect(reconnectServerMock).toHaveBeenCalledOnce();
+      expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    },
+  );
+
+  it("does not import tokens or reconnect if saving the OAuth method fails", async () => {
+    const appState = createAppState();
+    appState.servers["demo-server"].useOAuth = false;
+    mockConvexQuery.mockResolvedValue([{ _id: "srv_demo", projectId: "project_default", useOAuth: false }]);
+    mockUpdateServer.mockRejectedValueOnce(
+      new Error("Could not save auth method"),
+    );
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        { accessToken: "access-token", clientId: "client-id" },
+        "https://example.com/mcp",
+      );
+    });
+
+    expect(importHostedOAuthTokensMock).not.toHaveBeenCalled();
+    expect(reconnectServerMock).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(
+      errorToastMessage("Connection failed: Could not save auth method"),
+      { duration: 8000 },
+    );
+  });
+
+  it.each([
+    "handleConnectWithTokensFromOAuthFlow",
+    "handleRefreshTokensFromOAuthFlow",
+  ] as const)(
+    "%s handles an import failure without an unhandled rejection",
+    async (handler) => {
+      importHostedOAuthTokensMock.mockRejectedValueOnce(
+        new Error("Server does not require OAuth"),
+      );
+      const { result } = renderUseServerState(vi.fn());
+
+      await act(async () => {
+        await result.current[handler](
+          "demo-server",
+          { accessToken: "access-token", clientId: "client-id" },
+          "https://example.com/mcp",
+        );
+      });
+
+      expect(reconnectServerMock).not.toHaveBeenCalled();
+      expect(toastError).toHaveBeenCalledWith(
+        errorToastMessage(
+          `${handler === "handleConnectWithTokensFromOAuthFlow" ? "Connection failed" : "Token refresh failed"}: Server does not require OAuth`,
+        ),
+        { duration: 8000 },
+      );
+      expect(toastSuccess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses the exact saved server even when another project's runtime has the same name", async () => {
+    mockConvexQuery.mockResolvedValue([
+      { _id: "srv_other", projectId: "other_project", name: "demo-server", useOAuth: true },
+      { _id: "srv_demo", projectId: "project_default", name: "demo-server", useOAuth: false },
+    ]);
+    mockUpdateServer.mockResolvedValueOnce({
+      expectedUpdatedAt: 10, previous: { authMethod: null, useOAuth: false, useXaa: null },
+    });
+    reconnectServerMock.mockResolvedValueOnce({ success: true, initInfo: null });
+    const { result } = renderUseServerState(vi.fn());
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server", { accessToken: "access-token", clientId: "client-id" }, "https://example.com/mcp",
+      );
+    });
+    expect(mockUpdateServer).toHaveBeenCalledWith(expect.objectContaining({
+      serverId: "srv_demo", projectId: "project_default", oauthImportTransition: { kind: "prepare" },
+    }));
+    expect(importHostedOAuthTokensMock).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back a failed import with a conditional receipt and never switches local auth", async () => {
+    const receipt = {
+      expectedUpdatedAt: 10, previous: { authMethod: "none", useOAuth: false, useXaa: null },
+    };
+    mockConvexQuery.mockResolvedValue([{ _id: "srv_demo", projectId: "project_default", useOAuth: false }]);
+    mockUpdateServer.mockResolvedValueOnce(receipt).mockResolvedValueOnce(null);
+    importHostedOAuthTokensMock.mockRejectedValueOnce(new Error("Import failed"));
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server", { accessToken: "access-token", clientId: "client-id" }, "https://example.com/mcp",
+      );
+    });
+    expect(mockUpdateServer).toHaveBeenNthCalledWith(2, {
+      serverId: "srv_demo", projectId: "project_default",
+      oauthImportTransition: { kind: "rollback", ...receipt },
+    });
+    expect(dispatch.mock.calls.some(([action]) => action.type === "UPSERT_SERVER")).toBe(false);
+    expect(reconnectServerMock).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(errorToastMessage("Connection failed: Import failed"), { duration: 8000 });
+  });
+
+  it("refuses a target that is not in the resolved project", async () => {
+    mockConvexQuery.mockResolvedValue([{ _id: "srv_demo", projectId: "other_project", useOAuth: false }]);
+    const { result } = renderUseServerState(vi.fn());
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server", { accessToken: "access-token", clientId: "client-id" }, "https://example.com/mcp",
+      );
+    });
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(importHostedOAuthTokensMock).not.toHaveBeenCalled();
+    expect(reconnectServerMock).not.toHaveBeenCalled();
   });
 
   it("preserves the 2026 wire pin through the stored-credential probe and CONNECT_SUCCESS", async () => {
@@ -4369,6 +4537,114 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(dispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "UPSERT_SERVER" })
     );
+  });
+
+  describe("renames the saved row by id, keeping its stored client secret", () => {
+    // A rename used to delete this row and create a new one. The edit form
+    // never holds a stored secret, so the new row had none and the next OAuth
+    // token request went out without it.
+    const savedRow = {
+      _id: "srv_saved",
+      projectId: "project_default",
+      name: "demo-server",
+      enabled: true,
+      transportType: "http",
+      url: "https://example.com/mcp",
+    };
+    const renamedForm = {
+      name: "demo-server-renamed",
+      type: "http" as const,
+      url: "https://example.com/mcp",
+    };
+
+    function renderSignedIn(dispatch = vi.fn()) {
+      const appState = createAppState();
+      appState.projects.default.sharedProjectId = "project_default";
+      const rendered = renderUseServerState(dispatch, appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        activeProjectServersFlat: [savedRow],
+      });
+      return { dispatch, ...rendered };
+    }
+
+    function expectRenamedInPlace() {
+      expect(mockUpdateServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_saved",
+          name: "demo-server-renamed",
+        })
+      );
+      expect(mockDeleteServer).not.toHaveBeenCalled();
+      expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+      expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    }
+
+    it("from the Servers tab's Update server", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", renamedForm);
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("from the Servers tab's Update server without connecting", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", renamedForm, true);
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("from the OAuth debugger's server modal, which passes no target", async () => {
+      const { dispatch, result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.saveServerConfigWithoutConnecting(renamedForm, {
+          originalServerName: "demo-server",
+        });
+      });
+
+      expectRenamedInPlace();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+      );
+    });
+
+    it("writes a newly typed secret to the same row", async () => {
+      const { result } = renderSignedIn();
+
+      await act(async () => {
+        await result.current.handleUpdate("demo-server", {
+          ...renamedForm,
+          useOAuth: true,
+          clientId: "client-1",
+          clientSecret: "new-secret",
+        });
+      });
+
+      expect(mockUpdateServerWithClientSecret).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_saved",
+          name: "demo-server-renamed",
+          clientSecret: "new-secret",
+        })
+      );
+      expect(mockDeleteServer).not.toHaveBeenCalled();
+      expect(mockCreateServerWithClientSecret).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects a rename onto another server's name", async () => {

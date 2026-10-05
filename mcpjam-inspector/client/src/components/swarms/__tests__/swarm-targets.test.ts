@@ -3,6 +3,7 @@ import {
   buildSwarmRunTargets,
   buildUnrunJourneyTargets,
   findTargetCellForChatSessionId,
+  snapshotTargetModelLabels,
   summaryTargetKey,
 } from "../swarm-targets";
 
@@ -64,6 +65,97 @@ describe("buildSwarmRunTargets", () => {
     expect(targets.map((t) => t.key)).toEqual(["hostA", "hostB"]);
     expect(targets[0]!.label).toBe("Alpha");
     expect(targets[0]!.identity).toEqual({ hostId: "hostA" });
+  });
+});
+
+describe("swarm target models with effort", () => {
+  const hosted = (effort?: "low" | "high") => ({
+    modelId: "openai/gpt-5.4-nano",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+  });
+  const snapshotHosts = [
+    { hostId: "h1", hostName: "MCPJam", targetId: "t-low", modelId: "openai/gpt-5.4-nano", resolvedSelection: hosted("low") },
+    { hostId: "h1", hostName: "MCPJam", targetId: "t-high", modelId: "openai/gpt-5.4-nano", resolvedSelection: hosted("high") },
+  ];
+
+  it("labels each target's model with its effort", () => {
+    const labels = snapshotTargetModelLabels(snapshotHosts);
+    expect(snapshotHosts.map((host) => labels.get(host))).toEqual([
+      "gpt-5.4-nano · Low",
+      "gpt-5.4-nano · High",
+    ]);
+  });
+
+  it("tells two targets of one client apart by model, not #n", () => {
+    const columns = buildSwarmRunTargets({
+      hostSummaries: [
+        { hostId: "h1", targetId: "t-low" },
+        { hostId: "h1", targetId: "t-high" },
+      ],
+      snapshotHosts,
+      hostName: () => "MCPJam",
+    });
+    expect(columns.map((column) => column.label)).toEqual([
+      "MCPJam · gpt-5.4-nano · Low",
+      "MCPJam · gpt-5.4-nano · High",
+    ]);
+    expect(columns.map((column) => column.model)).toEqual([
+      "gpt-5.4-nano · Low",
+      "gpt-5.4-nano · High",
+    ]);
+  });
+});
+
+describe("a target that ran the client's own model", () => {
+  const ran = (environmentName: string) => ({
+    hostId: "h1",
+    hostName: "MCPJam",
+    targetId: "environment:e1",
+    environmentRef: { environmentId: "e1", name: environmentName, revision: 1 },
+    modelId: "anthropic/claude-haiku-4.5",
+  });
+  const columnsFor = (environmentName: string, liveName = "MCPJam") =>
+    buildSwarmRunTargets({
+      hostSummaries: [{ hostId: "h1", targetId: "environment:e1" }],
+      snapshotHosts: [ran(environmentName)],
+      hostName: () => liveName,
+    });
+
+  it("names the model it ran beside the bare client name", () => {
+    expect(columnsFor("MCPJam")[0]!.label).toBe("MCPJam · claude-haiku-4.5");
+  });
+
+  it("uses the model recorded at launch even after the client is renamed", () => {
+    expect(columnsFor("MCPJam", "Renamed")[0]!.label).toBe(
+      "MCPJam · claude-haiku-4.5",
+    );
+  });
+
+  it("keeps a custom environment name as it is", () => {
+    expect(columnsFor("Prod")[0]!.label).toBe("Prod");
+  });
+
+  it("keeps a custom name when the client is later renamed to it", () => {
+    expect(columnsFor("Prod", "Prod")[0]!.label).toBe("Prod");
+  });
+
+  it("does not repeat a model the saved name already carries", () => {
+    expect(columnsFor("MCPJam · claude-haiku-4.5")[0]!.label).toBe(
+      "MCPJam · claude-haiku-4.5",
+    );
+  });
+
+  it("names it on a legacy host target too", () => {
+    const columns = buildSwarmRunTargets({
+      hostSummaries: [{ hostId: "h1" }],
+      snapshotHosts: [
+        { hostId: "h1", hostName: "MCPJam", modelId: "openai/gpt-5-nano" },
+      ],
+      hostName: () => "MCPJam",
+    });
+    expect(columns[0]!.label).toBe("MCPJam · gpt-5-nano");
   });
 });
 

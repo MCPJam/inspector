@@ -1,6 +1,24 @@
+import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
+import {
+  findModelForStoredChoice,
+  modelRowKey,
+} from "@/components/chat-v2/shared/model-selection";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { useCompareSelections } from "@/hooks/use-compare-selections";
+import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
+import {
+  compareSelectionForRow,
+  mergePickedRows,
+  replaceLeadCompareSelection,
+  resolveCompareCards,
+  setCompareCardEffort,
+  MAX_COMPARE_SELECTIONS,
+  type CompareCard,
+} from "@/lib/compare-cards";
+import { withReasoningEffort } from "@/lib/reasoning-effort-selection";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { useBrowserToolIds } from "@/hooks/useBrowserToolIds";
 /**
@@ -139,13 +157,19 @@ import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
 import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
-import { LocalHarnessTrustDialog } from "@/components/harness/LocalHarnessTrustDialog";
+import {
+  LocalHarnessTrustDialog,
+  LocalHarnessAutoApproveDialog,
+} from "@/components/harness/LocalHarnessTrustDialog";
 import {
   LocalHarnessComposerNotice,
   LocalHarnessReadyNotice,
 } from "@/components/harness/LocalHarnessComposerNotice";
 import type { ExecutionTargetChipData } from "@/components/chat-v2/chat-input/execution-target-chip";
-import { isLocalHarnessScope } from "@/lib/local-harness-scope";
+import {
+  isAnotherUsersReopenedThread,
+  isLocalHarnessScope,
+} from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -764,6 +788,11 @@ export function PlaygroundMain({
   const lastCompareLeadIdRef = useRef<string | null>(null);
   const prevCompareIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
+  // A card that replaces another (its effort changed, so its
+  // `comparisonKey` did) or joins beside one of the same model (another
+  // effort, picked in the model menu) is seeded from that card's transcript
+  // rather than the lead's: new key → source key.
+  const compareSeedSourceRef = useRef<Record<string, string>>({});
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
@@ -1022,6 +1051,13 @@ export function PlaygroundMain({
   // kind of send local execution applies to. `previewedHarnessId` is what the
   // composer is PREVIEWING; the transport re-derives from the host that
   // actually sends.
+  // Only another member's reopened chat is somebody else's turn; see
+  // `isAnotherUsersReopenedThread`.
+  const replayingAnotherUsersThread = isAnotherUsersReopenedThread({
+    viewingHistory: viewingHistoryReplay,
+    ownerUserId: loadedThreadOwnerUserId,
+    currentUserId: currentUserForSender?._id,
+  });
   const localHarnessInScope = isLocalHarnessScope({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
@@ -1029,10 +1065,10 @@ export function PlaygroundMain({
       ? playgroundEnvironment.environmentId ?? null
       : null,
     requiresWebChatApi: isEnvironmentMode,
-    // A shared transcript and a replayed one are both somebody else's turn, or
-    // an old one being re-read. Neither is the attended member session a
+    // A shared transcript and another member's reopened one are both
+    // somebody else's turn. Neither is the attended member session a
     // filesystem grant is bound to, so neither may offer local execution.
-    sharedRun: isSharedSession || viewingHistoryReplay,
+    sharedRun: isSharedSession || replayingAnotherUsersThread,
   });
   // Identifies WHAT an approval was captured against, so switching host or
   // surface invalidates it rather than carrying a click across.
@@ -1055,6 +1091,9 @@ export function PlaygroundMain({
       : null,
     inScope: localHarnessInScope,
     scopeKey: localHarnessScopeKey,
+    // The previewed host's harness: each local harness has its own runtime,
+    // rollout, authorization and stored choice.
+    harnessId: previewedHarnessId,
   });
   const localHarnessRequested =
     localHarnessInScope && localHarness.requestedTarget === "local-native";
@@ -1142,6 +1181,12 @@ export function PlaygroundMain({
     setSystemPrompt,
     temperature,
     setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    setReasoningEffort,
+    seedReasoningEffort,
+    reasoningEffortLevelsFor,
+    setReasoningEffortForModel,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -1179,6 +1224,9 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
+    reasoningEffortEnabled: true,
+    // A harness turn offers only what its adapter verified (none today).
+    reasoningEffortHarness: previewedHost?.config?.harness,
     // Opt-in from the Tools panel's Page tools section. Off unless the user
     // ticked it for the page they currently have open in the WebMCP tab.
     usePageTools: webmcpPageToolsEnabled,
@@ -1256,6 +1304,12 @@ export function PlaygroundMain({
     personalComputerEngine: personalComputerEngineOption,
     personalBrowserEngine: personalBrowserEngineOption,
     localHarnessExecution: localHarnessExecutionOption,
+    // A harness client's picker offers only models that harness can run, and
+    // falls back to the client's own model rather than the emulated default.
+    harnessModelTarget: previewedHarnessId
+      ? { harnessId: previewedHarnessId }
+      : null,
+    preferredModelId: previewedHost?.config?.modelId ?? null,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -1315,6 +1369,9 @@ export function PlaygroundMain({
   const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
     null,
   );
+  // Whether the last host switch seeded an effort (so a switch to a host
+  // with none knows to clear it).
+  const hostSeededEffortRef = useRef(false);
   // Declared early so the previewed-host reseed effect can early-return
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
@@ -1372,6 +1429,13 @@ export function PlaygroundMain({
     const ids = [...(cfg.serverIds ?? []), ...(cfg.optionalServerIds ?? [])];
     if (ids.length > 0 && serversById.size === 0) return;
 
+    // The first seed of this mount (a page reload, or coming back to a host
+    // after it was unavailable) re-applies the host to the single chat, as it
+    // always has, but leaves the compare panes alone: pane 1 is a model and
+    // effort the user saved, and a reload must not swap it for the host's.
+    // Only a host SWITCH (or an edit of the host's config) moves the host's
+    // model into pane 1.
+    const isFirstSeedThisMount = last === null;
     lastSeededHostRef.current = { hostId: previewedHostId, configId };
 
     setSystemPrompt(cfg.systemPrompt);
@@ -1398,11 +1462,62 @@ export function PlaygroundMain({
     // event round-trip.
     const desiredModelId = cfg.modelId?.trim();
     if (desiredModelId) {
-      const match = availableModels.find(
-        (m) => String(m.id) === desiredModelId,
+      // Selection-aware, as the host Agent tab resolves it: a saved canonical
+      // id (`openai/gpt-5`) for a bare BYOK row must land on THAT row, not on
+      // the hosted row of the same id (which would bill MCPJam's key).
+      const match = findModelForStoredChoice(
+        { modelId: desiredModelId, selection: cfg.modelSelection },
+        availableModels,
+        undefined,
       );
       if (match) {
         setSelectedModel(match);
+        // A selected host's saved effort is the default for its own model
+        // (a later pick on the chip wins and is remembered per model).
+        // A host with none clears what the previous host seeded (High must
+        // not stick across a switch to a host that saved nothing).
+        const hostEffort = cfg.modelSelection?.settings?.reasoningEffort;
+        const clearsSeededEffort =
+          hostEffort === undefined && hostSeededEffortRef.current;
+        if (hostEffort || hostSeededEffortRef.current) {
+          seedReasoningEffort(match, hostEffort);
+        }
+        hostSeededEffortRef.current = hostEffort !== undefined;
+        // Compare line-up (v2): the host's model takes the lead card, count
+        // preserved. It is `match`'s own selection — so a BYOK host saved at
+        // High stays on the user's key — at the host's effort; with none,
+        // the lead card keeps a level the USER chose for this row, but not
+        // one the previous host seeded.
+        const cards = compareCardsRef.current;
+        const leadSelection = compareSelectionForRow(
+          match,
+          hostedOrgModelConfig,
+        );
+        if (cards && leadSelection && !isFirstSeedThisMount) {
+          const currentLead = cards[0];
+          const leadEffort =
+            hostEffort ??
+            (!clearsSeededEffort &&
+            currentLead &&
+            modelRowKey(currentLead.model) === modelRowKey(match)
+              ? currentLead.reasoningEffort
+              : undefined);
+          const lead =
+            leadSelection.source !== "legacy"
+              ? withReasoningEffort(leadSelection, leadEffort)
+              : leadSelection;
+          // Rewrite the SAVED line-up, not the resolved cards: a card whose
+          // row has not loaded yet (an org connection that arrives after the
+          // host) is not in `cards`, and writing only those back would drop
+          // it from storage for good.
+          setCompareSelections(
+            replaceLeadCompareSelection(
+              compareSelectionsRef.current ??
+                cards.map((card) => card.selection),
+              lead,
+            ),
+          );
+        }
       }
     }
     // availableModels intentionally omitted: re-seeding when the model
@@ -1419,6 +1534,7 @@ export function PlaygroundMain({
     setTemperature,
     setRequireToolApproval,
     setSelectedModel,
+    seedReasoningEffort,
   ]);
 
   // Currently selected protocol — derived from the selected tool's metadata
@@ -1473,17 +1589,103 @@ export function PlaygroundMain({
     () => new Map(availableModels.map((model) => [String(model.id), model])),
     [availableModels],
   );
-  const resolvedSelectedModels = useMemo(() => {
+  // v1 line-up (model ids): what compare renders until the one-time
+  // migration to the v2 selection list has run.
+  const v1SelectedModels = useMemo(() => {
     const persistedModels = selectedModelIds
       .map((modelId) => multiModelAvailableModels.get(modelId))
       .filter((model): model is ModelDefinition => !!model && !model.disabled);
 
     if (persistedModels.length > 0) {
-      return persistedModels.slice(0, 3);
+      return persistedModels.slice(0, MAX_COMPARE_SELECTIONS);
     }
 
     return selectedModel ? [selectedModel] : [];
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
+  // v2 line-up: saved selections, one card per `comparisonKey` (two cards of
+  // one model at Low and High are two cards), each with its own effort.
+  const { selections: compareSelections, setSelections: setCompareSelections } =
+    useCompareSelections({
+      availableModels,
+      orgConfig: hostedOrgModelConfig,
+      v1ModelIds: selectedModelIds,
+      ready: isSelectedModelResolved !== false,
+    });
+  const compareEffortHarness = previewedHost?.config?.harness;
+  const compareCards = useMemo<CompareCard[] | null>(() => {
+    if (!compareSelections) return null;
+    const cards = resolveCompareCards(
+      compareSelections,
+      availableModels,
+      hostedOrgModelConfig,
+      compareEffortHarness,
+    );
+    if (cards.length > 0 || !selectedModel) return cards;
+    // Nothing saved resolves: compare starts from the lead, as v1 did.
+    const lead = compareSelectionForRow(selectedModel, hostedOrgModelConfig);
+    if (!lead) return null;
+    const leadCards = resolveCompareCards(
+      [lead],
+      [selectedModel],
+      hostedOrgModelConfig,
+      compareEffortHarness,
+    );
+    return leadCards.length > 0 ? leadCards : null;
+  }, [
+    availableModels,
+    compareEffortHarness,
+    compareSelections,
+    hostedOrgModelConfig,
+    selectedModel,
+  ]);
+  // A single-model pick collapses the compare line-up to that model, in
+  // both stores (the v1 id list and, once migrated, the v2 selections).
+  const collapseCompareSelectionsTo = useCallback(
+    (model: ModelDefinition) => {
+      if (!compareSelections) return;
+      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      setCompareSelections(selection ? [selection] : []);
+    },
+    [compareSelections, hostedOrgModelConfig, setCompareSelections],
+  );
+
+  const compareCardsRef = useRef(compareCards);
+  compareCardsRef.current = compareCards;
+  const compareSelectionsRef = useRef(compareSelections);
+  compareSelectionsRef.current = compareSelections;
+  // What the grid renders in model mode: the v2 cards, else one card per v1
+  // model (keyed by its id, no per-card effort — exactly the v1 behaviour).
+  const modelCompareCards = useMemo<
+    { key: string; model: ModelDefinition; label: string; card?: CompareCard }[]
+  >(
+    () =>
+      compareCards
+        ? compareCards.map((card) => ({
+            key: card.key,
+            model: card.model,
+            label: card.label,
+            card,
+          }))
+        : v1SelectedModels.map((model) => ({
+            key: String(model.id),
+            model,
+            label: model.name,
+          })),
+    [compareCards, v1SelectedModels],
+  );
+  // The distinct rows in the line-up (the picker's checked models and the
+  // v1 id mirror); two efforts of one model are one row.
+  const resolvedSelectedModels = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: ModelDefinition[] = [];
+    for (const entry of modelCompareCards) {
+      const rowKey = modelRowKey(entry.model);
+      if (seen.has(rowKey)) continue;
+      seen.add(rowKey);
+      rows.push(entry.model);
+    }
+    return rows;
+  }, [modelCompareCards]);
   // `!isEnvironmentMode`: like multi-HOST below, model comparison is mutually
   // exclusive with environment mode in v1. Each comparison card runs its own
   // request against `hostId`, so leaving it enabled would silently execute the
@@ -2041,10 +2243,10 @@ export function PlaygroundMain({
     useModelSelectorLayoutLock(isCompareMode);
 
   useEffect(() => {
-    if (isMultiModelMode && resolvedSelectedModels[0]) {
-      lastCompareLeadIdRef.current = String(resolvedSelectedModels[0].id);
+    if (isMultiModelMode && modelCompareCards[0]) {
+      lastCompareLeadIdRef.current = modelCompareCards[0].key;
     }
-  }, [isMultiModelMode, resolvedSelectedModels]);
+  }, [isMultiModelMode, modelCompareCards]);
 
   // Mirror of the multi-model lead tracker for host mode. The transition
   // effect reads `lastCompareLeadIdRef` to harvest the outgoing lead's
@@ -2137,16 +2339,23 @@ export function PlaygroundMain({
   const localHarnessExecutionByColumn = useMemo(() => {
     const byColumn = new Map<string, typeof localHarnessExecutionOption>();
     for (const column of multiHostColumns) {
-      const columnInScope = isLocalHarnessScope({
-        // This column's own host, not the previewed one.
-        harnessId: column.hostConfig?.harness ?? null,
-        hostedMode: HOSTED_MODE,
-        environmentId: isEnvironmentMode
-          ? playgroundEnvironment.environmentId ?? null
-          : null,
-        requiresWebChatApi: isEnvironmentMode,
-        sharedRun: isSharedSession || viewingHistoryReplay,
-      });
+      const columnHarness = column.hostConfig?.harness ?? null;
+      const columnInScope =
+        isLocalHarnessScope({
+          // This column's own host, not the previewed one.
+          harnessId: columnHarness,
+          hostedMode: HOSTED_MODE,
+          environmentId: isEnvironmentMode
+            ? playgroundEnvironment.environmentId ?? null
+            : null,
+          requiresWebChatApi: isEnvironmentMode,
+          sharedRun: isSharedSession || replayingAnotherUsersThread,
+        }) &&
+        // The page has ONE controller, for the previewed host's harness, and
+        // its authorization is that harness's alone. A column running another
+        // local harness would inherit a target it can never satisfy, so it
+        // keeps its own default instead.
+        columnHarness === previewedHarnessId;
       byColumn.set(column.compareId, {
         requested:
           columnInScope && localHarness.requestedTarget === "local-native",
@@ -2159,9 +2368,10 @@ export function PlaygroundMain({
     isEnvironmentMode,
     playgroundEnvironment.environmentId,
     isSharedSession,
-    viewingHistoryReplay,
+    replayingAnotherUsersThread,
     localHarness.requestedTarget,
     localHarnessResolveSendTarget,
+    previewedHarnessId,
   ]);
 
   const handleMultiModelTranscriptSync = useCallback(
@@ -2253,26 +2463,35 @@ export function PlaygroundMain({
       prevCompareIdsRef.current = new Set();
       return;
     }
-    const current = new Set(resolvedSelectedModels.map((m) => String(m.id)));
+    const current = new Set(modelCompareCards.map((card) => card.key));
     const prev = prevCompareIdsRef.current;
     const added = [...current].filter((id) => !prev.has(id));
-    const leadId = resolvedSelectedModels[0]
-      ? String(resolvedSelectedModels[0].id)
-      : null;
+    const leadId = modelCompareCards[0]?.key ?? null;
     if (prev.size > 0 && added.length > 0 && leadId) {
-      const src = compareTranscriptsRef.current[leadId] ?? [];
       multiAddColumnSeqRef.current += 1;
       const v = multiAddColumnSeqRef.current;
+      const sources = compareSeedSourceRef.current;
+      const seeds = added.map((id) => {
+        const sourceId = sources[id];
+        const src =
+          (sourceId !== undefined
+            ? compareTranscriptsRef.current[sourceId]
+            : undefined) ??
+          compareTranscriptsRef.current[leadId] ??
+          [];
+        return [id, src] as const;
+      });
       setCompareAddColumnSeeds((s) => {
         const next = { ...s };
-        for (const id of added) {
+        for (const [id, src] of seeds) {
           next[id] = { version: v, messages: cloneUiMessages(src) };
         }
         return next;
       });
     }
+    for (const id of added) delete compareSeedSourceRef.current[id];
     prevCompareIdsRef.current = current;
-  }, [isMultiModelMode, resolvedSelectedModels]);
+  }, [isMultiModelMode, modelCompareCards]);
 
   // Host-mode sibling of the multi-model added-column effect above.
   // Without this, adding a host after the conversation has continued
@@ -2437,34 +2656,44 @@ export function PlaygroundMain({
     if (!isSelectedModelResolved) {
       return;
     }
+    // A host whose config has not arrived may be a harness client whose model
+    // list is narrower; the fallback shown meanwhile is not a choice to save.
+    if (previewedHostConfigUnresolved) {
+      return;
+    }
 
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
       return;
     }
-
     const sanitizedIds = resolvedSelectedModels.map((model) =>
       String(model.id),
     );
+    // What the ids SHOULD be: the line-up in compare, else the single chat's
+    // own model. Compared against that same value, so the write settles:
+    // comparing against the line-up while writing the single model looped
+    // forever whenever the two differed (a reload keeps the line-up while the
+    // single chat re-seeds from the client).
+    const nextIds =
+      sanitizedIds.length > 0 && multiModelEnabled
+        ? sanitizedIds
+        : selectedModel
+          ? [String(selectedModel.id)]
+          : [];
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
-      sanitizedIds.length !== persistedIds.length ||
-      sanitizedIds.some((modelId, index) => modelId !== persistedIds[index]);
+      nextIds.length !== persistedIds.length ||
+      nextIds.some((modelId, index) => modelId !== persistedIds[index]);
 
     if (idsChanged) {
-      setSelectedModelIds(
-        sanitizedIds.length > 0 && multiModelEnabled
-          ? sanitizedIds
-          : selectedModel
-            ? [String(selectedModel.id)]
-            : [],
-      );
+      setSelectedModelIds(nextIds);
     }
   }, [
     canEnableMultiModel,
     isSelectedModelResolved,
     multiModelEnabled,
+    previewedHostConfigUnresolved,
     resolvedSelectedModels,
     selectedModel,
     selectedModelIds,
@@ -2495,10 +2724,12 @@ export function PlaygroundMain({
     if (matchingModel) {
       setMultiModelEnabled(false);
       setSelectedModelIds([String(matchingModel.id)]);
+      collapseCompareSelectionsTo(matchingModel);
       setSelectedModel(matchingModel);
     } else if (selectedModel) {
       setMultiModelEnabled(false);
       setSelectedModelIds([String(selectedModel.id)]);
+      collapseCompareSelectionsTo(selectedModel);
     }
 
     startChatWithMessages(evalChatHandoff.messages);
@@ -2524,6 +2755,7 @@ export function PlaygroundMain({
     onEvalChatHandoffConsumed?.(evalChatHandoff.id);
   }, [
     availableModels,
+    collapseCompareSelectionsTo,
     composer,
     evalChatHandoff,
     isSessionBootstrapComplete,
@@ -2766,6 +2998,18 @@ export function PlaygroundMain({
         );
         if (!apply) return false;
       }
+      // Resolved BEFORE the load so the pinned effort seeds for the model the
+      // session restores, not the one the picker is on now.
+      const restoredModel =
+        ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
+          ? // By `modelSource` as well as id: an OpenRouter id can also be a
+            // hosted row, and this thread must reopen on the one it ran on (#5472).
+            resolveRestoredModel(
+              availableModels,
+              detail.modelId,
+              detail.modelSource,
+            )
+          : null) ?? undefined;
       await loadChatSession(
         {
           chatSessionId: detail.chatSessionId,
@@ -2778,6 +3022,7 @@ export function PlaygroundMain({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
+          restoredModel,
         },
       );
       if (options?.shouldApply && !options.shouldApply()) {
@@ -2785,19 +3030,8 @@ export function PlaygroundMain({
       }
       useActiveChatSessionStore.getState().setRestoredSession({ sessionId: detail.chatSessionId, origin: detail.origin, browser: detail.browser });
       if (detail.browser && detail.projectId) useActiveChatSessionStore.getState().setBrowserLocation({ projectId: detail.projectId, sessionId: detail.chatSessionId, engine: "cloud" });
-      const shouldRestoreComposerState =
-        options?.shouldRestoreComposerState?.() ?? true;
-      if (shouldRestoreComposerState && detail.modelId) {
-        // By `modelSource` as well as id: an OpenRouter id can also be a
-        // hosted row, and this thread must reopen on the one it ran on (#5472).
-        const matchingModel = resolveRestoredModel(
-          availableModels,
-          detail.modelId,
-          detail.modelSource,
-        );
-        if (matchingModel) {
-          setSelectedModel(matchingModel);
-        }
+      if (restoredModel) {
+        setSelectedModel(restoredModel);
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -3529,20 +3763,20 @@ export function PlaygroundMain({
   // changed.
   const activeCompareIdsKey = useMemo(() => {
     const parts: string[] = [];
-    for (const model of resolvedSelectedModels) {
-      parts.push(`m:${String(model.id)}`);
+    for (const card of modelCompareCards) {
+      parts.push(`m:${card.key}`);
     }
     for (const column of multiHostColumns) {
       parts.push(`h:${column.compareId}`);
     }
     parts.sort();
     return parts.join("|");
-  }, [resolvedSelectedModels, multiHostColumns]);
+  }, [modelCompareCards, multiHostColumns]);
 
   useEffect(() => {
     const activeIds = new Set<string>();
-    for (const model of resolvedSelectedModels) {
-      activeIds.add(String(model.id));
+    for (const card of modelCompareCards) {
+      activeIds.add(card.key);
     }
     for (const column of multiHostColumns) {
       activeIds.add(column.compareId);
@@ -3570,7 +3804,7 @@ export function PlaygroundMain({
         ? previous
         : filtered;
     });
-    // The set itself is read from `resolvedSelectedModels` and
+    // The set itself is read from `modelCompareCards` and
     // `multiHostColumns` (latest values via closure). The dep is a
     // stable string key — see the comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3774,25 +4008,62 @@ export function PlaygroundMain({
     }
   }, [ensureServersReady, serverName, servers]);
 
+  const localAutoApprove = useLocalAutoApproveConsent({
+    enabled: localHarnessRequested && requireToolApproval === false,
+    ready: localHarness.phase === "ready",
+    projectId: convexProjectId,
+    harnessId: localHarness.harnessId ?? "claude-code",
+    scopeKey: localHarnessScopeKey,
+    acknowledged: localHarness.availability?.autoApproveAcknowledged === true,
+    onCancel: () => setRequireToolApproval(true),
+    onAcknowledged: localHarness.refresh,
+  });
+  useEffect(() => {
+    if (
+      localHarnessRequested &&
+      error?.message.includes("auto-approve-consent-required")
+    ) {
+      void localAutoApprove.request();
+    }
+  }, [error, localHarnessRequested, localAutoApprove.request]);
+
   // Handle follow-up messages from widgets
   // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
-      if (!localHarnessRequested || (!setup && localHarness.phase === "ready")) return true;
+      if (!localHarnessRequested) return true;
+      // A ready target sends without a readiness round trip (the turn's own
+      // route re-checks it); only Off still confirms consent first.
+      if (!setup && localHarness.phase === "ready") {
+        try {
+          return await localAutoApprove.ensure();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+          return false;
+        }
+      }
       if (!convexProjectId || localHarnessPreparingRef.current) return false;
       localHarnessPreparingRef.current = true;
       setLocalHarnessPreparing(true);
       try {
-        await ensureLocalHarnessReady(convexProjectId, setup);
-        return true;
+        // The previewed harness's own readiness and setup: each local harness
+        // has its own runtime, authorization and stored consent.
+        await ensureLocalHarnessReady(
+          convexProjectId,
+          setup,
+          undefined,
+          undefined,
+          localHarness.harnessId ?? "claude-code",
+        );
+        return await localAutoApprove.ensure();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Claude Code is not ready. Retry setup from the client settings.");
+        toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
         return false;
       } finally {
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, convexProjectId, localHarness.phase]);
+    }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -3970,9 +4241,15 @@ export function PlaygroundMain({
     (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
       setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
+      collapseCompareSelectionsTo(model);
       setMultiModelEnabled(false);
     },
-    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
+    [
+      collapseCompareSelectionsTo,
+      setMultiModelEnabled,
+      setSelectedModel,
+      setSelectedModelIds,
+    ],
   );
 
   // Publish the chat composer's controls so the global playground agent tools
@@ -4039,7 +4316,7 @@ export function PlaygroundMain({
 
   const handleSelectedModelsChange = useCallback(
     (models: ModelDefinition[]) => {
-      const nextSelectedModels = models.slice(0, 3);
+      const nextSelectedModels = models.slice(0, MAX_COMPARE_SELECTIONS);
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
@@ -4051,9 +4328,65 @@ export function PlaygroundMain({
           String(selectedModelItem.id),
         ),
       );
+      // v2: every card of a still-picked row keeps its effort (Sonnet·Low
+      // and Sonnet·High both stay); a new row joins at its default.
+      if (compareSelections) {
+        setCompareSelections(
+          mergePickedRows(
+            compareCards ?? [],
+            nextSelectedModels,
+            hostedOrgModelConfig,
+            compareSelections,
+          ),
+        );
+      }
     },
-    [selectedModel, setSelectedModel, setSelectedModelIds],
+    [
+      compareCards,
+      compareSelections,
+      hostedOrgModelConfig,
+      selectedModel,
+      setCompareSelections,
+      setSelectedModel,
+      setSelectedModelIds,
+    ],
   );
+
+  // One card's chip. The card's `comparisonKey` changes with its effort, so
+  // the replacement card is seeded from the old card's transcript.
+  const handleCompareCardEffortChange = useCallback(
+    (cardKey: string, effort: ModelReasoningEffort | undefined) => {
+      if (!compareCards) return;
+      const next = setCompareCardEffort(compareCards, cardKey, effort);
+      if (!next) return;
+      compareSeedSourceRef.current[next.key] = cardKey;
+      setCompareSelections(next.selections);
+    },
+    [compareCards, setCompareSelections],
+  );
+
+  // Efforts in the model menu: a model and its effort in one pick; in
+  // compare, each model × effort is its own pane.
+  const seedCompareCard = useCallback((key: string, fromKey: string) => {
+    compareSeedSourceRef.current[key] = fromKey;
+  }, []);
+  const modelEfforts = useModelPickerEfforts({
+    enabled: true,
+    isMultiModelMode,
+    selectedModel,
+    reasoningEffort,
+    levelsFor: reasoningEffortLevelsFor,
+    onSingleModelChange: handleSingleModelChange,
+    setReasoningEffortForModel,
+    compareCards,
+    compareSelections,
+    availableModels,
+    orgConfig: hostedOrgModelConfig,
+    setCompareSelections,
+    setSelectedModel,
+    setSelectedModelIds,
+    seedCard: seedCompareCard,
+  });
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
@@ -4165,13 +4498,13 @@ export function PlaygroundMain({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
         multi_model_enabled: isMultiModelMode,
-        multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
+        multi_model_count: isMultiModelMode ? modelCompareCards.length : 1,
         ...(captureProps ?? {}),
       });
     },
     [
       isMultiModelMode,
-      resolvedSelectedModels.length,
+      modelCompareCards.length,
       selectedModel?.id,
       selectedModel?.name,
       selectedModel?.provider,
@@ -4894,6 +5227,9 @@ export function PlaygroundMain({
       ? {
           target: localHarness.requestedTarget,
           phase: localHarness.phase,
+          ...(localHarness.harnessName
+            ? { harnessName: localHarness.harnessName }
+            : {}),
           ...(localHarness.runtimeStatus?.state === "downloading"
             ? { percent: localHarness.runtimeStatus.percent }
             : {}),
@@ -4924,6 +5260,29 @@ export function PlaygroundMain({
     return merged.filter((entry, index) => merged[index - 1] !== entry);
   }, [messages, compareSentPrompts]);
 
+  // In model compare the composer chip edits the lead card's effort (each
+  // card has its own chip too). Before the v2 migration ran, cards carry no
+  // effort, so the chip is withheld rather than shown doing nothing.
+  const leadCompareCard = isMultiModelMode ? compareCards?.[0] : undefined;
+  const composerEffortProps = !isMultiModelMode
+    ? {
+        reasoningEffort,
+        reasoningEffortLevels,
+        onReasoningEffortChange: setReasoningEffort,
+      }
+    : leadCompareCard?.editableSelection
+      ? {
+          reasoningEffort: leadCompareCard.reasoningEffort,
+          reasoningEffortLevels: leadCompareCard.reasoningEffortLevels,
+          onReasoningEffortChange: (effort: ModelReasoningEffort | undefined) =>
+            handleCompareCardEffortChange(leadCompareCard.key, effort),
+        }
+      : {
+          reasoningEffort: undefined,
+          reasoningEffortLevels: [],
+          onReasoningEffortChange: undefined,
+        };
+
   const sharedChatInputProps = {
     value: composer.input,
     onChange: composer.handleInputChange,
@@ -4942,6 +5301,7 @@ export function PlaygroundMain({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
+    modelEfforts,
     // Client chip in the chat input toolbar (sibling to the model chip).
     // Replaces the standalone "Compare" button that used to live in the
     // playground header. Shared sessions can't switch hosts, so leave it off.
@@ -4966,6 +5326,7 @@ export function PlaygroundMain({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
+    ...composerEffortProps,
     onResetChat: handleResetAllChats,
     submitDisabled:
       disableChatInput ||
@@ -5446,6 +5807,12 @@ export function PlaygroundMain({
       {/* ONE dialog for the surface. Rendered here rather than by a composer
           because there are six composers and a compare view mounts several at
           once — each owning its own would race one approval. */}
+      <LocalHarnessAutoApproveDialog
+        open={localAutoApprove.open}
+        name={previewedHost?.config?.harness === "codex" ? "Codex" : "Claude Code"}
+        onCancel={localAutoApprove.cancel}
+        onApprove={localAutoApprove.approve}
+      />
       {localHarnessDialog !== null ? (
         <LocalHarnessTrustDialog
           open
@@ -5710,6 +6077,9 @@ export function PlaygroundMain({
                           compareKind="host"
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
+                          // No `reasoningEffort`: a host column states none,
+                          // so the server runs each host's own saved
+                          // selection (effort included) for its `hostId`.
                           comparisonSummaries={Object.values(compareSummaries)}
                           selectedServers={selectedServers}
                           broadcastRequest={broadcastRequest}
@@ -5788,21 +6158,24 @@ export function PlaygroundMain({
                       data-testid="playground-multi-model-grid"
                       className={cn(
                         "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                        resolvedSelectedModels.length <= 1 && "grid-cols-1",
-                        resolvedSelectedModels.length === 2 &&
+                        modelCompareCards.length <= 1 && "grid-cols-1",
+                        modelCompareCards.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
-                        resolvedSelectedModels.length >= 3 &&
+                        modelCompareCards.length >= 3 &&
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
-                      {resolvedSelectedModels.map((model, modelIndex) => {
-                        const compareId = String(model.id);
+                      {modelCompareCards.map((entry, modelIndex) => {
+                        // `comparisonKey`: Sonnet·Low and Sonnet·High are
+                        // two cards, each sending its own selection + effort.
+                        const compareId = entry.key;
+                        const { model, card } = entry;
                         return (
                           <MultiModelPlaygroundCard
                             browserWorkspace={{
                               id: chatSessionId,
                               order: modelIndex,
-                              clientCount: resolvedSelectedModels.length,
+                              clientCount: modelCompareCards.length,
                             }}
                             usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
@@ -5810,9 +6183,25 @@ export function PlaygroundMain({
                             // during mode-swap transitions.
                             key={`${multiModelSessionGeneration}:model:${compareId}`}
                             compareId={compareId}
-                            compareLabel={model.name}
+                            compareLabel={entry.label}
                             compareKind="model"
                             model={model}
+                            reasoningEffort={card?.reasoningEffort}
+                            reasoningEffortHarness={compareEffortHarness}
+                            effort={
+                              card?.editableSelection
+                                ? {
+                                    levels: card.reasoningEffortLevels,
+                                    value: card.reasoningEffort,
+                                    onChange: (effort) =>
+                                      handleCompareCardEffortChange(
+                                        card.key,
+                                        effort,
+                                      ),
+                                    disabled: isStreamingActive,
+                                  }
+                                : undefined
+                            }
                             comparisonSummaries={Object.values(
                               compareSummaries,
                             )}
@@ -5874,7 +6263,7 @@ export function PlaygroundMain({
                               handleMultiModelHasMessagesChange
                             }
                             showComparisonChrome={
-                              resolvedSelectedModels.length > 1
+                              modelCompareCards.length > 1
                             }
                             suppressThreadEmptyHint={false}
                             compareEnterVersion={multiCompareEnterVersion}

@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ServerCheckQueue } from "../server-check-queue";
+import * as abortSignals from "../compose-abort-signals";
 const tick = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 };
@@ -13,7 +14,100 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("server check scheduler", () => {
+describe.each(["native", "fallback"])("server check scheduler (%s)", (support) => {
+  const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any")!;
+  beforeEach(() => {
+    if (support === "fallback")
+      Object.defineProperty(AbortSignal, "any", {
+        ...anyDescriptor,
+        value: undefined,
+      });
+  });
+  afterEach(() => {
+    Object.defineProperty(AbortSignal, "any", anyDescriptor);
+    vi.restoreAllMocks();
+  });
+
+  it.each(["success", "failure", "cancel", "retry", "preempt"])(
+    "disposes every scheduled attempt after %s",
+    async (outcome) => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0);
+      const compose = abortSignals.composeAbortSignals;
+      const disposals: ReturnType<typeof vi.fn>[] = [];
+      vi.spyOn(abortSignals, "composeAbortSignals").mockImplementation(
+        (signals) => {
+          const combined = compose(signals);
+          const dispose = vi.fn(combined.dispose);
+          disposals.push(dispose);
+          return { signal: combined.signal, dispose };
+        }
+      );
+      const queue = new ServerCheckQueue();
+      if (outcome === "preempt") queue.markAutomatic("project", ["one"]);
+      const run = vi.fn(async (signal: AbortSignal) => {
+        if (outcome === "failure") throw new Error("Failed");
+        if (outcome === "cancel")
+          return new Promise((_, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          });
+        if (run.mock.calls.length === 1) {
+          if (outcome === "retry")
+            throw { status: 429, details: { reason: "SERVER_CHECK_QUEUE_FULL" } };
+          if (outcome === "preempt")
+            throw { status: 409, details: { reason: "SERVER_CHECK_PREEMPTED" } };
+        }
+        return "ok";
+      });
+      const result = queue.run(options("one"), run);
+      const settled = Promise.allSettled([result]);
+      await vi.advanceTimersByTimeAsync(0);
+      if (outcome === "cancel") queue.cancelServer("project", "one");
+      if (outcome === "retry") await vi.advanceTimersByTimeAsync(2000);
+      if (outcome === "preempt") await vi.advanceTimersByTimeAsync(500);
+      await settled;
+      await tick();
+      expect(disposals).toHaveLength(
+        outcome === "retry" || outcome === "preempt" ? 2 : 1
+      );
+      for (const dispose of disposals) expect(dispose).toHaveBeenCalledOnce();
+      expect(queue.state("project", "one")).toBeUndefined();
+    }
+  );
+
+  it("releases a cancelled slot and allows a new check of the same server", async () => {
+    const queue = new ServerCheckQueue();
+    const result = queue.run(
+      options("one"),
+      (signal) =>
+        new Promise((_, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    const cancelled = expect(result).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await tick();
+    queue.cancelServer("project", "one");
+    await cancelled;
+    await tick();
+    expect(queue.state("project", "one")).toBeUndefined();
+    const releases: Array<() => void> = [];
+    const jobs = Array.from({ length: 10 }, (_, i) =>
+      queue.run(
+        options(i === 0 ? "one" : String(i)),
+        () => new Promise<void>((resolve) => releases.push(resolve)),
+      ),
+    );
+    await tick();
+    expect(releases).toHaveLength(10);
+    releases.forEach((release) => release());
+    await Promise.all(jobs);
+  });
   it("runs 120 cards ten at a time in card order and reprioritizes pending work", async () => {
     const queue = new ServerCheckQueue();
     const names = Array.from({ length: 120 }, (_, i) => String(i));

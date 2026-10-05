@@ -1,4 +1,4 @@
-import { useQuery } from "convex/react";
+import { useSoftQuery } from "@/hooks/use-soft-query";
 
 export type EvalIterationQuota = {
   used: number;
@@ -15,14 +15,18 @@ export function useEvalIterationQuota({
   organizationId?: string | null;
   enabled?: boolean;
 }) {
-  const quota = useQuery(
-    "billing:getEvalIterationQuota" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip",
-  ) as EvalIterationQuota | undefined;
+  // Soft: the sidebar meter reads this on every page, and a failed quota must
+  // not replace the app. A failure reads as no quota, which the meter hides.
+  const { data: quota, error } = useSoftQuery<EvalIterationQuota>(
+    "billing:getEvalIterationQuota",
+    enabled && organizationId ? { organizationId } : "skip",
+  );
 
   return {
     quota,
-    isLoading: Boolean(enabled && organizationId && quota === undefined),
+    isLoading: Boolean(
+      enabled && organizationId && quota === undefined && !error,
+    ),
     isAtLimit: Boolean(
       quota && quota.allowed !== null && quota.used >= quota.allowed,
     ),

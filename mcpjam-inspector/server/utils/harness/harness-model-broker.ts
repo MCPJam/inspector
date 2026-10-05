@@ -15,6 +15,7 @@ import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessId } from "./registry.js";
 import { harnessPinnedVersion } from "@/shared/harness-model-support";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 
 /**
  * The harness runtime CLI version the lease is for — the adapter's pinned
@@ -53,7 +54,17 @@ export type HarnessBrokerStartResult =
       proxyBaseUrl: string;
       delivery: "e2b-network-transform";
     }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /**
+       * The backend's machine code, when it sent one (`spend_budget_reached`,
+       * `free_tier_model_restricted`, …), so a caller can type the failure
+       * instead of reading the prose.
+       */
+      code?: string;
+    };
 
 /**
  * The LOCAL delivery's result. Structurally the cloud one plus a `lease`.
@@ -149,6 +160,12 @@ export async function startHarnessModelBroker(args: {
   modelId: string;
   runId?: string;
   maxOutputTokens?: number;
+  /**
+   * The reasoning effort the turn will run at. The backend validates it
+   * against the catalog and the proxy checks the wire against it. Optional and
+   * omitted when the turn has none, so an older backend sees the same body.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -183,6 +200,9 @@ export async function startHarnessModelBroker(args: {
         ...(args.runId ? { runId: args.runId } : {}),
         ...(args.maxOutputTokens !== undefined
           ? { maxOutputTokens: args.maxOutputTokens }
+          : {}),
+        ...(args.reasoningEffort
+          ? { reasoningEffort: args.reasoningEffort }
           : {}),
       }),
       signal: args.signal,
@@ -226,6 +246,9 @@ export async function startHarnessModelBroker(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Harness model-broker failed (${response.status})`,
+      ...(!response.ok && typeof payload?.code === "string"
+        ? { code: payload.code }
+        : {}),
     };
   }
 
@@ -331,6 +354,8 @@ export async function startLoopbackModelBroker(args: {
   sessionIdx?: number;
   hostId?: string;
   maxOutputTokens?: number;
+  /** See `startHarnessModelBroker`. */
+  reasoningEffort?: ModelReasoningEffort;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessLoopbackStartResult> {
@@ -374,6 +399,9 @@ export async function startLoopbackModelBroker(args: {
         ...(args.runId ? { runId: args.runId } : {}),
         ...(args.maxOutputTokens !== undefined
           ? { maxOutputTokens: args.maxOutputTokens }
+          : {}),
+        ...(args.reasoningEffort
+          ? { reasoningEffort: args.reasoningEffort }
           : {}),
       }),
       ...(args.signal ? { signal: args.signal } : {}),

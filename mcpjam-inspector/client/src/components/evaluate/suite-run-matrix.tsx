@@ -12,7 +12,16 @@ import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities
 import { Label } from "@mcpjam/design-system/label";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import { compactModelIdTail } from "@/lib/environment-label";
-import type { ModelSelection } from "@/components/environment-composer/environment-stack";
+import {
+  emptyModelSelection,
+  type ModelSelection,
+} from "@/components/environment-composer/environment-stack";
+import {
+  dedupeModelTargets,
+  environmentModelTarget,
+} from "@/lib/model-target";
+import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
+import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { EvalTargetMatrix } from "./eval-target-matrix";
 import {
@@ -39,7 +48,12 @@ type PlannedCombination = {
   derive?: {
     sourceEnvironmentId: string;
     expectedRevision: number;
-    overrides: { hostId: string; modelId: string | null };
+    overrides: {
+      hostId: string;
+      modelId: string | null;
+      /** The picked model's saved selection (carries its effort). */
+      modelSelection?: SavedModelSelection;
+    };
   };
   /** Why this cell cannot start; the dialog shows the first one. */
   blocked?: string;
@@ -60,19 +74,22 @@ export function seedRunMatrix(
     if (!environment) continue;
     const selection = (selections[environment.hostId] ??= {
       includeClientDefaults: false,
-      explicitModelIds: [],
+      explicitTargets: [],
     });
-    if (environment.modelId) {
-      if (!selection.explicitModelIds.includes(environment.modelId))
-        selection.explicitModelIds.push(environment.modelId);
-    } else selection.includeClientDefaults = true;
+    // One cell per comparisonKey: the environment's own saved selection (its
+    // effort) is what the run reuses, so two efforts of one model seed two
+    // cells instead of collapsing onto the first.
+    const target = environmentModelTarget(environment);
+    if (target)
+      selection.explicitTargets = dedupeModelTargets([
+        ...selection.explicitTargets,
+        target,
+      ]);
+    else selection.includeClientDefaults = true;
   }
   if (!suite.environmentIds?.length) {
     for (const host of suite.hostAttachments ?? [])
-      selections[host.namedHostId] = {
-        includeClientDefaults: true,
-        explicitModelIds: [],
-      };
+      selections[host.namedHostId] = emptyModelSelection();
   }
   return selections;
 }
@@ -97,6 +114,11 @@ export function planRunMatrix(
      * (`environmentDerivation`), so a pinned setup no longer blocks them.
      */
     lossless?: boolean;
+    /**
+     * The deployment stores model selections: new cells carry the picked
+     * model's selection (and so its effort). Off ⇒ legacy ids only.
+     */
+    modelSelections?: boolean;
   } = {},
 ): PlannedCombination[] {
   const attached = (suite.environmentIds ?? []).map((id) => {
@@ -108,15 +130,28 @@ export function planRunMatrix(
     return environment;
   });
   return Object.entries(selections).flatMap(([hostId, selection]) => {
-    const models = [
+    const targets = [
       ...(selection.includeClientDefaults ? [undefined] : []),
-      ...selection.explicitModelIds,
+      // Without stored selections a target is its bare id: two efforts of
+      // one model would be one cell, so they are one target.
+      ...dedupeModelTargets(
+        options.modelSelections
+          ? selection.explicitTargets
+          : selection.explicitTargets.map(({ modelId }) => ({ modelId })),
+      ),
     ];
-    return models.flatMap<PlannedCombination>((modelId) => {
-      const existing = attached.filter(
-        (environment) =>
-          environment.hostId === hostId && environment.modelId === modelId,
-      );
+    return targets.flatMap<PlannedCombination>((target) => {
+      const modelId = target?.modelId;
+      const picked = target?.selection;
+      const pickedSelection = options.modelSelections ? picked : undefined;
+      // An environment is reused only when it runs this cell's target (same
+      // comparisonKey); each effort of a model is its own cell.
+      const existing = environmentsForModelCell(attached, {
+        hostId,
+        modelId,
+        picked,
+        efforts: options.modelSelections === true,
+      });
       if (existing.length)
         return existing.map((environment) => ({
           environmentId: environment.environmentId,
@@ -126,7 +161,11 @@ export function planRunMatrix(
       const onHost = attached.filter(
         (environment) => environment.hostId === hostId,
       );
-      const bare = { hostId, ...(modelId ? { modelId } : {}) };
+      const bare = {
+        hostId,
+        ...(modelId ? { modelId } : {}),
+        ...(pickedSelection ? { modelSelection: pickedSelection } : {}),
+      };
       const choice = chooseTemplate(
         (onHost.length ? onHost : attached) as ProjectEnvironmentView[],
       );
@@ -147,7 +186,11 @@ export function planRunMatrix(
             derive: {
               sourceEnvironmentId: choice.source.environmentId,
               expectedRevision: choice.source.revision,
-              overrides: { hostId, modelId: modelId ?? null },
+              overrides: {
+                hostId,
+                modelId: modelId ?? null,
+                ...(pickedSelection ? { modelSelection: pickedSelection } : {}),
+              },
             },
             missingGroup: lacksServerSource(choice.composition),
             templateEnvironmentId: choice.source.environmentId,
@@ -216,7 +259,9 @@ export function ConfiguredSuiteRunReview(
   const { suite, projectId, environments = [] } = reviewProps;
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
-  const { availableModels } = useAvailableModels({ projectId });
+  const { availableModels, modelSelectionsSupported } = useAvailableModels({
+    projectId,
+  });
   const { capable, pending } = useEvalComposeCapable(projectId);
   // Until the probe answers, plan as an older backend would: a cell the
   // browser can't copy stays blocked rather than being composed lossily.
@@ -234,7 +279,10 @@ export function ConfiguredSuiteRunReview(
   );
   const plan = unresolved
     ? []
-    : planRunMatrix(suite, environments, selections, { lossless });
+    : planRunMatrix(suite, environments, selections, {
+        lossless,
+        modelSelections: modelSelectionsSupported,
+      });
   const blockedCell = plan.find((item) => item.blocked)?.blocked ?? null;
   // Start is refused for any cell that would connect no servers: a new cell
   // copying a group-less setup, or an attached environment that has none.
@@ -306,10 +354,7 @@ export function ConfiguredSuiteRunReview(
                 Object.fromEntries(
                   ids.map((id) => [
                     id,
-                    selections[id] ?? {
-                      includeClientDefaults: true,
-                      explicitModelIds: [],
-                    },
+                    selections[id] ?? emptyModelSelection(),
                   ]),
                 ),
               )

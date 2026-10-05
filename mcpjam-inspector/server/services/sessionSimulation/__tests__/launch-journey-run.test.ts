@@ -38,7 +38,17 @@ vi.mock("../../../utils/computers/browser-rollout.js", () => ({
   rolloutEnabled: rolloutMock,
 }));
 
-vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: localMock }));
+// Per harness, as the real helper decides it: `localMock(harness)` stands in
+// for "this harness is eligible for unattended local work here".
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  eligibleUnattendedLocalHarnesses: async (bearer: string, projectId: string, harnesses: Array<string | undefined> = []) => {
+    const eligible: string[] = [];
+    for (const harness of new Set(harnesses)) {
+      if ((harness === "claude-code" || harness === "codex") && await localMock(harness, bearer, projectId)) eligible.push(harness);
+    }
+    return eligible;
+  },
+}));
 vi.mock("../../../utils/harness/local/readiness.js", () => ({ ensureLocalHarnessTarget: ensureMock }));
 vi.mock("../../../utils/harness/local/acting-user.js", () => ({ resolveLocalHarnessActor: async () => ({ userId: "user-1" }) }));
 
@@ -545,8 +555,25 @@ it.each([undefined, "codex", "claude-code"].flatMap(harness => [false, true].map
   queryMock.mockImplementation(async (name: string, ...args: any[]) => name === "hosts:getHost" ? { config: { harness } } : original(name, ...args));
   createRunMock.mockResolvedValue(created());
   await launchJourneyRun(DEPS, { ...INPUT, waveId: "wave-1", ...(environment ? { environmentIds: ["env_1"] } : {}) });
-  expect(localMock).toHaveBeenCalledTimes(harness === "claude-code" ? 1 : 0);
-  expect(ensureMock).toHaveBeenCalledTimes(harness === "claude-code" ? 1 : 0);
-  expect(createRunMock.mock.calls[0][2].runtimeVenue).toBe(harness === "claude-code" ? "local" : "hosted");
+  const local = harness === "claude-code" || harness === "codex";
+  expect(localMock).toHaveBeenCalledTimes(local ? 1 : 0);
+  expect(ensureMock).toHaveBeenCalledTimes(local ? 1 : 0);
+  if (local) expect(ensureMock).toHaveBeenCalledWith(expect.objectContaining({ harnessId: harness }));
+  expect(createRunMock.mock.calls[0][2].runtimeVenue).toBe(local ? "local" : "hosted");
+  // The launch declares exactly the harnesses it will run locally.
+  expect(createRunMock.mock.calls[0][2].localHarnessIds).toEqual(local ? [harness] : undefined);
+  await settle();
+});
+
+it("keeps a harness this runner cannot run unattended out of the local set", async () => {
+  const original = queryMock.getMockImplementation()!;
+  let call = 0;
+  queryMock.mockImplementation(async (name: string, ...args: any[]) =>
+    name === "hosts:getHost" ? { config: { harness: call++ === 0 ? "claude-code" : "codex" } } : original(name, ...args));
+  localMock.mockImplementation(async (harness: string) => harness === "claude-code");
+  createRunMock.mockResolvedValue(created());
+  await launchJourneyRun(DEPS, { ...INPUT, waveId: "wave-1", environmentIds: ["env_1", "env_2"] });
+  expect(createRunMock.mock.calls[0][2]).toMatchObject({ runtimeVenue: "local", localHarnessIds: ["claude-code"] });
+  localMock.mockResolvedValue(true);
   await settle();
 });

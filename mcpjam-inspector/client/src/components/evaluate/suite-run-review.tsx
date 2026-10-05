@@ -20,12 +20,14 @@ import {
   type RunPreflightState,
 } from "./suite-run-preflight";
 import type { EvalCase, EvalSuite } from "../evals/types";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
 type ReviewEnvironment = Pick<
   ProjectEnvironmentView,
   | "environmentId"
   | "hostId"
   | "modelId"
+  | "modelSelection"
   | "name"
   | "serverAttachmentId"
   | "skillSelection"
@@ -69,7 +71,11 @@ export function suiteReviewTargets(
             `Client …${environment.hostId.slice(-6)}`)
           : `Environment …${id.slice(-6)}`,
         model: environment?.modelId
-          ? compactModelIdTail(environment.modelId)
+          ? `${compactModelIdTail(environment.modelId)}${
+              environment.modelSelection?.settings?.reasoningEffort
+                ? ` · ${reasoningEffortLabel(environment.modelSelection.settings.reasoningEffort)}`
+                : ""
+            }`
           : "Client default",
         detail: environment?.name,
       };

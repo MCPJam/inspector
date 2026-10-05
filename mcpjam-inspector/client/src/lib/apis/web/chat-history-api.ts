@@ -1,3 +1,4 @@
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
 import { registerArtifactUrls } from "@/lib/artifact-urls";
@@ -32,6 +33,8 @@ export interface ChatHistorySession {
   status: "active" | "archived";
   directVisibility: "private" | "project";
   modelId?: string;
+  /** The last turn's model selection, effort included; absent on older sessions. */
+  modelSelection?: RequestedModelSelection | null;
   modelSource?: string;
   messageCount: number;
   version: number;

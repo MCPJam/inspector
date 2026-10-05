@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { comparisonKey } from "@mcpjam/sdk/browser";
 import { RunResultsMatrix } from "../run-results-matrix";
 import {
   buildRunResultsMatrix,
@@ -370,6 +371,66 @@ describe("run results matrix", () => {
       "sonnet",
     ]);
     expect(matrix.targets[2].iterations).toEqual([]);
+  });
+
+  it("splits two efforts of one model into two columns labelled by what differs", () => {
+    const selection = (reasoningEffort: "low" | "high") => ({
+      modelId: "sonnet",
+      source: "hosted" as const,
+      settings: { reasoningEffort },
+      fallback: { provider: "none" as const, model: "none" as const },
+    });
+    const low = comparisonKey(selection("low"));
+    const high = comparisonKey(selection("high"));
+    // One fan-out arm per effort (run targetKey) ...
+    const fanOut = buildRunResultsMatrix({
+      run: run("r1", { targetKey: low }),
+      runs: [run("r2", { targetKey: high })],
+      iterations: [iteration("i1", "r1"), iteration("i2", "r2")],
+      hostNamesById: names,
+    });
+    expect(fanOut.targets.map((target) => target.model)).toEqual([
+      "sonnet · Low",
+      "sonnet · High",
+    ]);
+    expect(fanOut.targets.map((target) => target.targetKey)).toEqual([
+      low,
+      high,
+    ]);
+    expect(fanOut.targets.every((target) => target.modelId === "sonnet")).toBe(
+      true,
+    );
+    // ... and one case-model run holding both entries (iteration targetKey /
+    // snapshot selection).
+    const first = iteration("i1", "one", { targetKey: low });
+    const second = iteration("i2", "one", {
+      testCaseSnapshot: { ...first.testCaseSnapshot!, selection: selection("high") },
+    });
+    const caseModels = buildRunResultsMatrix({
+      run: run("one", { effectiveModelId: undefined }),
+      runs: [],
+      iterations: [first, second],
+      hostNamesById: names,
+    });
+    expect(caseModels.targets.map((target) => target.model)).toEqual([
+      "sonnet · Low",
+      "sonnet · High",
+    ]);
+  });
+
+  it("keys and labels default runs exactly as before", () => {
+    const matrix = buildRunResultsMatrix({
+      run: run("one", { targetKey: "sonnet" }),
+      runs: [run("two")],
+      iterations: [iteration("i1", "one"), iteration("i2", "two")],
+      hostNamesById: names,
+    });
+    expect(
+      matrix.targets.map((target) => [target.targetKey, target.model]),
+    ).toEqual([
+      ["sonnet", "sonnet"],
+      ["sonnet", "sonnet"],
+    ]);
   });
 
   it("switches each case between results and metrics", async () => {

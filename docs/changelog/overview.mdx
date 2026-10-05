@@ -9,6 +9,26 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-05
+
+#### Changed
+
+- **Evals and swarms refuse `requireToolApproval` up front** — a harness host (Claude Code or Codex) with **Tool Approval on** is now refused before any sandbox is provisioned when running an eval or a swarm. Nobody can answer an approval in an unattended run: previously, the first gated tool call threw mid-run (evals) or parked a pause that the next persona turn silently dropped (swarms). The refusal message reads: "the &lt;harness&gt; harness can't pause for tool approval in an unattended run (evals and swarms) — turn off requireToolApproval on this host". Turn **Tool Approval off** in the suite's execution config or the swarm's host config to resolve it.
+
+- **Chat shows a notice when its harness session was built for a different runtime** — if a chat's saved harness session no longer matches the current client configuration (model, connected servers, skills, approval setting, or transport), the next turn now shows: "Started a new session because this client's runtime changed, so earlier context isn't available." Previously the turn started fresh silently and the model appeared to forget earlier context with no explanation.
+
+### 2026-10-04
+
+#### Changed
+
+- **Turning Tool Approval off for local Claude Code and Codex now requires a separate confirmation** — when a local harness is active in chat, switching Tool Approval off opens a **Run without asking?** dialog before the first send. The dialog names the harness and explains that it will run commands and change files on your computer without asking first. Consent is scoped to your signed-in account, this machine, the current project, and the harness.
+
+  - **Cancel** restores Tool Approval to On and keeps your draft intact.
+  - Once confirmed, MCPJam answers native approval requests on your behalf. The runtime stays in ask mode — toggling the switch does not decide any approval that was already waiting; your explicit answer still controls it.
+  - Host-executed tools marked as always requiring approval continue to pause regardless of the toggle.
+  - Forgetting the local authorization clears the Off consent; the confirmation dialog reappears the next time you turn it off.
+  - Unattended eval and swarm runs are unaffected.
+
 ### 2026-09-30
 
 #### Added

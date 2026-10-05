@@ -93,6 +93,7 @@ import type { RunMetricsByRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
+import { targetKeyLabel } from "@/lib/eval-target-key";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -305,6 +306,13 @@ export function SuiteDetailOverview({
     });
     return { clients: options.clients, models: options.models };
   }, [historyRows, clientFilter, modelFilter]);
+  // Model filter values are TARGETS (`targetKey`); a default target reads as
+  // its model id exactly as before, two efforts of one model read
+  // "model · Low" / "model · High".
+  const formatModelFilterOption = useMemo(() => {
+    const keys = [...new Set(historyRows.flatMap((row) => row.models))];
+    return (key: string) => targetKeyLabel(key, keys, (modelId) => modelId);
+  }, [historyRows]);
   // Derived once per data/filter change. `details` and the filtered launches
   // are passed down as props, so fresh identities on every local state change
   // (opening the review dialog, toggling "show all") defeated the children's
@@ -802,6 +810,7 @@ export function SuiteDetailOverview({
                     label="Model"
                     value={effectiveModel}
                     options={filterOptions.models}
+                    formatOption={formatModelFilterOption}
                     onChange={setModelFilter}
                   />
                 )}

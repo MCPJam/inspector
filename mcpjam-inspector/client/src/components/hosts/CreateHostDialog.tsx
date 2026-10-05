@@ -1,6 +1,14 @@
 import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
 import { HOSTED_MODE } from "@/lib/config";
-import { ensureLocalHarnessReady, fetchLocalHarnessAvailability } from "@/lib/local-harness-consent";
+import {
+  asLocalHarnessClientId,
+  ensureLocalHarnessReady,
+  fetchLocalHarnessAvailability,
+  LOCAL_HARNESS_CLIENT_NAMES,
+  type LocalHarnessClientId,
+} from "@/lib/local-harness-consent";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -71,16 +79,31 @@ export function CreateHostDialog({
   const adminOnly = !roleLoading && !canManageClients;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
-  const localHarnessFlag = useLocalHarnessEnabled();
-  const [localHarnessEnabled, setLocalHarnessEnabled] = useState(false);
+  // Each local harness is its own rollout and its own runtime, so setup is
+  // offered per harness: only where its flag is on AND this Inspector can set
+  // it up here.
+  const claudeCodeLocalFlag = useLocalHarnessEnabled();
+  const codexLocalFlag = useFeatureFlagEnabled(LOCAL_CODEX_FEATURE_FLAG) === true;
+  const [localSetupAvailable, setLocalSetupAvailable] = useState<
+    Readonly<Record<LocalHarnessClientId, boolean>>
+  >({ "claude-code": false, codex: false });
   useEffect(() => {
     let cancelled = false;
-    setLocalHarnessEnabled(false);
-    if (!HOSTED_MODE && localHarnessFlag) void fetchLocalHarnessAvailability().then(result => {
-      if (!cancelled) setLocalHarnessEnabled(result.ok && result.availability.setupAvailable === true);
-    });
+    setLocalSetupAvailable({ "claude-code": false, codex: false });
+    if (HOSTED_MODE) return;
+    for (const [harnessId, flag] of [
+      ["claude-code", claudeCodeLocalFlag],
+      ["codex", codexLocalFlag],
+    ] as const) {
+      if (!flag) continue;
+      void fetchLocalHarnessAvailability(undefined, harnessId).then(result => {
+        if (cancelled) return;
+        const available = result.ok && result.availability.setupAvailable === true;
+        setLocalSetupAvailable(current => ({ ...current, [harnessId]: available }));
+      });
+    }
     return () => { cancelled = true; };
-  }, [localHarnessFlag]);
+  }, [claudeCodeLocalFlag, codexLocalFlag]);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
@@ -120,6 +143,16 @@ export function CreateHostDialog({
     catalogState.status === "live"
       ? getCatalogTemplate(catalogState.catalog, selectedTemplateId)
       : undefined;
+  // The local harness the selected template would set up here, when its
+  // setup is available on this Inspector for this member.
+  const selectedLocalHarnessCandidate = asLocalHarnessClientId(
+    selectedTemplateInput?.harness,
+  );
+  const selectedLocalHarness =
+    selectedLocalHarnessCandidate &&
+    localSetupAvailable[selectedLocalHarnessCandidate]
+      ? selectedLocalHarnessCandidate
+      : null;
   const selectedTemplateLabel =
     (catalogState.status === "live"
       ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
@@ -194,11 +227,13 @@ export function CreateHostDialog({
         // scenario-minting path.
         ...(owner ? { owner } : {}),
       });
-      if (!HOSTED_MODE && localHarnessEnabled && seed.harness === "claude-code") {
-        const setupToast = toast.loading("Installing Claude Code…");
-        void ensureLocalHarnessReady(projectId, true, undefined, message => toast.loading(message, { id: setupToast }))
-          .then(() => toast.success("Claude Code is ready", { id: setupToast }))
-          .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : "Claude Code setup needs a retry."}`, { id: setupToast }));
+      const localHarness = asLocalHarnessClientId(seed.harness);
+      if (!HOSTED_MODE && localHarness && localSetupAvailable[localHarness]) {
+        const harnessName = LOCAL_HARNESS_CLIENT_NAMES[localHarness];
+        const setupToast = toast.loading(`Installing ${harnessName}…`);
+        void ensureLocalHarnessReady(projectId, true, undefined, message => toast.loading(message, { id: setupToast }), localHarness)
+          .then(() => toast.success(`${harnessName} is ready`, { id: setupToast }))
+          .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : `${harnessName} setup needs a retry.`}`, { id: setupToast }));
       }
       toast.success(`Client "${trimmed}" created`);
       handleClose();
@@ -297,7 +332,7 @@ export function CreateHostDialog({
             />
           </div>
         </div>
-        {!HOSTED_MODE && localHarnessEnabled && selectedTemplateInput?.harness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
+        {!HOSTED_MODE && selectedLocalHarness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
         {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={handleClose}>
@@ -305,7 +340,7 @@ export function CreateHostDialog({
           </Button>
           <Button onClick={handleCreate} disabled={!canCreate}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {isSaving && !HOSTED_MODE && localHarnessEnabled && selectedTemplateInput?.harness === "claude-code" ? "Setting up Claude Code…" : "Create"}
+            {isSaving && !HOSTED_MODE && selectedLocalHarness ? `Setting up ${LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]}…` : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -583,6 +583,8 @@ Provide either `--template` or `--file`/`--json`, not both.
 | `--expected-config-id <id>` | With any config edit | The `configId` you last read |
 | `--set <key=value>` | No | Set one field. Repeatable |
 | `--unset <key>` | No | Clear an optional field, or reset a required one to its default. Repeatable |
+| `--effort <level>` | No | Set the reasoning effort on the client's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the client's model selection |
 | `--file <path>` | No | Replacement client config v2 JSON (or `-` for stdin) |
 | `--json <json>` | No | Inline replacement client config v2 JSON (or `@file`, or `-`) |
 
@@ -600,6 +602,7 @@ string.
 | Field | Value | `--unset` |
 |-------|-------|-----------|
 | `modelId` | string | Not allowed — a client cannot be edited into one that pins no model |
+| `modelSelection` | JSON object | Drops the saved selection and keeps the bare `modelId` |
 | `systemPrompt` | string | Resets to `""` |
 | `temperature` | number | Resets to `0.7` |
 | `requireToolApproval` | `true` \| `false` | Resets to `false` |
@@ -708,6 +711,8 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--host-id <id>` | Yes\* | ID of the host this environment runs against |
 | `--project <id-or-name>` | No | Project name or ID |
 | `--description <text>` | No | Optional description |
+| `--model <id>` | No | Model to run instead of the host's |
+| `--model-selection <json>` | No | Whole saved model selection behind the override — source, connection and `settings.reasoningEffort` (see [Reasoning effort](#reasoning-effort)). Must be for the model named; sent alone it pins its own model |
 | `--file <path>` | No | Environment JSON file (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
@@ -731,6 +736,9 @@ mcpjam cloud environments create --project Acme --json '{
 | `--name <name>` | No | New display name |
 | `--host-id <id>` | No | New host |
 | `--description <text>` | No | New description (empty string clears it) |
+| `--model-selection <json>` | No | Whole saved model selection for the override, as JSON (or `@file`, or `-`) |
+| `--effort <level>` | No | Set the reasoning effort on the environment's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the environment's model selection |
 | `--file <path>` | No | Environment JSON with the fields to change (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
@@ -772,6 +780,7 @@ Requires project membership, not admin (pinning plugin versions still requires a
 | `--host <id-or-name>` | Yes | Host the stack runs as — the client whose configuration a run is stamped with |
 | `--server-group <id>` | No | Standalone server group to pin (omit to use the host's own servers) |
 | `--model <id>` | No | Model to run instead of the host's pinned one |
+| `--model-selection <json>` | No | Whole saved model selection (source, connection, `settings.reasoningEffort`) as JSON. Stacks that differ only by effort are different environments |
 | `--computer <id-or-name>` | No | Project-shared sandbox image to pin, so runs boot a fresh computer from it |
 | `--skill <id...>` | No | Project-shared skill IDs to pin |
 | `--secret <id...>` | No | Project secret IDs the stack grants to its runs (`secrets list` shows them) |
@@ -812,16 +821,62 @@ The pin fields are narrower than they look:
 
   - **This MCPJam deployment does not support environment model overrides.**
   - **This MCPJam deployment does not support environment secret grants.**
+  - **This MCPJam deployment does not support saved model selections (and so reasoning effort) on composed stacks.**
+  - **This MCPJam deployment does not support saved model selections (and so reasoning effort) on environments.**
 
   A second sentence then names what to drop, and it differs by surface —
   `--model` / `--clear-model` / `"modelId"` on the environment writes,
   `--compose-model` / `compose.models` on a composed launch, and the
-  `--secret` / `--compose-secret` equivalents. Grep for the sentence above,
+  `--secret` / `--compose-secret` equivalents, and
+  `--model-selection` / `--compose-model-selection` / `--effort` on an
+  environment for the two saved-selection sentences (the deployment publishes
+  `modelSelections` when it accepts them). Grep for the sentence above,
   not for the whole message.
 
   Every other flag on these commands works regardless; only the calls that
   actually carry a model or a grant are checked.
 </Note>
+
+### Reasoning effort
+
+A reasoning effort is saved on a **model selection** — `settings.reasoningEffort`
+inside the `modelSelection` a client, environment, eval case (`models[].selection`)
+or eval suite (`executionConfig.modelSelection`) carries. There is no other saved
+carrier, and `advancedConfig.reasoningEffort` is refused. Levels are `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh` and `max`; which of them a model
+accepts is `supportedReasoningEfforts` on the public model catalog
+(`GET /v1/models`). Every route either applies a saved effort and records it or
+refuses it (`capability_missing`) before any spend — it is never dropped — and an
+effort replaces the sampling temperature.
+
+Three ways to set one:
+
+- **A whole selection** — `--set modelSelection='{…}'` (clients),
+  `--model-selection '{…}'` (environments, `eval update`),
+  `--compose-model-selection '{…}'` (composed launches). A selection holds
+  `source` and a connection that only you know, so it is always sent whole:
+
+  ```json
+  {
+    "modelId": "openai/gpt-5",
+    "source": "hosted",
+    "settings": { "reasoningEffort": "high" },
+    "fallback": { "provider": "none", "model": "none" }
+  }
+  ```
+
+- **`--effort <level>` / `--clear-effort`** on `clients update`,
+  `environments update` and `eval update` — a shorthand that edits the
+  selection the target **already has**. When there is none the command is
+  refused with a message telling you to send `modelSelection`, because inventing
+  one would mean guessing whose credentials pay. It cannot be combined with a
+  whole selection, or with a new model (a new model needs a new selection).
+- **`sessions send --effort <level>`** — a per-request effort, pinned on the
+  session's first turn like `--temperature`.
+
+Changing a target's model with a bare `--model` never keeps a selection saved for
+the old one: on a suite or environment it is dropped, so the write is not
+refused for naming two models.
 
 ---
 
@@ -1249,6 +1304,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
+| `--compose-model-selection <json...>` | No | Whole saved model selection(s) — source, connection, `settings.reasoningEffort` — as JSON: one cell per selection, for its model, at its effort. Repeat to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell |
 | `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
 | `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
@@ -2163,6 +2219,9 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--client <name...>` | No | Replace client attachments (by name/ID) |
 | `--host <name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
 | `--model <id>` | No | Execution model ID |
+| `--model-selection <json>` | No | Whole saved model selection for the suite (source, connection, `settings.reasoningEffort`) as JSON. A bare `--model` change drops a selection saved for a different model |
+| `--effort <level>` | No | Set the reasoning effort on the suite's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the suite's model selection |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
 | `--min-accuracy <pct>` | No | Suite accuracy threshold: one percentage, 0–100, over the whole run. Mutually exclusive with `--pass-threshold` |
@@ -2374,6 +2433,7 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-model-selection <json>` | No | One whole saved model selection to run this case on, at its effort |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
@@ -2564,6 +2624,7 @@ Omit `--session` to start a conversation; pass the `sessionId` the command retur
 | `--max-steps <n>` | Maximum engine steps this turn (1–16) |
 | `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. |
 | `--temperature <n>` | Sampling temperature (0–2) |
+| `--effort <level>` | Reasoning effort for the model. First turn only: pinned to the session, refused with `--session`. It replaces the temperature, so it cannot be combined with `--temperature`. Applied or refused by the rail the model runs on, never dropped |
 | `--project <id-or-name>` | Project name or ID (required to start a session) |
 
 `read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.

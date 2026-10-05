@@ -8,13 +8,20 @@
  * generated sources to what the TypeScript modules actually export, because
  * two readers of the same facts drift.
  */
-export declare function readCommittedFacts(): Promise<{
-  /** `EXPECTED_PACK_VERSION`, or "" when no pack build has been recorded. */
-  expectedVersion: string;
-  /** `PACK_RECORDS["claude-code"]`, keyed by pack target. */
-  records: Record<string, { packVersion: string; treeDigest: string }>;
-  /** The claude-code manifest's `lifecycleConformanceVersion`. */
-  conformance: string;
-  /** The claude-code manifest's `nativePlatforms`. */
-  nativePlatforms: string[];
-}>;
+export declare function readCommittedFacts(): Promise<
+  Record<
+    string,
+    {
+      /** `EXPECTED_PACK_VERSIONS[harnessId]`, or "" when no pack build has been recorded. */
+      expectedVersion: string;
+      /** `PACK_RECORDS[harnessId]`, keyed by pack target. */
+      records: Record<string, { packVersion: string; treeDigest: string }>;
+      /** The harness manifest's `lifecycleConformanceVersion`. */
+      conformance: string;
+      /** The harness manifest's `nativePlatforms`. */
+      nativePlatforms: string[];
+      /** The harness manifest's `nativeTargets` (D8), when it narrows. */
+      nativeTargets?: string[];
+    }
+  >
+>;

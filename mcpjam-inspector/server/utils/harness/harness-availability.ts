@@ -232,6 +232,25 @@ export function selectionReasoningEffort(
 }
 
 /**
+ * The effort a turn asked for, from every place it can ride: the typed field,
+ * else the top-level `extraBodyFields.reasoningEffort` (where
+ * `resolveTurnRuntime`'s hosted branch puts a turn's own effort, and which
+ * `/stream` prefers), else the saved selection forwarded with the turn
+ * (`extraBodyFields.modelSelection`). One reader for every harness check so a
+ * turn-level effort cannot be dropped by one and refused by another.
+ */
+export function turnReasoningEffortOf(args: {
+  reasoningEffort?: ModelReasoningEffort;
+  extraBodyFields?: Record<string, unknown>;
+}): ModelReasoningEffort | undefined {
+  return (
+    args.reasoningEffort ??
+    readReasoningEffort(args.extraBodyFields?.reasoningEffort) ??
+    selectionReasoningEffort(args.extraBodyFields?.modelSelection)
+  );
+}
+
+/**
  * Why a harness turn must not run at this reasoning effort, or `undefined` when
  * it may.
  *
@@ -245,10 +264,25 @@ export function selectionReasoningEffort(
 export function harnessReasoningEffortRefusalReason(args: {
   adapter: HarnessRuntimeAdapter;
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The levels the turn's MODEL lists, when the caller has them (the catalog's
+   * `supportedReasoningEfforts`). The adapter applying a level does not mean the
+   * model accepts it (`xhigh` on `gpt-5-nano`), and that otherwise fails late at
+   * the lease mint, after the sandbox is reserved. Absent ⇒ not checked here.
+   */
+  modelEfforts?: readonly string[];
 }): string | undefined {
-  const { adapter, reasoningEffort } = args;
+  const { adapter, reasoningEffort, modelEfforts } = args;
   if (reasoningEffort === undefined) return undefined;
   if (adapter.supportedReasoningEfforts.includes(reasoningEffort)) {
+    if (modelEfforts && !modelEfforts.includes(reasoningEffort)) {
+      return (
+        `this model doesn't accept the "${reasoningEffort}" reasoning effort` +
+        (modelEfforts.length > 0
+          ? ` — it lists ${modelEfforts.map((level) => `"${level}"`).join(", ")}`
+          : " — it lists none")
+      );
+    }
     return undefined;
   }
   const name = adapter.displayName;
@@ -279,6 +313,12 @@ export function harnessReasoningEffortRefusalReason(args: {
  * (`supportsHostExecutedToolApproval`). Reading the wrong one is the bypass this
  * function exists to make unrepresentable — Codex's MCP tools are host-executed,
  * so `supportsMcpToolApproval` says nothing about them.
+ *
+ * An UNATTENDED run (evals, swarms: nobody can answer) is refused whatever the
+ * adapter can do. A runtime that pauses would otherwise be admitted and then
+ * fail at its first gated call (an eval turn has no session to park in) or
+ * stall silently (a swarm parks a pause nobody resumes). Refusing up front is
+ * the same posture a runtime that can't pause already gets.
  */
 export function harnessToolApprovalRefusalReason(args: {
   adapter: HarnessRuntimeAdapter;
@@ -286,9 +326,17 @@ export function harnessToolApprovalRefusalReason(args: {
   /** Whether the host has any selected MCP servers. Selects whether the
    *  MCP-surface arm applies; the native-surface arm applies regardless. */
   hasSelectedMcpServers: boolean;
+  /** Nobody can answer an approval on this run (evals, swarms). */
+  unattended?: boolean;
 }): string | undefined {
   if (!args.requireToolApproval) return undefined;
   const name = args.adapter.displayName;
+  if (args.unattended) {
+    return (
+      `the ${name} harness can't pause for tool approval in an unattended ` +
+      "run (evals and swarms) — turn off requireToolApproval on this host"
+    );
+  }
   // The runtime runs its own native tools in-sandbox. If it can't pause on
   // those, approval is unsound for the whole turn — servers or no servers.
   if (!args.adapter.supportsNativeToolApproval) {
@@ -366,7 +414,13 @@ export function checkHarnessRuntimeAvailable(args: {
    * admitted and then silently runs emulated). Deriving both from the resolved
    * definition makes the two answers consistent by construction.
    */
-  model: { id: string; provider?: string; hosted?: boolean };
+  model: {
+    id: string;
+    provider?: string;
+    hosted?: boolean;
+    /** The model's own effort levels (catalog), when known. */
+    supportedReasoningEfforts?: readonly string[];
+  };
   /**
    * The host's CONFIGURED model id, before any body or per-case override.
    *
@@ -427,7 +481,14 @@ export function checkHarnessRuntimeAvailable(args: {
    * adapter has not verified it, rather than silently not applied.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /** Nobody can answer an approval on this run (evals, swarms). Not derived
+   *  from `purpose`: a human scenario chat reads models strictly as `eval`
+   *  but can still answer an approval. */
+  unattended?: boolean;
 }): HarnessAvailability {
+  // The SAME arm the turn will run: local Codex is always the app-server
+  // adapter, so asking the hosted default here would refuse an approval-gated
+  // local Codex turn the turn itself can serve.
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
 
@@ -490,6 +551,7 @@ export function checkHarnessRuntimeAvailable(args: {
     adapter,
     requireToolApproval: args.requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
+    unattended: args.unattended === true,
   });
   if (approvalRefusal) {
     return { ok: false, kind: "tool-approval", reason: approvalRefusal };
@@ -499,6 +561,9 @@ export function checkHarnessRuntimeAvailable(args: {
     adapter,
     ...(args.reasoningEffort !== undefined
       ? { reasoningEffort: args.reasoningEffort }
+      : {}),
+    ...(args.model.supportedReasoningEfforts
+      ? { modelEfforts: args.model.supportedReasoningEfforts }
       : {}),
   });
   if (effortRefusal) {
