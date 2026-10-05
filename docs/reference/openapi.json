@@ -3240,8 +3240,7 @@
                     "suiteId",
                     "status",
                     "rerunOfRunId",
-                    "rerunScope",
-                    "selectedCaseCount"
+                    "rerunScope"
                   ],
                   "properties": {
                     "runId": {
@@ -3262,9 +3261,6 @@
                     "rerunScope": {
                       "type": "string",
                       "enum": ["failed_cases"]
-                    },
-                    "selectedCaseCount": {
-                      "type": "integer"
                     },
                     "servers": {
                       "type": "array",

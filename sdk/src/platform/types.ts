@@ -1626,7 +1626,6 @@ export interface PlatformEvalRunRerunCreated {
   deduped?: boolean;
   rerunOfRunId: string;
   rerunScope: PlatformEvalRunRerunScope;
-  selectedCaseCount: number;
   servers?: Array<{ id: string; name?: string }>;
   environment?: PlatformEvalRunEnvironment | null;
 }

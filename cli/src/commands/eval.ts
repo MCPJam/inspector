@@ -4873,6 +4873,9 @@ export function registerEvalCommands(program: Command): void {
 
       if ("preview" in outcome) {
         writeResult({ preview: outcome.preview }, format);
+        // Same answer the launch would give: nothing qualifies, or the run is
+        // still in flight, is not a rerun that can start.
+        if (outcome.preview?.rerunnable !== true) setProcessExitCode(1);
         return;
       }
       const { rerun } = outcome;

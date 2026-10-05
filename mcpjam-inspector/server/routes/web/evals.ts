@@ -140,12 +140,6 @@ const hostedReplayRunSchema = z.object({
   // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
   // and the gate it produced could never fail.
   passCriteria: passCriteriaSchema.optional(),
-  /**
-   * `"failed_cases"` reruns only the cases of `runId` with a trial that did
-   * not complete and pass (the backend picks them). Absent replays the whole
-   * run.
-   */
-  scope: z.literal("failed_cases").optional(),
 });
 
 const hostedTraceRepairStartSchema = z.discriminatedUnion("scope", [
@@ -722,7 +716,6 @@ evals.post("/replay-run", async (c) =>
           modelApiKeys: body.modelApiKeys,
           notes: body.notes,
           passCriteria: body.passCriteria,
-          ...(body.scope ? { scope: body.scope } : {}),
         });
 
         detachPreparedEvalRun({

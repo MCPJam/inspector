@@ -1660,7 +1660,7 @@ trend point, or a comparison baseline.
 |------|----------|-------------|
 | `<run-id>` | Yes | Eval run ID to rerun (from `eval run`) |
 | `--failed` | Yes | Rerun only the cases that did not pass (the only rerun scope) |
-| `--dry-run` | No | Show which cases would rerun, and why, without starting anything |
+| `--dry-run` | No | Show which cases would rerun, and why, without starting anything. Exits 1 when nothing can rerun |
 | `--notes <text>` | No | Free-text note stored on the new run |
 | `--idempotency-key <key>` | No | Repeating the call returns the run it already started |
 | `--wait` | No | Wait for the rerun to reach a terminal status; exits on its verdict like `eval run --wait` |

@@ -1,15 +1,6 @@
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 /**
- * The subset a rerun can narrow its source run to. `failed_cases`: every case
- * with a trial that did not complete and pass (cancelled and skipped trials do
- * not count). The BACKEND picks the cases (`convex/lib/evalRerun.ts`) and
- * stamps the new run `rerunOfRunId` + `rerunScope`; a caller only names the
- * scope.
- */
-export type SuiteRerunScope = "failed_cases";
-
-/**
  * The backend's rerun refusals, as readable route errors. Each one is raised
  * before any run row exists, and each names something the caller can act on,
  * so none of them should surface as an opaque 500.
@@ -22,7 +13,7 @@ const RERUN_REFUSALS: Record<
     status: 409,
     code: ErrorCode.CONFLICT,
     fallback:
-      "Every case in that run passed (cancelled and skipped trials do not count), so there is nothing to rerun.",
+      "Nothing in that run qualifies (no trial failed; cancelled and skipped trials do not count).",
   },
   RERUN_SOURCE_NOT_TERMINAL: {
     status: 409,
@@ -51,6 +42,17 @@ function refusal(
   );
 }
 
+/** The backend's trial counts that did not qualify, numbers only. */
+function excludedCounts(value: unknown): { excluded?: Record<string, number> } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const counts = Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, number] => typeof entry[1] === "number",
+    ),
+  );
+  return Object.keys(counts).length > 0 ? { excluded: counts } : {};
+}
+
 /**
  * Translate a `startTestSuiteRun` rerun refusal (a `ConvexError` whose
  * `data.code` is one of the `RERUN_*` codes). Codes, not prose: the message is
@@ -64,15 +66,19 @@ export function rerunRefusalError(error: unknown): WebRouteError | null {
     code?: unknown;
     message?: unknown;
     totalCaseCount?: unknown;
+    excluded?: unknown;
   };
   const code = typeof record.code === "string" ? record.code : undefined;
   if (!code || !RERUN_REFUSALS[code]) return null;
   return refusal(
     code,
     typeof record.message === "string" ? record.message : undefined,
-    typeof record.totalCaseCount === "number"
-      ? { totalCaseCount: record.totalCaseCount }
-      : {},
+    {
+      ...(typeof record.totalCaseCount === "number"
+        ? { totalCaseCount: record.totalCaseCount }
+        : {}),
+      ...excludedCounts(record.excluded),
+    },
   );
 }
 
@@ -87,6 +93,7 @@ export function rerunPreviewRefusal(preview: {
   sourceStatus?: unknown;
   rerunnable?: unknown;
   totalCaseCount?: unknown;
+  excluded?: unknown;
 }): WebRouteError | null {
   if (preview.rerunnable === true) return null;
   const sourceStatus =
@@ -101,5 +108,6 @@ export function rerunPreviewRefusal(preview: {
     ...(typeof preview.totalCaseCount === "number"
       ? { totalCaseCount: preview.totalCaseCount }
       : {}),
+    ...excludedCounts(preview.excluded),
   });
 }

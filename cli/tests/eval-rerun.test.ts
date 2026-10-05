@@ -92,7 +92,11 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
 }
 
 async function startFixture(
-  options: { rerunResult?: "passed" | "failed"; nothingToRerun?: boolean } = {}
+  options: {
+    rerunResult?: "passed" | "failed";
+    nothingToRerun?: boolean;
+    preview?: Record<string, unknown>;
+  } = {}
 ): Promise<{
   baseUrl: string;
   requests: string[];
@@ -118,7 +122,7 @@ async function startFixture(
         "/api/v1/projects/proj-alpha/eval-runs/run-src/rerun-preview" &&
       method === "GET"
     ) {
-      res.end(JSON.stringify(PREVIEW));
+      res.end(JSON.stringify({ ...PREVIEW, ...options.preview }));
       return;
     }
     if (
@@ -146,7 +150,6 @@ async function startFixture(
           status: "running",
           rerunOfRunId: "run-src",
           rerunScope: "failed_cases",
-          selectedCaseCount: 2,
           servers: [{ id: "srv-1", name: "Server" }],
           environment: null,
         })
@@ -222,13 +225,11 @@ test("eval rerun --failed POSTs the failed-cases scope and prints the new run", 
         runId: string;
         rerunOfRunId: string;
         rerunScope: string;
-        selectedCaseCount: number;
       };
     };
     assert.equal(payload.rerun.runId, "run-rerun");
     assert.equal(payload.rerun.rerunOfRunId, "run-src");
     assert.equal(payload.rerun.rerunScope, "failed_cases");
-    assert.equal(payload.rerun.selectedCaseCount, 2);
     // The platform picks the cases: the body names the scope and nothing else.
     assert.deepEqual(fixture.rerunBodies, [{ scope: "failed_cases" }]);
     // No --wait: the new run is never polled.
@@ -301,6 +302,35 @@ test("eval rerun --failed --dry-run reads the preview and launches nothing", asy
     assert.equal(payload.preview.selectedCaseCount, 2);
     assert.deepEqual(payload.preview.selectedCaseIds, ["case-b", "case-c"]);
     assert.equal(payload.preview.reasons.evaluator_error, 1);
+    assert.deepEqual(fixture.rerunBodies, []);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval rerun --dry-run exits non-zero when nothing can rerun", async () => {
+  const fixture = await startFixture({
+    preview: { selectedCaseCount: 0, selectedCaseIds: [], rerunnable: false },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        rerunArgv(
+          fixture.baseUrl,
+          "run-src",
+          "--failed",
+          "--dry-run",
+          "--json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 1, run.stderr);
+    const payload = JSON.parse(run.stdout) as {
+      preview: { rerunnable: boolean };
+    };
+    assert.equal(payload.preview.rerunnable, false);
     assert.deepEqual(fixture.rerunBodies, []);
   } finally {
     process.exitCode = 0;

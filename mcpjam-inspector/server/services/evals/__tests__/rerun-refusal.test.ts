@@ -15,14 +15,22 @@ describe("rerunRefusalError", () => {
     expect(error?.details).toEqual({ reason: code });
   });
 
-  it("falls back to its own wording and keeps the case count", () => {
+  it("falls back to its own wording and keeps the counts", () => {
     const error = rerunRefusalError({
-      data: { code: "RERUN_NOTHING_TO_RERUN", totalCaseCount: 4 },
+      data: {
+        code: "RERUN_NOTHING_TO_RERUN",
+        totalCaseCount: 4,
+        excluded: { passed: 2, cancelled: 3, skipped: 1, bogus: "x" },
+      },
     });
-    expect(error?.message).toMatch(/nothing to rerun/);
+    // Not "every case passed": a run of only stopped trials lands here too.
+    expect(error?.message).toBe(
+      "Nothing in that run qualifies (no trial failed; cancelled and skipped trials do not count).",
+    );
     expect(error?.details).toEqual({
       reason: "RERUN_NOTHING_TO_RERUN",
       totalCaseCount: 4,
+      excluded: { passed: 2, cancelled: 3, skipped: 1 },
     });
   });
 
@@ -60,12 +68,14 @@ describe("rerunPreviewRefusal", () => {
       sourceStatus: "completed",
       rerunnable: false,
       totalCaseCount: 3,
+      excluded: { passed: 1, cancelled: 2, skipped: 0 },
     });
     expect(error?.status).toBe(409);
     expect(error?.details).toEqual({
       reason: "RERUN_NOTHING_TO_RERUN",
       sourceStatus: "completed",
       totalCaseCount: 3,
+      excluded: { passed: 1, cancelled: 2, skipped: 0 },
     });
   });
 

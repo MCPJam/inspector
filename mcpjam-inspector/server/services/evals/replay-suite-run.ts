@@ -25,7 +25,6 @@ import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
-import { rerunPreviewRefusal, type SuiteRerunScope } from "./rerun-refusal.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -36,13 +35,6 @@ export type ExecuteSuiteReplayFromRunParams = {
   notes?: string;
   passCriteria?: { minimumPassRate: number };
   useCurrentSuiteConfig?: boolean;
-  /**
-   * Replay only part of the source run. `"failed_cases"` reruns the cases
-   * with a trial that did not complete and pass; the BACKEND picks them and
-   * stamps the new run `rerunOfRunId` + `rerunScope`. Absent replays the whole
-   * run, exactly as before.
-   */
-  scope?: SuiteRerunScope;
 };
 
 export type ExecuteSuiteReplayFromRunResult = {
@@ -78,7 +70,6 @@ export async function prepareSuiteReplayFromRun(
     notes,
     passCriteria,
     useCurrentSuiteConfig,
-    scope,
   } = params;
 
   const convexHttpUrl = requireConvexHttpUrl();
@@ -89,17 +80,6 @@ export async function prepareSuiteReplayFromRun(
 
   if (!replayMetadata?.hasServerReplayConfig) {
     throw new Error("This run does not have stored replay config");
-  }
-
-  // Refused before a server is connected when the answer is already known.
-  // The launch mutation makes the same decision again.
-  if (scope) {
-    const preview = await convexClient.query(
-      "testSuites:getRerunPreview" as any,
-      { runId: sourceRunId },
-    );
-    const refusal = rerunPreviewRefusal(preview ?? {});
-    if (refusal) throw refusal;
   }
 
   const replayConfig = await fetchReplayConfig(sourceRunId, convexAuthToken);
@@ -154,9 +134,6 @@ export async function prepareSuiteReplayFromRun(
       passCriteria,
       serverIds: replayServerIds,
       replayedFromRunId: sourceRunId,
-      // Only when a scope was asked for: an unscoped replay sends exactly the
-      // args it always sent.
-      ...(scope ? { rerunOfRunId: sourceRunId, rerunScope: scope } : {}),
       runtimeVenue,
       ...(replayLocalHarness ? { localHarnessIds: [replayLocalHarness] } : {}),
       useCurrentSuiteConfig,

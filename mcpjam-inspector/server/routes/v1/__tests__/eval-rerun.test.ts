@@ -259,7 +259,6 @@ describe("eval rerun routes", () => {
         suiteId: SUITE_ID,
         rerunOfRunId: RUN_ID,
         rerunScope: "failed_cases",
-        selectedCaseCount: 2,
       });
       expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
       const prepared = prepareEvalRunMock.mock.calls[0]![1] as Record<

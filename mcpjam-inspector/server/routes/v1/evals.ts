@@ -6323,7 +6323,6 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
         ...(launched.deduped ? { deduped: true } : {}),
         rerunOfRunId: runId,
         rerunScope: body.scope,
-        selectedCaseCount: preview.selectedCaseCount,
         servers: launched.servers,
         environment: launched.environment,
       },
