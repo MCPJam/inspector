@@ -41,7 +41,7 @@ Sentry.init({
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
   // Promotes crashed/oom from breadcrumbs to captured events — see
   // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
-  // already on by default in @sentry/electron 5.12 and is left alone.
+  // already on by default in @sentry/electron 7 and is left alone.
   integrations: crashReportingIntegrations,
   // Drops the ONE rejection the app cannot catch: Electron leaves
   // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
