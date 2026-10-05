@@ -31,58 +31,55 @@ import { createModelFromString } from "../src/model-factory";
 
 const mockModelInfo = { modelId: "gpt-4o", provider: "openai" } as const;
 
-const telemetryEventBase = {
-  messages: [],
-  abortSignal: undefined,
-  functionId: undefined,
-  metadata: undefined,
-  experimental_context: undefined,
-};
-
 /** Replays `experimental_telemetry.integrations` like real `generateText` (Jest mocks `ai` only). */
 async function replayEvalSpanStepFinish(params: any, stepResult: any) {
   for (const integration of params.experimental_telemetry?.integrations ?? []) {
-    await integration.onStepFinish?.(stepResult);
+    await integration.onStepEnd?.(stepResult);
   }
 }
 
-/** Wraps a tool execution with `onToolCallStart` / `onToolCallFinish` on span integrations. */
+/**
+ * Wraps a tool execution with AI SDK 7's `onToolExecutionStart` /
+ * `onToolExecutionEnd` on span integrations. Those events carry no step
+ * number; the integration attributes the tool to the step that last started.
+ */
 async function replayEvalSpanToolCall(
   params: any,
   spec: {
     toolName: string;
     toolCallId: string;
     input: Record<string, unknown>;
-    stepNumber?: number;
   },
   execute: () => Promise<unknown>
 ) {
   const integrations = params.experimental_telemetry?.integrations ?? [];
-  const stepNumber = spec.stepNumber ?? 0;
   const toolCall = {
     type: "tool-call" as const,
     toolCallId: spec.toolCallId,
     toolName: spec.toolName,
     input: spec.input,
   };
+  const eventBase = {
+    callId: "call",
+    messages: [],
+    toolCall,
+    toolContext: undefined,
+  };
   for (const integration of integrations) {
-    await integration.onToolCallStart?.({
-      stepNumber,
-      model: mockModelInfo,
-      toolCall,
-      ...telemetryEventBase,
-    });
+    await integration.onToolExecutionStart?.(eventBase);
   }
   const output = await execute();
   for (const integration of integrations) {
-    await integration.onToolCallFinish?.({
-      stepNumber,
-      model: mockModelInfo,
-      toolCall,
-      ...telemetryEventBase,
-      durationMs: 1,
-      success: true as const,
-      output,
+    await integration.onToolExecutionEnd?.({
+      ...eventBase,
+      toolExecutionMs: 1,
+      toolOutput: {
+        type: "tool-result" as const,
+        toolCallId: spec.toolCallId,
+        toolName: spec.toolName,
+        input: spec.input,
+        output,
+      },
     });
   }
 }
@@ -1889,7 +1886,7 @@ describe("HostRunner", () => {
         })
       ).toEqual({
         type: "content",
-        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+        value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
       });
     });
   });
