@@ -48,9 +48,10 @@ export interface EphemeralEvalSandboxNeed {
  * desktop box for a run that will use nothing is money for nothing, refused a
  * moment later by the control plane as `desktop_not_advertised`.
  *
- * `runId` absent is the SINGLE-CASE surface, which never provisions (both
- * provisioning sites require a run). Admission refuses a harness there rather
- * than letting it reach the personal-computer fallback with no box.
+ * `runId` absent is the SINGLE-CASE surface. It boots a box for ONE reason:
+ * a harness, keyed to the iteration (the control plane authorizes the
+ * iteration itself, since there is no run). A pinned image or a browser alone
+ * boots nothing there — admission refuses a host that needs one instead.
  */
 export function needsEphemeralEvalSandbox(args: {
   pinnedEnvironmentId?: string | undefined;
@@ -74,9 +75,17 @@ export function needsEphemeralEvalSandbox(args: {
    */
   hostedBrowserAvailable?: boolean;
   runId: unknown;
+  /** The iteration a single-case box is keyed to. Unread for a suite run. */
+  iterationId?: unknown;
 }): EphemeralEvalSandboxNeed {
   if (args.runId === null || args.runId === undefined) {
-    return { needed: false, runtimeKind: "terminal" };
+    return {
+      needed:
+        Boolean(args.harness) &&
+        args.iterationId !== null &&
+        args.iterationId !== undefined,
+      runtimeKind: "terminal",
+    };
   }
   const wantsBrowser =
     (args.builtInToolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID) &&

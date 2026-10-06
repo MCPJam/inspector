@@ -6603,6 +6603,7 @@ const runHostedIterationWithBrowser = async (
       // tool to — paid, idle, and for the whole iteration.
       hostedBrowserAvailable: hostedBrowserAdvertisable(),
       runId,
+      iterationId,
     });
     if (harnessExecutionTarget) {
       assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
@@ -6616,7 +6617,7 @@ const runHostedIterationWithBrowser = async (
       const unavailable = harnessBoxUnavailableReason(
         sandboxNeed.runtimeKind === "desktop-browser"
           ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration"
-          : pinnedEnvironmentId
+          : pinnedEnvironmentId && runId
             ? "This eval pins a reproducible computer environment"
             : "This eval runs on a harness, which boots a disposable computer per iteration",
       );
@@ -6629,18 +6630,25 @@ const runHostedIterationWithBrowser = async (
       // The shared box holder: it keeps the box's idle clock running while the
       // iteration's turns do, so a long harness turn cannot outlive its box.
       const acquired = await acquireHarnessBox({
-        surface: "eval",
+        // A single-case run has no suite run; its box is keyed to the
+        // iteration, which `needsEphemeralEvalSandbox` only books for a
+        // harness (so terminal).
+        surface: runId ? "eval" : "single-case",
         provision: async () => {
           const result = await provisionEvalSandbox({
             timeoutMs: capacityBudgetMs,
             bearer: convexAuthToken,
-            runId: String(runId),
-            ...(iterationId ? { iterationId: String(iterationId) } : {}),
-            // Absent for a terminal box, so every request that predates
-            // desktops is byte-identical on the wire.
-            ...(sandboxNeed.runtimeKind === "desktop-browser"
-              ? { runtimeKind: "desktop-browser" as const }
-              : {}),
+            ...(runId
+              ? {
+                  runId: String(runId),
+                  ...(iterationId ? { iterationId: String(iterationId) } : {}),
+                  // Absent for a terminal box, so every request that predates
+                  // desktops is byte-identical on the wire.
+                  ...(sandboxNeed.runtimeKind === "desktop-browser"
+                    ? { runtimeKind: "desktop-browser" as const }
+                    : {}),
+                }
+              : { iterationId: String(iterationId) }),
             ...(abortSignal ? { signal: abortSignal } : {}),
           });
           return result.ok
@@ -6767,6 +6775,9 @@ const runHostedIterationWithBrowser = async (
     // `sandboxBinding` does.
     if (
       sandboxBinding &&
+      // Attachments resolve through the RUN (`/evals/sandbox/attachments`); a
+      // single-case run has none to resolve them through.
+      runId &&
       evalBoxFilesystemIsReachable({
         runtimeKind: sandboxBinding.runtimeKind,
         harness: resolvedExecution.harness,
