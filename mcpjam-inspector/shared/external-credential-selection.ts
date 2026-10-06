@@ -146,10 +146,11 @@ export interface ExternalCredentialSelection {
  * `secrets` is the composer's own view (project-shared rows plus their own
  * personal ones; another member's personal key is invisible to them). Brokered
  * only: a materialized `CURSOR_API_KEY` cannot be delivered to a hosted box.
- * Project-shared wins over personal when both exist.
+ * Only the composer's own (personal) key is selected; a project-shared one is
+ * refused — see the comment where it is handled.
  *
  * `requireShared` is for a surface whose participants are not the composer —
- * User Testing — where a personal key would reach nobody but its owner.
+ * User Testing — which therefore cannot carry a personal key at all.
  */
 export function externalCredentialSecretSelection(
   hostConfig: { harness?: string | null },
@@ -179,17 +180,28 @@ export function externalCredentialSecretSelection(
   const usable = named.filter((secret) =>
     bindingDeliversCredential(secret, spec),
   );
-  const shared = usable.find((secret) => secret.sharing === "project");
-  if (shared) return { mode: "explicit", secretIds: [shared.secretId] };
+  // Only the composer's OWN key is ever selected. A project-shared key is
+  // never auto-selected: the harness's shell is unrestricted and the egress
+  // proxy rewrites the credential header on the vendor's host, so anyone who
+  // can run the harness can have it exchange the key for a reusable vendor
+  // token (Cursor: `/auth/exchange_user_api_key`) and read it back. A brokered
+  // key keeps the raw value out of the box, not the access it grants — so
+  // sharing it project-wide would hand every member that access.
   const personal = usable.find((secret) => secret.sharing === "user");
   if (personal) {
     if (options.requireShared) {
       return fail(
         "not_shared",
-        `The ${spec.label} (${spec.env}) is personal, so it would reach only you. People you share this with need a project-shared key — ask a project admin to share it.`,
+        `${spec.label} can't run in User Testing: it signs in with a personal account, and nobody else may use yours.`,
       );
     }
     return { mode: "explicit", secretIds: [personal.secretId] };
+  }
+  if (usable.some((secret) => secret.sharing === "project")) {
+    return fail(
+      "not_shared",
+      `${spec.env} is shared with the project, which Cursor doesn't use: the agent could read a reusable token back from it. Add your own ${spec.label} instead.`,
+    );
   }
   if (named.length > 0) {
     return fail(

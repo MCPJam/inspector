@@ -17,7 +17,7 @@ function secret(
     secretId: "s1",
     name: "CURSOR_API_KEY",
     delivery: "brokered",
-    sharing: "project",
+    sharing: "user",
     brokerHosts: [...BINDING.hosts],
     brokerHeader: BINDING.header,
     brokerTemplate: BINDING.template,
@@ -66,44 +66,41 @@ describe("externalCredentialSecretSelection", () => {
     ).toBeUndefined();
   });
 
-  it("selects the usable brokered key", () => {
-    expect(externalCredentialSecretSelection(cursor, [secret()])).toEqual({
-      mode: "explicit",
-      secretIds: ["s1"],
-    });
+  it("selects the composer's own brokered key", () => {
+    expect(
+      externalCredentialSecretSelection(cursor, [secret()]),
+    ).toEqual({ mode: "explicit", secretIds: ["s1"] });
   });
 
-  it("prefers the project-shared key over a personal one", () => {
+  it("never selects a project-shared key, even alongside a personal one", () => {
     expect(
       externalCredentialSecretSelection(cursor, [
         secret({ secretId: "mine", sharing: "user" }),
         secret({ secretId: "shared", sharing: "project" }),
       ]),
-    ).toEqual({ mode: "explicit", secretIds: ["shared"] });
-  });
-
-  it("falls back to a personal key for the composer's own runs", () => {
-    expect(
-      externalCredentialSecretSelection(cursor, [
-        secret({ secretId: "mine", sharing: "user" }),
-      ]),
     ).toEqual({ mode: "explicit", secretIds: ["mine"] });
   });
 
-  it("refuses a personal key where the people who run it are not the composer", () => {
+  it("refuses a project-shared key when it is the only one", () => {
     const error = missing(() =>
-      externalCredentialSecretSelection(cursor, [secret({ sharing: "user" })], {
-        requireShared: true,
-      }),
+      externalCredentialSecretSelection(cursor, [
+        secret({ sharing: "project" }),
+      ]),
     );
     expect(error.code).toBe("not_shared");
-    expect(error.message).toMatch(/project admin/);
-    // A shared key satisfies the same surface.
-    expect(
-      externalCredentialSecretSelection(cursor, [secret()], {
-        requireShared: true,
-      }),
-    ).toEqual({ mode: "explicit", secretIds: ["s1"] });
+    expect(error.message).toMatch(/shared with the project/);
+    expect(error.message).toMatch(/your own/);
+  });
+
+  it("cannot be carried by a surface whose participants are not the composer", () => {
+    for (const sharing of ["user", "project"] as const) {
+      const error = missing(() =>
+        externalCredentialSecretSelection(cursor, [secret({ sharing })], {
+          requireShared: true,
+        }),
+      );
+      expect(error.code).toBe("not_shared");
+    }
   });
 
   it("throws when there is no key, naming the secret to add", () => {

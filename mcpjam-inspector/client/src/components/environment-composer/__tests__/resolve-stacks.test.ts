@@ -1403,7 +1403,7 @@ describe("resolveComposerEnvironments — a client that signs in with its own ac
     secretId: "sec-1",
     name: "CURSOR_API_KEY",
     delivery: "brokered" as const,
-    sharing: "project" as const,
+    sharing: "user" as const,
     brokerHosts: ["api2.cursor.sh"],
     brokerHeader: "authorization",
     brokerTemplate: "Bearer {}",
@@ -1469,7 +1469,7 @@ describe("resolveComposerEnvironments — a client that signs in with its own ac
     ).rejects.toBeInstanceOf(ComposerResolveError);
   });
 
-  it("needs a project-shared key where the people running it are not the composer", async () => {
+  it("refuses where the people running it are not the composer, however the key is shared", async () => {
     const personal = [cursorKey({ sharing: "user" })];
     const args = {
       ...base,
