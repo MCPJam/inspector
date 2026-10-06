@@ -74,6 +74,9 @@ export async function acquirePlaygroundHarnessBox(args: {
 }): Promise<AcquireHarnessBoxResult<PlaygroundBoxRefusal>> {
   return acquireHarnessBox<PlaygroundBoxRefusal>({
     surface: "playground",
+    // The turn's signal: a stopped or abandoned turn stops beating, and the
+    // box idles out on its own clock (it is never torn down by the turn).
+    ...(args.signal ? { signal: args.signal } : {}),
     provision: async () => {
       let result: ControlPlaneResult<PlaygroundTerminalSandbox>;
       try {
