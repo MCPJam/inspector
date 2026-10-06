@@ -16,6 +16,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import worker from "../src/index.js";
 import { GUEST_ISSUER } from "../src/auth.js";
 import { EXCLUDED_FROM_CATALOG } from "../src/tools/platformTools.js";
+import { SKILLS_BUNDLE_CONTENTS } from "../src/generated/SkillsBundle.generated.js";
 
 const ORIGIN = "https://mcp.test";
 const CLIENT_ID = "client_test_0123456789";
@@ -399,6 +400,18 @@ describe("held beta tools", () => {
       .map(([name]) => name)
       .sort();
     expect(held).toEqual([...HELD_TOOLS].sort());
+  });
+
+  it("are not named by any skill this worker serves", () => {
+    // A served skill that teaches a held tool sends the model after a tool
+    // that tools/list never offered.
+    const named = Object.entries(SKILLS_BUNDLE_CONTENTS).flatMap(
+      ([uri, text]) =>
+        HELD_TOOLS.filter((name) => new RegExp(`\\b${name}\\b`).test(text)).map(
+          (name) => `${uri}: ${name}`
+        )
+    );
+    expect(named).toEqual([]);
   });
 });
 
