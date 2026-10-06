@@ -13,6 +13,16 @@ name: Prepare release
 # Soundcheck's "Start release" dispatches this. Dispatching again while the PR
 # is open regenerates it from the latest `main`, which also versions any
 # changesets merged since, and resets its checkboxes to these inputs.
+#
+# It also brings the local-harness runtime packs up to date, so nobody
+# publishes a pack by hand and `main` never sits unreleasable behind one.
+# `packs` runs `local-harness-pack-pipeline.yml` per harness: a harness whose
+# pack inputs did not move is "up to date" in a minute; one whose inputs moved
+# is built, signed, published (or found byte-identical and recorded as an
+# equivalence) and conformance-tested, which takes a while. Each hands back a
+# pin, and the version PR carries every pin next to the versions, so its one
+# review covers both. If any harness's pipeline fails, no version PR opens;
+# dispatching again resumes it from wherever it stopped.
 
 on:
   workflow_dispatch:
@@ -37,6 +47,8 @@ permissions:
   contents: read
   # `@changesets/changelog-github` looks up each changeset's PR and author.
   pull-requests: read
+  # The local harness gate verifies pinned packs' build provenance.
+  attestations: read
 
 concurrency:
   group: prepare-release
@@ -46,7 +58,50 @@ env:
   NODE_VERSION: "24.14.0"
 
 jobs:
+  harnesses:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "prepare-release.yml must run from main" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Harnesses with a pack recipe
+        id: list
+        run: |
+          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
+          import { listPackHarnessIds } from "./mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs";
+          console.log(`list=${JSON.stringify(listPackHarnessIds())}`);
+          JS
+
+  # One pipeline per harness, side by side. The permissions are the ones its
+  # jobs ask for: publishing (contents), signing provenance (id-token,
+  # attestations) and the failure issue (issues).
+  packs:
+    name: ${{ matrix.harness }} pack
+    needs: harnesses
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJSON(needs.harnesses.outputs.list) }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      issues: write
+    uses: ./.github/workflows/local-harness-pack-pipeline.yml
+    with:
+      harness: ${{ matrix.harness }}
+    secrets: inherit
+
   version-pr:
+    needs: packs
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -102,14 +157,31 @@ jobs:
       - name: Refresh root lockfile
         run: npm install --package-lock-only --legacy-peer-deps
 
+      # Every harness's pin from `packs` (a new pack, an equivalence record,
+      # or "up to date"), written onto this branch so the version PR carries
+      # it. Before the consistency gate below, which then checks exactly what
+      # this PR pins.
+      - name: Collect the local runtime pins
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: local-harness-pin-*
+          path: ${{ runner.temp }}/pins
+
+      - name: Pin the local runtime packs
+        run: |
+          node mcpjam-inspector/scripts/local-harness-publication.mjs apply-pins \
+            --dir "$RUNNER_TEMP/pins" --summary "$RUNNER_TEMP/packs.md"
+
       # release.yml runs this same gate in its preflight. Running it here too
       # means an inconsistency stops the release before its versions are on
       # `main`, rather than after, when fixing it takes another PR.
       - name: Local harness release consistency
         working-directory: mcpjam-inspector
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if jq -e '.releases[] | select(.name == "@mcpjam/inspector" and .type != "none")' "$RUNNER_TEMP/status.json" >/dev/null; then
-            node scripts/check-local-harness-release.mjs --assets --version "$(jq -r .version package.json)"
+            node scripts/check-local-harness-release.mjs --assets --verify-attestations --version "$(jq -r .version package.json)"
           fi
 
       - name: Open or refresh the version PR
@@ -125,6 +197,7 @@ jobs:
           branch="$(jq -r .branch <<<"$pr")"
           title="$(jq -r .title <<<"$pr")"
           body="$(jq -r .body <<<"$pr")"
+          body="$body"$'\n\n'"$(cat "$RUNNER_TEMP/packs.md")"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -133,11 +206,33 @@ jobs:
           # `git diff`). `changeset version` also writes a CHANGELOG.md for
           # every bumped package that lacks one, and only sdk's is kept.
           git add -u
+          # A new equivalence record is an untracked file `-u` would miss.
+          git add mcpjam-inspector/scripts/local-harness-pack-equivalence
           git status --short
           git commit -m "$title"
-          git push --force origin "HEAD:refs/heads/$branch"
 
           existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+          # This PR now pins the packs users download, and the rulesets keep
+          # approvals across pushes. An approval covers the bytes it saw: when
+          # a regenerated PR's tree differs, dismiss them BEFORE the push, so
+          # no moment exists where new pins sit under an old approval.
+          if [ -n "$existing" ]; then
+            previous_tree=""
+            if git fetch --quiet origin "refs/heads/$branch" 2>/dev/null; then
+              previous_tree="$(git rev-parse 'FETCH_HEAD^{tree}')"
+            fi
+            if [ "$previous_tree" != "$(git rev-parse 'HEAD^{tree}')" ]; then
+              # Assigned first: a failed listing must stop the push (fail
+              # closed), and `for x in $(…)` would swallow that failure.
+              approvals="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$existing/reviews" --paginate --jq '.[] | select(.state == "APPROVED") | .id')"
+              for review in $approvals; do
+                gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$existing/reviews/$review/dismissals" \
+                  -f message="Regenerated: the version PR's contents changed, so it needs a fresh review." -f event=DISMISS >/dev/null
+              done
+            fi
+          fi
+          git push --force origin "HEAD:refs/heads/$branch"
+
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "$title" --body "$body"
             url="$(gh pr view "$existing" --json url --jq .url)"

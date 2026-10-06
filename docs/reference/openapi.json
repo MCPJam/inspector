@@ -9748,10 +9748,10 @@
         "operationId": "cancelGoalRun",
         "tags": ["Swarm runs"],
         "summary": "Cancel a journey run",
-        "description": "Stops a run and settles its in-flight attempts. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
+        "description": "Accepts a durable Stop request and returns immediately. cleanupPending indicates that attempts are being settled in the background; status remains the current stored run status. IDEMPOTENT: cancelling an already-cancelled run answers 200 with `alreadyCanceled: true` and `finalized: 0`, not a 409.\n\nAddressed entirely by the path `runId` — there is no body.\n\nDeliberately NOT behind the beta gate: cancelling REDUCES exposure and spend, so an organization that loses the flag can still stop a run that is under way.",
         "responses": {
           "200": {
-            "description": "The run was cancelled (or already was).",
+            "description": "Stop accepted (or already requested); cleanup may still be pending.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28098,6 +28098,14 @@
           "createdAt"
         ],
         "properties": {
+          "cancelRequested": {
+            "type": "boolean",
+            "description": "A durable Stop request exists, including while status is still running. Optional for older servers."
+          },
+          "cleanupPending": {
+            "type": "boolean",
+            "description": "Cancellation cleanup is pending. Absent means false."
+          },
           "id": {
             "type": "string"
           },
@@ -28508,12 +28516,16 @@
           "finalized"
         ],
         "properties": {
+          "cleanupPending": {
+            "type": "boolean",
+            "description": "Stop accepted; background cleanup is pending. Absent means false on older servers."
+          },
           "id": {
             "type": "string"
           },
           "status": {
             "type": "string",
-            "description": "The run's terminal status after the cancel settled it."
+            "description": "Current run status; may still be running while cleanup is pending."
           },
           "canceled": {
             "type": "boolean",

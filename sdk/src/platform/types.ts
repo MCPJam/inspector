@@ -4144,6 +4144,10 @@ export interface PlatformGoalRun {
    * — so check this before showing a run as a failure.
    */
   canceled: boolean;
+  /** A durable Stop request exists, including while status is still running. */
+  cancelRequested?: boolean;
+  /** Background cancellation cleanup is pending. Absent means false. */
+  cleanupPending?: boolean;
   /** True when the runner went silent and the watchdog settled the run. */
   stale: boolean;
   /** Raw marker behind `canceled` / `stale`, when present. */
@@ -4253,11 +4257,13 @@ export interface PlatformGoalRunLaunched {
 
 export interface PlatformGoalRunCanceled {
   id: string;
-  /** The run's terminal status after the cancel settled it. */
+  /** Current status; may still be running while cancellation cleanup is pending. */
   status: PlatformGoalRun["status"];
   canceled: true;
   /** True when the run was ALREADY canceled and this call did nothing. */
   alreadyCanceled: boolean;
+  /** Stop accepted; cleanup continues in the background. Absent means false on older servers. */
+  cleanupPending?: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }
@@ -4332,6 +4338,10 @@ export interface PlatformJourneyRun {
    * — so check this before showing a run as a failure.
    */
   canceled: boolean;
+  /** A durable Stop request exists, including while status is still running. */
+  cancelRequested?: boolean;
+  /** Background cancellation cleanup is pending. Absent means false. */
+  cleanupPending?: boolean;
   /** True when the runner went silent and the watchdog settled the run. */
   stale: boolean;
   /** Raw marker behind `canceled` / `stale`, when present. */
@@ -4501,11 +4511,13 @@ export interface PlatformJourneyRunLaunched {
 /** @deprecated Use {@link PlatformGoalRunCanceled}. */
 export interface PlatformJourneyRunCanceled {
   id: string;
-  /** The run's terminal status after the cancel settled it. */
+  /** Current status; may still be running while cancellation cleanup is pending. */
   status: PlatformJourneyRun["status"];
   canceled: true;
   /** True when the run was ALREADY canceled and this call did nothing. */
   alreadyCanceled: boolean;
+  /** Stop accepted; cleanup continues in the background. Absent means false on older servers. */
+  cleanupPending?: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }

@@ -9,11 +9,12 @@
  * compiled into the server bundle, so a packaged Electron app reads it the same
  * way npx does (no build-time define, unlike the Claude adapter's version).
  *
- * What ENFORCES it at run time is not a string comparison but the runtime pack:
- * the provider byte-compares every bootstrap file (bridge, MCP entrypoint,
- * manifest, lockfile) the adapter writes against the verified pack's copy, and
- * refuses the session on any difference. A bridge edit therefore needs a Codex
- * pack bump before local sessions can run it.
+ * What ENFORCES it at run time is not a string comparison but the Inspector
+ * layer: the bridge and its MCP entrypoint a local session runs are the ones
+ * compiled into THIS Inspector (`local/inspector-layer.ts`), written to a
+ * content-addressed directory and re-hashed before every exec, and their
+ * digest is part of the launch identity. A bridge edit is therefore an
+ * ordinary Inspector change; the Codex pack carries only the CLI.
  */
 import { createHash } from "node:crypto";
 import {
@@ -25,7 +26,8 @@ import { PINNED_CODEX_VERSION } from "./bridge/app-server-protocol.js";
 /** `app-server/<bundle hash>+@openai/codex@<version>`. */
 export const CODEX_LOCAL_ADAPTER_IDENTITY = `app-server/${CODEX_APPSERVER_BUNDLE_VERSION}+@openai/codex@${PINNED_CODEX_VERSION}`;
 
-/** sha256 of the bundled `bridge.mjs`, as a pack manifest's `bridgeDigest`. */
+/** sha256 of the HOSTED bundled `bridge.mjs` (informational; local sessions
+ *  run the Inspector layer's variant, pinned by the layer digest). */
 export const CODEX_BRIDGE_BUNDLE_DIGEST = `sha256:${createHash("sha256")
   .update(CODEX_APPSERVER_BRIDGE_SOURCE, "utf8")
   .digest("hex")}`;
