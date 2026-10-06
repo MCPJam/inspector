@@ -1020,18 +1020,6 @@ describe("shouldSkipExecution", () => {
     }
   });
 
-  it("executes a fresh start even when its server failed the preflight", () => {
-    // Nothing else will drive a run this call created, so skipping it would
-    // leave it `running` forever.
-    expect(
-      shouldSkipExecution({
-        deduped: false,
-        status: "running",
-        serverUnreachable: true,
-      })
-    ).toBe(false);
-  });
-
   it("executes a fresh start, whatever its status says", () => {
     expect(shouldSkipExecution({ deduped: false, status: "running" })).toBe(
       false

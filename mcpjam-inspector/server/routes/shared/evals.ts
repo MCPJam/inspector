@@ -2684,7 +2684,7 @@ export async function prepareEvalRun(
   // A benchmark cell still launches: an unreachable target is evidence the
   // benchmark scores as a failed child run, where a refusal here would leave
   // the cell unattached and read as a coverage gap.
-  let serverUnreachable = false;
+  let preflightRefusal: unknown;
   if (provenance.source !== "benchmark") {
     try {
       throwIfEvalToolSnapshotFailed({
@@ -2710,7 +2710,7 @@ export async function prepareEvalRun(
       ) {
         throw refusal;
       }
-      serverUnreachable = true;
+      preflightRefusal = refusal;
     }
   }
 
@@ -2829,11 +2829,26 @@ export async function prepareEvalRun(
       ? { ciMetadata: launchContext.ciMetadata }
       : {}),
   });
-  // A run handed back through a failed preflight belongs to an earlier attempt
-  // and is never executed from here (`shouldSkipExecution`). Every gate below
-  // finalizes the run as failed when it refuses, which would fail a run that
-  // attempt may still be driving, so none of them runs.
-  if (serverUnreachable && runWasDeduped === true) {
+  // The preflight was waived only because the key already had a run to hand
+  // back. A run handed back belongs to an earlier attempt and is never
+  // executed from here (`shouldSkipExecution`). Every gate below finalizes the
+  // run as failed when it refuses, which would fail a run that attempt may
+  // still be driving, so none of them runs.
+  //
+  // When the start created a run instead (the lookup and the mutation
+  // disagreed, e.g. the earlier run was deleted in between), nothing was
+  // handed back: close the new run before it executes against the server
+  // that failed, and keep the refusal.
+  if (preflightRefusal !== undefined) {
+    if (runWasDeduped !== true) {
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason:
+          preflightRefusal instanceof Error
+            ? preflightRefusal.message
+            : String(preflightRefusal),
+      });
+      throw preflightRefusal;
+    }
     return {
       suiteId: resolvedSuiteId,
       runId,
@@ -2844,7 +2859,7 @@ export async function prepareEvalRun(
       recorder,
       deduped: true,
       status: existingRunStatus,
-      serverUnreachable,
+      serverUnreachable: true,
       execute: async () => {
         throw new Error(
           `eval run ${runId} was handed back without execution: its server failed the preflight`,

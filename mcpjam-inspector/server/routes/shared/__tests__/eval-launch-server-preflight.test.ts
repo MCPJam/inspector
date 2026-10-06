@@ -108,14 +108,22 @@ describe("eval launch server preflight", () => {
       );
     };
 
-    it("whose run already exists reaches the dedupe instead of a refusal", async () => {
-      answerLookup(async () => ({ runId: "run-1" }));
-
-      // The mocked mutation returns no run, so preparation fails after the
-      // start call; what matters is that the start call is made.
-      await launch(disconnected(), { idempotencyKey: "trigger-1" }).catch(
-        () => undefined,
+    // Nothing answers the setup queries, so any setup gate that ran would
+    // refuse and finalize the run as failed.
+    const answerStart = (deduped: boolean) =>
+      mocks.mutation.mockImplementation(async (name: string) =>
+        name === "testSuites:startTestSuiteRun"
+          ? { runId: "run-1", testCases: [], deduped, status: "running" }
+          : null,
       );
+
+    it("is handed its in-flight run without executing or failing it", async () => {
+      answerLookup(async () => ({ runId: "run-1" }));
+      answerStart(true);
+
+      const prepared = await launch(disconnected(), {
+        idempotencyKey: "trigger-1",
+      });
 
       expect(mocks.query).toHaveBeenCalledWith(
         "testSuites:findSuiteRunByIdempotencyKey",
@@ -128,22 +136,6 @@ describe("eval launch server preflight", () => {
           idempotencyKey: "trigger-1",
         }),
       );
-    });
-
-    it("is handed its in-flight run without executing or failing it", async () => {
-      answerLookup(async () => ({ runId: "run-1" }));
-      // Nothing answers the setup queries, so any setup gate that ran would
-      // refuse and finalize the run as failed.
-      mocks.mutation.mockImplementation(async (name: string) =>
-        name === "testSuites:startTestSuiteRun"
-          ? { runId: "run-1", testCases: [], deduped: true, status: "running" }
-          : null,
-      );
-
-      const prepared = await launch(disconnected(), {
-        idempotencyKey: "trigger-1",
-      });
-
       expect(prepared).toMatchObject({
         runId: "run-1",
         deduped: true,
@@ -156,13 +148,24 @@ describe("eval launch server preflight", () => {
       ]);
     });
 
+    it("closes a run the start created instead and keeps the refusal", async () => {
+      // The lookup found a run but the start did not dedupe into it, e.g.
+      // because that run was deleted in between.
+      answerLookup(async () => ({ runId: "run-0" }));
+      answerStart(false);
+
+      await expect(
+        launch(disconnected(), { idempotencyKey: "trigger-1" }),
+      ).rejects.toMatchObject({ status: 409, code: "SERVER_UNREACHABLE" });
+      expect(mocks.mutation).toHaveBeenCalledWith(
+        "testSuites:markSetupPendingIterationsFailed",
+        expect.objectContaining({ runId: "run-1" }),
+      );
+    });
+
     it("is not executed by the inline runner either", async () => {
       answerLookup(async () => ({ runId: "run-1" }));
-      mocks.mutation.mockImplementation(async (name: string) =>
-        name === "testSuites:startTestSuiteRun"
-          ? { runId: "run-1", testCases: [], deduped: true, status: "running" }
-          : null,
-      );
+      answerStart(true);
 
       await expect(
         runEvalsWithManager(
