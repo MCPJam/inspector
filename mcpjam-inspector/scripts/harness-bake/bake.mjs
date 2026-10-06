@@ -262,6 +262,56 @@ function verifyVendor(recipe, dir) {
     );
     return;
   }
+  if (vendor.kind === "cursor-cli") {
+    // The installer checksums the ARCHIVE before it extracts anything (and the
+    // archive is gone by now), so what is left to prove is that the installer
+    // that ran is the one the inspector resolved — it carries this platform's
+    // recorded digest — and that what it left behind is the pinned build:
+    // the `agent` the adapter will exec resolves into that build's directory
+    // and reports its version.
+    const expected = vendor.platforms?.[platformKey];
+    if (!expected?.archiveSha256) {
+      fail(`no Cursor CLI checksum is recorded for ${platformKey}`);
+    }
+    const installer = readFileSync(
+      join(dir, "implementation", "install.sh"),
+      "utf8",
+    );
+    if (
+      !installer.includes(expected.archiveSha256) ||
+      !installer.includes(vendor.version)
+    ) {
+      fail(
+        `${recipe.dir}: implementation/install.sh is not the pinned installer ` +
+          `for Cursor CLI ${vendor.version} (${platformKey})`,
+      );
+    }
+    const home = join(dir, "implementation", "home");
+    const agent = join(home, ".local", "bin", "agent");
+    const installed = realpathSync(agent);
+    const buildDir = join(
+      home,
+      ".local",
+      "share",
+      "cursor-agent",
+      "versions",
+      vendor.version,
+    );
+    if (!installed.startsWith(`${realpathSync(buildDir)}${sep}`)) {
+      fail(
+        `the Cursor agent resolves to ${installed}, not into the pinned build ${buildDir}`,
+      );
+    }
+    const version = execFileSync(agent, ["--version"], {
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    }).trim();
+    if (version !== vendor.version) {
+      fail(`the Cursor CLI reports "${version}", not ${vendor.version}`);
+    }
+    log(`${recipe.dir}: vendor CLI ${version} verified (${platformKey})`);
+    return;
+  }
   fail(`unknown vendor verification "${vendor.kind}" for ${recipe.dir}`);
 }
 

@@ -16,6 +16,12 @@
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
       "identity": "5ab70959ac9c0fc7",
       "runtimeVersion": "0.149.1"
+    },
+    {
+      "harnessId": "cursor",
+      "bootstrapDir": ".harness-bootstrap/cursor",
+      "identity": "1e02a0aee92902b9",
+      "runtimeVersion": "2026.10.01-e373342"
     }
   ]
 }

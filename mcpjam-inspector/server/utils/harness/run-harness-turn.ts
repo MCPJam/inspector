@@ -1660,6 +1660,11 @@ export async function runHarnessTurn(
                   ? { environmentUnresolvedReason }
                   : {}),
                 boxKind: harnessSandboxBinding ? "sandbox" : "computer",
+                // A box answers for itself: the member-only readers are the
+                // fallback for a persistent computer (and an older backend).
+                ...(harnessSandboxBinding
+                  ? { sandboxRowId: harnessSandboxBinding.sandboxRowId }
+                  : {}),
                 required: Object.fromEntries(
                   unresolved.map((name) => [name, brokerBinding[name]!]),
                 ),

@@ -25,6 +25,15 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
+import {
+  useCreateProjectSecret,
+  useProjectSecrets,
+} from "@/hooks/useProjectSecrets";
+import {
+  externalAccountCredentialFor,
+  externalCredentialSecretSelection,
+  ExternalCredentialMissingError,
+} from "@/shared/external-credential-selection";
 import { useProjectServers } from "@/hooks/useViews";
 import {
   PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
@@ -153,6 +162,28 @@ export function CreateHostDialog({
     localSetupAvailable[selectedLocalHarnessCandidate]
       ? selectedLocalHarnessCandidate
       : null;
+  // A client whose harness authenticates on the customer's own account (Cursor)
+  // cannot run without its key. When the project has no usable one, the dialog
+  // takes it here, so creating the client is the whole setup.
+  const externalCredential = externalAccountCredentialFor(
+    selectedTemplateInput?.harness,
+  );
+  const projectSecrets = useProjectSecrets(projectId || null);
+  const createProjectSecret = useCreateProjectSecret();
+  const [externalKey, setExternalKey] = useState("");
+  const needsExternalKey = useMemo(() => {
+    if (!externalCredential || !selectedTemplateInput) return false;
+    if (projectSecrets === undefined) return false;
+    try {
+      externalCredentialSecretSelection(
+        { harness: selectedTemplateInput.harness },
+        projectSecrets,
+      );
+      return false;
+    } catch (error) {
+      return error instanceof ExternalCredentialMissingError;
+    }
+  }, [externalCredential, projectSecrets, selectedTemplateInput]);
   const selectedTemplateLabel =
     (catalogState.status === "live"
       ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
@@ -215,6 +246,21 @@ export function CreateHostDialog({
       // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
+      if (needsExternalKey && externalCredential && externalKey.trim()) {
+        // Personal and brokered: the value reaches the egress proxy, never a
+        // box. A project admin can share it from Secrets for other people.
+        await createProjectSecret({
+          projectId,
+          name: externalCredential.env,
+          value: externalKey.trim(),
+          delivery: "brokered",
+          brokerHosts: [...externalCredential.binding.hosts],
+          brokerHeader: externalCredential.binding.header,
+          brokerTemplate: externalCredential.binding.template,
+          sharing: "user",
+        });
+        setExternalKey("");
+      }
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -332,6 +378,26 @@ export function CreateHostDialog({
             />
           </div>
         </div>
+        {needsExternalKey && externalCredential && (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="external-credential-key">
+              {externalCredential.label}
+            </Label>
+            <Input
+              id="external-credential-key"
+              type="password"
+              autoComplete="off"
+              placeholder="Paste your key"
+              value={externalKey}
+              onChange={(e) => setExternalKey(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Stored as a personal secret and delivered to runs by the egress
+              proxy, so it never enters a computer. To let teammates and
+              testers run this client, a project admin shares it from Secrets.
+            </p>
+          </div>
+        )}
         {!HOSTED_MODE && selectedLocalHarness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
         {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
         <DialogFooter>

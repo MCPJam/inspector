@@ -118,6 +118,15 @@ vi.mock("../../computers/convex-secrets-client.js", () => ({
   convexMarkSecretsDelivered: vi.fn(async () => ({ marked: 0 })),
 }));
 
+// A box binding makes the turn ask the box's own scope; these cases exercise
+// the member readers, which is what a backend without the route answers.
+vi.mock("../../computers/control-plane-client.js", () => ({
+  getBoxCredentialAvailability: vi.fn(async () => ({
+    ok: false,
+    status: 404,
+  })),
+}));
+
 vi.mock("../resolve-sandbox.js", () => ({
   resolveHarnessSandbox: vi.fn(async () => ({
     computerId: "computer-1",

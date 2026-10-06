@@ -61,6 +61,7 @@
  * `null` is the same answer the turn gave before brokering existed, so a
  * degraded read is a non-regression rather than a new failure.
  */
+import { getBoxCredentialAvailability } from "../computers/control-plane-client.js";
 import {
   convexGetEnvironmentSecretSelection,
   convexListProjectSecretBindings,
@@ -169,6 +170,51 @@ function bindingDelivers(
 }
 
 /**
+ * Ask the box's own scope. `null` ⇒ could not establish (refused like an
+ * absence); `undefined` ⇒ the backend predates the route.
+ */
+async function fetchFromBox(args: {
+  bearer: string;
+  sandboxRowId: string;
+  required: Readonly<Record<string, HarnessExternalAccountBrokerBinding>>;
+}): Promise<BrokeredCredentialAvailability | null | undefined> {
+  let answer;
+  try {
+    answer = await getBoxCredentialAvailability(args);
+  } catch (error) {
+    logger.warn(
+      "[external-account-credentials] box credential lookup failed; " +
+        "treating the credential as unestablished",
+      { error: error instanceof Error ? error.message : String(error) },
+    );
+    return null;
+  }
+  if (!answer.ok) {
+    if (answer.status === 404) return undefined;
+    logger.warn(
+      "[external-account-credentials] box credential lookup refused; " +
+        "treating the credential as unestablished",
+      { status: answer.status },
+    );
+    return null;
+  }
+  const available = new Set<string>();
+  const misboundHosts: Record<string, string[]> = {};
+  const unselected = new Set<string>();
+  for (const [name, state] of Object.entries(answer.value.credentials ?? {})) {
+    if (state.status === "available") available.add(name);
+    else if (state.status === "misbound") misboundHosts[name] = state.hosts;
+    else if (state.status === "unselected") unselected.add(name);
+  }
+  return {
+    available,
+    misboundHosts,
+    unselected,
+    environmentMissing: answer.value.environmentMissing === true,
+  };
+}
+
+/**
  * The brokered credentials this box will actually be carrying, by name.
  *
  * `null` means "could not establish", NOT "none" — see the file header.
@@ -231,6 +277,14 @@ export type BrokeredCredentialAvailability = {
 
 export async function fetchBrokeredCredentialNames(args: {
   bearer?: string;
+  /**
+   * The ephemeral box the turn runs on. When present the question is put to the
+   * BOX's own scope (`getBoxCredentialAvailability`), which answers for anyone
+   * the box's scope admits — including a non-member participant, whom the
+   * member-only readers below always refuse. A backend that predates the route
+   * falls back to those readers. Absent (a persistent computer) ⇒ the readers.
+   */
+  sandboxRowId?: string;
   projectId?: string;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY. Absent ⇒
@@ -269,6 +323,15 @@ export async function fetchBrokeredCredentialNames(args: {
   // Not a failure: this box provably carries no brokered transform, so "none"
   // is the correct answer rather than an unknown.
   if (args.boxKind !== "sandbox") return empty;
+  if (args.sandboxRowId && args.bearer) {
+    const fromBox = await fetchFromBox({
+      bearer: args.bearer,
+      sandboxRowId: args.sandboxRowId,
+      required: args.required,
+    });
+    // `undefined` ⇒ this backend has no such route: use the member readers.
+    if (fromBox !== undefined) return fromBox;
+  }
   if (!args.bearer || !args.projectId) return null;
   let rows: ProjectSecretBinding[];
   try {
@@ -386,8 +449,7 @@ export function planExternalAccountCredentials(args: {
   secretEnv: Readonly<Record<string, string>> | undefined;
   /** The adapter's brokered binding declaration, if it has one. */
   brokerBinding:
-    | Readonly<Record<string, HarnessExternalAccountBrokerBinding>>
-    | undefined;
+    Readonly<Record<string, HarnessExternalAccountBrokerBinding>> | undefined;
   /** Names the box is carrying by brokered egress. `null` = could not tell,
    *  which is refused exactly like an absence. */
   brokeredAvailable: ReadonlySet<string> | null;
@@ -464,8 +526,7 @@ function externalAccountCredentialRefusal(args: {
   harnessDisplayName: string;
   unsatisfied: readonly UnsatisfiedName[];
   brokerBinding:
-    | Readonly<Record<string, HarnessExternalAccountBrokerBinding>>
-    | undefined;
+    Readonly<Record<string, HarnessExternalAccountBrokerBinding>> | undefined;
 }): string {
   const misbound = args.unsatisfied.filter(
     (entry): entry is Extract<UnsatisfiedName, { reason: "misbound" }> =>
