@@ -36,7 +36,7 @@
  * resolution and exec fails closed, it is never healed under a running session.
  */
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { logger } from "../../logger.js";
 import {
@@ -86,11 +86,24 @@ const exists = (path: string) =>
     () => false,
   );
 
-/** Make a read-only tree removable again, then remove it. Best effort. */
+/**
+ * Make a read-only tree removable again, then remove it. Best effort.
+ *
+ * Never changes a mode THROUGH a link: `chmod` follows symlinks, so a link
+ * planted at the root or among its entries would point the permission change
+ * at a file outside the layer. A link is removed as a link.
+ */
 export async function removeReadOnlyTree(path: string): Promise<void> {
+  const top = await lstat(path).catch(() => null);
+  if (top === null) return;
+  if (!top.isDirectory()) {
+    await rm(path, { force: true }).catch(() => {});
+    return;
+  }
   await chmod(path, 0o700).catch(() => {});
-  for (const name of await readdir(path).catch(() => [] as string[])) {
-    await chmod(join(path, name), 0o600).catch(() => {});
+  for (const entry of await readdir(path, { withFileTypes: true }).catch(() => [])) {
+    if (entry.isSymbolicLink()) continue;
+    await chmod(join(path, entry.name), entry.isDirectory() ? 0o700 : 0o600).catch(() => {});
   }
   await rm(path, { recursive: true, force: true }).catch(() => {});
 }

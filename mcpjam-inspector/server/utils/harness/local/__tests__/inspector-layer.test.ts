@@ -7,7 +7,7 @@
  * when ensured and REFUSED before an exec, and the bridge it carries imports
  * nothing but Node builtins.
  */
-import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import {
   inspectorLayerDigest,
   inspectorLayerFiles,
   inspectorLayerRecipeFiles,
+  removeReadOnlyTree,
   verifyInspectorLayer,
 } from "../inspector-layer.js";
 import { computeTreeDigest, digestFileSet } from "../tree-digest.js";
@@ -160,6 +161,39 @@ describe("ensureInspectorLayer", () => {
     expect((await readdir(inspectorLayerBase(root))).sort()).toEqual(
       [codex.layer.digest.slice(7), claude.layer.digest.slice(7)].sort(),
     );
+  });
+});
+
+describe.skipIf(process.platform === "win32")("removeReadOnlyTree never reaches through a link", () => {
+  it("removes a planted entry link without changing what it points at", async () => {
+    const outside = join(root, "outside.txt");
+    await writeFile(outside, "not the layer's\n");
+    await chmod(outside, 0o644);
+    const retired = join(root, "retired");
+    await mkdir(retired);
+    await writeFile(join(retired, "launcher.mjs"), "x");
+    await symlink(outside, join(retired, "bridge.mjs"));
+    await chmod(join(retired, "launcher.mjs"), 0o444);
+    await chmod(retired, 0o555);
+
+    await removeReadOnlyTree(retired);
+    await expect(stat(retired)).rejects.toThrow();
+    expect((await stat(outside)).mode & 0o777).toBe(0o644);
+    expect(await readFile(outside, "utf8")).toBe("not the layer's\n");
+  });
+
+  it("removes a root that is itself a link as a link, leaving its target alone", async () => {
+    const target = join(root, "elsewhere");
+    await mkdir(target);
+    await writeFile(join(target, "keep.txt"), "keep\n");
+    await chmod(target, 0o755);
+    const link = join(root, "retired-link");
+    await symlink(target, link);
+
+    await removeReadOnlyTree(link);
+    await expect(stat(link)).rejects.toThrow();
+    expect((await stat(target)).mode & 0o777).toBe(0o755);
+    expect(await readFile(join(target, "keep.txt"), "utf8")).toBe("keep\n");
   });
 });
 

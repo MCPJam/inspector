@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
@@ -12,6 +13,11 @@ import {
   stageRecipe as installClaudeCodePackRecipe,
   vendorSdkVersion,
 } from "../../../../../scripts/local-harness-pack-recipes/claude-code.mjs";
+
+/** The committed manifest the recipe installs the Claude Code vendor graph from. */
+const VENDOR_MANIFEST = fileURLToPath(
+  new URL("../../../../../scripts/local-harness-pack-recipes/claude-code-vendor/package.json", import.meta.url),
+);
 
 const directories: string[] = [];
 async function scratch(): Promise<string> {
@@ -49,13 +55,16 @@ describe("the Claude Code pack is vendor bytes only", () => {
       // Exactly the vendor graph's manifest and lockfile — no bridge, no
       // adapter recipe, no build-script permissions.
       expect((await readdir(root)).sort()).toEqual(["package.json", "pnpm-lock.yaml"]);
+      // The committed vendor graph, exactly: the agent SDK and its declared
+      // peers. (Compared with the file rather than spelled out here: the MCP
+      // SDK peer's name is one the runtime-imports guard refuses in server code.)
       const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-      expect(Object.keys(pkg.dependencies).sort()).toEqual([
-        "@anthropic-ai/claude-agent-sdk",
-        "@anthropic-ai/sdk",
-        "@modelcontextprotocol/sdk",
-        "zod",
-      ]);
+      const vendor = JSON.parse(await readFile(VENDOR_MANIFEST, "utf8"));
+      expect(pkg.dependencies).toEqual(vendor.dependencies);
+      const names = Object.keys(pkg.dependencies);
+      expect(names).toHaveLength(4);
+      expect(names).toEqual(expect.arrayContaining(["@anthropic-ai/claude-agent-sdk", "@anthropic-ai/sdk", "zod"]));
+      for (const bridgeOnly of ["ws", "@ai-sdk/harness-claude-code", "esbuild"]) expect(names).not.toContain(bridgeOnly);
       installed = true;
     });
     expect(installed).toBe(true);
