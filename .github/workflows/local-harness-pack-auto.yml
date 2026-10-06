@@ -28,6 +28,8 @@ on:
       - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
       - "mcpjam-inspector/scripts/local-harness-pack-recipes/**"
       - "mcpjam-inspector/server/utils/harness/local/tree-digest.ts"
+      # Codex's vendor graph: its recipe installs from this manifest + lockfile.
+      - "mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/**"
       - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
       - "package-lock.json"
   workflow_dispatch:

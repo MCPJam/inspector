@@ -1,8 +1,40 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { computePackInputs } from "../../../../../scripts/check-local-harness-inputs.mjs";
 
 const workflow = (name: string) => parse(readFileSync(new URL(`../../../../../../.github/workflows/${name}.yml`, import.meta.url), "utf8"));
+
+/** GitHub `paths` filter semantics: `**` crosses `/`, `*` does not. */
+const globToRegExp = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .split("**")
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"))
+      .join(".*")}$`,
+  );
+
+describe("automatic pack publication", () => {
+  it("runs on a push that changes ANY declared pack input", async () => {
+    // Lint only reports a moved fingerprint, so a merge that moves one and
+    // does not start this workflow leaves the next release blocked on a pack
+    // nobody published. Codex's bootstrap lockfile was such a miss.
+    const paths: string[] = workflow("local-harness-pack-auto").on.push.paths;
+    const filters = paths.map(globToRegExp);
+    const { harnesses } = await computePackInputs();
+    const declared = new Set<string>(["package-lock.json"]); // pack-dependency-closure
+    for (const { inputs } of Object.values(harnesses)) {
+      for (const key of Object.keys(inputs)) {
+        // `recipe/*` are bytes emitted FROM declared sources, listed as well.
+        if (key === "pack-dependency-closure" || key.startsWith("recipe/")) continue;
+        declared.add(key);
+      }
+    }
+    const missed = [...declared].filter((path) => !filters.some((filter) => filter.test(path)));
+    expect(missed).toEqual([]);
+  });
+});
 
 describe("pack release boundaries", () => {
   const runsAssetCheck = (name: string) =>
@@ -55,7 +87,27 @@ describe("pack release boundaries", () => {
     expect(jobs.sign.environment).toBe("local-harness-pack-release");
     expect(JSON.stringify(jobs.sign)).toContain("secrets.PROTECTED_LOCAL_HARNESS_PACK_SIGNING_KEY");
     expect(jobs.publish.needs).toContain("sign");
-    expect(jobs.publish.steps.find((step: any) => step.uses?.startsWith("actions/download-artifact")).with.name).toBe("signed-local-harness-pack");
+    expect(jobs.publish.steps.find((step: any) => step.uses?.startsWith("actions/download-artifact")).with.name).toBe(
+      "signed-local-harness-pack-${{ inputs.harness }}-${{ inputs.pack_version }}",
+    );
+  });
+
+  it("keeps every pack artifact to its own harness and version", () => {
+    // Artifact names are run-wide, and the auto workflow builds every harness
+    // in one run: an unscoped name collides (409) and an unscoped pattern
+    // hands one harness's sign job the other's manifests.
+    const { jobs } = workflow("local-harness-pack");
+    const scope = "${{ inputs.harness }}";
+    const version = "${{ inputs.pack_version }}";
+    const artifactSteps = Object.values(jobs)
+      .flatMap((job: any) => job.steps ?? [])
+      .filter((step: any) => /^actions\/(upload|download)-artifact@/.test(step.uses ?? ""));
+    expect(artifactSteps.length).toBeGreaterThanOrEqual(5);
+    for (const step of artifactSteps) {
+      const key = step.with.name ?? step.with.pattern;
+      expect(key, JSON.stringify(step.with)).toContain(scope);
+      expect(key, JSON.stringify(step.with)).toContain(version);
+    }
   });
 
   it("ships a runtime contract proven by THIS commit's layer against every selected pack", () => {
