@@ -355,11 +355,7 @@ function withGroup(
 
 function renderTab(swarmId?: string) {
   return render(
-    <SwarmsTab
-      projectId="proj-1"
-      isAuthenticated
-      swarmId={swarmId ?? null}
-    />
+    <SwarmsTab projectId="proj-1" isAuthenticated swarmId={swarmId ?? null} />,
   );
 }
 
@@ -1149,6 +1145,61 @@ describe("Swarm run state and navigation", () => {
       ],
     };
   }
+
+  it("restores a pending Stop request after refresh", async () => {
+    const current = runningOverview();
+    overviewData = {
+      ...current,
+      runs: current.runs.map((run) => ({
+        ...run,
+        cancelRequested: true,
+        cleanupPending: true,
+      })),
+    };
+    renderTab("run-2b");
+    expect(
+      (await screen.findByTestId("swarm-run-detail-state-label")).textContent,
+    ).toBe("Stop requested");
+    expect(
+      screen.getByTestId("swarm-run-detail-stop").hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("restores Stopped after settlement without a local Stop click", async () => {
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) => ({
+        ...run,
+        status: "failed",
+        cancelRequested: true,
+        cleanupPending: false,
+      })),
+    };
+    renderTab("run-2b");
+    expect(
+      (await screen.findByTestId("swarm-run-detail-state-label")).textContent,
+    ).toBe("Stopped");
+  });
+
+  it("reports Stop acceptance while background cleanup is pending", async () => {
+    overviewData = runningOverview();
+    mutationResult = (name) =>
+      name === "journeyRuns:cancelJourneyRun"
+        ? {
+            canceled: true,
+            cleanupPending: true,
+            status: "running",
+            finalized: 0,
+          }
+        : {};
+    renderTab("run-2b");
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Stop requested"),
+    );
+  });
 
   it("states the outcome when the viewer returns to a finished run", async () => {
     renderTab("run-2b");

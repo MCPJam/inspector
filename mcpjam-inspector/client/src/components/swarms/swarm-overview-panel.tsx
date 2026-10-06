@@ -127,18 +127,24 @@ export function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null 
  * while three others are still fanning out is running, and calling it failed
  * sends the viewer away from a run that is still producing results.
  *
- * A deliberately STOPPED run is not distinguishable here: the marker that
- * separates it from a failure lives on `journeyRuns.error`, which
- * `getSwarmOverview` does not project. The run page substitutes `stopped` from
- * its own local evidence when the viewer is the one who stopped it.
+ * Durable cancellation fields distinguish a Stop request from execution
+ * failures and survive refresh. Pending cleanup takes precedence; after it
+ * settles, any remaining live sibling keeps the wave running.
  */
-export type SwarmWaveRunState = "running" | "complete" | "issues";
+export type SwarmWaveRunState =
+  | "running"
+  | "complete"
+  | "issues"
+  | "stopping"
+  | "stopped";
 
 export function waveRunState(
   runs: readonly SwarmOverviewRun[]
 ): SwarmWaveRunState {
+  if (runs.some((run) => run.cleanupPending)) return "stopping";
   const statuses = new Set(runs.map((r) => r.status));
   if (statuses.has("running") || statuses.has("pending")) return "running";
+  if (runs.some((run) => run.cancelRequested)) return "stopped";
   // `failed`/`stale` and `partial`/`rate_limited` are ONE bucket on purpose.
   // The split never survived contact with a viewer: a `stale` run is only one
   // the sweeper gave up on, and `partial`/`rate_limited` runs produced sessions
@@ -167,6 +173,8 @@ export function swarmWaveRunStateChipClass(state: SwarmWaveRunState): string {
   switch (state) {
     case "running":
       return "bg-primary/15 text-primary";
+    case "stopping":
+    case "stopped":
     case "issues":
       return "bg-muted text-muted-foreground";
     case "complete":
@@ -179,6 +187,10 @@ export function swarmWaveRunStateLabel(state: SwarmWaveRunState): string {
   switch (state) {
     case "running":
       return "Running";
+    case "stopping":
+      return "Stop requested";
+    case "stopped":
+      return "Stopped";
     case "issues":
       return "Completed with issues";
     case "complete":

@@ -742,6 +742,43 @@ describe("NewSwarmRunningStep — session stream pane", () => {
    * that looked equal and went to the same place. BB-161: the finish is
    * announced and then walks the viewer to Findings on its own.
    */
+  it.each([true, false])(
+    "restores cancellation in the wizard (cleanupPending=%s)",
+    async (cleanupPending) => {
+      runQueryState.run = {
+        ...runFixture,
+        status: cleanupPending ? "running" : "failed",
+        cancelRequested: true,
+        cleanupPending,
+      };
+      render(
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Writer",
+              personaRole: "Writer",
+              label: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />,
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("new-swarm-running-title").textContent,
+        ).toContain(cleanupPending ? "Stop requested" : "Swarm stopped"),
+      );
+      expect(toast.success).not.toHaveBeenCalledWith("Swarm complete!");
+    },
+  );
+
   it("announces a finished wave and goes to Findings by itself", async () => {
     runFixture.status = "completed";
     runFixture.summary = { total: 2, succeeded: 2, failed: 0, rateLimited: 0 };

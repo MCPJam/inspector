@@ -923,6 +923,37 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
 });
 
 describe("swarm single-host runner — heartbeat", () => {
+  it("keeps only one heartbeat in flight when a poll is slow", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHeartbeat!: (status: string) => void;
+      heartbeatJourneyRunMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveHeartbeat = resolve;
+          }),
+      );
+      runSyntheticHostSessionMock.mockImplementation(
+        async (adapter: any) =>
+          new Promise((resolve) => {
+            adapter.abortSignal.addEventListener("abort", () =>
+              resolve({ outcome: "failed" }),
+            );
+          }),
+      );
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
+      resolveHeartbeat("failed");
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+      expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not execute a claim that resolves after the backend ends the run", async () => {
     vi.useFakeTimers();
     try {
@@ -935,7 +966,7 @@ describe("swarm single-host runner — heartbeat", () => {
       );
       heartbeatJourneyRunMock.mockResolvedValue("failed");
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(reportAttemptMock).toHaveBeenCalledTimes(1);
       resolveClaim({ ok: true, applied: true });
       await done;
@@ -967,7 +998,7 @@ describe("swarm single-host runner — heartbeat", () => {
         });
       });
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       resolveSession({ outcome: "succeeded" });
       await done;
       resolveHeartbeat("completed");
@@ -997,7 +1028,7 @@ describe("swarm single-host runner — heartbeat", () => {
           return { outcome: "failed", errorMessage: "aborted" };
         });
         const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
-        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(5_000);
         await done;
 
         expect(signal?.aborted).toBe(true);
@@ -1016,7 +1047,7 @@ describe("swarm single-host runner — heartbeat", () => {
     },
   );
 
-  it("fires the heartbeat on an independent 30s schedule (not gated on turn completion) and stops it on finally", async () => {
+  it("fires the heartbeat on an independent 5s schedule (not gated on turn completion) and stops it on finally", async () => {
     vi.useFakeTimers();
     try {
       let resolveRun!: () => void;
@@ -1031,9 +1062,9 @@ describe("swarm single-host runner — heartbeat", () => {
 
       // Session is still running (its core promise is pending) — the heartbeat
       // must still fire purely on the interval.
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(2);
 
       // Finish the session; the runner's finally clears the interval.
@@ -1693,5 +1724,19 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("swarm durable cancellation response", () => {
+  it("aborts the run on a refused canceled claim without executing or claiming another session", async () => {
+    reportAttemptMock.mockResolvedValueOnce({
+      ok: true,
+      applied: false,
+      canceled: true,
+    });
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+    expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 });

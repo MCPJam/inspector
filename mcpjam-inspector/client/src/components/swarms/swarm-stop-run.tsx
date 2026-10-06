@@ -106,11 +106,16 @@ export function useStopSwarmRun(runningRunIds: readonly string[]) {
         toast.info("Run had already finished");
         return "settled";
       }
+      const cleanupPending = results.some(
+        (r) => r.status === "fulfilled" && r.value?.cleanupPending === true,
+      );
       setStoppedHere(true);
       toast.success(
         refused.length === 0
-          ? "Run stopped"
-          : `Run stopped: ${refused.length} ${
+          ? cleanupPending
+            ? "Stop requested"
+            : "Run stopped"
+          : `${cleanupPending ? "Stop requested" : "Run stopped"}: ${refused.length} ${
               refused.length === 1 ? "goal" : "goals"
             } could not be stopped`,
       );
