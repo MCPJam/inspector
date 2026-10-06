@@ -26,14 +26,22 @@ const HOSTED_REDIRECT_HOSTNAMES = new Set([
   "score.mcpjam.com",
   "www.score.mcpjam.com",
 ]);
-const RAILWAY_INSPECTOR_PREVIEW_HOSTNAME =
-  /^mcp-inspector-pr-\d+\.up\.railway\.app$/i;
+const INSPECTOR_PREVIEW_HOSTNAME_PATTERNS = [
+  /^pr-(?:be-)?\d+\.mcpjam\.dev$/i,
+  /^mcp-inspector-pr-(?:be-)?\d+\.up\.railway\.app$/i,
+];
+
+function isInspectorPreviewHostname(hostname: string): boolean {
+  return INSPECTOR_PREVIEW_HOSTNAME_PATTERNS.some((pattern) =>
+    pattern.test(hostname)
+  );
+}
 
 /** Ephemeral preview callbacks cannot be listed in the public CIMD document. */
 export function supportsMcpJamCimdRedirect(
   locationLike: Pick<Location, "hostname">
 ): boolean {
-  return !RAILWAY_INSPECTOR_PREVIEW_HOSTNAME.test(locationLike.hostname);
+  return !isInspectorPreviewHostname(locationLike.hostname);
 }
 
 /**
@@ -62,7 +70,7 @@ export function resolveBrowserOAuthRedirectOrigin(
   if (
     HOSTED_REDIRECT_HOSTNAMES.has(locationLike.hostname) ||
     locationLike.hostname.endsWith(".app.mcpjam.com") ||
-    RAILWAY_INSPECTOR_PREVIEW_HOSTNAME.test(locationLike.hostname)
+    isInspectorPreviewHostname(locationLike.hostname)
   ) {
     return locationLike.origin;
   }

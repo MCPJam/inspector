@@ -35,12 +35,18 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
     ).toBe("https://staging.mcpjam.com");
   });
 
-  it("keeps the callback on a numbered Inspector Railway preview only", () => {
-    expect(
-      resolveBrowserOAuthRedirectOrigin(
-        new URL("https://mcp-inspector-pr-5479.up.railway.app/home")
-      )
-    ).toBe("https://mcp-inspector-pr-5479.up.railway.app");
+  it.each([
+    "https://pr-5479.mcpjam.dev/home",
+    "https://pr-be-1693.mcpjam.dev/home",
+    "https://mcp-inspector-pr-5479.up.railway.app/home",
+    "https://mcp-inspector-pr-be-1693.up.railway.app/home",
+  ])("keeps the callback on supported Inspector preview %s", (url) => {
+    expect(resolveBrowserOAuthRedirectOrigin(new URL(url))).toBe(
+      new URL(url).origin
+    );
+  });
+
+  it("does not treat an unrelated Railway app as an Inspector preview", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
         new URL("https://unrelated-app.up.railway.app/home")
@@ -78,12 +84,16 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
 });
 
 describe("supportsMcpJamCimdRedirect", () => {
-  it("requires DCR on ephemeral Railway previews, but permits stable origins", () => {
-    expect(
-      supportsMcpJamCimdRedirect({
-        hostname: "mcp-inspector-pr-5479.up.railway.app",
-      })
-    ).toBe(false);
+  it.each([
+    "pr-5479.mcpjam.dev",
+    "pr-be-1693.mcpjam.dev",
+    "mcp-inspector-pr-5479.up.railway.app",
+    "mcp-inspector-pr-be-1693.up.railway.app",
+  ])("requires DCR on ephemeral preview %s", (hostname) => {
+    expect(supportsMcpJamCimdRedirect({ hostname })).toBe(false);
+  });
+
+  it("permits CIMD on stable origins", () => {
     expect(supportsMcpJamCimdRedirect({ hostname: "app.mcpjam.com" })).toBe(
       true
     );

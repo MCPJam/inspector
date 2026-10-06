@@ -896,6 +896,7 @@ function buildAutomaticAuthorizationDecisionReason(
 function annotateTraceWithAuthorizationPlan(input: {
   trace: OAuthTrace;
   authorizationPlan?: ResolvedAuthorizationPlan;
+  automaticRegistrationOverrideReason?: string;
   requestedRegistrationMode: OAuthRegistrationMode;
   requestedProtocolMode: OAuthProtocolMode;
   protocolResolutionSource?: OAuthProtocolResolutionSource;
@@ -971,7 +972,9 @@ function annotateTraceWithAuthorizationPlan(input: {
   const selectedStrategyLabel = formatAuthorizationStrategyLabel(
     authorizationPlan.registrationStrategy
   );
-  const reason = buildAutomaticAuthorizationDecisionReason(authorizationPlan);
+  const reason =
+    input.automaticRegistrationOverrideReason ??
+    buildAutomaticAuthorizationDecisionReason(authorizationPlan);
   const supportedStrategies =
     authorizationPlan.capabilities.registrationStrategies.length > 0
       ? authorizationPlan.capabilities.registrationStrategies.map(
@@ -996,9 +999,12 @@ function annotateTraceWithAuthorizationPlan(input: {
       : {}),
     ...(reason ? { Reason: reason } : {}),
     ...(authorizationPlan.registrationStrategy === "dcr" &&
-    !authorizationPlan.capabilities.supportsCimd
+    (!authorizationPlan.capabilities.supportsCimd ||
+      input.automaticRegistrationOverrideReason)
       ? {
-          "CIMD Support": "Not advertised by authorization server",
+          "CIMD Support": input.automaticRegistrationOverrideReason
+            ? "Unavailable for this preview callback"
+            : "Not advertised by authorization server",
         }
       : {}),
   };
@@ -2658,6 +2664,7 @@ export async function initiateOAuth(
   const getState = () => state;
   const requestedProtocolMode = resolveOAuthProtocolMode(options);
   const requestedRegistrationMode = resolveOAuthRegistrationMode(options);
+  let automaticRegistrationOverrideReason: string | undefined;
   let traceAuthorizationPlan: ResolvedAuthorizationPlan | undefined;
   const emitTraceSnapshot = (snapshot: OAuthTraceSnapshot) =>
     publishOAuthTraceUpdate(
@@ -2670,6 +2677,7 @@ export async function initiateOAuth(
           snapshot,
         }),
         authorizationPlan: traceAuthorizationPlan,
+        automaticRegistrationOverrideReason,
         requestedRegistrationMode,
         requestedProtocolMode,
         protocolResolutionSource: options.protocolResolutionSource,
@@ -2687,6 +2695,7 @@ export async function initiateOAuth(
           state: nextState,
         }),
         authorizationPlan: traceAuthorizationPlan,
+        automaticRegistrationOverrideReason,
         requestedRegistrationMode,
         requestedProtocolMode,
         protocolResolutionSource: options.protocolResolutionSource,
@@ -2733,6 +2742,8 @@ export async function initiateOAuth(
             "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
         };
       }
+      automaticRegistrationOverrideReason =
+        "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.";
       authorizationPlan = await resolveOAuthExecutionPlan(provider, fetchFn, {
         ...options,
         registrationMode: "dcr",

@@ -1465,6 +1465,54 @@ describe("mcp-oauth", () => {
       });
     });
 
+    it("forces DCR on preview callbacks and records the override in the trace", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createCimdDiscoveryState());
+      const constants = await import("../constants");
+      vi.spyOn(constants, "supportsMcpJamCimdRedirect").mockReturnValue(false);
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+        registrationMode: "auto",
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockRunOAuthStateMachine).toHaveBeenCalledWith(
+        expect.objectContaining({ registrationStrategy: "dcr" })
+      );
+      expect(findAutomaticDecisionStep(result)).toMatchObject({
+        message:
+          "Automatic resolved to DCR for this run. CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.",
+        details: expect.objectContaining({
+          "Automatic Decision": "DCR",
+          Reason:
+            "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.",
+          "CIMD Support": "Unavailable for this preview callback",
+        }),
+      });
+    });
+
+    it("rejects explicitly selected CIMD on preview callbacks", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createCimdDiscoveryState());
+      const constants = await import("../constants");
+      vi.spyOn(constants, "supportsMcpJamCimdRedirect").mockReturnValue(false);
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+        registrationMode: "cimd",
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error:
+          "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
+      });
+      expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
+    });
+
     it("returns safe defaults when stored OAuth config is missing or malformed", async () => {
       const { readStoredOAuthConfig } = await import("../mcp-oauth");
 
