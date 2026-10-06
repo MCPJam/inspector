@@ -1,12 +1,15 @@
 /**
  * A resumed hosted turn respawns its bridge and resumes the conversation from
- * disk; it never hands the adapter the last turn's bridge to reattach to.
+ * disk; it never hands the adapter the last turn's bridge to reattach to. A
+ * reattach whose bridge is gone — reaped as idle by another chat's spawn, or
+ * stopped with its computer — is retried by the adapter for its whole 120s
+ * startup timeout before it falls back: the two-minute stall this pins shut.
  *
- * Every bridge on a computer binds the same port. A reattach whose bridge is
- * gone, or was evicted by another session's fresh bridge, is retried by the
- * adapter for its whole 120s startup timeout before it falls back — the
- * two-minute stall this pins shut. The module mocks are the ones
- * `run-harness-turn-provenance.test.ts` drives a turn with.
+ * The one exception is an approval decision: the paused turn lives in its
+ * bridge (which the reaper never stops), so the continuation reattaches.
+ *
+ * The module mocks are the ones `run-harness-turn-provenance.test.ts` drives
+ * a turn with.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -15,6 +18,7 @@ const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
   finalText: "",
   claimedState: null as unknown,
+  approvalContinuations: [] as unknown[],
   createSession: vi.fn(async (_opts?: unknown) => ({
     sessionId: "harness-session-0",
     stop: vi.fn(async () => ({})),
@@ -34,9 +38,12 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       })(),
       text: Promise.resolve(harnessState.finalText),
     }));
+    continueStream = this.stream;
   },
-  // WS3: no trailing tool-approval-response parts in these prompts.
-  collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
+  // WS3: the user's approval decision, when a test sends one.
+  collectHarnessAgentToolApprovalContinuations: vi.fn(
+    () => harnessState.approvalContinuations,
+  ),
 }));
 
 vi.mock("../registry.js", () => ({
@@ -169,6 +176,7 @@ describe("runHarnessTurn hosted resume", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     harnessState.claimedState = null;
+    harnessState.approvalContinuations = [];
   });
 
   it("resumes the session from disk instead of reattaching to the last bridge", async () => {
@@ -194,6 +202,35 @@ describe("runHarnessTurn hosted resume", () => {
         specificationVersion: "harness-v1",
         data: { claudeSessionId: "claude-1" },
       },
+    });
+  });
+
+  it("A pauses, B runs, A decides: the decision reattaches to A's bridge", async () => {
+    // B's turn on the same computer reaped only bridges between turns; A's,
+    // paused on the approval, is still there and still holds the turn.
+    const paused = {
+      type: "continue-turn",
+      harnessId: "claude-code",
+      specificationVersion: "harness-v1",
+      data: { claudeSessionId: "claude-1", bridge: BRIDGE },
+      pendingToolApprovals: [{ approvalId: "approval-1" }],
+    };
+    harnessState.claimedState = {
+      harnessSessionId: "harness-session-0",
+      computerId: "computer-1",
+      awaitingApproval: true,
+      resumeState: paused,
+    };
+    harnessState.approvalContinuations = [
+      { approvalId: "approval-1", approved: true },
+    ];
+
+    const result = await runHarnessTurn(options() as any, "ui");
+    await result.response!.text();
+
+    expect(harnessState.createSession).toHaveBeenCalledWith({
+      sessionId: "harness-session-0",
+      continueFrom: paused,
     });
   });
 });

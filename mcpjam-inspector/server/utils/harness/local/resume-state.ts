@@ -3,13 +3,12 @@
  * the bridge the last turn left behind.
  *
  * Locally, teardown proves that bridge stopped. On a hosted computer it may
- * still be running, but nothing proves it is THIS session's: every bridge on a
- * computer binds the same port, so once another session's fresh bridge evicts
- * it (`bridge-port-eviction.ts`) the port answers with a different token. The
- * adapter retries a reattach that cannot succeed until its 120s startup
- * timeout, swallows the failure and only then respawns — a two-minute stall
- * on a turn that ends exactly where respawning first would have. A respawn
- * costs about a second.
+ * still be running, or another chat's bridge spawn may have reaped it as idle
+ * (`bridge-reaper.ts`) — and its port may since have been bound by someone
+ * else. The adapter retries a reattach that cannot succeed until its 120s
+ * startup timeout, swallows the failure and only then respawns — a two-minute
+ * stall on a turn that ends exactly where respawning first would have. A
+ * respawn costs about a second.
  */
 export function diskResumeState<T>(state: T): T {
   if (!state || typeof state !== "object") return state;

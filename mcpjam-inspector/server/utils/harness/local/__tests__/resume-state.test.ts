@@ -47,8 +47,8 @@ describe("sessionResumeStateFrom", () => {
 
 describe("diskResumeState", () => {
   it("drops a hosted session's bridge, so the turn respawns rather than reattaching", () => {
-    // Every bridge on a computer binds the same port; a reattach to it can
-    // reach another session's bridge and stall two minutes before respawning.
+    // That bridge may have been reaped as idle by another chat's spawn; a
+    // reattach to it stalls two minutes before respawning.
     expect(
       diskResumeState({
         type: "resume-session",
