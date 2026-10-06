@@ -1782,7 +1782,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         token
       );
 
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
       const body = (await response.json()) as { error?: { message?: string } };
       expect(JSON.stringify(body)).toContain("chooses its own model");
       // The id its owner has to fix, named in the refusal.
@@ -1816,7 +1816,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         token
       );
 
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
       expect(JSON.stringify(await response.json())).toContain(
         "anthropic/claude-sonnet-4.5"
       );

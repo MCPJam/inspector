@@ -1128,8 +1128,9 @@ chatV2.post("/", async (c) => {
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+            code: "FEATURE_NOT_SUPPORTED",
           },
-          503,
+          422,
         );
       }
     }
@@ -1609,8 +1610,9 @@ chatV2.post("/", async (c) => {
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+            code: "FEATURE_NOT_SUPPORTED",
           },
-          503,
+          422,
         );
       }
     }

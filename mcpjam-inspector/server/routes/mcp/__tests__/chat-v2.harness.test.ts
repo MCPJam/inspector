@@ -577,7 +577,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
   });
 
-  it("503s a non-catalog model on a brokered harness host (model-not-hosted)", async () => {
+  it("422s a non-catalog model on a brokered harness host (model-not-hosted)", async () => {
     // The routing half of the same story: an org-BYOK model that is not in the
     // hosted catalog cannot run the real runtime, local or otherwise, and the
     // preflight says so rather than the turn failing later.
@@ -610,7 +610,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       }),
     });
 
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(422);
     expect((await response.json()).error).toMatch(/MCPJam-provided models/);
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
@@ -715,7 +715,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
         reason: "the Claude Code harness can't apply a reasoning effort yet",
       });
       const response = await post({ reasoningEffort: "high" });
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
       expect((await response.json()).error).toMatch(/can't apply a reasoning effort/);
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });

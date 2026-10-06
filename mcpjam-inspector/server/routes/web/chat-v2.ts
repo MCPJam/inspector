@@ -1050,9 +1050,11 @@ chatV2.post("/", async (c) => {
         modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
       });
       if (hostModelRefusal) {
+        // 422, not 503: the request is well-formed and retrying it changes
+        // nothing. This client's harness cannot run this turn.
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
         );
       }
@@ -1221,9 +1223,11 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422, not 503: the request is well-formed and retrying it changes
+        // nothing. This client's harness cannot run this turn.
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
         );
       }
