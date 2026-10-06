@@ -82,6 +82,30 @@ describe("WidgetReplay", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it.each([
+    { type: "error-text", value: "INSTANCE_BINDING_UNAVAILABLE" },
+    { type: "error-json", value: { error: "denied" } },
+    { isError: true, content: [{ type: "text", text: "denied" }] },
+  ])("never mounts a guest for failed tool output %j", (output) => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    render(<WidgetReplay {...baseProps} toolOutput={output} />);
+    expect(screen.queryByTestId("mcp-apps-renderer")).not.toBeInTheDocument();
+  });
+
+  it("preserves immutable call attribution ahead of duplicate tool-name lookup", () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    const gate = vi.fn(() => true);
+    render(
+      <WidgetReplay
+        {...baseProps}
+        serverId="original-imported-server"
+        resolveHostSupportsWidget={gate}
+      />,
+    );
+    expect(gate).toHaveBeenCalledWith("original-imported-server");
+    expect(gate).not.toHaveBeenCalledWith("server-1");
+  });
+
   // The caps-blob → boolean integration (`hostSupportsWidgetRendering` over the
   // active host's resolved `clientCapabilities`) now lives in the injecting
   // caller (PartSwitch) and is covered by PartSwitch.test.tsx. WidgetReplay only
@@ -90,7 +114,7 @@ describe("WidgetReplay", () => {
     it("renders when resolveHostSupportsWidget returns true", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       render(
-        <WidgetReplay {...baseProps} resolveHostSupportsWidget={() => true} />
+        <WidgetReplay {...baseProps} resolveHostSupportsWidget={() => true} />,
       );
       expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
     });
@@ -98,7 +122,7 @@ describe("WidgetReplay", () => {
     it("renders nothing when resolveHostSupportsWidget returns false (e.g. Codex strips the UI extension)", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       const { container } = render(
-        <WidgetReplay {...baseProps} resolveHostSupportsWidget={() => false} />
+        <WidgetReplay {...baseProps} resolveHostSupportsWidget={() => false} />,
       );
       expect(container.firstChild).toBeNull();
     });
@@ -110,7 +134,7 @@ describe("WidgetReplay", () => {
         <WidgetReplay
           {...baseProps}
           resolveHostSupportsWidget={resolveHostSupportsWidget}
-        />
+        />,
       );
       expect(resolveHostSupportsWidget).toHaveBeenCalledWith("server-1");
     });
