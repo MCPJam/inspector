@@ -16,10 +16,16 @@ import {
  */
 import { logger } from "../../utils/logger.js";
 import {
-  isComputersDataPlaneConfigured,
   provisionJourneySandbox,
   releaseSandbox,
 } from "../../utils/computers/control-plane-client.js";
+import {
+  acquireHarnessBox,
+  canProvisionHarnessBoxes,
+  type HarnessBoxBinding,
+  type ProvisionedHarnessBox,
+  type ProvisionHarnessBoxResult,
+} from "../../utils/harness/harness-box.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import type { TrustedSandboxBinding } from "../../utils/built-in-tools/registry.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
@@ -213,7 +219,16 @@ export function sandboxIntentFor(
 export interface ProvisionedAttemptSandbox {
   binding: TrustedSandboxBinding;
   sandboxRowId: string;
+  /** The same box as the harness attaches to it. */
+  harnessBinding: HarnessBoxBinding;
+  /**
+   * Stop the turn heartbeat and release the box. Idempotent and never throws;
+   * the attempt's `finally` calls it on every exit.
+   */
+  release(): Promise<void>;
 }
+
+type AttemptSandboxRefusal = Extract<ProvisionAttemptResult, { ok: false }>;
 
 export type ProvisionAttemptResult =
   | { ok: true; sandbox: ProvisionedAttemptSandbox }
@@ -234,7 +249,37 @@ const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
  * terminal: the answer will not change by asking again, and burning two minutes
  * to re-learn it delays the attempt's honest failure.
  */
-export async function provisionAttemptSandbox(args: {
+export async function provisionAttemptSandbox(
+  args: AttemptSandboxArgs,
+): Promise<ProvisionAttemptResult> {
+  // The shared box holder: from here until `release()`, the attempt's box is
+  // heartbeated like every other harness box.
+  const acquired = await acquireHarnessBox<AttemptSandboxRefusal>({
+    surface: "swarm",
+    provision: () => provisionAttemptBox(args),
+    release: releaseAttemptSandbox,
+  });
+  if (!acquired.ok) return acquired.refusal;
+  const { binding, release } = acquired.box;
+  return {
+    ok: true,
+    sandbox: {
+      sandboxRowId: binding.sandboxRowId,
+      binding: {
+        sandboxId: binding.sandboxId,
+        // The CONTROL-PLANE row, which a browser session is recorded against
+        // and every teardown keys on. `bash` never needed it.
+        sandboxRowId: binding.sandboxRowId,
+        runtimeKind: binding.runtimeKind,
+        ...(binding.workdir ? { workdir: binding.workdir } : {}),
+      },
+      harnessBinding: binding,
+      release,
+    },
+  };
+}
+
+interface AttemptSandboxArgs {
   bearer: string;
   runId: string;
   targetId: string;
@@ -242,13 +287,19 @@ export async function provisionAttemptSandbox(args: {
   /** Absent ⇒ terminal, byte-identical to every request that predates it. */
   runtimeKind?: "terminal" | "desktop-browser";
   signal?: AbortSignal;
-}): Promise<ProvisionAttemptResult> {
+}
+
+async function provisionAttemptBox(
+  args: AttemptSandboxArgs,
+): Promise<ProvisionHarnessBoxResult<AttemptSandboxRefusal>> {
   let last: { code: string; message: string } = {
     code: "provision_failed",
     message: "Could not provision a sandbox for this session.",
   };
   const outcome = await withCapacityRetry<
-    ProvisionAttemptResult & { status: number }
+    ({ ok: true; box: ProvisionedHarnessBox } | AttemptSandboxRefusal) & {
+      status: number;
+    }
   >(
     async (_attempt, signal) => {
       const result = await provisionJourneySandbox({
@@ -298,18 +349,11 @@ export async function provisionAttemptSandbox(args: {
         return {
           status: 200,
           ok: true,
-          sandbox: {
+          box: {
             sandboxRowId: result.value.sandboxRowId,
-            binding: {
-              sandboxId: result.value.sandboxId,
-              // The CONTROL-PLANE row, which a browser session is recorded
-              // against and every teardown keys on. `bash` never needed it.
-              sandboxRowId: result.value.sandboxRowId,
-              runtimeKind: bootedKind,
-              ...(result.value.workdir
-                ? { workdir: result.value.workdir }
-                : {}),
-            },
+            sandboxId: result.value.sandboxId,
+            runtimeKind: bootedKind,
+            ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
           },
         };
       }
@@ -349,17 +393,22 @@ export async function provisionAttemptSandbox(args: {
   );
   if (outcome.kind === "settled") {
     const { status: _status, ...result } = outcome.result;
-    return result;
+    return result.ok
+      ? { ok: true, box: result.box }
+      : { ok: false, refusal: result };
   }
   if (outcome.reason === "aborted") {
     return {
       ok: false,
-      retryable: false,
-      code: "aborted",
-      message: "Run was cancelled while provisioning a sandbox.",
+      refusal: {
+        ok: false,
+        retryable: false,
+        code: "aborted",
+        message: "Run was cancelled while provisioning a sandbox.",
+      },
     };
   }
-  return { ok: false, retryable: true, ...last };
+  return { ok: false, refusal: { ok: false, retryable: true, ...last } };
 }
 
 /**
@@ -400,5 +449,5 @@ export async function releaseAttemptSandbox(
  * the same check `evals-runner.ts` makes before its own sandbox path.
  */
 export function canProvisionSwarmSandboxes(): boolean {
-  return isComputersDataPlaneConfigured();
+  return canProvisionHarnessBoxes();
 }

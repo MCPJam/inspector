@@ -52,7 +52,6 @@ import { collectHostedRecordingBeforeRelease } from "../browserd/hosted-recordin
 import {
   canProvisionSwarmSandboxes,
   provisionAttemptSandbox,
-  releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
   targetWantsBrowser,
@@ -1406,12 +1405,7 @@ async function runJourneyFanOut(
               // `runHarnessTurn` does not use the tool resolver at all. Only
               // for a harness target: the emulated engine has no use for it.
               ...(target.harness && attemptSandbox
-                ? {
-                    harnessSandboxBinding: {
-                      sandboxRowId: attemptSandbox.sandboxRowId,
-                      ...attemptSandbox.binding,
-                    },
-                  }
+                ? { harnessSandboxBinding: attemptSandbox.harnessBinding }
                 : {}),
               // F4: refuse the harness turn rather than let it reserve the
               // launcher's shared personal computer.
@@ -1773,7 +1767,8 @@ async function runJourneyFanOut(
                 error: err instanceof Error ? err.message : String(err),
               });
             }
-            await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
+            // Stops the turn heartbeat, then releases the box.
+            await attemptSandbox.release();
           }
         }
         } finally { releaseLocalSlot?.(); }

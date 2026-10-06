@@ -290,6 +290,9 @@ export interface EvalSandbox {
   runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
+  /** Where the box's harness and shell start. Absent from an older control
+   * plane; the harness then falls back to the box home. */
+  workdir?: string;
 }
 
 /**
@@ -820,6 +823,41 @@ export async function releaseSandbox(args: {
       error: result.error,
     });
   }
+}
+
+/**
+ * What a turn heartbeat learned from one touch.
+ *   - `touched` — the box is live and its idle clock restarted.
+ *   - `gone`    — the box is released, reaping, or not this one (404/409), or
+ *     the control plane predates the route (also a 404). Stop beating.
+ *   - `failed`  — anything else (network, 5xx, no credential). Keep beating:
+ *     one missed touch costs nothing while the next lands inside the TTL.
+ */
+export type TouchSandboxOutcome = "touched" | "gone" | "failed";
+
+/**
+ * Restart an ephemeral box's idle clock (service-token auth). The reaper judges
+ * eval, scenario and playground boxes idle by the row's `lastUsedAt` alone, so
+ * a harness turn that runs longer than the scope's TTL without touching the row
+ * can lose its box mid-turn. Bound to the box: the control plane checks the
+ * vendor id against the row, so a stale binding never revives another box.
+ */
+export async function touchSandbox(args: {
+  sandboxRowId: string;
+  sandboxId: string;
+  signal?: AbortSignal;
+}): Promise<TouchSandboxOutcome> {
+  const headers = authHeaders();
+  if (!headers) return "failed";
+  const result = await postJson(
+    "/computers/sandbox/touch",
+    headers,
+    { sandboxRowId: args.sandboxRowId, sandboxId: args.sandboxId },
+    args.signal,
+  );
+  if (result.ok) return "touched";
+  if (result.status === 404 || result.status === 409) return "gone";
+  return "failed";
 }
 
 /** @deprecated Renamed {@link releaseSandbox} — release is scope-agnostic now.
