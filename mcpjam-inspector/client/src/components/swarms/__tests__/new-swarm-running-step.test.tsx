@@ -839,6 +839,91 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(screen.getByTestId("new-swarm-running-failure")).toBeInTheDocument();
   });
 
+  it.each(["provider", "account"] as const)(
+    "clears the %s callout when a Stop receipt arrives after the last snapshot",
+    async (kind) => {
+      const limited = {
+        ...runFixture,
+        summary: { total: 2, succeeded: 0, failed: 0, rateLimited: 1 },
+        attempts: [
+          {
+            hostId: "host-1",
+            targetId: "environment:env-1",
+            sessionIdx: 0,
+            chatSessionId: null,
+            status: "rate_limited" as const,
+            errorCode:
+              kind === "account" ? "spend_cap_exceeded" : "rate_limited",
+            errorMessage: null,
+          },
+        ],
+      };
+      runQueryState.run = limited;
+      let resolveCancel!: (value: { canceled: boolean }) => void;
+      cancelJourneyRun.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveCancel = resolve;
+          }),
+      );
+      const view = render(<NewSwarmRunningStep {...cancellationProps} />);
+      const callout =
+        kind === "account"
+          ? "new-swarm-running-account-limit"
+          : "new-swarm-running-rate-limit";
+      await screen.findByTestId(callout);
+      fireEvent.click(screen.getByTestId("new-swarm-running-stop"));
+      fireEvent.click(
+        await screen.findByTestId("new-swarm-running-stop-confirm"),
+      );
+      runQueryState.run = { ...limited, status: "failed" };
+      view.rerender(<NewSwarmRunningStep {...cancellationProps} />);
+      expect(screen.getByTestId(callout)).toBeInTheDocument();
+      resolveCancel({ canceled: true });
+      await waitFor(() =>
+        expect(screen.queryByTestId(callout)).not.toBeInTheDocument(),
+      );
+    },
+  );
+
+  it("excludes canceled failures from the account-limit breakdown", async () => {
+    const failed = {
+      ...runFixture,
+      status: "failed" as const,
+      summary: { total: 2, succeeded: 0, failed: 2, rateLimited: 0 },
+    };
+    runQueryState.byRunId = {
+      "run-1": {
+        ...failed,
+        summary: { ...failed.summary, failed: 0, rateLimited: 1 },
+        attempts: [
+          {
+            hostId: "host-1",
+            targetId: "environment:env-1",
+            sessionIdx: 0,
+            chatSessionId: null,
+            status: "rate_limited",
+            errorCode: "spend_cap_exceeded",
+            errorMessage: null,
+          },
+        ],
+      },
+      "run-2": { ...failed, cancelRequested: true },
+    };
+    render(
+      <NewSwarmRunningStep
+        {...cancellationProps}
+        runs={[
+          ...cancellationProps.runs,
+          { ...cancellationProps.runs[0], runId: "run-2", journeyId: "j-2" },
+        ]}
+      />,
+    );
+    expect(
+      await screen.findByTestId("new-swarm-running-account-limit"),
+    ).toHaveTextContent("0 completed, 0 failed, 1 stopped at an organization usage limit");
+  });
+
   it.each([true, false])(
     "restores cancellation in the wizard (cleanupPending=%s)",
     async (cleanupPending) => {

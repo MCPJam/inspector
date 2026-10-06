@@ -963,6 +963,15 @@ export function NewSwarmRunningStep({
   const uncanceledSnapshots = Object.entries(snapshots).filter(
     ([runId, run]) => !run.cancelRequested && !stoppedRunIds.includes(runId),
   );
+  const uncanceledTotals = uncanceledSnapshots.reduce(
+    (totals, [, run]) => ({
+      succeeded: totals.succeeded + run.summarySucceeded,
+      failed: totals.failed + run.summaryFailed,
+      rateLimited: totals.rateLimited + run.summaryRateLimited,
+      total: totals.total + run.summaryTotal,
+    }),
+    { succeeded: 0, failed: 0, rateLimited: 0, total: 0 },
+  );
   const uncanceledIssues = uncanceledSnapshots.some(([, run]) =>
     ["failed", "partial", "rate_limited", "stale"].includes(run.status),
   );
@@ -1126,7 +1135,7 @@ export function NewSwarmRunningStep({
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
     return { count, label: labels.size === 1 ? (only ?? null) : null };
-  }, [snapshots]);
+  }, [snapshots, stoppedRunIds]);
 
   // The other half of that split: sessions MCPJam's own account limit stopped.
   // Skipping them above is right — no provider throttled anything — but on a
@@ -1179,7 +1188,7 @@ export function NewSwarmRunningStep({
       accountLimit: count === 0 ? null : { count, message, exhausted },
       heldCredits: held === 0 ? null : { count: held },
     };
-  }, [snapshots]);
+  }, [snapshots, stoppedRunIds]);
 
   // The account-limit and held-credits callouts own their causes — count,
   // breakdown and the top-up links — so the grouped banner states every OTHER
@@ -1356,14 +1365,14 @@ export function NewSwarmRunningStep({
                 >
                   <p className="font-medium">
                     {accountLimit.exhausted > 0 && allTerminal
-                      ? `Stopped: this organization's MCPJam credits ran out after ${succeeded} of ${total} sessions.`
+                      ? `Stopped: this organization's MCPJam credits ran out after ${uncanceledTotals.succeeded} of ${uncanceledTotals.total} sessions.`
                       : "Sessions stopped at an organization usage limit."}
                   </p>
                   <p className="mt-0.5">
-                    {`${succeeded} completed, ${Math.max(
+                    {`${uncanceledTotals.succeeded} completed, ${Math.max(
                       0,
-                      failed +
-                        rateLimited -
+                      uncanceledTotals.failed +
+                        uncanceledTotals.rateLimited -
                         accountLimit.count -
                         (heldCredits?.count ?? 0) -
                         (providerRateLimit?.count ?? 0),
