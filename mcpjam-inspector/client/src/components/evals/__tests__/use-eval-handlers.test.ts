@@ -302,6 +302,30 @@ describe("useEvalHandlers", () => {
           mockAuthFetch.mock.calls.find(([url]) => url === "/api/mcp/evals/run"),
         ).toBeUndefined();
       });
+
+      it("launches once when a second rerun starts while servers connect", async () => {
+        const connect = createDeferred<ReturnType<typeof readiness>>();
+        const ensureServersReady = vi.fn().mockReturnValue(connect.promise);
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        let first!: Promise<unknown>;
+        let second!: Promise<unknown>;
+        act(() => {
+          first = result.current.handleRerun(envSuite);
+          second = result.current.handleRerun(envSuite);
+        });
+        await act(async () => {
+          connect.resolve(readiness({ readyServerNames: ["billing"] }));
+          await Promise.all([first, second]);
+        });
+        expect(ensureServersReady).toHaveBeenCalledOnce();
+        expect(
+          mockAuthFetch.mock.calls.filter(
+            ([url]) => url === "/api/mcp/evals/run",
+          ),
+        ).toHaveLength(1);
+      });
     });
 
     it("runs a model-less case on an environment suite even when the suite default model is not in the picker", async () => {

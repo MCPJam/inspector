@@ -8,10 +8,10 @@ import {
   listProjectsOperation,
   listStudiesOperation,
   runEvalSuiteOperation,
-  sendFeedbackOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
 import {
+  compactModelCatalogForModel,
   EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
@@ -411,6 +411,9 @@ describe("platform tool registration", () => {
     const registration = registrations[0]!;
     expect(registration.name).toBe("show_servers");
     expect(registration.config.annotations?.readOnlyHint).toBe(true);
+    expect(registration.config.annotations?.title).toBe(
+      registration.config.title
+    );
     if (PLATFORM_WIDGETS_ENABLED) {
       expect(registration.ui?.resourceUri).toBe(SHOW_SERVERS_RESOURCE_URI);
       expect(registration.ui?.html).toContain("<html");
@@ -602,7 +605,7 @@ describe("platform tool registration", () => {
     );
   });
 
-  it("marks reads read-only, the eval-run starter as non-destructive write, and call_server_tool as assume-destructive", () => {
+  it("annotates every tool for Claude's directory: a title, read-only reads, and destructive unless purely additive", () => {
     const { registrar, registrations } = fakeRegistrar();
 
     registerPlatformCatalogTools(
@@ -610,227 +613,123 @@ describe("platform tool registration", () => {
       fakeToolContext({ bearerToken: "jwt" })
     );
 
-    // Writes whose handler is a no-op when the work is already done, so a
-    // client may safely repeat one after a dropped response.
-    const IDEMPOTENT_WRITES = new Set([
-      "cancel_project_server_connection",
-      // A repeat replays the stored receipt or dedupes onto the original.
+    // Spelled out, not read from the worker's tables, so a name that drifts
+    // into or out of either list fails here instead of passing by construction.
+    //
+    // Writes that only create rows or start new work. Every other write —
+    // updates, replacements, cancels, revokes, deletes, forced regenerations,
+    // and anything that runs a third party's tool — must say destructive.
+    const ADDITIVE_WRITES = new Set([
+      "create_project",
+      "create_project_server",
+      "create_eval_suite",
+      "create_eval_case",
+      "create_eval_cases",
+      "generate_eval_cases",
+      "import_eval_cases",
+      "run_eval_case",
+      "run_eval_suite",
+      "backtest_eval_run",
+      "backtest_eval_run_judge",
+      "ensure_adhoc_environment",
+      "create_persona",
+      "generate_personas",
+      "create_goal",
+      "generate_goals",
+      "launch_goal_run",
+      "create_swarm",
+      "publish_study",
+      "create_client",
+      "duplicate_client",
       "send_feedback",
+    ]);
+    // Writes whose identical repeat answers success on the state the first
+    // call produced. NOT here: update_client and set_client_servers (409 on a
+    // rotated config id), delete_eval_suite / delete_eval_case /
+    // uninstall_registry_server (not-found), unpublish_study (not-found for a
+    // named study), rotate_study_link (mints another link).
+    const IDEMPOTENT_WRITES = new Set([
+      "delete_project_server",
+      "cancel_eval_run",
+      "cancel_goal_run",
+      "cancel_project_server_connection",
+      "send_feedback",
+      "ensure_adhoc_environment",
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "dismiss_study_finding",
+      "undismiss_study_finding",
+      "upsert_study_member",
+      "update_project",
+      "archive_goal",
     ]);
     // Writes whose effect leaves the caller's organization.
     const EXTERNAL_COMMUNICATION = new Set(["send_feedback"]);
 
-    const NON_DESTRUCTIVE_WRITES = new Set([
-      "observe_chat_session_browser",
-      // Starting dials a third party's server and can spend; cancelling stops
-      // one. Neither destroys a record, so both annotate as plain writes.
-      "start_claude_readiness_run",
-      "start_openai_readiness_run",
-      "start_conformance_run",
-      "cancel_readiness_run",
-      "run_eval_case",
-      "run_eval_suite",
-      "create_eval_suite",
-      "update_eval_suite",
-      "set_eval_suite_schedule",
-      "set_eval_suite_environments",
-      "create_eval_case",
-      "create_eval_cases",
-      "update_eval_case",
-      "generate_eval_cases",
-      "import_eval_cases",
-      // Grading SPENDS but writes only an advisory result onto the run — the
-      // deterministic verdict stays authoritative, so nothing is destroyed.
-      "backtest_eval_run",
-      "backtest_eval_run_judge",
-      "request_eval_run_judge",
-      // Proposing SPENDS one model call and starting SPENDS trials, but both
-      // only ever create rows: the proposal and two replay runs. The source
-      // run, its verdict and the developer's server are untouched.
-      "propose_eval_description_rewrite",
-      "start_eval_description_experiment",
-      // Additive: it creates a repository connection. Its hazard is REACH (a
-      // shared repository, everyone's pull requests), not destruction — the
-      // annotation says write, and the gated tier is what warns.
-      "connect_eval_github_repo",
-      "connect_eval_check_repo",
-      // Content-addressed mint: repeating the same stack reuses one row.
-      // Nothing is destroyed and nothing is named.
-      "ensure_adhoc_environment",
-      "create_project_server",
-      "update_project_server",
-      // Project create/update: both are cheap, both are metadata-only (the
-      // update schema has no `servers` key at all), and neither destroys
-      // anything — so they announce a plain write, not a destructive one.
-      "create_project",
+    const names = new Set(registrations.map((registration) => registration.name));
+    for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {
+      expect(names, `${name} is not a registered tool`).toContain(name);
+    }
+
+    // The ones the directory review named, and the ones the audit moved.
+    const annotationsOf = (name: string) =>
+      registrations.find((registration) => registration.name === name)?.config
+        .annotations;
+    for (const name of [
+      "call_server_tool",
+      "send_chat_message",
       "update_project",
-      // Creates a connection request, and possibly a DISABLED server row.
-      // Nothing is destroyed and nothing is enabled without a person
-      // completing the flow, so it is a write rather than a destructive one.
+      "update_project_server",
       "connect_project_server",
-      // Install writes a servers row + provenance. Not a live connection and
-      // not a removal — exposure is the risk, announced as a plain write.
-      "install_registry_directory_server",
       "install_registry_server",
-      // Swarms authoring. Persists and is editable; nothing here removes
-      // anything, and creating a journey starts nothing.
-      "create_persona",
-      "update_persona",
-      "create_goal",
-      "update_goal",
-      "create_swarm",
-      "update_swarm",
-      // Generation writes NOTHING — it returns drafts — but it spends, so it
-      // cannot claim to be a read.
-      "generate_personas",
-      "generate_goals",
-      // Insight lifecycle. Requesting spends; dismissing records a judgement;
-      // cancelling stops a generation nobody is waiting for.
-      "dismiss_swarm_finding",
-      "undismiss_swarm_finding",
-      "request_swarm_run_insights",
-      "cancel_swarm_run_insights",
-      // Launching spends across a fan-out, but it does not destroy anything.
-      "launch_goal_run",
-      // Publishing exposes an environment. Additive: it creates a scenario.
-      "publish_study",
-      // User testing writes that change state without removing anything.
-      // `rotate_study_link` and `remove_study_member` are below,
-      // with the destructive set: both take access away from people who have
-      // it, immediately.
-      "update_study",
+      "request_eval_run_judge",
       "request_study_insights",
+      "request_swarm_run_insights",
       "cancel_study_insights",
-      "dismiss_study_finding",
-      "undismiss_study_finding",
-      "set_study_guest_execution",
+      "cancel_swarm_run_insights",
       "upsert_study_member",
-      "rebind_study",
-      // Client authoring, the ADDITIVE half. Both mint a new client and change
-      // nothing that exists — which is exactly what separates them from
-      // `update_client` / `set_client_servers` below.
-      "create_client",
-      "duplicate_client",
-    ]);
-    // Destructive AND not safe to repeat — for opposite reasons: the soft
-    // deletes 404 on a retry, the rotation mints another link.
-    const NON_IDEMPOTENT_DESTRUCTIVE = new Set([
-      // Executes the caller's tool before rendering, and nobody can promise
-      // that running a third party's tool twice is safe.
-      "render_server_widget",
-      "delete_persona",
-      // A HARD credential revoke: the row and the ciphertext both go, so a
-      // second call cannot find the row to report the same outcome.
-      "delete_secret",
-      "archive_goal",
-      "archive_swarm",
-      "remove_study_member",
-      "rotate_study_link",
-    ]);
-    const DESTRUCTIVE_OPS = new Set([
-      // `risk: "destructive"` is the CONSERVATIVE reading of an unknowable
-      // effect, not a claim that this removes a specific record. Overclaiming
-      // destructiveness is the safe direction, and it matches what the spec
-      // tells a client to assume when the hints are absent anyway.
-      "render_server_widget",
-      "delete_eval_suite",
-      "delete_eval_case",
-      // Cancelling a run terminates in-flight work, so it announces destructive.
-      "cancel_eval_run",
-      "delete_project_server",
-      // The swarm soft deletes: history survives, but the resource leaves the
-      // roster and a second call answers not-found. From the caller's side
-      // that is a removal.
-      "delete_persona",
-      // Revoking a credential. Unlike the soft deletes around it, this one is
-      // genuinely irreversible — the encrypted value is gone.
-      "delete_secret",
-      "archive_goal",
-      "archive_swarm",
-      "cancel_goal_run",
-      // Unpublishing kills every live guest session on the scenario.
-      "unpublish_study",
-      // Rotating invalidates every copy of the share link that anyone holds.
-      "rotate_study_link",
-      "remove_study_member",
-      "uninstall_registry_server",
-      // Client edits: DETERMINISTIC OVERWRITES. `destructiveHint: true` here is
-      // not "this is a deletion" — the taxonomy is "removes or invalidates
-      // something that existed", and replacing a live setting (or a server set,
-      // where every omitted server is detached) does exactly that. They stay in
-      // the catalog anyway, behind compare-and-set; `delete_client` does not,
-      // because it removes the client identity itself. They ARE idempotent:
-      // applying the same `set` twice against the same `expectedConfigId`
-      // conflicts on the second call rather than compounding, and applying it
-      // to the already-edited config is a no-op.
+      "set_study_guest_execution",
+      "update_eval_suite",
+      "update_eval_case",
+      "set_eval_suite_environments",
+    ]) {
+      expect(annotationsOf(name)?.destructiveHint, name).toBe(true);
+    }
+    for (const name of [
       "update_client",
       "set_client_servers",
-    ]);
-
-    // `openWorldHint` is claimed by exactly the tools that talk to people
-    // outside the organization — never inherited from `risk: "exposure"`.
-    expect(
-      registrations
-        .filter(
-          (registration) =>
-            registration.config.annotations?.openWorldHint !== undefined
-        )
-        .map((registration) => registration.name)
-    ).toEqual([...EXTERNAL_COMMUNICATION]);
+      "delete_eval_suite",
+      "delete_eval_case",
+      "uninstall_registry_server",
+      "unpublish_study",
+      "rotate_study_link",
+      "publish_study",
+    ]) {
+      expect(annotationsOf(name)?.idempotentHint, name).toBe(false);
+    }
 
     for (const registration of registrations) {
-      if (EXTERNAL_COMMUNICATION.has(registration.name)) {
-        expect(registration.config.annotations).toEqual({
-          readOnlyHint: false,
-          destructiveHint: false,
-          idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
-          openWorldHint: true,
-        });
-      } else if (IDEMPOTENT_WRITES.has(registration.name)) {
-        // A write that can be repeated. Cancelling an already-cancelled request
-        // is a no-op on the backend, so a client that retries a dropped
-        // response lands on the state the first call produced — and NOT saying
-        // so would leave a lost cancel holding a connection slot.
-        expect(registration.config.annotations).toEqual({
-          readOnlyHint: false,
-          destructiveHint: false,
-          idempotentHint: true,
-        });
-      } else if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
-        expect(registration.config.annotations).toEqual({
-          readOnlyHint: false,
-          destructiveHint: false,
-          idempotentHint: false,
-        });
-      } else if (DESTRUCTIVE_OPS.has(registration.name)) {
-        // Known-destructive ops announce it explicitly. Whether they also
-        // announce IDEMPOTENCY is a separate claim: a soft delete answers
-        // not-found on a second call and a link rotation mints a new link, so
-        // an auto-retrying client would get a spurious error or a broken link.
-        expect(registration.config.annotations).toEqual({
-          readOnlyHint: false,
-          destructiveHint: true,
-          idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
-        });
-      } else if (
-        registration.name === "call_server_tool" ||
-        // A turn under `toolMode: "auto"` executes arbitrary third-party
-        // tools with the MODEL choosing the arguments, so its effects are no
-        // more knowable than a direct call's. Same absent hints, same reason.
-        registration.name === "send_chat_message" ||
-        registration.name === "drive_chat_session_browser"
-      ) {
-        // Arbitrary third-party tool execution: destructive/idempotent hints
-        // are deliberately absent so clients assume destructive (spec
-        // default).
-        expect(registration.config.annotations).toEqual({
-          readOnlyHint: false,
-        });
-      } else {
-        expect(registration.config.annotations).toEqual({
-          readOnlyHint: true,
-        });
+      const { title, ...hints } = registration.config.annotations ?? {};
+      // Claude's directory reads `annotations.title` and ignores the top-level
+      // one, so every tool carries both.
+      expect(title, registration.name).toBe(registration.config.title);
+      expect(String(title).trim(), registration.name).not.toBe("");
+      expect(registration.name.length, registration.name).toBeLessThanOrEqual(
+        64
+      );
+
+      if (hints.readOnlyHint === true) {
+        expect(hints, registration.name).toEqual({ readOnlyHint: true });
+        continue;
       }
+      expect(hints, registration.name).toEqual({
+        readOnlyHint: false,
+        destructiveHint: !ADDITIVE_WRITES.has(registration.name),
+        idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
+        ...(EXTERNAL_COMMUNICATION.has(registration.name)
+          ? { openWorldHint: true }
+          : {}),
+      });
     }
   });
 });
@@ -1078,10 +977,8 @@ describe("runPlatformOperation", () => {
     )) as ToolResult;
 
     expect(result.isError).toBe(true);
-    // Prefix only: an internal error also earns the send_feedback nudge,
-    // asserted in full in its own describe block below.
-    expect(result.content[0]?.text).toMatch(
-      /^INTERNAL_ERROR: Something broke \(request id: req_0123456789abcdef\)/
+    expect(result.content[0]?.text).toBe(
+      "INTERNAL_ERROR: Something broke (request id: req_0123456789abcdef)"
     );
     expect(result.structuredContent?.error).toEqual({
       code: "INTERNAL_ERROR",
@@ -1410,7 +1307,10 @@ describe("the worker's declared launcher", () => {
   });
 });
 
-describe("the send_feedback nudge on tool errors", () => {
+// Claude's directory review rejects server text that steers the model toward
+// a tool the user did not ask for. Error results used to close with "report it
+// with send_feedback"; they now carry the failure and nothing else.
+describe("tool errors carry no unsolicited send_feedback suggestion", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -1430,11 +1330,9 @@ describe("the send_feedback nudge on tool errors", () => {
     );
   }
 
-  async function listProjectsText(
-    context = fakeToolContext({ bearerToken: "user-jwt" })
-  ): Promise<string> {
+  async function listProjectsText(): Promise<string> {
     const result = (await runPlatformOperation(
-      context,
+      fakeToolContext({ bearerToken: "user-jwt" }),
       listProjectsOperation,
       {}
     )) as ToolResult;
@@ -1442,85 +1340,94 @@ describe("the send_feedback nudge on tool errors", () => {
     return result.content[0]!.text;
   }
 
-  const NUDGE = "If this looks like an MCPJam bug, report it with send_feedback";
-
-  it("suggests reporting an internal error, quoting its request id", async () => {
+  it("reports an internal error with its request id and nothing else", async () => {
     failWith(
       500,
       { code: "INTERNAL_ERROR", message: "Something broke" },
       { "x-request-id": "req_0123456789abcdef" }
     );
     expect(await listProjectsText()).toBe(
-      "INTERNAL_ERROR: Something broke (request id: req_0123456789abcdef) " +
-        "If this looks like an MCPJam bug, report it with send_feedback (requestId req_0123456789abcdef)."
+      "INTERNAL_ERROR: Something broke (request id: req_0123456789abcdef)"
     );
   });
 
-  it("suggests reporting a missing capability", async () => {
+  it("reports a missing capability without suggesting a report", async () => {
     failWith(422, {
       code: "FEATURE_NOT_SUPPORTED",
       message: "This server does not support tasks.",
     });
     expect(await listProjectsText()).toBe(
-      "FEATURE_NOT_SUPPORTED: This server does not support tasks. " +
-        "If this looks like an MCPJam bug, report it with send_feedback."
+      "FEATURE_NOT_SUPPORTED: This server does not support tasks."
     );
   });
 
-  it.each([502, 503, 504])(
-    "stays quiet on a %i: the gateway or the user's own server failed",
-    async (status) => {
-      failWith(status, undefined);
-      const text = await listProjectsText();
-      expect(text).toContain("INTERNAL_ERROR");
-      expect(text).not.toContain(NUDGE);
-    }
-  );
-
-  it.each([
-    [404, { code: "NOT_FOUND", message: "No such project." }],
-    [400, { code: "VALIDATION_ERROR", message: "Bad input." }],
-    [403, { code: "FORBIDDEN", message: "Denied." }],
-    [429, { code: "RATE_LIMITED", message: "Slow down." }],
-  ])("stays quiet on a %i: the caller's to fix", async (status, body) => {
-    failWith(status, body);
-    expect(await listProjectsText()).not.toContain(NUDGE);
-  });
-
-  it("stays quiet in an anonymous session, where send_feedback refuses", async () => {
-    failWith(500, { code: "INTERNAL_ERROR", message: "Something broke" });
-    expect(
-      await listProjectsText(
-        fakeToolContext({ bearerToken: "guest-jwt", isGuestSession: true })
-      )
-    ).not.toContain(NUDGE);
-  });
-
-  it("never suggests reporting a failed report", async () => {
-    failWith(500, { code: "INTERNAL_ERROR", message: "Something broke" });
-    const result = (await runPlatformOperation(
-      fakeToolContext({ bearerToken: "user-jwt" }),
-      sendFeedbackOperation,
-      { kind: "bug", summary: "the run page crashes" }
-    )) as ToolResult;
-    expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toBe("INTERNAL_ERROR: Something broke");
-  });
-
-  it("tells the agent where the text goes and to carry on", () => {
+  it("still describes where send_feedback's text goes, without steering the agent", () => {
     const { registrar, registrations } = fakeRegistrar();
     registerPlatformCatalogTools(
       registrar,
       fakeToolContext({ bearerToken: "jwt" })
     );
-    const tool = registrations.find(
-      (registration) => registration.name === "send_feedback"
+    const description = String(
+      registrations.find((registration) => registration.name === "send_feedback")
+        ?.config.description
     );
-    expect(tool?.config.description).toContain(
-      "SENDS YOUR TEXT TO THE MCPJAM TEAM"
+    expect(description).toContain("SENDS YOUR TEXT TO THE MCPJAM TEAM");
+    expect(description).not.toContain("HINT:");
+    expect(description).not.toContain("continue with the user's original task");
+  });
+});
+
+
+describe("list_models on this surface", () => {
+  it("keeps what choosing a model needs and names what it drops", () => {
+    const full = {
+      items: [
+        {
+          id: "amazon/nova-2-lite",
+          canonical_slug: "amazon/nova-2-lite",
+          name: "Nova 2 Lite",
+          pricing: { prompt: "3e-7", completion: "0.0000025", image: "0" },
+          context_length: 1_000_000,
+          architecture: {
+            modality: "text+image->text",
+            input_modalities: ["text", "image"],
+            output_modalities: ["text"],
+          },
+          top_provider: { context_length: 1_000_000 },
+          supported_parameters: ["max_tokens", "tools", "reasoning"],
+          description: "x".repeat(500),
+          providerSource: "gateway",
+          guestAllowed: false,
+          deprecated_at: null,
+          observations: { tools: { status: "supported", observedAt: 1 } },
+        },
+      ],
+    };
+    const compact = compactModelCatalogForModel(full) as {
+      items: Array<Record<string, unknown>>;
+      compacted: { omittedFields: string[] };
+    };
+    expect(compact.items).toEqual([
+      {
+        id: "amazon/nova-2-lite",
+        name: "Nova 2 Lite",
+        providerSource: "gateway",
+        contextLength: 1_000_000,
+        pricingPerToken: { prompt: "3e-7", completion: "0.0000025" },
+        inputModalities: ["text", "image"],
+        outputModalities: ["text"],
+        supportsTools: true,
+        guestAllowed: false,
+      },
+    ]);
+    expect(compact.compacted.omittedFields).toContain("observations");
+    expect(JSON.stringify(compact).length).toBeLessThan(
+      JSON.stringify(full).length / 2
     );
-    expect(tool?.config.description).toContain(
-      "then continue with the user's original task"
-    );
+  });
+
+  it("leaves a payload without items alone", () => {
+    const payload = { error: "x" };
+    expect(compactModelCatalogForModel(payload)).toBe(payload);
   });
 });

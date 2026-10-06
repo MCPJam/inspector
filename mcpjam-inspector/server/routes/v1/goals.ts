@@ -931,9 +931,9 @@ both(
 // from my list", and a scorecard that vanished with its goal would take the
 // evidence for a decision with it.
 //
-// Second call answers 404: an archived goal is filtered out of the project's
-// goals, so the scoping preflight can no longer place it. Cleanup scripts
-// should read 404 here as success.
+// A second call succeeds again: the scoping preflight reads the goal by id,
+// archived or not, and `archiveJourney` is a no-op on an archived row
+// (observed on production 2026-10-06).
 //
 // NOT flag-gated — archiving reduces exposure.
 both(

@@ -9,8 +9,8 @@
  * this build's Inspector layer against every pack it may select.
  *
  * `--candidate` is the publication pipeline's one exception: a pack it has
- * just published and not yet pinned (its pin PR is what this run's evidence
- * lets it open). Nothing pins it yet, so the anchor is instead that its
+ * just published and not yet pinned (the version PR that pins it is what
+ * this run's evidence lets the release open). Nothing pins it yet, so the anchor is instead that its
  * SIGNED manifest names this checkout's own inputs fingerprint — the pack was
  * built from exactly this commit's pack inputs — and that the tree on disk
  * hashes to the digest that manifest signs.

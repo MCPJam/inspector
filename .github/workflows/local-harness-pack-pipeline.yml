@@ -1,10 +1,15 @@
 # The publication pipeline for ONE harness's runtime pack, end to end:
 #
-#   plan → build/adopt/finish-draft → conformance → pin PR
-#                   ↘ equivalent → equivalence record PR
+#   plan → build/adopt/finish-draft → conformance → pin intent
+#                   ↘ equivalent → equivalence record intent
 #
-# Called by `local-harness-pack-auto.yml` on every push to main that can move a
-# pack input, and on dispatch — one run per harness at a time, never cancelled.
+# Called by `prepare-release.yml`, once per harness, before it opens the
+# version PR. The pipeline writes nothing to main: each harness hands the
+# release a `local-harness-pin-<harness>` artifact (a pin, an equivalence
+# record, or "up to date"), and prepare-release applies every one of them to
+# the version branch — so the version PR carries the versions AND the packs
+# Inspectors will select, under one review. There is no separate pin PR and no
+# window where main moved pack inputs nobody has published.
 #
 # RESUMABLE BY CONSTRUCTION. Nothing here remembers anything: every run
 # re-derives its plan from what exists, keyed by (harness, inputs fingerprint)
@@ -13,20 +18,21 @@
 #   up-to-date    the pinned pack was built from these inputs, or an
 #                 equivalence record says a rebuild reproduced it. Nothing runs.
 #   adopt         a release from these inputs is already published (an earlier
-#                 run stopped after publishing): conformance, then the pin PR.
+#                 run stopped after publishing): conformance, then the pin.
 #   finish-draft  a complete draft from these inputs exists (an earlier run
 #                 stopped between upload and release): finish it, then as adopt.
 #   build         build every target. A rebuild that reproduces the pinned tree
 #                 digests publishes nothing and records an attested
 #                 equivalence; anything else publishes the next patch version.
 #
-# So a failure at any stage is resumed by running the same thing again
-# (`gh workflow run local-harness-pack-auto.yml -f harness=<id>`), and the
-# `report` job says exactly that in the harness's failure issue.
+# So a failure at any stage is resumed by preparing the release again
+# (`gh workflow run prepare-release.yml --ref main`, or Soundcheck's "Start
+# release"), and the `report` job says exactly that in the harness's failure
+# issue.
 #
-# What reaches users is only ever the PIN PR: a pack is selectable once the PR
-# recording its digests merges, and that PR is reviewed (the approval rule on
-# main is the one human gate; the signing environment needs no reviewer).
+# What reaches users is only ever the VERSION PR: a pack is selectable once the
+# PR recording its digests merges, and that PR is reviewed (the approval rule
+# on main is the one human gate; the signing environment needs no reviewer).
 #
 # This file is NOT a pack input: it decides when packs are built, not what is
 # in them. `local-harness-pack.yml` is, and is what it calls to build.
@@ -101,6 +107,24 @@ jobs:
             echo "$(grep '^reason=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Nothing to publish. Still handed over: the release expects one intent
+      # per harness, and a missing one means a pipeline that did not finish.
+      - name: Hand "up to date" to the release
+        if: steps.plan.outputs.action == 'up-to-date'
+        env:
+          HARNESS: ${{ inputs.harness }}
+          PINNED: ${{ steps.plan.outputs.pinned_version }}
+        run: |
+          node mcpjam-inspector/scripts/local-harness-publication.mjs intent --harness "$HARNESS" \
+            --kind up-to-date --version "$PINNED" --out "$RUNNER_TEMP/pin/intent.json"
+
+      - if: steps.plan.outputs.action == 'up-to-date'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-harness-pin-${{ inputs.harness }}
+          path: ${{ runner.temp }}/pin
+          if-no-files-found: error
+
   # Build (or finish a draft of) the planned version. The pack workflow is
   # itself resumable at one version: it adopts a release from these inputs,
   # finishes a complete draft, and never overwrites anything else.
@@ -130,9 +154,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      # No credential persisted into the checkout: `npm ci` runs next, and an
-      # install script must not find a push token in the git config. The bot
-      # PR step authenticates git itself, from its own GH_TOKEN.
+      # No install in this job: it holds `id-token: write`, and nothing an
+      # install script runs should be able to mint provenance. The record and
+      # its intent need builtins only; the reviewed fingerprint is re-recorded
+      # by prepare-release, in a clean install.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -144,13 +169,6 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
-
-      # `--write` refuses a drifted install, so the recorded fingerprint is the
-      # one a clean install computes.
-      - name: Install workspace dependencies
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: npm ci --legacy-peer-deps
 
       - name: Write the equivalence record
         id: record
@@ -168,7 +186,6 @@ jobs:
           file="scripts/local-harness-pack-equivalence/$name"
           node scripts/local-harness-publication.mjs equivalence --harness "$HARNESS" \
             --fingerprint "$FINGERPRINT" --version "$PINNED" --digests "$DIGESTS" --out "$file"
-          node scripts/check-local-harness-inputs.mjs --write --harness "$HARNESS"
           echo "file=mcpjam-inspector/$file" >> "$GITHUB_OUTPUT"
 
       # The record's bytes are attested exactly as committed: the release gate
@@ -178,9 +195,10 @@ jobs:
         with:
           subject-path: ${{ steps.record.outputs.file }}
 
-      - name: Open or refresh the PR
+      # prepare-release commits the record byte for byte (its sha256 is in
+      # the intent and checked), so the attestation above covers what lands.
+      - name: Hand the equivalence record to the release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
           HARNESS: ${{ inputs.harness }}
           FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
           PINNED: ${{ needs.plan.outputs.pinned_version }}
@@ -188,10 +206,17 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          text="$(node mcpjam-inspector/scripts/local-harness-publication.mjs pr-text --harness "$HARNESS" \
-            --kind equivalence --previous "$PINNED" --fingerprint "$FINGERPRINT" --run "$RUN_URL")"
-          git add "$RECORD" mcpjam-inspector/server/utils/harness/local/pack-inputs.generated.json
-          bash .github/scripts/local-harness-bot-pr.sh "$text"
+          node mcpjam-inspector/scripts/local-harness-publication.mjs intent --harness "$HARNESS" --kind equivalence \
+            --previous "$PINNED" --fingerprint "$FINGERPRINT" --record "$RECORD" --run "$RUN_URL" \
+            --out "$RUNNER_TEMP/pin/intent.json"
+          mkdir -p "$RUNNER_TEMP/pin/files/$(dirname "$RECORD")"
+          cp "$RECORD" "$RUNNER_TEMP/pin/files/$RECORD"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-harness-pin-${{ inputs.harness }}
+          path: ${{ runner.temp }}/pin
+          if-no-files-found: error
 
   # This commit's Inspector layer against the pack about to be pinned, on every
   # target. The pack is published but selected by nothing yet, so it is named
@@ -229,7 +254,7 @@ jobs:
       harnesses: ${{ inputs.harness }}
 
   pin:
-    name: pin PR
+    name: pin
     needs: [plan, pack, candidate-conformance, previous-conformance]
     if: |
       always() && needs.candidate-conformance.result == 'success' &&
@@ -239,9 +264,8 @@ jobs:
       contents: read
       attestations: read
     steps:
-      # No credential persisted into the checkout: `npm ci` runs next, and an
-      # install script must not find a push token in the git config. The bot
-      # PR step authenticates git itself, from its own GH_TOKEN.
+      # Builtins only, so no install: this job checks evidence and provenance
+      # and hands the pin over; prepare-release writes it in a clean install.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -253,11 +277,6 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
-
-      - name: Install workspace dependencies
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: npm ci --legacy-peer-deps
 
       - name: Collect this run's conformance evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -331,27 +350,13 @@ jobs:
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
           echo "permit previous $PREVIOUS: $permit ${reason:+($reason)}"
 
-      - name: Write the pin
-        working-directory: mcpjam-inspector
+      # prepare-release writes it (`write-pack-digests.mjs`, then the reviewed
+      # fingerprint) on the version branch, alongside the other harnesses'.
+      - name: Hand the pin to the release
         env:
           HARNESS: ${{ inputs.harness }}
           VERSION: ${{ needs.plan.outputs.version }}
           DIGESTS: ${{ steps.published.outputs.digests }}
-          PERMIT: ${{ steps.previous.outputs.permit }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          permit=()
-          if [ "$PERMIT" = "true" ]; then permit=(--permit-previous); fi
-          node scripts/write-pack-digests.mjs --harness "$HARNESS" --version "$VERSION" --digests "$DIGESTS" \
-            --conformance "published-$HARNESS-$VERSION-${GITHUB_SHA::12}" --evidence "$RUN_URL" "${permit[@]}"
-          node scripts/check-local-harness-inputs.mjs --write --harness "$HARNESS"
-
-      - name: Open or refresh the pin PR
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
-          HARNESS: ${{ inputs.harness }}
-          VERSION: ${{ needs.plan.outputs.version }}
           FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
           PREVIOUS: ${{ needs.plan.outputs.pinned_version }}
           PERMIT: ${{ steps.previous.outputs.permit }}
@@ -359,15 +364,18 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          text="$(node mcpjam-inspector/scripts/local-harness-publication.mjs pr-text --harness "$HARNESS" \
-            --kind pin --version "$VERSION" --previous "$PREVIOUS" --permit-previous "$PERMIT" \
-            --permit-reason "$PERMIT_REASON" --fingerprint "$FINGERPRINT" --run "$RUN_URL")"
-          git add mcpjam-inspector/server/utils/harness/local/runtime-compat.generated.json \
-            mcpjam-inspector/server/utils/harness/local/pack-inputs.generated.json
-          bash .github/scripts/local-harness-bot-pr.sh "$text"
+          node mcpjam-inspector/scripts/local-harness-publication.mjs intent --harness "$HARNESS" --kind pin \
+            --version "$VERSION" --digests "$DIGESTS" --fingerprint "$FINGERPRINT" \
+            --conformance "published-$HARNESS-$VERSION-${GITHUB_SHA::12}" \
+            --previous "$PREVIOUS" --permit-previous "$PERMIT" --permit-reason "$PERMIT_REASON" \
+            --run "$RUN_URL" --out "$RUNNER_TEMP/pin/intent.json"
 
-  # One issue per harness, opened on the first failure, commented on by the
-  # next, closed by the run that gets through. Superseded runs say nothing.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-harness-pin-${{ inputs.harness }}
+          path: ${{ runner.temp }}/pin
+          if-no-files-found: error
+
   report:
     needs: [plan, pack, equivalence, candidate-conformance, previous-conformance, pin]
     if: always()

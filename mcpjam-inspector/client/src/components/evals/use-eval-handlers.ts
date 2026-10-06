@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -714,7 +714,7 @@ export function useEvalHandlers({
   );
 
   // Rerun handler
-  const handleRerun = useCallback(
+  const runSuiteRerun = useCallback(
     async (
       suite: EvalSuite,
       options?: {
@@ -769,9 +769,10 @@ export function useEvalHandlers({
 
       // Environment suites launch through the server's authoritative
       // resolution (P0.1): the browser never knows the environment's closed
-      // server set, so the legacy server-readiness gates below are skipped —
-      // the server returns a readable auth/connection error for the exact
-      // resolved set instead.
+      // server set, so the legacy server-readiness gates below are skipped.
+      // Locally the run route still executes on this inspector's connection
+      // pool, so those servers are connected from the environment resolution
+      // further down; hosted routes connect them and refuse unreachable ones.
       const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
 
       // Effective servers = flat env.servers ∪ resolved servers across all
@@ -1228,6 +1229,27 @@ export function useEvalHandlers({
       evalsNavigationContext,
       openEvalIterationWall,
     ],
+  );
+
+  // `rerunningSuiteId` is state set only after the server readiness awaits,
+  // so a second click while servers connect would pass its check and launch
+  // twice. This lock is taken synchronously and released on every exit.
+  const rerunInFlightRef = useRef(false);
+  const handleRerun = useCallback(
+    async (...args: Parameters<typeof runSuiteRerun>) => {
+      if (rerunInFlightRef.current) {
+        if (args[1]?.stayOnPage)
+          throw new Error("Another suite run is already starting.");
+        return;
+      }
+      rerunInFlightRef.current = true;
+      try {
+        return await runSuiteRerun(...args);
+      } finally {
+        rerunInFlightRef.current = false;
+      }
+    },
+    [runSuiteRerun],
   );
 
   const handleRunTestCase = useCallback(

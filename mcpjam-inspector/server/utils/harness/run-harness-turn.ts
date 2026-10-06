@@ -1,5 +1,5 @@
 import {
-  localDiskResumeState,
+  diskResumeState,
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
@@ -2893,9 +2893,11 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            resumeFrom: localPrepared
-              ? localDiskResumeState(sessionResumeStateFrom(resumable.resumeState))
-              : sessionResumeStateFrom(resumable.resumeState),
+            // Hosted too, not only local: see `diskResumeState`. An approval
+            // continuation (above) still reattaches to its paused bridge.
+            resumeFrom: diskResumeState(
+              sessionResumeStateFrom(resumable.resumeState),
+            ),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {

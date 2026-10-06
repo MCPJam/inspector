@@ -4,13 +4,13 @@
  *   (no flag)              check the snapshot; exit 1 if any fingerprint moved
  *   --advisory             report moved fingerprints (to the job summary in
  *                          CI) and exit 0: on a pull request a moved
- *                          fingerprint is not a defect, it is what merging
- *                          will publish — `local-harness-pack-auto.yml` builds
- *                          the pack and opens the pin PR that records it
+ *                          fingerprint is not a defect, it is what the next
+ *                          release publishes — `prepare-release.yml` builds
+ *                          the pack and pins it in the version PR
  *   --drift                only refuse an installed tree that is not the
  *                          locked one (what a pack build needs)
  *   --write [--harness id] update the snapshot — every harness's record, or
- *                          only the named one's (the pin PR moves its own)
+ *                          only the named one's
  *
  * ── What "per harness" has to mean ───────────────────────────────────────
  * Each harness's pack has its own version and its own release, so each needs
@@ -245,7 +245,7 @@ export function movedFingerprints(recorded, computed) {
 
 /**
  * The snapshot with ONE harness's record replaced and every other carried
- * over byte for byte — so a harness's pin PR moves exactly its own record.
+ * over byte for byte — so pinning one harness moves exactly its own record.
  */
 export function withHarnessRecord(recorded, computed, harnessId) {
   if (!computed.harnesses[harnessId]) throw new Error(`no pack recipe for ${harnessId}`);
@@ -263,11 +263,11 @@ export function advisorySummary(moved) {
   return [
     '### Local harness pack inputs changed',
     '',
-    'Merging this publishes a new runtime pack (or, if the rebuild reproduces the pinned bytes, records an equivalence) for:',
+    'The next release publishes a new runtime pack (or, if the rebuild reproduces the pinned bytes, records an equivalence) for:',
     '',
     ...moved.map(({ harnessId, recorded, computed }) => `- **${harnessId}**: \`${(recorded ?? 'none').slice(0, 19)}…\` → \`${(computed ?? 'removed').slice(0, 19)}…\``),
     '',
-    'Nothing to do in this PR: `local-harness-pack-auto.yml` builds it on main and opens the pin PR that records it.',
+    'Nothing to do in this PR: starting the next release (`prepare-release.yml`) builds it and pins it in the version PR.',
     '',
   ].join('\n');
 }
