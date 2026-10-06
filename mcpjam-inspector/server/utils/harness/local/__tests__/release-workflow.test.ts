@@ -7,6 +7,21 @@ import { computePackInputs } from "../../../../../scripts/check-local-harness-in
 const workflowsDir = new URL("../../../../../../.github/workflows/", import.meta.url);
 const workflow = (name: string) => parse(readFileSync(new URL(`${name}.yml`, workflowsDir), "utf8"));
 
+describe("the layer digest helper", () => {
+  it("generates the Codex bridge bundle before anything that imports it", () => {
+    // release.yml's contract job runs only `npm ci` before computing layer
+    // digests; release 3.14.0 failed there with ERR_MODULE_NOT_FOUND after
+    // every platform had passed. The helper must not rely on its caller.
+    const source = readFileSync(new URL("../../../../../scripts/inspector-layer-digests.mjs", import.meta.url), "utf8");
+    const codex = source.indexOf("await bundleCodexAppServerBridge()");
+    const layer = source.indexOf("await bundleLocalHarnessLayer()");
+    const read = source.indexOf("inspector-layer-files.ts");
+    expect(codex).toBeGreaterThan(-1);
+    expect(codex).toBeLessThan(layer);
+    expect(layer).toBeLessThan(read);
+  });
+});
+
 describe("packs are part of starting a release", () => {
   it("brings every harness's pack up to date before the version PR opens", () => {
     const { jobs } = workflow("prepare-release");
