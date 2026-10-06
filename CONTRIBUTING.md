@@ -99,9 +99,65 @@ config, not in this repo):
 ```bash
 npx convex env set WORKOS_CLIENT_ID client_01KTN2EWHHJCKRB8RSR307X4SG
 npx convex env set AUTHKIT_DOMAIN  deep-vanilla-68-test.authkit.app
-npx convex env set GUEST_JWKS_URL  http://localhost:6274/api/web/guest-jwks
 npx convex env list   # verify WORKOS_CLIENT_ID / AUTHKIT_DOMAIN are the dev values
 ```
+
+Do not point `GUEST_JWKS_URL` anywhere: a development deployment verifies guest
+tokens with its own `/guest/jwks` by default. (The shared OSS deployment's
+pairing with the hosted guest authority is managed by operators.)
+
+### Guest sessions
+
+The Inspector never writes configuration to a backend while it runs. Guests come
+from ONE guest authority per instance:
+
+- **Standard profile** (the committed `.env.local`, and packaged releases): the
+  hosted Inspector at `app.mcpjam.com`. Nothing to set up.
+- **Your own development deployment**: initialize it once, explicitly:
+
+  ```bash
+  npm run dev:setup-guest-auth -w @mcpjam/inspector -- --deployment dev:<deployment-name> \
+    --env-file mcpjam-inspector/.env.development.local
+  ```
+
+  This accepts only a fully qualified `dev:` selector, stops unless Convex itself
+  reports that name as a development deployment, runs the Convex CLI from an
+  isolated directory with your shell's `CONVEX_*` settings removed, initializes only
+  missing values (it never overwrites, never writes `GUEST_JWKS_URL`), and adds the
+  deployment's addresses and guest credentials to the profile you name.
+
+### Running several instances (worktrees)
+
+```bash
+npm run dev:worktree -w @mcpjam/inspector -- <N> [local|staging|preview <viteConvexUrl> <convexHttpUrl>] [--env-file <profile>]
+```
+
+Instance `N` gets client `5173+N`, server `6274+N`, platform worker `8787+N` and
+worker debugger `9229+N` (`--client-port`, `--server-port`, `--worker-port`,
+`--debugger-port` override them; `--no-worker` skips the worker). The launcher
+resolves ONE profile for the instance and passes it to the server, Vite and the
+worker, none of which then reads `.env` files on its own:
+
+- `--env-file <profile>` is the whole profile and wins over everything, except
+  with `preview`: there the two URLs name the backend and the file supplies its
+  other settings (for example its guest credentials). A relative path is
+  resolved from the directory you ran npm in.
+- `local` (default): the committed `.env.local`, overlaid by this worktree's
+  `.env.development.local` — or, only when you named no target, the main
+  worktree's, read in place (secrets are never copied between worktrees).
+- `staging` / `preview` never inherit the local profile. Both default to the
+  hosted guest authority at `staging.mcpjam.com`.
+
+Backend settings (Convex addresses, guest authority, service tokens, `COMPUTERS_*`,
+`DEPLOYMENT_SESSION_JWT_*`) and sign-in settings (WorkOS, CLI/Slack/Discord auth) are
+each taken as a group from one layer, so a profile that points at another backend never
+picks up the standard profile's credentials. Values for those settings exported in your
+shell are ignored (the launcher lists them). Callback origins (`CLI_AUTH_PUBLIC_ORIGIN`
+and the Slack/Discord link origins) follow the instance's port.
+
+Each instance keeps its own sign-in and guest cookies, so instances never sign each other
+in or out. After upgrading from an older Inspector, each instance asks you to sign in
+once; guest sessions carry over.
 
 ### Electron Development
 
@@ -111,16 +167,19 @@ One command, from a fresh clone:
 npm run electron:dev -w @mcpjam/inspector
 ```
 
-**Stop `npm run dev` first.** The Electron renderer proxies `/api` to a
-hardcoded `localhost:6274`, so if a separate dev server already holds that port
-the window will quietly talk to it instead of to Electron's own embedded server.
-The command warns you if the port is taken.
+It runs next to `npm run dev`. The launcher (`scripts/electron-dev.mjs`) picks
+a free server port once (6274, or the next free one when another Inspector
+holds it) and hands it to both the renderer's `/api` proxy and the main
+process, so the window always talks to its own embedded server and keeps its
+own sign-in: the desktop app and the web app on the same machine never share a
+WorkOS or guest cookie. `--server-port N` pins the port
+(`npm run electron:dev -w @mcpjam/inspector -- --server-port 7000`).
 
 Its `pre` step builds the SDK if `../sdk/dist` is stale and regenerates the
 gitignored bundles (`PluginShim.bundled.ts` and friends), so there is nothing to
 run first. Then it starts:
 
-- the Electron main process, with the embedded Hono server on `:6274`
+- the Electron main process, with the embedded Hono server on the chosen port
 - Vite's dev server for the renderer, which is what the window loads
 - file watchers for the main and preload bundles
 

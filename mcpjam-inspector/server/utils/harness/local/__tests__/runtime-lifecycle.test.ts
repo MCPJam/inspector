@@ -178,7 +178,7 @@ describe("a second process", () => {
     // `beginInstallAttempt` produces exactly this shape — so what this test
     // adds is the part only a second process can show, which is what one
     // process concludes about another's live record.
-    const recordFile = join(installRoot(), ".mcpjam-operation.json");
+    const recordFile = join(installRoot(), `.mcpjam-operation-${key.packVersion}-${"a".repeat(16)}.json`);
     const holder = spawnHolder(`
       import { writeFileSync } from "node:fs";
       writeFileSync(${JSON.stringify(recordFile)}, JSON.stringify({
@@ -211,7 +211,7 @@ describe("a second process", () => {
   });
 
   it("recovers an attempt whose owner was killed, as interrupted", async () => {
-    const recordFile = join(installRoot(), ".mcpjam-operation.json");
+    const recordFile = join(installRoot(), `.mcpjam-operation-${key.packVersion}-${"a".repeat(16)}.json`);
     const holder = spawnHolder(`
       import { writeFileSync } from "node:fs";
       writeFileSync(${JSON.stringify(recordFile)}, JSON.stringify({

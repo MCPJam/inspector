@@ -35,6 +35,16 @@ export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, __dirname, "");
 
+  // The embedded server this window talks to. `scripts/electron-dev.mjs` picks
+  // a free port once (6274, or the next free one when another Inspector holds
+  // it) and passes it to BOTH this renderer dev server and the main process
+  // through SERVER_PORT, so the window always reaches its own server rather
+  // than whichever `npm run dev` happens to own 6274.
+  const serverPort = /^\d+$/.test(process.env.SERVER_PORT ?? "")
+    ? process.env.SERVER_PORT
+    : "6274";
+  const serverOrigin = `http://localhost:${serverPort}`;
+
   return {
     envDir: __dirname, // Load env files from project root (absolute path)
     envPrefix: "VITE_", // Only load VITE_ prefixed vars
@@ -64,7 +74,7 @@ export default defineConfig(({ mode }) => {
       },
       proxy: {
         "/api": {
-          target: "http://localhost:6274",
+          target: serverOrigin,
           changeOrigin: true,
         },
         // Proxy WorkOS API calls during Electron local dev to avoid browser CORS
@@ -78,13 +88,13 @@ export default defineConfig(({ mode }) => {
         // web client Vite config; without it Electron dev requests to /relay
         // fall through to Vite's SPA fallback and return index.html with 200.
         "/relay": {
-          target: "http://localhost:6274",
+          target: serverOrigin,
           changeOrigin: true,
         },
         // /tlm is the same relay on its edge-safe alias prefix (see
         // RELAY_MOUNT_PREFIXES in server/routes/relay.ts).
         "/tlm": {
-          target: "http://localhost:6274",
+          target: serverOrigin,
           changeOrigin: true,
         },
       },

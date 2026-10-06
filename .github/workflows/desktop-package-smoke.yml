@@ -47,6 +47,8 @@ env:
 jobs:
   package:
     name: Desktop Package Smoke
+    # Skip Dependabot's own rebases; see local-browser-security.yml.
+    if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
     runs-on: macos-latest
     steps:
       - name: Checkout code
