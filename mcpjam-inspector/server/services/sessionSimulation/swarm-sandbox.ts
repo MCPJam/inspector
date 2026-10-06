@@ -273,6 +273,9 @@ export async function provisionAttemptSandbox(
     surface: "swarm",
     provision: () => provisionAttemptBox(args),
     release: releaseAttemptSandbox,
+    // The attempt's signal: a stopped run stops beating even if its session
+    // never unwinds to the release.
+    ...(args.signal ? { signal: args.signal } : {}),
   });
   if (!acquired.ok) return acquired.refusal;
   const { binding, release } = acquired.box;

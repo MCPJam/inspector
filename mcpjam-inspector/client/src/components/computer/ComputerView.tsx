@@ -25,7 +25,11 @@ import {
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
-import { useSandboxImages, useResetComputer } from "@/hooks/useSandboxImages";
+import {
+  useSandboxImages,
+  useResetComputer,
+  useSetComputerSandboxImage,
+} from "@/hooks/useSandboxImages";
 import { SandboxImagesDrawer } from "./SandboxImagesDrawer";
 import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { toTerminalWsBase } from "@/lib/computer-terminal-connection";
@@ -47,7 +51,9 @@ import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
  * project, per user): see its status, open a live terminal, or delete it.
  * Gated behind the `computers-enabled` PostHog flag by its route. Choosing a
  * custom image (the image row's Change and its drawer) additionally takes
- * `sandbox-images-enabled`; the image label and Reset are the computer's own.
+ * `sandbox-images-enabled`; the image label and Reset are the computer's own,
+ * and so is switching an attached image back to base, which the backend keeps
+ * ungated.
  */
 export function ComputerView({
   projectId,
@@ -91,8 +97,11 @@ export function ComputerView({
   const [envDrawerOpen, setEnvDrawerOpen] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [confirmingBase, setConfirmingBase] = useState(false);
+  const [switchingToBase, setSwitchingToBase] = useState(false);
 
   const resetComputer = useResetComputer();
+  const setComputerSandboxImage = useSetComputerSandboxImage();
   const sandboxImagesEnabled = useSandboxImagesEnabled();
   const attachedEnvironmentId = status?.environmentId ?? null;
   const hasCustomImage = attachedEnvironmentId != null;
@@ -227,6 +236,27 @@ export function ComputerView({
       setConfirmingReset(false);
     }
   }, [effectiveProjectId, resetComputer]);
+
+  // The drawer's "Base image" row, for when the drawer is hidden: with images
+  // off, an attached image still needs a way back (detaching stays ungated).
+  const onUseBaseImage = useCallback(async () => {
+    if (!effectiveProjectId) return;
+    setSwitchingToBase(true);
+    try {
+      await setComputerSandboxImage({
+        projectId: effectiveProjectId,
+        environmentId: null,
+      });
+      toast.success("Switched to the base image. Rebuilding your computer…");
+    } catch (err) {
+      toast.error(
+        getBillingErrorMessage(err, "Could not switch to the base image."),
+      );
+    } finally {
+      setSwitchingToBase(false);
+      setConfirmingBase(false);
+    }
+  }, [effectiveProjectId, setComputerSandboxImage]);
 
   // Reset and image changes both rebuild the box, so only offer them when it's
   // settled (not mid-provision). Attaching is also allowed when there's no
@@ -681,6 +711,46 @@ export function ComputerView({
               >
                 Change
               </Button>
+            ) : hasCustomImage ? (
+              confirmingBase ? (
+                <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  Switch to the base image? All files on this computer will be
+                  deleted.
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => void onUseBaseImage()}
+                    disabled={switchingToBase}
+                  >
+                    {switchingToBase ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    Switch
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setConfirmingBase(false)}
+                    disabled={switchingToBase}
+                  >
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setConfirmingBase(true)}
+                  disabled={!canAttach}
+                  title={
+                    canAttach
+                      ? undefined
+                      : "Available once the computer is ready or asleep"
+                  }
+                >
+                  Use base image
+                </Button>
+              )
             ) : null}
             {hasComputer ? (
               confirmingReset ? (
