@@ -7,6 +7,7 @@ import {
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
 import { SwarmSetupError } from "./swarm-setup-turn";
+import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
@@ -110,7 +111,7 @@ import type {
  *     backend stale-run cron is the hard backstop.
  */
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_INTERVAL_MS = 5_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 /**
@@ -556,7 +557,9 @@ export function classifyRateLimit(
   hint?: SpendRefusal,
 ): "org_spend_cap" | "provider_rate_limit" | "transient_capacity" {
   const refusal = hint ?? humanizeSwarmAttemptError(message);
-  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason))
+  // The message is the fallback for a hold that lost its structured reason: a
+  // bare sentence would otherwise read as the user's provider throttling.
+  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason, message))
     return "transient_capacity";
   if (!message) return "provider_rate_limit";
   if (isCreditExhaustion(message)) return "org_spend_cap";
@@ -654,7 +657,9 @@ async function runJourneyFanOut(
   const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
   if (!opts.budgets) {
     // Only size a platform default. Explicit/frozen limits remain authoritative.
-    const localSessions = hosts.filter(host => runsLocally(opts, host.harness)).length * sessionsPerTarget;
+    const localSessions =
+      hosts.filter((host) => runsLocally(opts, host.harness)).length *
+      sessionsPerTarget;
     budgets.runTimeoutMs = Math.min(
       platformExecutionBudgetCeilings("swarms").runTimeoutMs,
       Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
@@ -680,6 +685,16 @@ async function runJourneyFanOut(
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
   let stoppedByBackend = false;
+
+  // Every attempt response is another opportunity to observe a durable stop.
+  const reportRunAttempt: typeof reportAttempt = async (...args) => {
+    const result = await reportAttempt(...args);
+    if (result.canceled) {
+      stoppedByBackend = true;
+      runStop.abort();
+    }
+    return result;
+  };
 
   // Reads the RUN deadline's signal, not the raw abort: a run that spent its
   // budget must stop handing out new sessions, and the raw signal knows
@@ -1072,7 +1087,7 @@ async function runJourneyFanOut(
         // after. A claim failure skips the session (we can't run without it).
         let claim: { ok: true; applied: boolean };
         try {
-          claim = await reportAttempt(convexHttpUrl, bearer, {
+          claim = await reportRunAttempt(convexHttpUrl, bearer, {
             projectId,
             runId,
             hostId,
@@ -1204,7 +1219,7 @@ async function runJourneyFanOut(
               status: "failed",
               errorMessage: humanizeSwarmAttemptErrorMessage(message),
             });
-            await reportAttempt(convexHttpUrl, bearer, {
+            await reportRunAttempt(convexHttpUrl, bearer, {
               projectId,
               runId,
               hostId,
@@ -1302,7 +1317,7 @@ async function runJourneyFanOut(
                 status: failure.status,
                 errorMessage: failure.errorMessage,
               });
-              await reportAttempt(convexHttpUrl, bearer, {
+              await reportRunAttempt(convexHttpUrl, bearer, {
                 projectId,
                 runId,
                 hostId,
@@ -1348,13 +1363,13 @@ async function runJourneyFanOut(
         // personal computer.
         const harnessBlockedReason = !harnessNeedsBox
           ? undefined
-          : harnessTargetBlockedReason ??
+            : (harnessTargetBlockedReason ??
             (attemptSandbox
               ? undefined
               : "This session could not get a disposable sandbox for its " +
                 `${target.harness} harness. A swarm harness never falls back ` +
                 "to the launcher's shared project computer, so this session " +
-                "cannot run.");
+                  "cannot run."));
 
         try {
           // Execute the session via the shared core. It owns manager lifecycle +
@@ -1381,6 +1396,7 @@ async function runJourneyFanOut(
                 ? { reasoningEffort: targetSettings.reasoningEffort }
                 : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
+              maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
@@ -1566,7 +1582,7 @@ async function runJourneyFanOut(
               : {}),
           });
           try {
-            await reportAttempt(convexHttpUrl, bearer, {
+            await reportRunAttempt(convexHttpUrl, bearer, {
               projectId,
               runId,
               hostId,
@@ -1706,7 +1722,14 @@ async function runJourneyFanOut(
               remaining: sessionsPerTarget - (sessionIdx + 1),
             });
             await markRemainingTargetAttemptsRateLimited(
-              { convexHttpUrl, bearer, projectId, runId, target },
+                {
+                  convexHttpUrl,
+                  bearer,
+                  projectId,
+                  runId,
+                  target,
+                  reportAttemptFn: reportRunAttempt,
+                },
               sessionIdx + 1,
               sessionsPerTarget,
               cause === "transient_capacity"
@@ -1847,7 +1870,14 @@ async function runJourneyFanOut(
         return;
       }
       await markRemainingTargetAttemptsFailed(
-        { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
+        {
+          convexHttpUrl,
+          bearer: cleanupBearer,
+          projectId,
+          runId,
+          target,
+          reportAttemptFn: reportRunAttempt,
+        },
         sessionIdx,
         sessionsPerTarget,
         err instanceof SwarmSetupError
@@ -2101,12 +2131,13 @@ async function markRemainingTargetAttemptsRateLimited(
     projectId: string;
     runId: string;
     target: PinnedHostExecutionSpec;
+    reportAttemptFn: typeof reportAttempt;
   },
   fromIdx: number,
   toIdx: number,
   transientMessage?: string,
 ): Promise<void> {
-  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
     const chatSessionId = swarmAttemptChatSessionId(
@@ -2115,7 +2146,7 @@ async function markRemainingTargetAttemptsRateLimited(
       sessionIdx,
     );
     try {
-      await reportAttempt(convexHttpUrl, bearer, {
+      const claim = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2124,7 +2155,8 @@ async function markRemainingTargetAttemptsRateLimited(
         status: "running",
         chatSessionId,
       });
-      await reportAttempt(convexHttpUrl, bearer, {
+      if (claim.canceled) return;
+      const terminal = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2135,6 +2167,7 @@ async function markRemainingTargetAttemptsRateLimited(
         errorCode: transientMessage ? "user_rate_limit" : "rate_limited",
         ...(transientMessage ? { errorMessage: transientMessage } : {}),
       });
+      if (terminal.canceled) return;
     } catch (err) {
       logger.warn(
         "[swarm.runner] failed to mark remaining target attempt rate_limited",
@@ -2168,12 +2201,13 @@ async function markRemainingTargetAttemptsFailed(
     projectId: string;
     runId: string;
     target: PinnedHostExecutionSpec;
+    reportAttemptFn: typeof reportAttempt;
   },
   fromIdx: number,
   toIdx: number,
   errorCode = "host_worker_failed",
 ): Promise<void> {
-  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
     const chatSessionId = swarmAttemptChatSessionId(
@@ -2182,7 +2216,7 @@ async function markRemainingTargetAttemptsFailed(
       sessionIdx,
     );
     try {
-      await reportAttempt(convexHttpUrl, bearer, {
+      const claim = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2191,7 +2225,8 @@ async function markRemainingTargetAttemptsFailed(
         status: "running",
         chatSessionId,
       });
-      await reportAttempt(convexHttpUrl, bearer, {
+      if (claim.canceled) return;
+      const terminal = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2201,6 +2236,7 @@ async function markRemainingTargetAttemptsFailed(
         chatSessionId,
         errorCode,
       });
+      if (terminal.canceled) return;
     } catch (err) {
       logger.warn(
         "[swarm.runner] failed to mark remaining target attempt failed",

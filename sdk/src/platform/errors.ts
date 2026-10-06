@@ -109,6 +109,24 @@ export function isPlatformApiError(error: unknown): error is PlatformApiError {
 }
 
 /**
+ * True when the platform refused because a feature is not enabled for the
+ * caller's organization (a beta that has not reached it yet).
+ *
+ * The wire code for that refusal is the generic `FORBIDDEN`, so `code` alone
+ * cannot tell it from a permission denial. The reason rides in
+ * `details.code` (`"FEATURE_UNAVAILABLE"`), and `details.feature` names the
+ * feature when the server sent one. Branch on this rather than on the
+ * message, which is customer-facing copy.
+ */
+export function isFeatureUnavailable(
+  error: unknown
+): error is PlatformApiError {
+  return (
+    isPlatformApiError(error) && error.details?.code === "FEATURE_UNAVAILABLE"
+  );
+}
+
+/**
  * What a caller may safely say about a RATE_LIMITED refusal, read from the
  * error rather than its prose.
  *

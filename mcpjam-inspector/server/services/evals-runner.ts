@@ -247,6 +247,7 @@ import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
+import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -1513,6 +1514,40 @@ async function getEvalToolsForAiSdkOrThrow(args: {
     }
   }
   return flattened;
+}
+
+/**
+ * Refuses a launch whose tool snapshot could not list a server. Creating the
+ * run reserves iterations and charges `eval_step`, and the runner would then
+ * fail the same server in `getEvalToolsForAiSdkOrThrow` — so the caller gets
+ * that same setup error here, before anything is charged, not a failed run.
+ */
+export function throwIfEvalToolSnapshotFailed(args: {
+  toolSnapshot: ServerToolSnapshot;
+  mcpClientManager: MCPClientManager;
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+}): void {
+  const failures = args.toolSnapshot.servers.flatMap((server) => {
+    if (server.captureError === undefined) return [];
+    const connected =
+      args.mcpClientManager.getConnectionStatus(server.serverId) ===
+      "connected";
+    const phase: SetupPhase =
+      !connected || isMissingRuntimeServerError(server.captureError)
+        ? "connection"
+        : "discovery";
+    return [{ serverId: server.serverId, phase, error: server.captureError }];
+  });
+  // Same precedence as the runner: a connection failure is the one to report.
+  const chosen =
+    failures.find((failure) => failure.phase === "connection") ?? failures[0];
+  if (!chosen) return;
+  throwSetupPhaseError({
+    serverId: chosen.serverId,
+    phase: chosen.phase,
+    error: new Error(chosen.error),
+    environment: args.environment,
+  });
 }
 
 export function resolveConfiguredServerIds(args: {
