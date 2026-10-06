@@ -36,7 +36,7 @@ import { ErrorCard } from "@/components/ui/error-card";
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
-  isBusyReservation,
+  isBusyReservationRefusal,
 } from "@/shared/swarm-attempt-error";
 import {
   describeProviderRateLimit,
@@ -591,6 +591,7 @@ export function SwarmLiveStreamPane({
   // attempt row decides it: a whole-run spend-cap finalize stamps its code with
   // no message, so the stream's text alone cannot tell the two apart. A busy
   // reservation is a third thing: MCPJam's own wait, with no provider involved.
+  // The live event carries only the humanized sentence, so that counts too.
   const rateLimitInfo =
     outcome === "rate_limited"
       ? humanizeSwarmAttemptError(
@@ -602,7 +603,7 @@ export function SwarmLiveStreamPane({
   const providerRateLimit =
     rateLimitInfo &&
     !isAccountLimit(rateLimitInfo.message, rateLimitCode) &&
-    !isBusyReservation(rateLimitCode)
+    !isBusyReservationRefusal(rateLimitCode, rateLimitInfo.message)
       ? describeProviderRateLimit(
           providerLabelForModelId(convexSession?.modelId),
         )

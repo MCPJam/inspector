@@ -5,6 +5,7 @@ import {
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
   isBusyReservation,
+  isBusyReservationRefusal,
   isHeldCreditsRefusal,
   isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
@@ -539,6 +540,46 @@ describe("isBusyReservation", () => {
     ]) {
       expect(isBusyReservation(code)).toBe(false);
     }
+  });
+});
+
+describe("isBusyReservationRefusal", () => {
+  const BACKEND =
+    "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+
+  it("reads the code, and the busy sentence when the code was lost", () => {
+    expect(isBusyReservationRefusal("spending_reservation_busy")).toBe(true);
+    // A live event or stored row that kept only the sentence: the backend's,
+    // its older "spend capacity" wording, and the one the humanizer writes.
+    for (const message of [
+      BACKEND,
+      "MCPJam could not reserve spend capacity.",
+      humanizeSwarmAttemptError(BACKEND, "spending_reservation_busy").message,
+    ]) {
+      expect(isBusyReservationRefusal(undefined, message)).toBe(true);
+      // Under the runner's own generic code, which says nothing.
+      expect(isBusyReservationRefusal("rate_limited", message)).toBe(true);
+    }
+  });
+
+  it("does not read a busy reservation out of another refusal", () => {
+    // A code that names a different refusal rules the sentence out, and a
+    // text that also states an exhaustion is an exhaustion.
+    expect(isBusyReservationRefusal("wallet_locked", BACKEND)).toBe(false);
+    expect(
+      isBusyReservationRefusal(
+        undefined,
+        `${BACKEND} Daily MCPJam model limit reached.`,
+      ),
+    ).toBe(false);
+    for (const message of [
+      "Anthropic rate-limited this key.",
+      "The provider has no capacity right now.",
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits.",
+    ]) {
+      expect(isBusyReservationRefusal(undefined, message)).toBe(false);
+    }
+    expect(isBusyReservationRefusal(undefined, undefined)).toBe(false);
   });
 });
 

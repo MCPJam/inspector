@@ -54,7 +54,7 @@ import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
-  isBusyReservation,
+  isBusyReservationRefusal,
   isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
 import { providerLabelForModelId } from "./session-rate-limit";
@@ -1115,7 +1115,7 @@ export function NewSwarmRunningStep({
         if (
           isAccountLimit(info.message, attempt.errorCode ?? info.code) ||
           isHeldAttempt(attempt, info) ||
-          isBusyReservation(attempt.errorCode ?? info.code)
+          isBusyReservationRefusal(attempt.errorCode ?? info.code, info.message)
         ) {
           continue;
         }

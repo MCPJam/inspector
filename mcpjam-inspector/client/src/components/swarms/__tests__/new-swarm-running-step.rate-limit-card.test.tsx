@@ -381,6 +381,53 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     );
   });
 
+  it("does NOT name a provider for a busy reservation known only by its sentence", async () => {
+    // The terminal event can reach the browser before the attempt row does, or
+    // the report can fail: the live message is then all there is, and the
+    // humanizer has already dropped the code from it. Rows stored before the
+    // runner kept the busy code carry the same sentence under the generic one.
+    const humanized =
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.";
+    attempt.errorCode = "rate_limited";
+    attempt.errorMessage = humanized;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = humanized;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("does NOT name a provider while only the live stream has said a session was busy", async () => {
+    // No attempt row has landed yet: its status is still the lifecycle's, and it
+    // carries no code or message of its own.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const humanized =
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.";
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = humanized;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
   it("explains an account limit above the table when other sessions succeeded", async () => {
     // With a success in the wave the run banner stays silent, so without this
     // the stopped sessions would be amber chips with no reason given.

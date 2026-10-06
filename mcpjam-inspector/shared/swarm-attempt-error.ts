@@ -196,6 +196,36 @@ export function isBusyReservation(code?: string | null): boolean {
 }
 
 /**
+ * The busy reservation's own sentences: the backend's ("could not reserve
+ * spending capacity because ...", and its older "spend capacity" wording) and
+ * the one {@link humanizeSwarmAttemptError} words it with.
+ */
+const BUSY_RESERVATION_SENTENCE =
+  /\bcould not reserve (?:spend|spending) capacity\b|\btemporarily busy reserving spending capacity\b/i;
+
+/**
+ * A busy reservation by its code, or by its own sentence when the code was
+ * lost: a live event carries only the humanized message, and a stored row can
+ * carry the runner's generic code (or, from before the runner kept the busy
+ * code, the credit denial) beside it. The same fallback a hold has.
+ *
+ * A code that names a different refusal rules the sentence out, and a text
+ * that also states an exhaustion is an exhaustion.
+ */
+export function isBusyReservationRefusal(
+  code?: string | null,
+  message?: string | null,
+): boolean {
+  if (isBusyReservation(code)) return true;
+  return (
+    !!message &&
+    !namesAnotherRefusal(code) &&
+    BUSY_RESERVATION_SENTENCE.test(message) &&
+    !statesExhaustion(message)
+  );
+}
+
+/**
  * A refusal that lifts in seconds on its own: a wait, never an exhausted
  * wallet.
  *
