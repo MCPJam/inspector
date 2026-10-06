@@ -47,6 +47,7 @@ import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
   releaseBoxWhenStreamEnds,
@@ -780,8 +781,12 @@ const chatV2 = new Hono();
 chatV2.post("/", async (c) => {
   // The conversation's disposable box, held for this turn when the Playground
   // turn can't run on the member's personal computer (see playground-box.ts).
-  // Its heartbeat ends with the turn's stream, or with a throw below.
+  // Its heartbeat ends with the turn's stream; EVERY other way out of this
+  // handler (an early refusal, a throw) releases it in `finally`, so a box
+  // acquired for a turn that never started is not held for the heartbeat's
+  // 4-hour cap.
   let playgroundHarnessBox: HarnessBox | undefined;
+  let playgroundHarnessBoxHandedOff = false;
   try {
     const body = (await readRequestJson(c)) as ChatV2Request & {
       /** A Playground compare column: its harness gets a computer of its own. */
@@ -1541,71 +1546,6 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    // PLAYGROUND FALLBACK. A harness that signs in with the member's own
-    // account (Cursor), and every compare column, runs on this conversation's
-    // disposable computer — never the personal one, which holds no credentials
-    // and is one machine however many columns ask. Same decision, same box
-    // holder and same refusals as the hosted route (`web/chat-v2.ts`).
-    const playgroundBoxReason = playgroundHarnessBoxReason({
-      harnessId: resolvedExecution.harness,
-      localExecution: Boolean(harnessExecutionTarget),
-      isScenarioSession,
-      comparePane: body.comparePane === true,
-    });
-    // Anonymous (no bearer) or project-less turns have no project to hold a box
-    // for and no personal computer to protect: they keep their existing path.
-    if (
-      playgroundBoxReason &&
-      resolvedExecution.harness &&
-      typeof body.projectId === "string" &&
-      requestAuthHeader
-    ) {
-      const unavailable = playgroundHarnessBoxUnavailableReason(
-        resolvedExecution.harness,
-        playgroundBoxReason,
-      );
-      if (unavailable) {
-        return c.json(
-          {
-            error: unavailable,
-            code: "SANDBOX_UNAVAILABLE",
-            reason: "not_a_data_plane",
-          },
-          503,
-        );
-      }
-      if (!body.chatSessionId) {
-        return c.json(
-          {
-            error: `This turn runs the ${resolvedExecution.harness} harness on a disposable computer, which belongs to one conversation, and this turn named none.`,
-            code: "NO_CHAT_SESSION_ID",
-          },
-          400,
-        );
-      }
-      const acquired = await acquirePlaygroundHarnessBox({
-        bearer: requestAuthHeader.replace(/^Bearer\s+/i, ""),
-        projectId: body.projectId,
-        chatSessionId: body.chatSessionId,
-        signal: c.req.raw.signal as AbortSignal | undefined,
-      });
-      if (!acquired.ok) {
-        const described = describePlaygroundBoxRefusal(
-          resolvedExecution.harness,
-          playgroundBoxReason,
-          acquired.refusal,
-        );
-        return c.json(
-          {
-            error: described.message,
-            code: described.code ?? "PLAYGROUND_SANDBOX_PROVISION_FAILED",
-          },
-          described.status,
-        );
-      }
-      playgroundHarnessBox = acquired.box;
-    }
-
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
@@ -1662,6 +1602,93 @@ chatV2.post("/", async (c) => {
           503,
         );
       }
+    }
+
+    // PLAYGROUND FALLBACK — after the availability check, so a turn refused
+    // there never boots a box. A harness that signs in with the member's own
+    // account (Cursor), and every compare column, runs on this conversation's
+    // disposable computer — never the personal one, which holds no credentials
+    // and is one machine however many columns ask. Same decision, same box
+    // holder and same refusals as the hosted route (`web/chat-v2.ts`).
+    const playgroundBoxReason = playgroundHarnessBoxReason({
+      harnessId: resolvedExecution.harness,
+      localExecution: Boolean(harnessExecutionTarget),
+      isScenarioSession,
+      comparePane: body.comparePane === true,
+    });
+    // Anonymous (no bearer) or project-less turns have no project to hold a box
+    // for and no personal computer to protect: they keep their existing path.
+    if (
+      playgroundBoxReason &&
+      resolvedExecution.harness &&
+      typeof body.projectId === "string" &&
+      requestAuthHeader
+    ) {
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        resolvedExecution.harness,
+        playgroundBoxReason,
+      );
+      if (unavailable) {
+        return c.json(
+          {
+            error: unavailable,
+            code: "SANDBOX_UNAVAILABLE",
+            reason: "not_a_data_plane",
+          },
+          503,
+        );
+      }
+      if (!body.chatSessionId) {
+        return c.json(
+          {
+            error: `This turn runs the ${resolvedExecution.harness} harness on a disposable computer, which belongs to one conversation, and this turn named none.`,
+            code: "NO_CHAT_SESSION_ID",
+          },
+          400,
+        );
+      }
+      // The credential check the harness turn would fail, run BEFORE the box
+      // is booted, so a refused Cursor turn provisions nothing. This route
+      // resolves no project secrets and no environment, so it asks exactly
+      // what `runHarnessTurn` would.
+      if (playgroundBoxReason === "credential") {
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: resolvedExecution.harness,
+          secretEnv: undefined,
+          bearer: requestAuthHeader,
+          projectId: body.projectId,
+        });
+        if (credentialRefusal) {
+          return c.json(
+            {
+              error: credentialRefusal,
+              code: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+            },
+            409,
+          );
+        }
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: requestAuthHeader.replace(/^Bearer\s+/i, ""),
+        projectId: body.projectId,
+        chatSessionId: body.chatSessionId,
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (!acquired.ok) {
+        const described = describePlaygroundBoxRefusal(
+          resolvedExecution.harness,
+          playgroundBoxReason,
+          acquired.refusal,
+        );
+        return c.json(
+          {
+            error: described.message,
+            code: described.code ?? "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+          },
+          described.status,
+        );
+      }
+      playgroundHarnessBox = acquired.box;
     }
 
     // Built-in tools (e.g. web_search) bill MCPJam credits via a Convex
@@ -2554,6 +2581,7 @@ chatV2.post("/", async (c) => {
             }
           : undefined,
       });
+      playgroundHarnessBoxHandedOff = true;
       return releaseBoxWhenStreamEnds(turnResponse, playgroundHarnessBox);
     }
 
@@ -2945,7 +2973,7 @@ chatV2.post("/", async (c) => {
         : undefined,
     });
   } catch (error) {
-    await playgroundHarnessBox?.release();
+    // (The box, if one was acquired, is released in `finally` below.)
     // This catch wraps MCPJam's OWN request handling — config resolution,
     // backend dispatch, stream setup — not a hop into the user's MCP server,
     // so an unrecognized throw here is ours by default and the boundary
@@ -2966,6 +2994,8 @@ chatV2.post("/", async (c) => {
     return c.json({ error: "Unexpected error", origin }, 500, {
       "x-mcpjam-error-origin": origin,
     });
+  } finally {
+    if (!playgroundHarnessBoxHandedOff) await playgroundHarnessBox?.release();
   }
 });
 
