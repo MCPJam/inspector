@@ -37,6 +37,32 @@ function requestOf(fetchMock: FetchMock, call = 0): { url: URL; init: RequestIni
 }
 
 describe("PlatformApiClient", () => {
+  it.each(["goal", "journey"] as const)(
+    "preserves asynchronous %s cancellation acceptance",
+    async (surface) => {
+      const receipt = {
+        id: "r1",
+        status: "running",
+        canceled: true,
+        alreadyCanceled: false,
+        finalized: 0,
+        cleanupPending: true,
+      };
+      const fetchMock = vi.fn(async () => jsonResponse(receipt));
+      const client = makeClient(fetchMock);
+      const cancel =
+        surface === "goal"
+          ? client.cancelGoalRun.bind(client)
+          : client.cancelJourneyRun.bind(client);
+      expect(await cancel({ projectId: "p1", runId: "r1" })).toEqual(receipt);
+      const { url, init } = requestOf(fetchMock);
+      expect(url.pathname).toBe(
+        `/api/v1/projects/p1/${surface}-runs/r1/cancel`
+      );
+      expect(init.method).toBe("POST");
+    }
+  );
+
   it("defaults to the hosted production base URL", () => {
     expect(DEFAULT_PLATFORM_API_BASE_URL).toBe("https://app.mcpjam.com/api/v1");
   });

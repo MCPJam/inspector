@@ -48,6 +48,11 @@ describe("swarm-agent heartbeat — backend lifecycle response", () => {
     },
   );
 
+  it("honors an explicit cancellation flag even while stored status is running", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ok: true, status: "running", cancelRequested: true })));
+    expect(await heartbeatJourneyRun(CONVEX_HTTP_URL, "token", { projectId: "proj-1", runId: "run-1" })).toBe("failed");
+  });
+
   it("rejects an unrecognized status instead of stopping a healthy run", async () => {
     vi.stubGlobal(
       "fetch",
@@ -301,4 +306,12 @@ describe("swarm-agent reportAttempt — targetId echo", () => {
     );
     expect("targetId" in withoutTarget).toBe(false);
   });
+});
+
+
+it("preserves the canceled attempt response for runner control", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ok: true, applied: false, canceled: true })));
+  try {
+    expect(await reportAttempt(CONVEX_HTTP_URL, "token", { projectId: "proj-1", runId: "run-1", hostId: "host-1", sessionIdx: 0, status: "running", chatSessionId: "session-1" })).toEqual({ ok: true, applied: false, canceled: true });
+  } finally { vi.unstubAllGlobals(); }
 });
