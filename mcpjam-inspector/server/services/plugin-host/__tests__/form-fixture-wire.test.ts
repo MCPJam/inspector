@@ -1,8 +1,6 @@
 import { afterEach, expect, it } from "vitest";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/server";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { OpenAIFormParamsSchema } from "../../../../shared/plugin-extensions/wire.js";
 import { registerExtensionFormFixture } from "../../../testing/extension-form-fixture.js";
 const close: (() => Promise<void>)[] = [];
@@ -18,12 +16,10 @@ it("serves missing field, large-schema and upload cases through actual reverse M
   );
   const seen: unknown[] = [];
   client.setRequestHandler(
-    z.object({
-      method: z.literal("openai/elicitation/create"),
-      params: OpenAIFormParamsSchema,
-    }),
-    async (request) => {
-      seen.push(request.params.requestedSchema);
+    "openai/elicitation/create",
+    { params: OpenAIFormParamsSchema },
+    async (params) => {
+      seen.push(params.requestedSchema);
       return { action: "decline" };
     },
   );
