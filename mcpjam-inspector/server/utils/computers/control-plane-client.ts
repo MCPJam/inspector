@@ -206,6 +206,14 @@ async function postJson<T>(
   headers: Record<string, string>,
   body: Record<string, unknown>,
   signal?: AbortSignal,
+  options?: {
+    /**
+     * A network failure is EXPECTED and retried by the caller (a heartbeat
+     * beat), so log it at warn: `logger.error` pages, and an outage would
+     * page once per active box per beat.
+     */
+    quietNetworkErrors?: boolean;
+  },
 ): Promise<ControlPlaneResult<T>> {
   const base = getConvexHttpUrl();
   if (!base) {
@@ -220,7 +228,13 @@ async function postJson<T>(
       signal,
     });
   } catch (err) {
-    logger.error(`[computers] ${path} network error`, err);
+    if (options?.quietNetworkErrors) {
+      logger.warn(`[computers] ${path} network error`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } else {
+      logger.error(`[computers] ${path} network error`, err);
+    }
     return { ok: false, status: 0, error: "network error" };
   }
   let payload: unknown = null;
@@ -854,6 +868,7 @@ export async function touchSandbox(args: {
     headers,
     { sandboxRowId: args.sandboxRowId, sandboxId: args.sandboxId },
     args.signal,
+    { quietNetworkErrors: true },
   );
   if (result.ok) return "touched";
   if (result.status === 404 || result.status === 409) return "gone";
