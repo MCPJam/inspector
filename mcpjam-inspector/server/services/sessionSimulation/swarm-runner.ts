@@ -1540,8 +1540,20 @@ async function runJourneyFanOut(
             } finally { await localResources?.cleanup(); }
           };
           const sessionResult = await runSession();
-          const { outcome, errorMessage, errorReason, errorRefusal } =
-            sessionResult;
+          const { errorMessage, errorReason, errorRefusal } = sessionResult;
+          // A busy reservation that ran out its retries is a wait however the
+          // backend words it. The core folds a failure into `rate_limited` by
+          // its words (`spend`, `cap`, ...), and the current sentence ("spending
+          // capacity") has none of them, so it came back `failed` and never
+          // reached the target stop below. The code is structural, as a hold's is.
+          // A session the run's own stop cancelled is an abort artifact whatever
+          // its last refusal was, and is reclassified below.
+          const outcome =
+            sessionResult.outcome === "failed" &&
+            !sessionSignal.aborted &&
+            isBusyReservation(errorRefusal?.code)
+              ? "rate_limited"
+              : sessionResult.outcome;
 
           // The core has persisted its partial transcript before returning.
           // Convex already settled the attempts; do not replace that outcome
