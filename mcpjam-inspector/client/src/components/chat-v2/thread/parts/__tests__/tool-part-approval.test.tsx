@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { mcpCallToolResultToModelOutput } from "@mcpjam/sdk/browser";
 import { ToolPart } from "../tool-part";
 
 vi.mock("lucide-react", () => {
@@ -330,12 +331,10 @@ describe("ToolPart approval expansion", () => {
 
   it("shows an omitted-only image warning in the expanded panel", async () => {
     const user = userEvent.setup();
-    const output = {
-      type: "content",
-      value: [
-        { type: "text", text: "[image omitted: image/png exceeds 10 MB limit]" },
-      ],
-    };
+    const output = mcpCallToolResultToModelOutput(
+      { content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }] },
+      { maxImageBytes: 2 }
+    );
 
     render(
       <ToolPart
