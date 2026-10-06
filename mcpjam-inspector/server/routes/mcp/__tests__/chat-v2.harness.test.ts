@@ -831,7 +831,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
         reason: "nope",
       });
       const response = await post(cursor);
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
       expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
       // No stream will carry the box to its release, so the route must.
