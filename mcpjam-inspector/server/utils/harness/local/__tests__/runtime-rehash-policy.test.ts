@@ -16,7 +16,11 @@ describe("which pack files are re-hashed before a spawn", () => {
   });
 
   it("covers what Claude Code executes", () => {
-    expect(rehashPolicyFor("claude-code").always).toEqual(["launcher.mjs", "bridge.mjs"]);
+    // The bridge and launcher are the Inspector layer's, re-hashed in full
+    // before every exec; the pack's own entrypoint is the agent SDK.
+    expect(rehashPolicyFor("claude-code").always).toEqual([
+      "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs",
+    ]);
     expect(matches("claude-code", "bin/node")).toBe(true);
     expect(
       matches("claude-code", "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude"),
@@ -24,9 +28,9 @@ describe("which pack files are re-hashed before a spawn", () => {
   });
 
   it("covers what Codex executes, in the layout @openai/codex@0.149.1 installs", () => {
-    // Codex spawns the host-tool MCP entrypoint itself, so it is as much an
-    // executable as the bridge.
-    expect(rehashPolicyFor("codex").always).toContain("host-tools-mcp.mjs");
+    // The host-tool MCP entrypoint is the layer's now; the pack's script is
+    // the wrapper the bridge runs.
+    expect(rehashPolicyFor("codex").always).toEqual(["node_modules/@openai/codex/bin/codex.js"]);
     for (const path of [
       "bin/node.exe",
       "node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
@@ -49,7 +53,7 @@ describe("which pack files are re-hashed before a spawn", () => {
     expect(matches("claude-code", "node_modules/@openai/codex-linux-x64/vendor/x/bin/codex")).toBe(false);
   });
 
-  it("gives an unknown harness only the bridge pair and Node, never a throw", () => {
-    expect(rehashPolicyFor("toString").always).toEqual(["launcher.mjs", "bridge.mjs"]);
+  it("gives an unknown harness only Node, never a throw", () => {
+    expect(rehashPolicyFor("toString").always).toEqual([]);
   });
 });

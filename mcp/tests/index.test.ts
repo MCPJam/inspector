@@ -323,12 +323,16 @@ describe("/mcp with guests (mixed)", () => {
   });
 
   describe("without the mint secret", () => {
+    let freshWorker: typeof worker;
+    beforeAll(async () => {
+      // Reset the isolate warning once. Loading the full SDK/tool registry is
+      // setup work and can exceed a test's 5s budget in the parallel CI lane.
+      vi.resetModules();
+      freshWorker = (await import("../src/index.js")).default;
+    }, 30_000);
+
     it("answers a tokenless request with the OAuth 401 and logs the misconfiguration once", async () => {
       stubOutboundFetch();
-      // A fresh module instance: the warning is once per isolate, and earlier
-      // tests in this file share the cached one.
-      vi.resetModules();
-      const { default: freshWorker } = await import("../src/index.js");
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
       const env = makeEnv({ guestAccess: "mixed" });
 

@@ -8,6 +8,12 @@
  */
 import { vi, afterEach, beforeAll, afterAll } from "vitest";
 
+// The local-harness installer refreshes the signed revocation list before an
+// install. Keep unit tests off the network: a closed loopback port fails fast,
+// which the refresh treats as "offline, keep the cache". Tests that exercise
+// the list inject their own fetch.
+process.env.MCPJAM_LOCAL_HARNESS_REVOCATIONS_URL ??= "http://127.0.0.1:9/revocations.json";
+
 const isCI = process.env.CI === "true";
 const isVerbose = process.env.VERBOSE_TESTS === "1";
 const shouldSuppressConsole = !isCI && !isVerbose;

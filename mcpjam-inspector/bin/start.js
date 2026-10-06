@@ -5,7 +5,7 @@ import { spawn } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
 import { createServer, createConnection } from "net";
 import { execSync } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import open from "open";
 import {
   createLaunchToken,
@@ -435,29 +435,52 @@ async function setupOllamaInSingleTerminal(model) {
 }
 
 /**
- * `mcpjam-inspector harness install` — download and verify the local-harness
- * runtime pack, then exit.
+ * `mcpjam-inspector harness <install|status|doctor|repair>` — the local-harness
+ * runtime, from a terminal.
  *
- * A subcommand rather than a flag on the server, and handled before the server
- * spawn, because installing a 515 MB agent runtime is a thing somebody asks
- * for and watches finish. Nothing about starting the Inspector installs it.
+ *   install [--harness <id>] [--from <archive>]   download (or, with --from,
+ *       pre-provision from a local signed archive, no network) and verify
+ *   status  [--harness <id>]                       the selected runtime, as JSON
+ *   doctor  [--harness <id>] [--json] [--verify] [--export <file>]
+ *       what runs, what is installed, the last failure and its stage, disk,
+ *       proxy, update policy, and the repair to run; --export writes it
+ *       redacted (no home path, no credential) for a support ticket
+ *   repair  [--harness <id>] [--from <archive>]    re-verify, reinstall if
+ *       corrupt, clear staging, re-probe an unhealthy runtime
+ *
+ * Subcommands rather than server flags, and handled before the server spawn:
+ * nothing about starting the Inspector installs a runtime by itself here.
  */
 async function runHarnessSubcommand(args) {
   const action = args[1];
-  const usage = "usage: mcpjam-inspector harness <install|status> [--harness <id>]";
-  if (action !== "install" && action !== "status") {
+  const usage =
+    "usage: mcpjam-inspector harness <install|status|doctor|repair> [--harness <id>] " +
+    "[--from <archive>] [--json] [--verify] [--export <file>]";
+  if (!["install", "status", "doctor", "repair"].includes(action)) {
     logError(usage);
     return 2;
   }
-  // Which harness's pack. Omitted means Claude Code, as it always did.
+  // Which harness's pack. Omitted means Claude Code for install/status/repair
+  // (as it always did) and every harness for doctor.
   let harnessId;
+  let fromArchive;
+  let exportPath;
+  let json = false;
+  let verify = false;
   for (let i = 2; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--harness" && typeof args[i + 1] === "string") {
-      harnessId = args[++i];
-    } else if (arg.startsWith("--harness=")) {
-      harnessId = arg.slice("--harness=".length);
-    } else {
+    const value = (name) => {
+      if (arg === `--${name}` && typeof args[i + 1] === "string") return args[++i];
+      if (arg.startsWith(`--${name}=`)) return arg.slice(name.length + 3);
+      return undefined;
+    };
+    let v;
+    if ((v = value("harness")) !== undefined) harnessId = v;
+    else if ((v = value("from")) !== undefined && (action === "install" || action === "repair")) fromArchive = resolve(v);
+    else if ((v = value("export")) !== undefined && action === "doctor") exportPath = resolve(v);
+    else if (arg === "--json" && (action === "doctor" || action === "status")) json = true;
+    else if (arg === "--verify" && action === "doctor") verify = true;
+    else {
       logError(usage);
       return 2;
     }
@@ -506,8 +529,13 @@ async function runHarnessSubcommand(args) {
     );
     return 2;
   }
+  if (fromArchive !== undefined && !existsSync(fromArchive)) {
+    logError(`no archive at ${fromArchive}`);
+    return 2;
+  }
   const harnessName =
     mod?.harnessDisplayNames?.[harnessId ?? "claude-code"] ?? "Claude Code";
+  const harnessFlag = harnessId ? ` --harness ${harnessId}` : "";
 
   if (action === "status") {
     const current = await status(harnessId);
@@ -515,19 +543,58 @@ async function runHarnessSubcommand(args) {
     return current.state === "ready" ? 0 : 1;
   }
 
-  logStep("1", `Installing the local ${harnessName} runtime pack`);
+  if (action === "doctor") {
+    if (typeof mod?.harnessDoctor !== "function") {
+      logError("this Inspector build has no `harness doctor`");
+      return 1;
+    }
+    const exported = exportPath !== undefined;
+    const result = await mod.harnessDoctor({ harnessId, verify, exported });
+    if (exported) {
+      writeFileSync(exportPath, `${JSON.stringify(result.report, null, 2)}\n`, { mode: 0o600 });
+      logSuccess(`Wrote a redacted report to ${exportPath}`);
+    }
+    if (json) log(JSON.stringify(result.report, null, 2));
+    else if (!exported) log(result.text);
+    return result.healthy ? 0 : 1;
+  }
+
   let lastPercent = -1;
-  const result = await install((progress) => {
+  const onProgress = (progress) => {
     if (progress.state === "downloading" && progress.percent !== lastPercent) {
       lastPercent = progress.percent;
       process.stdout.write(`\r  downloading ${progress.percent}%   `);
     } else if (progress.state === "verifying") {
       process.stdout.write("\r  verifying…            ");
     }
-  }, harnessId);
-  process.stdout.write("\r");
+  };
+
+  let result;
+  if (action === "repair") {
+    if (typeof mod?.harnessRepair !== "function") {
+      logError("this Inspector build has no `harness repair`");
+      return 1;
+    }
+    logStep("1", `Repairing the local ${harnessName} runtime`);
+    const repaired = await mod.harnessRepair(onProgress, harnessId, fromArchive ? { fromArchive } : {});
+    process.stdout.write("\r");
+    for (const done of repaired.actions) logInfo(done);
+    result = repaired.status;
+  } else {
+    logStep(
+      "1",
+      fromArchive
+        ? `Installing the local ${harnessName} runtime pack from ${fromArchive} (no network)`
+        : `Installing the local ${harnessName} runtime pack`,
+    );
+    result = await install(onProgress, harnessId, fromArchive ? { fromArchive } : {});
+    process.stdout.write("\r");
+  }
   if (result.state === "ready") {
-    logSuccess(`Runtime pack ${result.packVersion} installed and verified`);
+    logSuccess(
+      `Runtime pack ${result.packVersion} ${action === "repair" ? "is usable" : "installed and verified"}` +
+        (result.role === "permitted" ? " (the previous pack; the current one is not installed)" : ""),
+    );
     return 0;
   }
   // The reason, where the installer could establish one. Each of these sends a
@@ -535,24 +602,28 @@ async function runHarnessSubcommand(args) {
   // bad artifact — so collapsing them into "it failed" is what makes an
   // installer message useless.
   const REASONS = {
-    network: "the runtime could not be downloaded",
+    network:
+      "the runtime could not be downloaded (behind a proxy? set HTTPS_PROXY, " +
+      "and NODE_EXTRA_CA_CERTS for a TLS-inspecting one)",
     verification:
-      "the downloaded runtime did not match what this Inspector expected, " +
-      "so it was not installed",
+      "the runtime did not match what this Inspector expected, so it was not " +
+      "installed",
     disk: "the runtime could not be written to its install location",
+    probe: "the runtime verified but this Inspector could not start on it",
     unknown: "the install did not complete",
   };
   if (result.state === "failed") {
     logError(
       `${REASONS[result.reason] ?? REASONS.unknown}` +
+        (result.stage ? ` [stage: ${result.stage}]` : "") +
         (result.message ? `: ${result.message}` : ""),
     );
-    logInfo(`Run \`mcpjam-inspector harness install${harnessId ? ` --harness ${harnessId}` : ""}\` again to retry.`);
+    logInfo(`Run \`mcpjam-inspector harness doctor${harnessFlag}\` for what to do next.`);
     return 1;
   }
   if (result.state === "interrupted") {
     logError("Setup was interrupted before it finished.");
-    logInfo(`Run \`mcpjam-inspector harness install${harnessId ? ` --harness ${harnessId}` : ""}\` again to continue.`);
+    logInfo(`Run \`mcpjam-inspector harness ${action}${harnessFlag}\` again to continue.`);
     return 1;
   }
   logError(
