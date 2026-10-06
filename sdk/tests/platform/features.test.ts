@@ -217,4 +217,23 @@ describe("disabledOperations", () => {
       ["drive_chat_session_browser", "observe_chat_session_browser"].sort()
     );
   });
+
+  it("keeps sandbox images apart from the computer itself", () => {
+    expect(
+      disabledOperations({ ...allOn, "sandbox-images": false }).sort()
+    ).toEqual(
+      [
+        "build_sandbox_image",
+        "create_sandbox_image",
+        "list_sandbox_image_builds",
+        "promote_sandbox_image",
+        "update_sandbox_image",
+        "use_sandbox_image",
+        "validate_sandbox_image_blueprint",
+      ].sort()
+    );
+    expect(disabledOperations({ ...allOn, computers: false })).toEqual([
+      "reset_computer",
+    ]);
+  });
 });

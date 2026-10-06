@@ -32,6 +32,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "local-browser",
   "sandboxes",
   "computers",
+  "sandbox-images",
   "browser",
   "hosted-browser",
   "skills",
@@ -61,6 +62,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "local-browser": "Local Browser",
   sandboxes: "Swarms and studies",
   computers: "Computers",
+  "sandbox-images": "Sandbox images",
   browser: "Browser",
   "hosted-browser": "Hosted Browser",
   skills: "Cloud Skills",
@@ -126,14 +128,16 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   // Cloud Skills. A server's own skills (`*_server_skill*`) are released.
   list_project_skills: "skills",
   get_project_skill: "skills",
-  // Computers and their sandbox images.
-  create_sandbox_image: "computers",
-  update_sandbox_image: "computers",
-  validate_sandbox_image_blueprint: "computers",
-  build_sandbox_image: "computers",
-  list_sandbox_image_builds: "computers",
-  promote_sandbox_image: "computers",
-  use_sandbox_image: "computers",
+  // Custom sandbox images: authoring, building, promoting and pinning one.
+  // Pinning also needs `computers` when the caller has no computer yet.
+  create_sandbox_image: "sandbox-images",
+  update_sandbox_image: "sandbox-images",
+  validate_sandbox_image_blueprint: "sandbox-images",
+  build_sandbox_image: "sandbox-images",
+  list_sandbox_image_builds: "sandbox-images",
+  promote_sandbox_image: "sandbox-images",
+  use_sandbox_image: "sandbox-images",
+  // The personal computer itself.
   reset_computer: "computers",
   // Named environments. Reading one, and the ad-hoc compose path
   // (`ensure_adhoc_environment`), are released.
