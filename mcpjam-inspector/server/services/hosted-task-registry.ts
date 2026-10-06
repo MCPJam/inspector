@@ -32,16 +32,19 @@
 import type { TaskCreatedEvent } from "@mcpjam/sdk";
 
 import type { RegistryTaskEntry } from "../../shared/hosted-tasks.js";
-import {
-  getInternalBackendConfig,
-  isEntityNotFound,
-} from "./internal-backend.js";
+import { isEntityNotFound } from "./internal-backend.js";
 import { logger } from "../utils/logger.js";
+import { getServiceCredential, serviceCredentialHeaders } from "./service-credential.js";
 
 const UPSERT_PATH = "/internal/v1/hosted-tasks/upsert";
 const LIST_PATH = "/internal/v1/hosted-tasks/list";
 const REPORT_PATH = "/internal/v1/hosted-tasks/report";
 const DELETE_PATH = "/internal/v1/hosted-tasks/delete";
+
+/** `/internal/v1/hosted-tasks/x` → `/v1/hosted-tasks/x` (the bearer-only twin). */
+export function bearerTwinPath(internalPath: string): string {
+  return internalPath.replace("/internal/v1/hosted-tasks/", "/v1/hosted-tasks/");
+}
 
 /**
  * Deliberately under the sink's 5s `bestEffort` ceiling.
@@ -96,7 +99,16 @@ async function registryRequest<T>(
   bearer: string,
   body: Record<string, unknown>
 ): Promise<RegistryOutcome<T>> {
-  const { convexUrl, serviceToken } = getInternalBackendConfig();
+  // Hosted: the service-credential route. Self-hosted (no credential): the
+  // backend's bearer-only twin of the same handler — the owner is derived from
+  // the forwarded bearer on both, so the credential never chose whose rows
+  // these are.
+  const serviceToken = getServiceCredential();
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new Error("CONVEX_HTTP_URL is not set");
+  }
+  const target = serviceToken ? path : bearerTwinPath(path);
 
   // Explicit controller + setTimeout rather than `AbortSignal.timeout()`: the
   // latter runs on the platform clock, which fake timers cannot drive, and an
@@ -113,11 +125,11 @@ async function registryRequest<T>(
   try {
     let response: Response;
     try {
-      response = await fetch(`${convexUrl}${path}`, {
+      response = await fetch(`${convexUrl}${target}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-inspector-service-token": serviceToken,
+          ...serviceCredentialHeaders(),
           authorization: `Bearer ${bearer}`,
         },
         body: JSON.stringify(body),

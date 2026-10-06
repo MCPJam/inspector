@@ -53,12 +53,7 @@ const MODULE = join("server", "services", "service-credential.ts");
  * an entry that no longer reads raw is stale and fails the check, so it cannot
  * silently re-permit a read later.
  */
-const ALLOWLIST = new Set([
-  "server/routes/v1/agent.ts",
-  "server/routes/web/hosted-elicitation.ts",
-  "server/utils/org-model-config.ts",
-  "server/utils/tool-approval-token.ts",
-]);
+const ALLOWLIST = new Set(["server/utils/tool-approval-token.ts"]);
 
 const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"];
 

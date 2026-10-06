@@ -1,5 +1,5 @@
 import type { Context, Next } from "hono";
-import { ErrorCode } from "../routes/web/errors.js";
+import { ErrorCode, hostedOnlyResponse } from "../routes/web/errors.js";
 import { validateGuestTokenDetailedAsync } from "../services/guest-token.js";
 import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
@@ -20,6 +20,7 @@ import {
   isDiscordServiceToken,
 } from "./surface-service-auth.js";
 import { refuseUnservableSession } from "./session-revocation.js";
+import { hasServiceCredential, isServiceCredentialUnavailableError, WORKOS_API_KEY_FEATURE } from "../services/service-credential.js";
 
 /**
  * The sign-out route (`routes/web/auth-session.ts`). It records the revocation
@@ -128,6 +129,18 @@ type ValidateApiKeyResult = {
   } | null;
 };
 
+/**
+ * Whether this is a self-hosted server, which cannot validate an `sk_…` key at
+ * all: that takes MCPJam's WorkOS admin key AND the service credential (the
+ * user lookup and the delegated-token mint behind every key call), and neither
+ * ships outside the hosted app. Keyed on the credential: a server that holds
+ * it but lacks the admin key is a misconfigured hosted deployment, and keeps
+ * its ordinary failure.
+ */
+function canValidateWorkosApiKeysHere(): boolean {
+  return hasServiceCredential();
+}
+
 export async function bearerAuthMiddleware(
   c: Context,
   next: Next
@@ -192,6 +205,13 @@ export async function bearerAuthMiddleware(
           value: token,
         })) as unknown as ValidateApiKeyResult;
       } catch (error) {
+        // A self-hosted server cannot validate an `sk_…` key at all: that
+        // takes MCPJam's WorkOS admin key and the service credential, neither
+        // of which ships outside the hosted app. Say so — "Invalid API key"
+        // would send the caller hunting for a problem with a key that is fine.
+        if (!canValidateWorkosApiKeysHere()) {
+          return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
+        }
         logger.warn("WorkOS API key validation threw", {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -236,6 +256,9 @@ export async function bearerAuthMiddleware(
     try {
       mcpjamUser = await resolveUserByExternalId(workosUserId);
     } catch (error) {
+      if (isServiceCredentialUnavailableError(error)) {
+        return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
+      }
       logger.error("Failed to resolve MCPJam user from WorkOS externalId", {
         workosUserId,
         error: error instanceof Error ? error.message : String(error),

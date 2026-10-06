@@ -13,18 +13,6 @@ import type { TaskCreatedEvent } from "@mcpjam/sdk";
 vi.mock("../../utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("../internal-backend.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../internal-backend.js")
-  >("../internal-backend.js");
-  return {
-    ...actual,
-    getInternalBackendConfig: () => ({
-      convexUrl: "https://backend.test",
-      serviceToken: "svc-token",
-    }),
-  };
-});
 
 import {
   deleteRegistryTask,
@@ -50,11 +38,14 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+  vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
   vi.clearAllMocks();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -333,5 +324,29 @@ describe("deleteRegistryTask", () => {
     await expect(deleteRegistryTask(scope, task)).resolves.toBe(false);
     expect(logger.info).toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("self-hosted (no service credential)", () => {
+  beforeEach(() => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+  });
+
+  it("uses the bearer-only twin and sends no service-token header at all", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true, tasks: [entry] }));
+
+    await expect(listRegistryTasks(scope)).resolves.toEqual([entry]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://backend.test/v1/hosted-tasks/list");
+    expect(init.headers).not.toHaveProperty("x-inspector-service-token");
+    expect(init.headers.authorization).toBe("Bearer user-jwt");
+  });
+
+  it("records a created task on the twin too", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
+    await recordHostedTask(event, options);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://backend.test/v1/hosted-tasks/upsert");
+    expect(init.headers).not.toHaveProperty("x-inspector-service-token");
   });
 });

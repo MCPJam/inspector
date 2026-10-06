@@ -29,6 +29,11 @@ import {
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
 import { backendFailureText } from "./backend-failure-text.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+  ServiceCredentialUnavailableError,
+} from "../services/service-credential.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,8 +96,13 @@ export function isLocalRuntimeEligible(providerKey: string): boolean {
 // Resolution — call the Convex HTTP endpoint
 // ---------------------------------------------------------------------------
 
-const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
 const RESOLVE_TIMEOUT_MS = 15_000;
+const ORG_MODEL_CONFIG_FEATURE = "Organization model providers";
+/** Service-credential route (hosted Inspector). */
+export const ORG_MODEL_CONFIG_SERVICE_PATH =
+  "/internal/v1/org-model-config/resolve";
+/** Bearer-only twin of the same handler (self-hosted Inspector). */
+export const ORG_MODEL_CONFIG_BEARER_PATH = "/v1/org-model-config/resolve";
 
 // ---------------------------------------------------------------------------
 // In-process cache — avoids one 15 s HTTP call per eval test case.
@@ -170,12 +180,15 @@ export async function resolveOrgModelConfig(
     throw new Error("CONVEX_HTTP_URL is not set");
   }
 
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
-
+  // With the service credential (hosted), the internal route; without it
+  // (every self-hosted build), the backend's bearer-only twin, which runs the
+  // same handler and authorizes the same user off the same bearer. Without a
+  // credential AND without a bearer there is nobody to resolve for.
+  const inspectorServiceToken = getServiceCredential();
   const authHeader = normalizeAuthHeader(auth);
+  if (!inspectorServiceToken && !authHeader) {
+    throw new ServiceCredentialUnavailableError(ORG_MODEL_CONFIG_FEATURE);
+  }
   const serverIds = normalizeServerIds(auth?.serverIds);
   await verifyGithubCredentialAccess();
   const cacheKey = buildCacheKey(params, auth);
@@ -184,7 +197,11 @@ export async function resolveOrgModelConfig(
     return cached.result;
   }
 
-  const url = `${convexHttpUrl.replace(/\/$/, "")}/internal/v1/org-model-config/resolve`;
+  const url = `${convexHttpUrl.replace(/\/$/, "")}${
+    inspectorServiceToken
+      ? ORG_MODEL_CONFIG_SERVICE_PATH
+      : ORG_MODEL_CONFIG_BEARER_PATH
+  }`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESOLVE_TIMEOUT_MS);
 
@@ -193,7 +210,9 @@ export async function resolveOrgModelConfig(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
+        ...(inspectorServiceToken
+          ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken }
+          : {}),
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       body: JSON.stringify({

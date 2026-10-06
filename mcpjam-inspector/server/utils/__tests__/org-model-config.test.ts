@@ -105,6 +105,42 @@ describe("resolveOrgModelConfig", () => {
     ).toBe("Bearer user-b");
   });
 
+  it("uses the bearer-only twin on a server without the service credential", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json({ ok: true, providers: [] }),
+      );
+
+    await expect(
+      resolveOrgModelConfig(
+        { projectId: "project_org_config_bearer_twin" },
+        { bearerToken: "user-self-hosted" },
+      ),
+    ).resolves.toEqual({ providers: [] });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://convex.example/v1/org-model-config/resolve",
+    );
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("authorization")).toBe("Bearer user-self-hosted");
+    // Omitted, not sent empty.
+    expect(headers.has("x-inspector-service-token")).toBe(false);
+  });
+
+  it("refuses as hosted-only with neither a credential nor a bearer", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      resolveOrgModelConfig({ projectId: "project_org_config_nobody" }),
+    ).rejects.toMatchObject({ name: "ServiceCredentialUnavailableError" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not reuse a runtime admission across tools, images or unattended purpose", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example/";
     const fetchMock = vi

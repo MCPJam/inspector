@@ -89,7 +89,7 @@ import {
 import { MCPJAM_HOSTED_ORIGIN, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import { parseWithSchema } from "../web/errors.js";
+import { hostedOnlyRouteError, parseWithSchema } from "../web/errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { isAuthorizedInternalServiceRequest } from "../../middleware/internal-service-auth.js";
@@ -125,6 +125,10 @@ import { getOrgAgentPolicyCached } from "../../utils/org-agent-policy.js";
 import { v1Error, v1Resource } from "./envelope.js";
 import { MCPJAM_AGENT_FAILURE_CAPTURE } from "../../utils/agent-failure-capture.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import {
+  hasServiceCredential,
+  serviceCredentialHeaders,
+} from "../../services/service-credential.js";
 
 // ---------------------------------------------------------------------------
 // Tool surface
@@ -1208,11 +1212,15 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
   // Graceful degradation on OSS/self-hosted installs: the hosted engine and
   // the delegated-token mint both require the backend wiring.
-  if (!process.env.CONVEX_HTTP_URL || !process.env.INSPECTOR_SERVICE_TOKEN) {
+  if (!process.env.CONVEX_HTTP_URL || !hasServiceCredential()) {
+    // The shared hosted-only answer, so the copy and `details.reason` match
+    // every other credential-backed feature.
+    const hostedOnly = hostedOnlyRouteError("The agent endpoint");
     return v1Error(
       c,
       "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint requires a hosted MCPJam deployment.",
+      hostedOnly.message,
+      hostedOnly.details,
     );
   }
 
@@ -1286,7 +1294,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${await getConvexBearerForRequest(c)}`,
-          "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN!,
+          ...serviceCredentialHeaders(),
         },
         body: JSON.stringify({
           projectId,

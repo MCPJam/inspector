@@ -15,6 +15,7 @@
 
 import { authFetch } from "@/lib/session-token";
 import { fetchArtifact } from "@/lib/artifact-urls";
+import { isHostedOnlyErrorBody } from "@/lib/hosted-only";
 
 const BASE = "/api/web/bench";
 
@@ -594,7 +595,13 @@ async function throwFromResponse(
     details?: { code?: string };
   } | null;
   const message = body?.message ?? body?.error ?? fallback;
-  if (response.status === 503 && body?.code === "FEATURE_NOT_SUPPORTED") {
+  // A self-hosted server without MCPJam's service credential answers with the
+  // shared hosted-only refusal: the same "hide the entry point" deployment
+  // state as a backend that has not enabled runs.
+  if (
+    (response.status === 503 && body?.code === "FEATURE_NOT_SUPPORTED") ||
+    isHostedOnlyErrorBody(body)
+  ) {
     throw new BenchNotEnabledError(message);
   }
   // The relay maps every backend 409 to CONFLICT and forwards the backend's
