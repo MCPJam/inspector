@@ -12,13 +12,15 @@ const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
  * has to finish an authorization. The pending marker, the resume record and the
  * guest cookie are all per-origin, so a callback that lands on a different host
  * cannot see any of them: the flow dead-ends and the visitor loses their work.
- * `score.mcpjam.com` and Inspector PR previews run authorizations, so they keep
- * their own callbacks. Only our numbered Railway preview hosts qualify.
+ * `score.mcpjam.com` and numbered Inspector PR previews run authorizations, so
+ * they keep their own callbacks.
  *
  * Adding a host here mints a new `redirect_uri`. Dynamic registration sends it
  * per-flow and needs nothing else, but Client ID Metadata Document flows only
  * accept URIs listed in the document at `MCPJAM_CLIENT_ID` — a new host must be
- * added there too, or CIMD servers will reject the authorization.
+ * added there too, or CIMD servers will reject the authorization. Preview hosts
+ * are ephemeral and cannot be listed, so `supportsMcpJamCimdRedirect` steers
+ * them to DCR instead.
  */
 const HOSTED_REDIRECT_HOSTNAMES = new Set([
   "app.mcpjam.com",

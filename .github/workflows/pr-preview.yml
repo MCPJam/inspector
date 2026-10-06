@@ -703,9 +703,22 @@ jobs:
       DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
       PREVIEW_BACKEND_CONFIGURED: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL != '' }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
-      PUBLIC_PREVIEW_HOST: pr-${{ github.event.client_payload.inspector_pr_number }}.mcpjam.dev
-      PUBLIC_PREVIEW_ORIGIN: https://pr-${{ github.event.client_payload.inspector_pr_number }}.mcpjam.dev
     steps:
+      # The public host is named after the Railway environment, not the PR
+      # number: backend-only previews dispatch `inspector_pr_number: "0"`
+      # with `inspector_environment: pr-be-<n>`, and `pr-0.mcpjam.dev` would
+      # replace the real host in the allowlists below.
+      - name: Resolve public preview host
+        env:
+          INSPECTOR_ENVIRONMENT: ${{ github.event.client_payload.inspector_environment }}
+        run: |
+          if ! [[ "$INSPECTOR_ENVIRONMENT" =~ ^pr-(be-)?[0-9]+$ ]]; then
+            echo "::error::inspector_environment is not a preview environment: '$INSPECTOR_ENVIRONMENT'"
+            exit 1
+          fi
+          echo "PUBLIC_PREVIEW_HOST=${INSPECTOR_ENVIRONMENT}.mcpjam.dev" >> "$GITHUB_ENV"
+          echo "PUBLIC_PREVIEW_ORIGIN=https://${INSPECTOR_ENVIRONMENT}.mcpjam.dev" >> "$GITHUB_ENV"
+
       # Never fall back to `client_payload.branch` here either: it names a
       # branch in mcpjam-backend, not in this repo. See the same checkout in
       # `upsert-backend-pr-preview` above. `backend_preview_ready` and
