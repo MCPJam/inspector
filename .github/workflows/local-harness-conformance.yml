@@ -630,15 +630,15 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.codex_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read pack toolchain pins
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
