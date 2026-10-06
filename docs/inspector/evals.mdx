@@ -301,6 +301,10 @@ A run needs three things, all picked from the suite header:
   If **Run all** is disabled, no models are selected or a run for that suite is already in progress. For non-environment suites, a missing connected server also disables it. The header pickers will tell you which condition applies.
 </Tip>
 
+<Note>
+  Before a run is created, MCPJam checks that every server the suite needs is connected and can list its tools. If a server is disconnected or its `tools/list` call fails, the launch is refused immediately — no run is created and no credits are charged. Reconnect the server and try again. Benchmark cells are exempt: an unreachable target is recorded as a failed child run rather than blocking the launch.
+</Note>
+
 ### Run review
 
 When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
