@@ -184,10 +184,16 @@ export type ScenarioRuntimeConfig = RuntimeExecutionFields & {
    *
    * Never carries a template id or a build id: the image is re-resolved
    * server-side at provision.
+   *
+   * `harness: true` — the HARNESS runs on this box too, and the backend's
+   * reserve and lease authorizer admit this actor for it. A harness turn moves
+   * to the box ONLY when this is present: a marker without it (an older
+   * backend, or an actor the reserve would refuse) keeps the harness where it
+   * always ran.
    */
   computerSandbox?:
-    | { mode: "ephemeral" }
-    | { mode: "unavailable"; reason?: string };
+    | { mode: "ephemeral"; harness?: true }
+    | { mode: "unavailable"; reason?: string; harness?: true };
 };
 
 /**
@@ -206,6 +212,20 @@ export function readComputerSandboxMode(
   if (!raw || typeof raw !== "object") return null;
   const mode = (raw as { mode?: unknown }).mode;
   return mode === "ephemeral" || mode === "unavailable" ? mode : null;
+}
+
+/**
+ * Whether the backend runs this scenario's HARNESS on the conversation's box
+ * (`computerSandbox.harness === true` on a well-formed marker). Anything else
+ * — no marker, a shell-only marker from an older backend, a malformed value —
+ * is `false`: the harness keeps its old path rather than being refused.
+ */
+export function readComputerSandboxHarness(config: unknown): boolean {
+  if (readComputerSandboxMode(config) === null) return false;
+  return (
+    (config as { computerSandbox: { harness?: unknown } }).computerSandbox
+      .harness === true
+  );
 }
 
 /**
@@ -253,6 +273,68 @@ export function shouldWarnSecretsUndelivered(args: {
  * conversation's box. Pinned to the backend's literal of the same name.
  */
 export const SCENARIO_HARNESS_BOX_VERSION = 1;
+
+/**
+ * The runtime config resolved this actor as a NON-MEMBER participant (a User
+ * Testing tester admitted by link or invite). Advisory, like every
+ * runtime-config execution field: it picks the copy they are shown, never
+ * what they may do.
+ */
+export function isScenarioParticipant(
+  config: { accessKind?: unknown } | null | undefined,
+): boolean {
+  return config?.accessKind === "swarm_grant";
+}
+
+export const PARTICIPANT_STUDY_AT_LIMIT =
+  "This study has reached its limit for now. Try again later.";
+export const PARTICIPANT_STUDY_MISCONFIGURED =
+  "This study isn't set up correctly yet. Let the study owner know.";
+
+/** Refusals only the study's owner can fix. */
+const PARTICIPANT_MISCONFIGURED_CODES = new Set([
+  "materialized_secrets_unsupported",
+  "free_tier_model_restricted",
+  "no_pin",
+  "image_unavailable",
+  "not_env_backed",
+]);
+
+/**
+ * What a participant is told when the study's box or model lease is refused.
+ * The backend's copy is written for the study's owner — add credits, raise the
+ * organization's budget, change the environment — none of which a tester can
+ * see or do, so they get one of two sentences instead. The participant-cap
+ * refusal is the exception: the backend wrote it for testers, and it says
+ * which cap and when to come back.
+ */
+export function participantSafeStudyError(refusal: {
+  status?: number;
+  code?: string;
+  error?: string;
+}): string {
+  if (refusal.code === "participant_cap" && refusal.error) {
+    return refusal.error;
+  }
+  if (refusal.code && PARTICIPANT_MISCONFIGURED_CODES.has(refusal.code)) {
+    return PARTICIPANT_STUDY_MISCONFIGURED;
+  }
+  if (
+    refusal.status === 429 ||
+    refusal.status === 503 ||
+    refusal.code === "spend_budget_reached"
+  ) {
+    return PARTICIPANT_STUDY_AT_LIMIT;
+  }
+  // Anything else passes through, unless it names what a tester can't see.
+  if (
+    !refusal.error ||
+    /credit|budget|organi[sz]ation|environment/i.test(refusal.error)
+  ) {
+    return PARTICIPANT_STUDY_MISCONFIGURED;
+  }
+  return refusal.error;
+}
 
 export interface ScenarioSandboxPlan {
   /**

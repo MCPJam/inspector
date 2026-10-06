@@ -234,7 +234,7 @@ vi.mock("../../../utils/scenario-runtime-config.js", async () => {
       fetchScenarioRuntimeConfigMock(...args),
     // Pure; the real ones, so the route sees the marker exactly as served and
     // words its refusals exactly as it would live.
-    readComputerSandboxMode: actual.readComputerSandboxMode,
+    readComputerSandboxHarness: actual.readComputerSandboxHarness,
     SCENARIO_HARNESS_REPUBLISH_REQUIRED:
       actual.SCENARIO_HARNESS_REPUBLISH_REQUIRED,
     scenarioHarnessRepublishRefusal: actual.scenarioHarnessRepublishRefusal,
@@ -383,7 +383,7 @@ describe("POST /api/mcp/chat-v2", () => {
         config: {
           harness: "claude-code",
           computer: { kind: "personal" },
-          computerSandbox: { mode: "ephemeral" },
+          computerSandbox: { mode: "ephemeral", harness: true },
         },
       });
 
@@ -462,6 +462,31 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(body.error).toBe(
         "This study isn't available right now. Let the person who shared it know."
       );
+    });
+
+    it("leaves a harness scenario whose marker lacks the harness field (an older backend) to the usual gates", async () => {
+      for (const computerSandbox of [
+        { mode: "ephemeral" },
+        { mode: "unavailable", reason: "no ready build" },
+      ]) {
+        fetchScenarioRuntimeConfigMock.mockResolvedValue({
+          ok: true,
+          config: {
+            harness: "claude-code",
+            computer: { kind: "personal" },
+            computerSandbox,
+          },
+        });
+
+        const res = await postAuthenticatedJson({
+          scenarioId: "cbx_1",
+          messages: [{ role: "user", content: "hi" }],
+          model: { id: "gpt-4", provider: "openai" },
+        });
+
+        const body = await res.json().catch(() => ({}));
+        expect(body?.reason).not.toBe("not_a_data_plane");
+      }
     });
   });
 

@@ -217,6 +217,8 @@ export interface WebChatTurnPersistContext {
    * Releasing it leaves the box for the conversation's next turn.
    */
   scenarioBox?: Pick<HarnessBox, "binding" | "release">;
+  /** A non-member participant's scenario turn. See `MCPJamHandlerOptions`. */
+  scenarioParticipant?: boolean;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
   authenticatedUserId?: string | null;
   /** UI messages from the inbound request — used to stamp `senderUserId`. */
@@ -1749,6 +1751,7 @@ export async function streamWebChatTurn(
     !persist.harnessExecutionTarget
       ? { harnessSandboxBinding: persist.scenarioBox.binding }
       : {}),
+    ...(persist.scenarioParticipant ? { scenarioParticipant: true } : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.
     ...(persist.runtimeSkillsOverride !== undefined
