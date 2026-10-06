@@ -24,7 +24,7 @@ const statusCopy: Record<TaxIdStatus, { label: string; detail: string }> = {
   unverified: {
     label: "Not verified",
     detail:
-      "Stripe could not verify this tax ID. Check for errors in Manage billing.",
+      "Stripe could not verify this tax ID. Check for errors in Manage plan.",
   },
   unavailable: {
     label: "Verification unavailable",
@@ -102,7 +102,7 @@ export function TaxIdStatusSection({
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Add or update tax IDs in Manage billing. You can check out while Stripe
+        Add or update tax IDs in Manage plan. You can check out while Stripe
         verifies your tax ID.
       </p>
       <div aria-live="polite">
