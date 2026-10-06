@@ -321,8 +321,8 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
   four sections below is behind that gate, enforced server-side. If it is not
   on for your organization, the reads generally return empty and every **write**
   — creating a persona or goal, launching a run, publishing a study,
-  requesting insights — answers `403` with a message naming the feature, not a
-  `404` and not a validation error.
+  requesting insights — answers `403 FORBIDDEN` with `details.code: "FEATURE_UNAVAILABLE"` and a message naming the feature, not a
+  `404` and not a validation error. Branch on `details.code` rather than the message text.
 
   Five operations are deliberately outside the gate, because every one of them
   *reduces* exposure and spend: cancelling a goal run, unpublishing a
