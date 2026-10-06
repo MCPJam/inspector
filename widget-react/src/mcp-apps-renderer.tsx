@@ -1294,6 +1294,12 @@ export function MCPAppsRendererSurface({
     url: string;
   } | null>(null);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
+  // One guest document per connected AppBridge. A bridge rebuilt under a
+  // mounted guest (new host capabilities, host identity, bridge extensions)
+  // would otherwise wait forever for a `ui/initialize` the guest already sent
+  // to the old bridge, leaving the iframe hidden at opacity 0. Each connection
+  // bumps this, and the sandbox reloads the guest for it.
+  const [bridgeGeneration, setBridgeGeneration] = useState(0);
   const explicitOpenInAppBaseUrl = useMemo(
     () => resolveExplicitBaseUrl(widgetHtml, resourceUri),
     [widgetHtml, resourceUri]
@@ -3774,6 +3780,7 @@ export function MCPAppsRendererSurface({
       .then(() => {
         if (!isActive) return;
         setBridgeTransportReady(true);
+        setBridgeGeneration((generation) => generation + 1);
         logWidgetDebug("host-to-ui", "debug/bridge-connect-ready", {
           htmlLength: widgetHtml.length,
         });
@@ -4380,6 +4387,8 @@ export function MCPAppsRendererSurface({
     <SandboxedIframe
       ref={sandboxRef}
       html={bridgeTransportReady ? widgetHtml : null}
+      // A new bridge always gets a freshly loaded guest to initialize it.
+      reloadKey={bridgeGeneration}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
       // Browser-enforced CSP / Permission Policy MUST receive the resolved
       // values, not the raw resource declaration. `effectiveSandbox` runs the
