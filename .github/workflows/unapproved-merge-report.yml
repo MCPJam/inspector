@@ -1,0 +1,55 @@
+name: Unapproved merge report
+
+# SOC 2 change management (CC8.1) requires an independent approval on every
+# change to the default branch. The org ruleset enforces one, but ruleset
+# bypass actors can merge without it, and GitHub records no flag when they do.
+# This weekly report reconstructs it from the reviews: every PR merged in the
+# window without an approval from a person other than its author. The job
+# summary is the evidence to attach in Oneleet; the JSON is kept as an
+# artifact. It reports and never fails on what it finds — whether a bypassed
+# merge was acceptable is a reviewer's call, not this job's.
+on:
+  schedule:
+    # Mondays, 13:30 UTC, covering the previous seven days.
+    - cron: "30 13 * * 1"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Days to look back.
+        default: "7"
+
+# Reads pull requests and their reviews; writes nothing to the repository.
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    name: List merges without an independent approval
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Node builtins only, so no install step.
+      - name: Build the report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPORT_DAYS: ${{ inputs.days || '7' }}
+        run: node .github/scripts/unapproved-merges.mjs
+
+      - name: Keep the report as evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: unapproved-merges-${{ github.run_id }}
+          path: unapproved-merges.json
+          retention-days: 90
