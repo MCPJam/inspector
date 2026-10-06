@@ -51,8 +51,12 @@ export async function authoringRequest(
     },
   );
   // A gateway 502/504 answers with an HTML page; its parser error would
-  // otherwise become the message the user reads.
-  const data = await response.json().catch(() => null);
+  // otherwise become the message the user reads. A cancellation that lands
+  // while the body is read stays a cancellation.
+  const data = await response.json().catch((error: unknown) => {
+    if (signal?.aborted) throw error;
+    return null;
+  });
   if (data === null)
     throw new AuthoringRequestError(
       "The case authoring service is unavailable. Please try again.",

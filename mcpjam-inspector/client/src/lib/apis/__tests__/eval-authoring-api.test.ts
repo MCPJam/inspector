@@ -76,6 +76,25 @@ describe("authoringRequest", () => {
     });
   });
 
+  it("keeps a cancellation during the body read as the abort", async () => {
+    const controller = new AbortController();
+    const abort = new DOMException("The operation was aborted.", "AbortError");
+    authFetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => {
+        controller.abort();
+        return Promise.reject(abort);
+      },
+    });
+    await expect(
+      authoringRequest(
+        { operation: "status", jobId: "job-1" },
+        controller.signal,
+      ),
+    ).rejects.toBe(abort);
+  });
+
   it("refuses an unreadable body on a 2xx instead of returning null", async () => {
     authFetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
     await expect(
