@@ -31,6 +31,7 @@ import { LAUNCH_FAILURE_THRESHOLD } from "../runtime-health.js";
 import { buildDoctorReport, redactDoctorReport, renderDoctorReport, suggestRepairs } from "../runtime-doctor.js";
 import { describeInstallerNetwork, installerFetch, proxySettings, redactProxyUrl } from "../runtime-fetch.js";
 import { localPackTarget } from "../targets.js";
+import { removeTestTree } from "./remove-test-tree.js";
 
 const TARGET = localPackTarget()!;
 const VERSION = "2.0.0";
@@ -107,7 +108,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await new Promise((r) => setTimeout(r, 20));
-  await rm(runtimeRoot, { recursive: true, force: true });
+  await removeTestTree(runtimeRoot);
 });
 
 afterAll(async () => {
@@ -115,7 +116,7 @@ afterAll(async () => {
   setPackSigningKeysForTests(null);
   setRuntimeProbeForTests(null);
   setRuntimeMetricsSinkForTests(null);
-  await rm(base, { recursive: true, force: true });
+  await removeTestTree(base);
 });
 
 describe("pre-provisioning: harness install --from <archive>", () => {

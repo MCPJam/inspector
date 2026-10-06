@@ -44,6 +44,7 @@ import { collectRuntimeGarbage, writeLivenessRecord } from "../runtime-gc.js";
 import { PREVIOUS_SUFFIX, reserveRuntimeUse } from "../runtime-lifecycle.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { currentLocalPlatform, localPackTarget } from "../targets.js";
+import { removeTestTree } from "./remove-test-tree.js";
 
 const TARGET = localPackTarget()!;
 const PLATFORM = currentLocalPlatform(process.platform)!;
@@ -149,7 +150,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   // Give a post-activation GC (fire-and-forget) a moment before removing its root.
   await new Promise((r) => setTimeout(r, 20));
-  await rm(runtimeRoot, { recursive: true, force: true });
+  await removeTestTree(runtimeRoot);
 });
 
 afterAll(async () => {
@@ -159,7 +160,7 @@ afterAll(async () => {
   setFreeSpaceProbeForTests(null);
   setRuntimeMetricsSinkForTests(null);
   setRevocationKeysForTests(null);
-  await rm(base, { recursive: true, force: true });
+  await removeTestTree(base);
 });
 
 describe("per-build selection", () => {

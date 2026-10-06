@@ -37,6 +37,7 @@ import { computeTreeDigest } from "../runtime-identity.js";
 import { setRuntimeProbeForTests } from "../runtime-probe.js";
 import { localPackTarget } from "../targets.js";
 import * as packDigests from "../pack-digests.generated.js";
+import { removeTestTree } from "./remove-test-tree.js";
 
 let base: string;
 let installRoot: string;
@@ -279,7 +280,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   resetRuntimeInstallStateForTests();
-  await rm(installRoot, { recursive: true, force: true });
+  await removeTestTree(installRoot);
 });
 
 afterAll(async () => {
@@ -290,7 +291,7 @@ afterAll(async () => {
   restoreEnv("MCPJAM_LOCAL_HARNESS_PACK_SOURCE", savedPackSource);
   setRuntimeProbeForTests(null);
   vi.restoreAllMocks();
-  await rm(base, { recursive: true, force: true });
+  await removeTestTree(base);
 });
 
 describe("where a pack lives", () => {

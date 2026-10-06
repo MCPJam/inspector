@@ -5,12 +5,13 @@
  * version handshake. The fixture packs' `bin/node` is a shell wrapper around
  * this Node (POSIX only), and their vendor binaries are small scripts.
  */
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { probeRuntimeCandidate } from "../runtime-probe.js";
 import { localPackTarget } from "../targets.js";
+import { removeTestTree } from "./remove-test-tree.js";
 
 const POSIX = process.platform !== "win32";
 const TARGET = localPackTarget()!;
@@ -60,7 +61,7 @@ beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-probe-test-")));
 });
 afterAll(async () => {
-  await rm(base, { recursive: true, force: true });
+  await removeTestTree(base);
 });
 
 const probe = (harnessId: "claude-code" | "codex", packRoot: string) =>
