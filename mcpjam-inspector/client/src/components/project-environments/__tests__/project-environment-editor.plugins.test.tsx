@@ -8,10 +8,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockCreateEnvironment, mockUpdateEnvironment } = vi.hoisted(() => ({
-  mockCreateEnvironment: vi.fn(),
-  mockUpdateEnvironment: vi.fn(),
-}));
+const { mockCreateEnvironment, mockUpdateEnvironment, flags } = vi.hoisted(
+  () => ({
+    mockCreateEnvironment: vi.fn(),
+    mockUpdateEnvironment: vi.fn(),
+    flags: { plugins: true },
+  }),
+);
 
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useCreateProjectEnvironment: () => mockCreateEnvironment,
@@ -19,7 +22,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   isRevisionConflictError: () => false,
 }));
 vi.mock("@/hooks/usePluginsEnabled", () => ({
-  usePluginsEnabled: () => false,
+  usePluginsEnabled: () => flags.plugins,
 }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => false,
@@ -69,10 +72,23 @@ vi.mock("@/lib/convex-error", () => ({
   convexErrMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
+vi.mock("../ProjectEnvironmentPluginsPicker", () => ({
+  ProjectEnvironmentPluginsPicker: ({
+    onChange,
+  }: {
+    onChange: (v: string[]) => void;
+  }) => (
+    <button onClick={() => onChange(["version_exact"])}>
+      Pick imported plugin
+    </button>
+  ),
+}));
+
 import { ProjectEnvironmentEditor } from "../ProjectEnvironmentEditor";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  flags.plugins = true;
   mockCreateEnvironment.mockResolvedValue({
     environmentId: "env_new",
     projectId: "proj_1",
@@ -84,64 +100,42 @@ beforeEach(() => {
   });
 });
 
-describe("ProjectEnvironmentEditor — initialDraft", () => {
-  it("seeds the create form and the seeded draft is immediately creatable", async () => {
+describe("immutable plugin pins in existing environment editor", () => {
+  it("creates with the explicitly selected immutable version", async () => {
     render(
       <ProjectEnvironmentEditor
         projectId="proj_1"
         environment={null}
         canManage
-        initialDraft={{ name: "Claude Code", hostId: "host_1" }}
+        initialDraft={{ name: "Disposable", hostId: "host_1" }}
       />,
     );
-    expect(screen.getByLabelText("Name")).toHaveValue("Claude Code");
-    expect(screen.getByTestId("host-picker")).toHaveTextContent("host_1");
-
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pick imported plugin" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(mockCreateEnvironment).toHaveBeenCalled());
-    expect(mockCreateEnvironment.mock.calls[0]![0]).toMatchObject({
+    expect(mockCreateEnvironment.mock.calls[0][0].pluginVersionIds).toEqual([
+      "version_exact",
+    ]);
+  });
+  it("omits the pin if rollout closes after selection", async () => {
+    const props = {
       projectId: "proj_1",
-      name: "Claude Code",
-      hostId: "host_1",
-    });
-  });
-
-  it("keeps its own Clear, and still lets the picker report a deleted row", () => {
-    // This editor paints a Clear button beside the trigger, so the picker's
-    // own X would be a second one; the callback still goes down, or deleting
-    // the selected group in the picker leaves the draft pointing at nothing.
-    render(
-      <ProjectEnvironmentEditor
-        projectId="proj_1"
-        environment={null}
-        canManage
-        initialDraft={{ name: "Claude Code", hostId: "host_1" }}
-      />,
+      environment: null,
+      canManage: true,
+      initialDraft: { name: "Disposable", hostId: "host_1" },
+    };
+    const view = render(<ProjectEnvironmentEditor {...props} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pick imported plugin" }),
     );
-
-    const picker = screen.getByTestId("server-picker");
-    expect(picker).toHaveAttribute("data-offer-clear", "false");
-    expect(picker).toHaveAttribute("data-can-clear", "true");
-  });
-
-  it("is ignored in edit mode — the row wins", () => {
-    render(
-      <ProjectEnvironmentEditor
-        projectId="proj_1"
-        environment={{
-          environmentId: "env_1",
-          projectId: "proj_1",
-          name: "Existing",
-          hostId: "host_row",
-          revision: 2,
-          createdAt: 0,
-          updatedAt: 0,
-        }}
-        canManage
-        initialDraft={{ name: "Seeded", hostId: "host_seed" }}
-      />,
+    flags.plugins = false;
+    view.rerender(<ProjectEnvironmentEditor {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(mockCreateEnvironment).toHaveBeenCalled());
+    expect(mockCreateEnvironment.mock.calls[0][0]).not.toHaveProperty(
+      "pluginVersionIds",
     );
-    expect(screen.getByLabelText("Name")).toHaveValue("Existing");
-    expect(screen.getByTestId("host-picker")).toHaveTextContent("host_row");
   });
 });

@@ -40,6 +40,9 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useUpdateProjectEnvironment: () => mockUpdateEnvironment,
   isRevisionConflictError: () => false,
 }));
+vi.mock("@/hooks/usePluginsEnabled", () => ({
+  usePluginsEnabled: () => false,
+}));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => mockComputersEnabled.value,
 }));

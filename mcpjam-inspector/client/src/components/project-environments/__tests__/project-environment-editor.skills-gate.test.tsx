@@ -27,6 +27,9 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => mockSkillsEnabled.value,
 }));
+vi.mock("@/hooks/usePluginsEnabled", () => ({
+  usePluginsEnabled: () => false,
+}));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => false,
 }));
