@@ -8,10 +8,10 @@ import {
   type ResolveComposerResult,
 } from "@/components/environment-composer/resolve-stacks";
 import type { EnvironmentComposerState } from "@/components/environment-composer/environment-stack";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useModelSelectionsCapability } from "@/hooks/use-project-environment-capability";
 import { useEnsureAdhocEnvironments } from "@/hooks/useProjectEnvironments";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useHostHarnessLoader } from "@/hooks/use-host-harness-targets";
@@ -37,7 +37,8 @@ export function useComposerResolver(
   const projectId = rawProjectId.trim();
   const ensureAdhocEnvironments = useEnsureAdhocEnvironments();
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // An image pin rides `sandbox-images-enabled`, not `computers-enabled`.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const modelMatrixEnabled = useModelMatrixCapability(projectId);
   const requireServerAttachment = options.requireServerAttachment === true;
   // Read at resolve time, per client with explicit model picks, so a pair the
@@ -53,7 +54,7 @@ export function useComposerResolver(
         liveEnvironments,
         ensureAdhocEnvironments,
         skillsEnabled,
-        computersEnabled,
+        computersEnabled: sandboxImagesEnabled,
         max,
         modelMatrixEnabled: modelMatrixEnabled === true,
         requireServerAttachment,
@@ -61,13 +62,13 @@ export function useComposerResolver(
         modelSelectionsEnabled: modelSelectionsEnabled === true,
       }),
     [
-      computersEnabled,
       ensureAdhocEnvironments,
       loadHostHarness,
       modelMatrixEnabled,
       modelSelectionsEnabled,
       projectId,
       requireServerAttachment,
+      sandboxImagesEnabled,
       skillsEnabled,
     ],
   );
