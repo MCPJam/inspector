@@ -289,6 +289,8 @@ describe("setup turn integration", () => {
         projectId: "p",
         authHeader: "Bearer test",
         maxSteps: 6,
+        // The same per-step ceiling as the persona conversation's host turns.
+        maxOutputTokens: 16_384,
         chatSessionId: "swarm-setup:r:t",
       });
       expect(Object.keys(args.tools!)).toEqual(["create_project"]);

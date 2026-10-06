@@ -54,21 +54,33 @@ type Args = {
   workdir: string;
   bridgeStateDir: string;
   sessionDataDir: string;
-  bootstrapDir: string;
+  /** Where Codex itself is installed (`node_modules/@openai/codex`). */
+  vendorDir: string;
+  /** Where MCPJam's own entrypoints are (`host-tools-mcp.mjs`). */
+  layerDir: string;
 };
 
-function parseArgs(argv: string[]): Args {
+/**
+ * In a sandbox one `--bootstrap-dir` holds everything: the recipe installed
+ * Codex next to our bundles. A LOCAL session splits it along the two trusted
+ * sources — the verified vendor pack (`--vendor-dir`) and the Inspector layer
+ * (`--layer-dir`) — so each half is read from where it was verified. Either
+ * flag falls back to `--bootstrap-dir`, so the hosted launch is unchanged.
+ */
+export function parseArgs(argv: string[]): Args {
   const read = (flag: string): string | undefined => {
     const index = argv.indexOf(`--${flag}`);
     return index === -1 ? undefined : argv[index + 1];
   };
   const workdir = read("workdir") ?? process.cwd();
+  const bootstrapDir = read("bootstrap-dir") ?? process.cwd();
   return {
     workdir,
     bridgeStateDir:
       read("bridge-state-dir") ?? join(workdir, ".harness-bridge"),
     sessionDataDir: read("session-data-dir") ?? join(workdir, ".codex-session"),
-    bootstrapDir: read("bootstrap-dir") ?? process.cwd(),
+    vendorDir: read("vendor-dir") ?? bootstrapDir,
+    layerDir: read("layer-dir") ?? bootstrapDir,
   };
 }
 
@@ -312,7 +324,7 @@ async function main(): Promise<void> {
       // placeholder (or local capability) that satisfies Codex's auth check.
       baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       apiKeyEnvVar: "CODEX_API_KEY",
-      hostToolsEntrypoint: join(args.bootstrapDir, "host-tools-mcp.mjs"),
+      hostToolsEntrypoint: join(args.layerDir, "host-tools-mcp.mjs"),
       relayUrl: relay.url,
       relayCredential: relay.credential,
       webSearch: start.webSearch ?? false,
@@ -325,7 +337,7 @@ async function main(): Promise<void> {
       command: process.execPath,
       args: [
         join(
-          args.bootstrapDir,
+          args.vendorDir,
           "node_modules",
           "@openai",
           "codex",

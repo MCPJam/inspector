@@ -50,6 +50,7 @@ import {
   runEvalSuiteWithAiSdk,
   runFrozenSkillOptions,
   streamTestCase,
+  throwIfEvalToolSnapshotFailed,
   type EvalPinnedSkillSource,
   type EvalTestCase,
 } from "../../services/evals-runner";
@@ -1448,6 +1449,12 @@ export type PreparedEvalRun = {
    *  on a replay, whatever the existing run actually is. */
   status?: string;
   /**
+   * The server preflight failed and was let through only because an earlier
+   * attempt with the same idempotency key had already started a run. Read it
+   * through {@link shouldSkipExecution}.
+   */
+  serverUnreachable?: boolean;
+  /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
    * terminal run status (completed/failed/cancelled); callers that detach
    * this (the async /api/v1 route) should still catch and defensively
@@ -1465,12 +1472,13 @@ export type PreparedEvalRun = {
 /**
  * Whether a prepared run has already been run and must NOT be executed again.
  *
- * TRUE for exactly one case: the platform replayed an existing run AND that run
- * is terminal. Executing then would re-run every case and bill for it, writing
- * over results that are already final — which is the double-spend an
- * idempotency key is sent to prevent.
+ * TRUE when the platform replayed an existing run AND that run is terminal.
+ * Executing then would re-run every case and bill for it, writing over results
+ * that are already final — which is the double-spend an idempotency key is
+ * sent to prevent.
  *
- * FALSE for a replay of a NON-terminal run, deliberately. Two situations are
+ * FALSE for a replay of a NON-terminal run whose server answered the
+ * preflight, deliberately. Two situations are
  * indistinguishable from here — a run genuinely in flight, and one abandoned
  * when its process died mid-execution — and they want opposite treatments. The
  * conservative answer preserves the behaviour that predates this check, so a
@@ -1487,12 +1495,22 @@ export type PreparedEvalRun = {
  * executed it would run the whole suite a second time and bill for it, against
  * a run whose trials are already recorded — the exact double-spend above, in a
  * status that is deliberately not terminal.
+ *
+ * TRUE for a replay whose server failed the preflight, whatever its status.
+ * Resuming a crashed run is only worth it against a server that answers; this
+ * one could not list its tools, so executing would fail every iteration,
+ * finalize the run as failed, and race the worker that may still be driving
+ * it.
  */
 export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
+  serverUnreachable?: boolean;
 }): boolean {
-  return prepared.deduped === true && isRunPastExecution(prepared.status);
+  return (
+    prepared.deduped === true &&
+    (prepared.serverUnreachable === true || isRunPastExecution(prepared.status))
+  );
 }
 
 /**
@@ -2388,6 +2406,42 @@ export async function fetchRunPinnedSkillsWithRetry(
  */
 
 /**
+ * Whether a keyed launch that failed the server preflight was already started
+ * by an earlier attempt with the same key.
+ *
+ * The backend dedupes a keyed launch inside the start mutation, which the
+ * preflight runs before. Without this a retry of a started launch — a
+ * redelivered scheduled trigger, say — is refused as SERVER_UNREACHABLE
+ * instead of being handed its run, and the caller reads the refusal as "no run
+ * was created". When this is true the preflight gives way and the start
+ * mutation returns the existing run.
+ *
+ * A failed lookup, including against a backend that predates these queries,
+ * keeps the refusal: that was the behaviour before the lookup existed, and a
+ * refusal never creates or charges anything.
+ */
+async function keyedLaunchAlreadyStarted(
+  convexClient: ReturnType<typeof createConvexClients>["convexClient"],
+  query:
+    | "testSuites:findSuiteRunByIdempotencyKey"
+    | "testSuites:findQuickRunByIdempotencyKey",
+  args: { idempotencyKey: string; suiteId?: string },
+): Promise<boolean> {
+  try {
+    return (await convexClient.query(query as any, args)) !== null;
+  } catch (error) {
+    logger.warn(
+      "[evals] Idempotent launch lookup failed; keeping the refusal",
+      {
+        query,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return false;
+  }
+}
+
+/**
  * Prepare phase of a suite run: validate, upsert suite + cases, create the
  * run record (status 'running'), store replay configs, and resolve model
  * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
@@ -2629,6 +2683,38 @@ export async function prepareEvalRun(
         logPrefix: "evals",
       },
     );
+  // A benchmark cell still launches: an unreachable target is evidence the
+  // benchmark scores as a failed child run, where a refusal here would leave
+  // the cell unattached and read as a coverage gap.
+  let preflightRefusal: unknown;
+  if (provenance.source !== "benchmark") {
+    try {
+      throwIfEvalToolSnapshotFailed({
+        toolSnapshot,
+        mcpClientManager: clientManager,
+        environment: buildPersistedSuiteEnvironment({
+          resolvedServerIds,
+          persistedServerRefs,
+          serverNames:
+            environmentLaunch && !githubCheckEnvironmentLaunch
+              ? environmentServerNames(environmentLaunch)
+              : serverNames,
+        }),
+      });
+    } catch (refusal) {
+      if (
+        !idempotencyKey ||
+        !(await keyedLaunchAlreadyStarted(
+          convexClient,
+          "testSuites:findSuiteRunByIdempotencyKey",
+          { idempotencyKey, ...(suiteId ? { suiteId } : {}) },
+        ))
+      ) {
+        throw refusal;
+      }
+      preflightRefusal = refusal;
+    }
+  }
 
   // Persist suite + cases (create or upsert). The suite/case persistence is
   // shared with the author-only public surface; `prepareEvalRun` then starts
@@ -2745,6 +2831,44 @@ export async function prepareEvalRun(
       ? { ciMetadata: launchContext.ciMetadata }
       : {}),
   });
+  // The preflight was waived only because the key already had a run to hand
+  // back. A run handed back belongs to an earlier attempt and is never
+  // executed from here (`shouldSkipExecution`). Every gate below finalizes the
+  // run as failed when it refuses, which would fail a run that attempt may
+  // still be driving, so none of them runs.
+  //
+  // When the start created a run instead (the lookup and the mutation
+  // disagreed, e.g. the earlier run was deleted in between), nothing was
+  // handed back: close the new run before it executes against the server
+  // that failed, and keep the refusal.
+  if (preflightRefusal !== undefined) {
+    if (runWasDeduped !== true) {
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason:
+          preflightRefusal instanceof Error
+            ? preflightRefusal.message
+            : String(preflightRefusal),
+      });
+      throw preflightRefusal;
+    }
+    return {
+      suiteId: resolvedSuiteId,
+      runId,
+      caseUpsert: {
+        committed: committedCases,
+        failed: failedCases,
+      },
+      recorder,
+      deduped: true,
+      status: existingRunStatus,
+      serverUnreachable: true,
+      execute: async () => {
+        throw new Error(
+          `eval run ${runId} was handed back without execution: its server failed the preflight`,
+        );
+      },
+    };
+  }
   if (
     githubExecutionPolicy() &&
     githubCredentialPolicy !== githubExecutionPolicy()
@@ -3212,7 +3336,9 @@ export async function runEvalsWithManager(
   request: RunEvalsWithManagerRequest,
 ) {
   const prepared = await prepareEvalRun(clientManager, request);
-  await prepared.execute();
+  if (!shouldSkipExecution(prepared)) {
+    await prepared.execute();
+  }
 
   return {
     success: true,
@@ -3677,6 +3803,37 @@ export async function prepareSingleCaseExecution(
   let suiteHostConfig = liveHostConfig;
   let environment: PreparedSingleCaseExecution["environment"];
   if (environmentLaunch) {
+    // The commit reserves this case's iterations, so a server that cannot be
+    // listed is refused first, as the suite launch does.
+    const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      { logPrefix: "evals" },
+    );
+    let preflightRefusal: unknown;
+    try {
+      throwIfEvalToolSnapshotFailed({
+        toolSnapshot,
+        mcpClientManager: clientManager,
+        environment: buildPersistedSuiteEnvironment({
+          resolvedServerIds,
+          persistedServerRefs: resolvedServerIds,
+          serverNames: environmentServerNames(environmentLaunch),
+        }),
+      });
+    } catch (refusal) {
+      if (
+        !idempotencyKey ||
+        !(await keyedLaunchAlreadyStarted(
+          convexClient,
+          "testSuites:findQuickRunByIdempotencyKey",
+          { idempotencyKey },
+        ))
+      ) {
+        throw refusal;
+      }
+      preflightRefusal = refusal;
+    }
     const committed = await commitEnvironmentQuickRun(convexClient, {
       testCaseId,
       testCaseSnapshot: buildQuickRunCommitSnapshot(
@@ -3689,6 +3846,20 @@ export async function prepareSingleCaseExecution(
       // request's own key still makes the backend call retry-safe.
       idempotencyKey: idempotencyKey ?? `quick-run:${randomUUID()}`,
     });
+    // The preflight was waived only because the key had a quick run to
+    // replay. A fresh commit (the request row expired between the lookup and
+    // the commit) would execute against the server that failed, so it is
+    // finalized and the refusal kept, as the suite launch does.
+    if (preflightRefusal !== undefined && !committed.replayed) {
+      await failCommittedQuickRun(
+        convexClient,
+        committed.iterationIds,
+        preflightRefusal instanceof Error
+          ? preflightRefusal.message
+          : String(preflightRefusal),
+      );
+      throw preflightRefusal;
+    }
     let frozenSkills: BuiltPinnedSkillSource | undefined;
     if (!committed.replayed) {
       try {
