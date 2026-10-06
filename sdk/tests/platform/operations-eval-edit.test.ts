@@ -519,7 +519,11 @@ describe("eval-edit operation execution", () => {
     // The way out of a partial import, stated where a model will read it.
     expect(importEvalCasesOperation.description).toContain("reviewUrl");
     expect(importEvalCasesOperation.description).toMatch(
-      /re-import(ing)? ONLY that case|re-import ONLY/i
+      /importing only one case's corrected text/i
+    );
+    // ...and the cost of not taking it, as a fact rather than an order.
+    expect(importEvalCasesOperation.description).toContain(
+      "re-authors and re-bills every case"
     );
   });
 
