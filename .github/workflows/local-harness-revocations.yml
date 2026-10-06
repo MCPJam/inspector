@@ -87,7 +87,7 @@ jobs:
 
       - name: Attest the signed list
         if: steps.diff.outputs.changed == 'true'
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           subject-path: |
             mcpjam-inspector/local-harness-revocations/revocations.json

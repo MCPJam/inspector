@@ -407,7 +407,7 @@ jobs:
           node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" \
             --evidence "$EVIDENCE" --commit "$GITHUB_SHA" --contract "$RUNNER_TEMP/runtime-contract.json"
       - name: Attest the runtime contract
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           subject-path: ${{ runner.temp }}/runtime-contract.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

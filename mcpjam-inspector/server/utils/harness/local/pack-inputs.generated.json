@@ -2,10 +2,10 @@
   "schema": 2,
   "harnesses": {
     "claude-code": {
-      "fingerprint": "sha256:5a1f4bc0df75612e9e318e8b90fd17b89e76122c37e011cf367d874d3182ccfa",
+      "fingerprint": "sha256:103685b5b0f71809969e7bb84b3ebdd49c7336d1ec32baa11144b64a81ae1cc8",
       "inputs": {
         "pack-dependency-closure": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        ".github/workflows/local-harness-pack.yml": "sha256:113f747eb9bd4d60ee8c4172a750d04a4bb292585267e8776042f854e6ed92f7",
+        ".github/workflows/local-harness-pack.yml": "sha256:11fb6f66537f77186153edc0567acdd3448f04d6fd5511c38f839b346108e972",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:73bbbf7622207800b3a23c6db1df11f3beba49f2e3411a01995a15275bb7e317",
         "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:01ca116c0def5b7f42249b5ffef3e96aed898aa572f791792ed2c072a47e68ac",
         "mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs": "sha256:89eda8f785d769cca750a58ddad4d5e954368a824e7e8916cc3c558c2b0bbeeb",
@@ -24,10 +24,10 @@
       }
     },
     "codex": {
-      "fingerprint": "sha256:f276d94dc4b7df69c67aca74c79cb399ba51924b8e7193a4acc0c8fb429dd857",
+      "fingerprint": "sha256:d6f8c8ed55a5fe8ea3ae773c047ccd7e45b570906a8a834f02a8caf7414f0f97",
       "inputs": {
         "pack-dependency-closure": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        ".github/workflows/local-harness-pack.yml": "sha256:113f747eb9bd4d60ee8c4172a750d04a4bb292585267e8776042f854e6ed92f7",
+        ".github/workflows/local-harness-pack.yml": "sha256:11fb6f66537f77186153edc0567acdd3448f04d6fd5511c38f839b346108e972",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:73bbbf7622207800b3a23c6db1df11f3beba49f2e3411a01995a15275bb7e317",
         "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:01ca116c0def5b7f42249b5ffef3e96aed898aa572f791792ed2c072a47e68ac",
         "mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs": "sha256:89eda8f785d769cca750a58ddad4d5e954368a824e7e8916cc3c558c2b0bbeeb",
