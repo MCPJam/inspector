@@ -865,6 +865,49 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
+  it("shows a saved recovery secret and clears it when the client ID changes", async () => {
+    const { onAuthorizeConnection } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Secure",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Secure",
+        transport: "http",
+        urlOrCommand: "https://secure.example/mcp",
+        authentication: "oauth",
+        registrationMode: "preregistered",
+        clientId: "old-client",
+        hasStoredClientSecret: true,
+        projectId: "project_1",
+        hostedServerId: "server_1",
+      },
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Advanced Settings" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Reveal" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
+      target: { value: "new-client" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    expect(onAuthorizeConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "new-client",
+        clientSecret: undefined,
+        clearClientSecret: true,
+      }),
+    );
+  });
+
   it("keeps newly entered credentials after switching registration modes", async () => {
     const { onConnectOwnServer } = renderOverlay(
       {

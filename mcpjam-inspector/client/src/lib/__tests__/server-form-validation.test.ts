@@ -86,3 +86,24 @@ describe("validateBearerTargetUrl", () => {
     expect(validate(url)).toBeNull();
   });
 });
+
+describe("shared OAuth credential validation", () => {
+  it("uses the same client ID and secret rules in both server forms", async () => {
+    const { validateOAuthClientId, validateOAuthClientSecret } =
+      await import("../server-form-validation");
+    expect(validateOAuthClientId("ab")).toMatch(/at least 3 characters/);
+    expect(validateOAuthClientId("abc")).toBeNull();
+    expect(validateOAuthClientSecret("   ")).toMatch(/only whitespace/);
+    expect(validateOAuthClientSecret("")).toBeNull();
+  });
+
+  it("blocks confidential CIMD until its identity is ready", async () => {
+    const { getConfidentialCimdBlockReason } =
+      await import("../server-form-validation");
+    expect(getConfidentialCimdBlockReason(true, "loading")).toMatch(
+      /Preparing/,
+    );
+    expect(getConfidentialCimdBlockReason(true, "ready")).toBeNull();
+    expect(getConfidentialCimdBlockReason(false, "unavailable")).toBeNull();
+  });
+});

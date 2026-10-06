@@ -3,6 +3,8 @@ import { readFirstRunServerChoiceState } from "./onboarding-state";
 
 export const FIRST_RUN_OAUTH_OVERLAY_READY_EVENT =
   "mcpjam:first-run-oauth-overlay-ready";
+export const FIRST_RUN_OAUTH_CANCELLED_EVENT =
+  "mcpjam:first-run-oauth-cancelled";
 
 export function getFirstRunOAuthReturnServerName(): string | null {
   if (

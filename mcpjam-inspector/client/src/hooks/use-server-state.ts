@@ -88,6 +88,10 @@ import {
   markPendingDirectScopeStepUpReplayReady,
 } from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
+import {
+  FIRST_RUN_OAUTH_CANCELLED_EVENT,
+  getFirstRunOAuthReturnServerName,
+} from "@/lib/first-run-oauth-return";
 import { isPrivateNetworkUrl } from "@/shared/private-address";
 import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
@@ -330,7 +334,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     "headers",
   );
   const customHeaders = hasExplicitHeaderPatch
-    ? formData.secretPatch?.headers ?? {}
+    ? (formData.secretPatch?.headers ?? {})
     : {
         ...(existingOAuthConfig.customHeaders ?? {}),
         ...(formData.headers ?? {}),
@@ -508,12 +512,12 @@ function buildOAuthProfileFromFormData(
   const registrationStrategy =
     formData.registrationMode && formData.registrationMode !== "auto"
       ? formData.registrationMode
-      : (formData.clearClientSecret
+      : ((formData.clearClientSecret
           ? "dcr"
           : existingProfile?.registrationStrategy) ??
         (formData.clientId || formData.clientSecret || formData.hasClientSecret
           ? "preregistered"
-          : "dcr");
+          : "dcr"));
   const customHeaders = Object.entries(formData.headers ?? {})
     .filter(([key, value]) => key.trim() && value)
     .map(([key, value]) => ({ key, value }));
@@ -548,8 +552,8 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
     typeof error === "string"
       ? error
       : error instanceof Error
-      ? error.message
-      : "";
+        ? error.message
+        : "";
 
   if (!errorMessage) {
     return false;
@@ -1038,8 +1042,8 @@ export function useServerState({
         access === "membership"
           ? "You no longer have access to this project. Ask a project owner for access, then reconnect."
           : access === "identity"
-          ? "Your sign-in changed during authorization. Sign in with the original account, then reconnect."
-          : "This authorization needs to be restarted. Return to the server and reconnect.";
+            ? "Your sign-in changed during authorization. Sign in with the original account, then reconnect."
+            : "This authorization needs to be restarted. Return to the server and reconnect.";
       failPendingOAuthConnection(message);
       clearPendingOAuthAttempt(context.serverName, state);
       if (context.organizationId)
@@ -1363,7 +1367,7 @@ export function useServerState({
               activeHostConfig.connectionDefaults,
               perServerOverride,
             ).timeout
-          : serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
+          : (serverConfig.timeout ?? projectConnectionDefaults.requestTimeout),
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
       } as MCPServerConfig;
@@ -1474,8 +1478,7 @@ export function useServerState({
         defaults.timeoutMs = serverConfig.timeout;
       }
       const caps = serverConfig.clientCapabilities as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       if (caps && typeof caps === "object") defaults.clientCapabilities = caps;
       const ci = mcpProfile?.initialize?.clientInfo;
       if (ci && typeof ci === "object" && !Array.isArray(ci)) {
@@ -1610,8 +1613,8 @@ export function useServerState({
         serverOverride === effectiveProtocolVersion
           ? "server_override"
           : hostPin === effectiveProtocolVersion
-          ? "host_default"
-          : "unknown";
+            ? "host_default"
+            : "unknown";
 
       return {
         ...standardEventProps("use_server_state"),
@@ -1884,11 +1887,11 @@ export function useServerState({
       }
       const hasSecretOperation = Boolean(
         hasClientSecretValue ||
-          clearClientSecret ||
-          hasEnvSecretPatch ||
-          hasHeadersSecretPatch ||
-          (!secretOptions && config?.env !== undefined) ||
-          (!secretOptions && headers !== undefined),
+        clearClientSecret ||
+        hasEnvSecretPatch ||
+        hasHeadersSecretPatch ||
+        (!secretOptions && config?.env !== undefined) ||
+        (!secretOptions && headers !== undefined),
       );
 
       // Resolve "does a server with this name already exist?" from the local
@@ -2639,7 +2642,7 @@ export function useServerState({
       effectiveActiveProjectId,
       effectiveProjects,
       activeProjectServersFlat,
-    ]
+    ],
   );
 
   const persistServerToLocalProject = useCallback(
@@ -2970,6 +2973,7 @@ export function useServerState({
       state: string | null,
       iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
+      isCancelled: () => boolean = () => false,
     ) => {
       const finishDiagnostic = startDesktopOperation("oauth_callback");
       const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
@@ -2993,6 +2997,7 @@ export function useServerState({
       };
 
       const assertProjectAccess = () => {
+        if (isCancelled()) throw new Error("OAuth callback was canceled.");
         if (hostedCallbackContext?.surface !== "project") return;
         if (
           checkProjectOAuthAccess(
@@ -3020,6 +3025,8 @@ export function useServerState({
               callbackIss: iss,
               assertProjectAccess,
             });
+
+        if (isCancelled()) return;
 
         finishDiagnostic(result.success);
 
@@ -3209,6 +3216,7 @@ export function useServerState({
               withProjectConnectionDefaults(mergedServerConfig),
               serverName,
             );
+            if (isCancelled()) return;
             if (connectionResult.success) {
               dispatch({
                 type: "CONNECT_SUCCESS",
@@ -3261,6 +3269,7 @@ export function useServerState({
               }
             }
           } catch (connectionError) {
+            if (isCancelled()) return;
             markPendingChatScopeStepUpCancelled(
               serverName,
               "The server could not reconnect after authorization.",
@@ -3293,15 +3302,16 @@ export function useServerState({
           };
         }
       } catch (error) {
+        if (isCancelled()) return;
         const errorMessage =
           error instanceof Error
             ? error.message
             : typeof error === "object" &&
-              error !== null &&
-              "message" in error &&
-              typeof (error as { message?: unknown }).message === "string"
-            ? (error as { message: string }).message
-            : "Unknown error";
+                error !== null &&
+                "message" in error &&
+                typeof (error as { message?: unknown }).message === "string"
+              ? (error as { message: string }).message
+              : "Unknown error";
         if (!suppressErrorToast) {
           toast.error(`Error completing OAuth flow: ${errorMessage}`);
         }
@@ -3453,7 +3463,17 @@ export function useServerState({
       // Captured before completion: handleOAuthCallbackComplete clears the
       // return-hash key as part of its cleanup.
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
+      const isFirstRunCallback =
+        getFirstRunOAuthReturnServerName() === earlyPendingName;
+      let wasCancelled = false;
+      const markCancelled = () => {
+        wasCancelled = true;
+      };
+      if (isFirstRunCallback) {
+        window.addEventListener(FIRST_RUN_OAUTH_CANCELLED_EVENT, markCancelled);
+      }
       const restoreCallbackUrl = () => {
+        if (wasCancelled) return;
         // The pending marker pinned the organization the flow started in.
         // Re-apply it as the explicit selection before navigating: most
         // routes (e.g. /servers) carry no org, so restoring the path alone
@@ -3483,7 +3503,16 @@ export function useServerState({
         state,
         iss,
         isHostedProjectCallback ? hostedOAuthCallbackContext : null,
-      ).finally(restoreCallbackUrl);
+        () => wasCancelled,
+      ).finally(() => {
+        if (isFirstRunCallback) {
+          window.removeEventListener(
+            FIRST_RUN_OAUTH_CANCELLED_EVENT,
+            markCancelled,
+          );
+        }
+        restoreCallbackUrl();
+      });
     } else if (error) {
       if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
@@ -3607,8 +3636,7 @@ export function useServerState({
       const token = nextOpToken(formData.name);
       let hostedServerId: string | undefined;
       let syncedConnectionTarget:
-        | { projectId: string; serverId: string }
-        | undefined;
+        { projectId: string; serverId: string } | undefined;
       const existingServerForSave = appState.servers[formData.name];
       const formOAuthProfile = buildOAuthProfileFromFormData(
         formData,
@@ -3618,8 +3646,8 @@ export function useServerState({
         (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
-                formData.hasClientSecret ||
-                existingServerForSave?.hasClientSecret,
+              formData.hasClientSecret ||
+              existingServerForSave?.hasClientSecret,
             )
           : false;
       const clientSecretSyncOptions = buildSecretSyncOptions(formData);
@@ -3633,7 +3661,7 @@ export function useServerState({
         enabled: true,
         useOAuth: formData.useOAuth ?? false,
         oauthProtocolMode: formData.useOAuth
-          ? formData.oauthProtocolMode ?? "auto"
+          ? (formData.oauthProtocolMode ?? "auto")
           : undefined,
         oauthFlowProfile: formOAuthProfile,
         hasClientSecret: nextHasClientSecret,
@@ -3692,7 +3720,7 @@ export function useServerState({
           clientSecretSyncOptions,
           options?.hostedWriteTarget
             ? { ...options.hostedWriteTarget, exactServerId: true }
-            : undefined
+            : undefined,
         );
         if (isStaleOp(formData.name, token)) return;
         if (synced.ok) {
@@ -3728,8 +3756,8 @@ export function useServerState({
         const errorMessage = workspaceNameTaken
           ? `A server named "${formData.name}" already exists in this workspace. Choose a different name.`
           : syncErr instanceof Error
-          ? syncErr.message
-          : "Could not save the hosted server before connecting. Please try again.";
+            ? syncErr.message
+            : "Could not save the hosted server before connecting. Please try again.";
         dispatch({
           type: "CONNECT_FAILURE",
           name: formData.name,
@@ -3760,7 +3788,7 @@ export function useServerState({
       const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
       const storedServerUrlBeforeSave = HOSTED_MODE
         ? undefined
-        : localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined;
+        : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
       saveOAuthConfigToLocalStorage(formData);
 
       try {
@@ -3880,8 +3908,8 @@ export function useServerState({
                   !formData.clearClientSecret &&
                   Boolean(
                     formData.clientSecret ||
-                      formData.hasClientSecret ||
-                      serverEntryForSave.hasClientSecret,
+                    formData.hasClientSecret ||
+                    serverEntryForSave.hasClientSecret,
                   ),
               };
               try {
@@ -4205,22 +4233,22 @@ export function useServerState({
                   },
                 }
               : // For XAA servers, offer a shortcut to the XAA Debugger so the
-              // dev can step through the handshake and pinpoint the failing
-              // claim (subject not provisioned, audience/issuer mismatch).
-              formData.useXaa
-              ? {
-                  action: {
-                    label: "Open XAA Debugger",
-                    onClick: () => {
-                      dispatch({
-                        type: "SELECT_SERVER",
-                        name: formData.name,
-                      });
-                      navigateApp(routePaths.xaaFlow);
+                // dev can step through the handshake and pinpoint the failing
+                // claim (subject not provisioned, audience/issuer mismatch).
+                formData.useXaa
+                ? {
+                    action: {
+                      label: "Open XAA Debugger",
+                      onClick: () => {
+                        dispatch({
+                          type: "SELECT_SERVER",
+                          name: formData.name,
+                        });
+                        navigateApp(routePaths.xaaFlow);
+                      },
                     },
-                  },
-                }
-              : undefined,
+                  }
+                : undefined,
           );
         }
       } catch (error) {
@@ -4315,19 +4343,19 @@ export function useServerState({
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile =
         formData.useOAuth || formData.useXaa
-          ? options?.oauthProfile ??
+          ? (options?.oauthProfile ??
             buildOAuthProfileFromFormData(
               formData,
               existingServer?.oauthFlowProfile,
             ) ??
-            existingServer?.oauthFlowProfile
+            existingServer?.oauthFlowProfile)
           : undefined;
       const nextHasClientSecret =
         (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
-                formData.hasClientSecret ||
-                existingServer?.hasClientSecret,
+              formData.hasClientSecret ||
+              existingServer?.hasClientSecret,
             )
           : false;
 
@@ -4342,7 +4370,7 @@ export function useServerState({
         oauthFlowProfile: nextOAuthProfile,
         useOAuth: formData.useOAuth ?? false,
         oauthProtocolMode: formData.useOAuth
-          ? formData.oauthProtocolMode ?? existingServer?.oauthProtocolMode
+          ? (formData.oauthProtocolMode ?? existingServer?.oauthProtocolMode)
           : undefined,
         hasClientSecret: nextHasClientSecret,
         hasEnv:
@@ -4397,8 +4425,8 @@ export function useServerState({
         hostedWriteTarget?.projectId ?? effectiveActiveProjectId;
       const activeHostedProjectId =
         effectiveActiveProjectId && effectiveActiveProjectId !== "none"
-          ? effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
-            effectiveActiveProjectId
+          ? (effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+            effectiveActiveProjectId)
           : null;
       // A pinned hosted write can outlive an OAuth redirect that changes the
       // ambient project. Convex still updates the pinned row, but this client
@@ -4904,7 +4932,7 @@ export function useServerState({
     const hasServerPayload = (cliConfig: any): boolean =>
       Boolean(
         (Array.isArray(cliConfig.servers) && cliConfig.servers.length > 0) ||
-          cliConfig.command,
+        cliConfig.command,
       );
 
     const formDataFromCliServer = (
@@ -4913,8 +4941,7 @@ export function useServerState({
     ): ServerFormData => ({
       name: server.name || fallbackName,
       type: (server.type === "sse" ? "http" : server.type || "stdio") as
-        | "stdio"
-        | "http",
+        "stdio" | "http",
       command: server.command,
       args: server.args || [],
       url: server.url,
@@ -4961,9 +4988,9 @@ export function useServerState({
 
       const hasActiveConvexProject = Boolean(
         activeProject?.sharedProjectId &&
-          effectiveActiveProjectId &&
-          effectiveActiveProjectId !== "none" &&
-          !useLocalFallback,
+        effectiveActiveProjectId &&
+        effectiveActiveProjectId !== "none" &&
+        !useLocalFallback,
       );
       if (isLoadingProjects || !hasActiveConvexProject) {
         return;
@@ -6460,15 +6487,15 @@ export function useServerState({
           oauthTokens: originalServer?.oauthTokens,
           oauthFlowProfile:
             formData.useOAuth || formData.useXaa
-              ? buildOAuthProfileFromFormData(
+              ? (buildOAuthProfileFromFormData(
                   formData,
                   originalServer?.oauthFlowProfile,
-                ) ?? originalServer?.oauthFlowProfile
+                ) ?? originalServer?.oauthFlowProfile)
               : undefined,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
           oauthProtocolMode: formData.useOAuth
-            ? formData.oauthProtocolMode ?? originalServer?.oauthProtocolMode
+            ? (formData.oauthProtocolMode ?? originalServer?.oauthProtocolMode)
             : undefined,
           xaaAuthzIssuer:
             formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
@@ -6519,7 +6546,7 @@ export function useServerState({
             nextServerName,
             updatedServer,
             undefined,
-            renameTarget ? { ...renameTarget, exactServerId: true } : undefined
+            renameTarget ? { ...renameTarget, exactServerId: true } : undefined,
           );
           // Nothing was written, so the success toast below would be a lie.
           if (!synced.ok) {
@@ -6622,7 +6649,7 @@ export function useServerState({
       }
       await handleConnect(
         formData,
-        renameTarget ? { hostedWriteTarget: renameTarget } : undefined
+        renameTarget ? { hostedWriteTarget: renameTarget } : undefined,
       );
       if (
         appState.selectedServer === originalServerName &&

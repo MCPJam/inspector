@@ -22,6 +22,13 @@ import {
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { AuthenticationSection } from "@/components/connection/shared/AuthenticationSection";
+import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
+import {
+  getConfidentialCimdBlockReason,
+  validateOAuthClientId,
+  validateOAuthClientSecret,
+} from "@/lib/server-form-validation";
+import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import type {
   ServerFormAuthType,
   ServerFormOAuthProtocolMode,
@@ -97,6 +104,10 @@ export interface FirstRunServerDraft {
   clientId?: string;
   clientSecret?: string;
   clearClientSecret?: boolean;
+  /** Recovery-only metadata; the secret itself is never copied into the draft. */
+  hasStoredClientSecret?: boolean;
+  projectId?: string | null;
+  hostedServerId?: string | null;
   oauthAllowPathScopedIssuer?: boolean;
   xaaClientAuth?: XaaClientAuthMethod;
   xaaAuthzIssuer?: string;
@@ -159,6 +170,8 @@ interface FirstRunOnboardingOverlayProps {
   onSkip: () => void;
   guestSessionRefused?: boolean;
   onSignIn?: () => void;
+  organizationId?: string | null;
+  isSignedIn?: boolean;
 }
 
 /**
@@ -184,6 +197,8 @@ export function FirstRunOnboardingOverlay({
   onSkip,
   guestSessionRefused = false,
   onSignIn,
+  organizationId,
+  isSignedIn,
 }: FirstRunOnboardingOverlayProps) {
   const prefersReducedMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -230,6 +245,9 @@ export function FirstRunOnboardingOverlay({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [clearClientCredentials, setClearClientCredentials] = useState(false);
+  const [clearStoredClientSecret, setClearStoredClientSecret] = useState(false);
+  const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
+  const [savedClientId, setSavedClientId] = useState("");
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
     null,
@@ -244,6 +262,19 @@ export function FirstRunOnboardingOverlay({
     useState(false);
   const [xaaSubject, setXaaSubject] = useState("");
   const [xaaEmail, setXaaEmail] = useState("");
+  const wantsConfidentialCimd =
+    serverAuthentication === "xaa" &&
+    registrationMode === "cimd" &&
+    xaaClientAuth === "private_key_jwt";
+  const confidentialCimdCapability = useConfidentialCimdCapability({
+    enabled: open && wantsConfidentialCimd,
+    organizationId,
+    isSignedIn,
+  });
+  const confidentialCimdBlockReason = getConfidentialCimdBlockReason(
+    wantsConfidentialCimd,
+    confidentialCimdCapability.status,
+  );
 
   useEffect(() => {
     const recoveryDraftKey = recoveryServerDraft
@@ -269,6 +300,11 @@ export function FirstRunOnboardingOverlay({
     setRegistrationMode(recoveryServerDraft.registrationMode ?? "auto");
     setOauthScopesInput((recoveryServerDraft.oauthScopes ?? []).join(" "));
     setClientId(recoveryServerDraft.clientId ?? "");
+    setSavedClientId(recoveryServerDraft.clientId ?? "");
+    setHasStoredClientSecret(
+      recoveryServerDraft.hasStoredClientSecret ?? false,
+    );
+    setClearStoredClientSecret(false);
     setUseCustomClientId(Boolean(recoveryServerDraft.clientId));
     setClientSecret(recoveryServerDraft.clientSecret ?? "");
     setClearClientCredentials(false);
@@ -308,6 +344,9 @@ export function FirstRunOnboardingOverlay({
     setClientId("");
     setClientSecret("");
     setClearClientCredentials(false);
+    setClearStoredClientSecret(false);
+    setHasStoredClientSecret(false);
+    setSavedClientId("");
     setClientIdError(null);
     setClientSecretError(null);
     setXaaConfigurationError(null);
@@ -396,12 +435,11 @@ export function FirstRunOnboardingOverlay({
         : (serverAuthentication === "oauth" ||
             serverAuthentication === "auto") &&
           registrationMode === "preregistered";
-    if (usesPreregisteredCredentials && clientId.trim().length < 3) {
-      setClientIdError(
-        clientId.trim()
-          ? "Client ID must be at least 3 characters"
-          : "Client ID is required when using custom credentials",
-      );
+    const clientIdValidation = usesPreregisteredCredentials
+      ? validateOAuthClientId(clientId)
+      : null;
+    if (clientIdValidation) {
+      setClientIdError(clientIdValidation);
       window.setTimeout(() => {
         contentRef.current
           ?.querySelector<HTMLInputElement>('input[aria-required="true"]')
@@ -409,15 +447,20 @@ export function FirstRunOnboardingOverlay({
       }, 0);
       return false;
     }
-    if (usesPreregisteredCredentials && clientSecret && !clientSecret.trim()) {
-      setClientSecretError("Client Secret cannot be only whitespace");
+    const clientSecretValidation = usesPreregisteredCredentials
+      ? validateOAuthClientSecret(clientSecret)
+      : null;
+    if (clientSecretValidation) {
+      setClientSecretError(clientSecretValidation);
       return false;
     }
     if (serverAuthentication !== "xaa") return true;
     if ((xaaSubject.trim() === "") !== (xaaEmail.trim() === "")) {
-      setXaaConfigurationError(
-        "Enter both a subject and email for an identity override, or leave both blank.",
-      );
+      setXaaConfigurationError(XAA_PARTIAL_OVERRIDE_ERROR);
+      return false;
+    }
+    if (confidentialCimdBlockReason) {
+      setXaaConfigurationError(confidentialCimdBlockReason);
       return false;
     }
     return true;
@@ -425,6 +468,7 @@ export function FirstRunOnboardingOverlay({
     bearerToken,
     clientId,
     clientSecret,
+    confidentialCimdBlockReason,
     registrationMode,
     serverAuthentication,
     xaaEmail,
@@ -444,6 +488,51 @@ export function FirstRunOnboardingOverlay({
     }
     window.dispatchEvent(new Event(FIRST_RUN_OAUTH_OVERLAY_READY_EVENT));
   }, [connectionState.status, open]);
+
+  const buildServerDraft = useCallback(
+    (name: string, urlOrCommand: string): FirstRunServerDraft => ({
+      name,
+      transport: serverTransport,
+      urlOrCommand,
+      authentication: serverAuthentication,
+      bearerToken: bearerToken.trim() || undefined,
+      oauthProtocolMode,
+      registrationMode,
+      oauthScopes: oauthScopesInput
+        .split(/\s+/)
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+      clientId: clearClientCredentials ? "" : clientId.trim() || undefined,
+      clientSecret: clearClientCredentials
+        ? undefined
+        : clientSecret || undefined,
+      clearClientSecret: clearClientCredentials || clearStoredClientSecret,
+      oauthAllowPathScopedIssuer,
+      xaaClientAuth,
+      xaaAuthzIssuer: xaaAuthzIssuer.trim() || undefined,
+      xaaAllowPathScopedIssuer,
+      xaaSubject: xaaSubject.trim() || undefined,
+      xaaEmail: xaaEmail.trim() || undefined,
+    }),
+    [
+      bearerToken,
+      clientId,
+      clientSecret,
+      clearClientCredentials,
+      clearStoredClientSecret,
+      oauthAllowPathScopedIssuer,
+      oauthProtocolMode,
+      oauthScopesInput,
+      registrationMode,
+      serverAuthentication,
+      serverTransport,
+      xaaAllowPathScopedIssuer,
+      xaaAuthzIssuer,
+      xaaClientAuth,
+      xaaEmail,
+      xaaSubject,
+    ],
+  );
 
   const submitServerDetails = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -465,104 +554,41 @@ export function FirstRunOnboardingOverlay({
       setServerUrlError(null);
       setServerUrlOrCommand(trimmedUrlOrCommand);
       if (!validateSelectedAuthentication()) return;
-      onConnectOwnServer({
-        name: serverName.trim() || deriveServerName(trimmedUrlOrCommand),
-        transport: serverTransport,
-        urlOrCommand: trimmedUrlOrCommand,
-        authentication: serverAuthentication,
-        bearerToken: bearerToken.trim() || undefined,
-        oauthProtocolMode,
-        registrationMode,
-        oauthScopes: oauthScopesInput
-          .split(/\s+/)
-          .map((scope) => scope.trim())
-          .filter(Boolean),
-        clientId: clearClientCredentials ? "" : clientId.trim() || undefined,
-        clientSecret: clearClientCredentials
-          ? undefined
-          : clientSecret || undefined,
-        clearClientSecret: clearClientCredentials,
-        oauthAllowPathScopedIssuer,
-        xaaClientAuth,
-        xaaAuthzIssuer: xaaAuthzIssuer.trim() || undefined,
-        xaaAllowPathScopedIssuer,
-        xaaSubject: xaaSubject.trim() || undefined,
-        xaaEmail: xaaEmail.trim() || undefined,
-      });
+      onConnectOwnServer(
+        buildServerDraft(
+          serverName.trim() || deriveServerName(trimmedUrlOrCommand),
+          trimmedUrlOrCommand,
+        ),
+      );
     },
     [
-      bearerToken,
-      clientId,
-      clientSecret,
-      clearClientCredentials,
-      oauthAllowPathScopedIssuer,
-      oauthProtocolMode,
-      oauthScopesInput,
+      buildServerDraft,
       onConnectOwnServer,
-      registrationMode,
       serverAuthentication,
       serverName,
       serverTransport,
       serverUrlOrCommand,
       validateSelectedAuthentication,
-      xaaAllowPathScopedIssuer,
-      xaaAuthzIssuer,
-      xaaClientAuth,
-      xaaEmail,
-      xaaSubject,
     ],
   );
 
   const authorizeWithSelectedSettings = useCallback(() => {
     if (!validateSelectedAuthentication()) return;
-    onAuthorizeConnection({
-      name:
+    onAuthorizeConnection(
+      buildServerDraft(
         serverName.trim() ||
-        (connectionState.status === "authorization-required"
-          ? connectionState.serverName
-          : deriveServerName(serverUrlOrCommand)),
-      transport: serverTransport,
-      urlOrCommand: serverUrlOrCommand,
-      authentication: serverAuthentication,
-      bearerToken: bearerToken.trim() || undefined,
-      oauthProtocolMode,
-      registrationMode,
-      oauthScopes: oauthScopesInput
-        .split(/\s+/)
-        .map((scope) => scope.trim())
-        .filter(Boolean),
-      clientId: clearClientCredentials ? "" : clientId.trim() || undefined,
-      clientSecret: clearClientCredentials
-        ? undefined
-        : clientSecret || undefined,
-      clearClientSecret: clearClientCredentials,
-      oauthAllowPathScopedIssuer,
-      xaaClientAuth,
-      xaaAuthzIssuer: xaaAuthzIssuer.trim() || undefined,
-      xaaAllowPathScopedIssuer,
-      xaaSubject: xaaSubject.trim() || undefined,
-      xaaEmail: xaaEmail.trim() || undefined,
-    });
+          (connectionState.status === "authorization-required"
+            ? connectionState.serverName
+            : deriveServerName(serverUrlOrCommand)),
+        serverUrlOrCommand,
+      ),
+    );
   }, [
-    bearerToken,
-    clientId,
-    clientSecret,
-    clearClientCredentials,
+    buildServerDraft,
     connectionState,
-    oauthAllowPathScopedIssuer,
-    oauthProtocolMode,
-    oauthScopesInput,
     onAuthorizeConnection,
-    registrationMode,
-    serverAuthentication,
     serverName,
-    serverTransport,
     serverUrlOrCommand,
-    xaaAllowPathScopedIssuer,
-    xaaAuthzIssuer,
-    xaaClientAuth,
-    xaaEmail,
-    xaaSubject,
     validateSelectedAuthentication,
   ]);
 
@@ -732,6 +758,80 @@ export function FirstRunOnboardingOverlay({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [continueToChoice, open, step]);
+
+  const authenticationSection = (
+    <AuthenticationSection
+      serverUrl={serverUrlOrCommand}
+      authType={serverAuthentication as ServerFormAuthType}
+      onAuthTypeChange={changeServerAuthentication}
+      showAuthSettings
+      bearerToken={bearerToken}
+      onBearerTokenChange={(value) => {
+        setBearerToken(value);
+        setBearerTokenError(null);
+      }}
+      bearerTokenError={bearerTokenError}
+      bearerTokenInputRef={bearerTokenInputRef}
+      oauthScopesInput={oauthScopesInput}
+      onOauthScopesChange={setOauthScopesInput}
+      oauthProtocolMode={oauthProtocolMode}
+      onOauthProtocolModeChange={setOauthProtocolMode}
+      registrationMode={registrationMode}
+      onOauthRegistrationModeChange={(value) => {
+        if (registrationMode === "preregistered" && value !== "preregistered") {
+          setClientId("");
+          setClientSecret("");
+          setClearClientCredentials(true);
+        } else if (value === "preregistered") {
+          setClearClientCredentials(false);
+        }
+        setRegistrationMode(value);
+      }}
+      oauthAllowPathScopedIssuer={oauthAllowPathScopedIssuer}
+      onOauthAllowPathScopedIssuerChange={setOauthAllowPathScopedIssuer}
+      useCustomClientId={useCustomClientId}
+      onUseCustomClientIdChange={setUseCustomClientId}
+      clientId={clientId}
+      onClientIdChange={(value) => {
+        setClientId(value);
+        if (hasStoredClientSecret && value !== savedClientId) {
+          setClearStoredClientSecret(true);
+        }
+        if (value.trim()) setClearClientCredentials(false);
+        setClientIdError(null);
+      }}
+      clientSecret={clientSecret}
+      onClientSecretChange={(value) => {
+        setClientSecret(value);
+        if (value.trim()) setClearStoredClientSecret(false);
+        if (value.trim()) setClearClientCredentials(false);
+        setClientSecretError(null);
+      }}
+      hasStoredClientSecret={
+        hasStoredClientSecret && clientId === savedClientId
+      }
+      clearClientSecret={clearClientCredentials || clearStoredClientSecret}
+      onClearClientSecret={() => setClearStoredClientSecret(true)}
+      onUndoClearClientSecret={() => setClearStoredClientSecret(false)}
+      projectId={recoveryServerDraft?.projectId}
+      hostedServerId={recoveryServerDraft?.hostedServerId}
+      clientIdError={clientIdError}
+      clientSecretError={clientSecretError}
+      xaaClientAuth={xaaClientAuth}
+      onXaaClientAuthChange={setXaaClientAuth}
+      confidentialCimdStatus={confidentialCimdCapability.status}
+      confidentialCimdBlockReason={confidentialCimdBlockReason}
+      onRetryConfidentialCimd={confidentialCimdCapability.retry}
+      xaaAuthzIssuer={xaaAuthzIssuer}
+      onXaaAuthzIssuerChange={setXaaAuthzIssuer}
+      xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
+      onXaaAllowPathScopedIssuerChange={setXaaAllowPathScopedIssuer}
+      xaaSubject={xaaSubject}
+      onXaaSubjectChange={setXaaSubject}
+      xaaEmail={xaaEmail}
+      onXaaEmailChange={setXaaEmail}
+    />
+  );
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onSkip()}>
@@ -930,69 +1030,7 @@ export function FirstRunOnboardingOverlay({
                   Authorize
                 </Button>
                 <div className="mt-3 border-t border-border pt-3">
-                  <AuthenticationSection
-                    serverUrl={serverUrlOrCommand}
-                    authType={serverAuthentication as ServerFormAuthType}
-                    onAuthTypeChange={changeServerAuthentication}
-                    showAuthSettings
-                    bearerToken={bearerToken}
-                    onBearerTokenChange={(value) => {
-                      setBearerToken(value);
-                      setBearerTokenError(null);
-                    }}
-                    bearerTokenError={bearerTokenError}
-                    bearerTokenInputRef={bearerTokenInputRef}
-                    oauthScopesInput={oauthScopesInput}
-                    onOauthScopesChange={setOauthScopesInput}
-                    oauthProtocolMode={oauthProtocolMode}
-                    onOauthProtocolModeChange={setOauthProtocolMode}
-                    registrationMode={registrationMode}
-                    onOauthRegistrationModeChange={(value) => {
-                      if (
-                        registrationMode === "preregistered" &&
-                        value !== "preregistered"
-                      ) {
-                        setClientId("");
-                        setClientSecret("");
-                        setClearClientCredentials(true);
-                      } else if (value === "preregistered") {
-                        setClearClientCredentials(false);
-                      }
-                      setRegistrationMode(value);
-                    }}
-                    oauthAllowPathScopedIssuer={oauthAllowPathScopedIssuer}
-                    onOauthAllowPathScopedIssuerChange={
-                      setOauthAllowPathScopedIssuer
-                    }
-                    useCustomClientId={useCustomClientId}
-                    onUseCustomClientIdChange={setUseCustomClientId}
-                    clientId={clientId}
-                    onClientIdChange={(value) => {
-                      setClientId(value);
-                      if (value.trim()) setClearClientCredentials(false);
-                      setClientIdError(null);
-                    }}
-                    clientSecret={clientSecret}
-                    onClientSecretChange={(value) => {
-                      setClientSecret(value);
-                      if (value.trim()) setClearClientCredentials(false);
-                      setClientSecretError(null);
-                    }}
-                    clientIdError={clientIdError}
-                    clientSecretError={clientSecretError}
-                    xaaClientAuth={xaaClientAuth}
-                    onXaaClientAuthChange={setXaaClientAuth}
-                    xaaAuthzIssuer={xaaAuthzIssuer}
-                    onXaaAuthzIssuerChange={setXaaAuthzIssuer}
-                    xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
-                    onXaaAllowPathScopedIssuerChange={
-                      setXaaAllowPathScopedIssuer
-                    }
-                    xaaSubject={xaaSubject}
-                    onXaaSubjectChange={setXaaSubject}
-                    xaaEmail={xaaEmail}
-                    onXaaEmailChange={setXaaEmail}
-                  />
+                  {authenticationSection}
                   {xaaConfigurationError ? (
                     <p className="mt-2 text-xs text-destructive" role="alert">
                       {xaaConfigurationError}
@@ -1026,8 +1064,8 @@ export function FirstRunOnboardingOverlay({
                   {guestSessionRefused
                     ? "Sign in to continue"
                     : connectionState.status === "preparing"
-                    ? "Preparing your MCPJam workspace"
-                    : "Connecting to "}
+                      ? "Preparing your MCPJam workspace"
+                      : "Connecting to "}
                   {!guestSessionRefused &&
                   connectionState.status !== "preparing"
                     ? connectionState.serverName
@@ -1037,8 +1075,8 @@ export function FirstRunOnboardingOverlay({
                   {guestSessionRefused
                     ? "MCPJam couldn't create another guest session from this network today."
                     : connectionState.status === "preparing"
-                    ? "Getting your project ready to connect to an MCP server."
-                    : "Checking the connection before MCPJam opens the playground."}
+                      ? "Getting your project ready to connect to an MCP server."
+                      : "Checking the connection before MCPJam opens the playground."}
                 </DialogDescription>
               </DialogHeader>
               {guestSessionRefused ? (
@@ -1229,67 +1267,7 @@ export function FirstRunOnboardingOverlay({
                   ) : null}
                 </div>
 
-                <AuthenticationSection
-                  serverUrl={serverUrlOrCommand}
-                  authType={serverAuthentication as ServerFormAuthType}
-                  onAuthTypeChange={changeServerAuthentication}
-                  showAuthSettings
-                  bearerToken={bearerToken}
-                  onBearerTokenChange={(value) => {
-                    setBearerToken(value);
-                    setBearerTokenError(null);
-                  }}
-                  bearerTokenError={bearerTokenError}
-                  bearerTokenInputRef={bearerTokenInputRef}
-                  oauthScopesInput={oauthScopesInput}
-                  onOauthScopesChange={setOauthScopesInput}
-                  oauthProtocolMode={oauthProtocolMode}
-                  onOauthProtocolModeChange={setOauthProtocolMode}
-                  registrationMode={registrationMode}
-                  onOauthRegistrationModeChange={(value) => {
-                    if (
-                      registrationMode === "preregistered" &&
-                      value !== "preregistered"
-                    ) {
-                      setClientId("");
-                      setClientSecret("");
-                      setClearClientCredentials(true);
-                    } else if (value === "preregistered") {
-                      setClearClientCredentials(false);
-                    }
-                    setRegistrationMode(value);
-                  }}
-                  oauthAllowPathScopedIssuer={oauthAllowPathScopedIssuer}
-                  onOauthAllowPathScopedIssuerChange={
-                    setOauthAllowPathScopedIssuer
-                  }
-                  useCustomClientId={useCustomClientId}
-                  onUseCustomClientIdChange={setUseCustomClientId}
-                  clientId={clientId}
-                  onClientIdChange={(value) => {
-                    setClientId(value);
-                    if (value.trim()) setClearClientCredentials(false);
-                    setClientIdError(null);
-                  }}
-                  clientSecret={clientSecret}
-                  onClientSecretChange={(value) => {
-                    setClientSecret(value);
-                    if (value.trim()) setClearClientCredentials(false);
-                    setClientSecretError(null);
-                  }}
-                  clientIdError={clientIdError}
-                  clientSecretError={clientSecretError}
-                  xaaClientAuth={xaaClientAuth}
-                  onXaaClientAuthChange={setXaaClientAuth}
-                  xaaAuthzIssuer={xaaAuthzIssuer}
-                  onXaaAuthzIssuerChange={setXaaAuthzIssuer}
-                  xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
-                  onXaaAllowPathScopedIssuerChange={setXaaAllowPathScopedIssuer}
-                  xaaSubject={xaaSubject}
-                  onXaaSubjectChange={setXaaSubject}
-                  xaaEmail={xaaEmail}
-                  onXaaEmailChange={setXaaEmail}
-                />
+                {authenticationSection}
                 {xaaConfigurationError ? (
                   <p className="text-xs text-destructive" role="alert">
                     {xaaConfigurationError}
