@@ -1,3 +1,8 @@
+import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
+import {
+  appendPluginModelContext,
+  stripPluginModelContext,
+} from "../../shared/plugin-model-context.js";
 import { modelWorkloadFor } from "./model-workload.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 /**
@@ -379,6 +384,7 @@ export interface WebChatTurnPersistContext {
  * here so the helper signature is self-contained.
  */
 export interface WebChatTurnPrepareInputs {
+  modelToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   selectedServerIds: string[];
   modelDefinition: ModelDefinition;
   /**
@@ -423,6 +429,8 @@ export interface WebChatTurnPrepareInputs {
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
+  /** Fresh server-owned App context, never browser-supplied bytes. */
+  pluginContext?: ModelMessage;
   /** Optional progressive-discovery override. */
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
@@ -529,6 +537,9 @@ export interface WebChatTurnRuntime {
    * elicitation bridge it is NOT disposed at end of turn.
    */
   mrtrBridge?: HostedMrtrBridge;
+  modelFormBridge?: {
+    attachStreamWriter(writer: { write(chunk: UIMessageChunk): void }): void;
+  };
   /**
    * Delivers `data-task-created` parts. Present only when the host policy
    * enables tasks for this surface AND the client sent a compatible
@@ -835,7 +846,7 @@ export async function streamWebChatTurn(
 
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
-  const modelMessages = await convertToMcpjamModelMessages(
+  let modelMessages = await convertToMcpjamModelMessages(
     uiMessagesForTurn as never,
     {
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
@@ -846,10 +857,16 @@ export async function streamWebChatTurn(
     },
   );
 
+  modelMessages = appendPluginModelContext(
+    modelMessages,
+    prepare.pluginContext,
+  );
+
   let prepared;
   try {
     prepared = await prepareChatV2({
       mcpClientManager: manager,
+      modelToolExecutor: prepare.modelToolExecutor,
       selectedServers: prepare.selectedServerIds,
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,
@@ -1342,24 +1359,27 @@ export async function streamWebChatTurn(
         // prompt exists to prevent. Hence two fields, both already on the
         // ingest contract — the local route has always filled this one.
         systemPrompt: effectiveEnhancedSystemPrompt,
-        sessionMessages: stampSenderUserIdsOnSessionMessages(
-          stripUiContextModelParts(
-            // Signed as the server's own where it is: this turn's output,
-            // and history that verified on the way in (MJ-009).
-            provenance
-              ? signHistoryForPersistence(
-                  fullHistory,
-                  provenance,
-                  allTools as ToolSet,
-                )
-              : fullHistory,
+        sessionMessages: preservePluginMessageTitles(
+          stampSenderUserIdsOnSessionMessages(
+            stripUiContextModelParts(
+              // Signed as the server's own where it is: this turn's output,
+              // and history that verified on the way in (MJ-009).
+              provenance
+                ? signHistoryForPersistence(
+                    stripPluginModelContext(fullHistory),
+                    provenance,
+                    allTools as ToolSet,
+                  )
+                : stripPluginModelContext(fullHistory),
+            ),
+            // The verified copy when there is one: it is the same list, with a
+            // system message now a user message, so user ordinals line up.
+            (provenanceReport && persist.originalMessages === prepare.uiMessages
+              ? provenanceReport.messages
+              : persist.originalMessages) as unknown[],
+            { authenticatedUserId: persist.authenticatedUserId },
           ),
-          // The verified copy when there is one: it is the same list, with a
-          // system message now a user message, so user ordinals line up.
-          (provenanceReport && persist.originalMessages === prepare.uiMessages
-            ? provenanceReport.messages
-            : persist.originalMessages) as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId },
+          persist.originalMessages as unknown[],
         ),
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
@@ -1731,6 +1751,11 @@ export async function streamWebChatTurn(
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
       : {}),
+    // A host-executed harness runs MCP tools in this process; they take the
+    // same plugin executor the emulated engine's tools do.
+    ...(persist.harness && prepare.modelToolExecutor
+      ? { hostToolExecutor: prepare.modelToolExecutor }
+      : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.
     ...(persist.runtimeSkillsOverride !== undefined
@@ -1803,6 +1828,7 @@ export async function streamWebChatTurn(
       runtime.elicitationBridge?.attachStreamWriter(writer);
       // MRTR suspend emits `data-mrtr-input-required` on this same stream.
       runtime.mrtrBridge?.attachStreamWriter(writer);
+      runtime.modelFormBridge?.attachStreamWriter(writer);
       // A task can be created on ANY engine path, so unlike the MRTR bridge
       // this one attaches at all three sites, following the elicitation bridge.
       runtime.taskCreatedBridge?.attachStreamWriter(writer);

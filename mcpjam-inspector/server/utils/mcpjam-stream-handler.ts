@@ -1097,6 +1097,14 @@ export interface MCPJamHandlerOptions {
    */
   harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
   /**
+   * HOST-EXECUTED harness delivery only (Codex): the same per-call executor an
+   * emulated Playground turn wraps its MCP tools with (OpenAI plugin forms on
+   * the composer card, owned model Apps). It runs innermost, after the tool
+   * policy gate and the harness's own approval, exactly where the emulated
+   * engine's wrapper sits. Absent ⇒ the projected tools are unchanged.
+   */
+  hostToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
+  /**
    * The eval ITERATION this harness turn is executing, when there is one.
    *
    * Present ⇒ the turn mints proxy tokens carrying an authorized iteration
