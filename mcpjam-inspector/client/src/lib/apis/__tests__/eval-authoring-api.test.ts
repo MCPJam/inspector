@@ -46,14 +46,13 @@ describe("authoringRequest", () => {
 
   it("surfaces an error string passed through from Convex", async () => {
     respond(403, {
-      error:
-        "Generating and importing test cases isn't available in a local MCPJam Inspector. Open this project at https://app.mcpjam.com to continue.",
+      code: "credential_not_allowed",
+      error: "Sign in to MCPJam in the Inspector to author cases.",
     });
     await expect(
       authoringRequest({ operation: "status", jobId: "job-1" }),
     ).rejects.toMatchObject({
-      message:
-        "Generating and importing test cases isn't available in a local MCPJam Inspector. Open this project at https://app.mcpjam.com to continue.",
+      message: "Sign in to MCPJam in the Inspector to author cases.",
       status: 403,
     });
   });
