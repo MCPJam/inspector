@@ -38,7 +38,14 @@ import {
 import { computeTreeDigest, predictManagedRuntimeId } from "../runtime-identity.js";
 import { setRuntimeProbeForTests } from "../runtime-probe.js";
 import { setRuntimeMetricsSinkForTests } from "../runtime-metrics.js";
-import { REVOCATION_SCHEMA, refreshRevocations, resetRevocationRefreshForTests, setRevocationKeysForTests } from "../runtime-revocation.js";
+import {
+  REVOCATION_RETRY_AFTER_FAILURE_MS,
+  REVOCATION_SCHEMA,
+  refreshRevocations,
+  resetRevocationRefreshForTests,
+  setRevocationFetchForTests,
+  setRevocationKeysForTests,
+} from "../runtime-revocation.js";
 import { LAUNCH_FAILURE_THRESHOLD } from "../runtime-health.js";
 import { collectRuntimeGarbage, writeLivenessRecord } from "../runtime-gc.js";
 import { PREVIOUS_SUFFIX, reserveRuntimeUse } from "../runtime-lifecycle.js";
@@ -110,6 +117,19 @@ async function selected(): Promise<RuntimeInstallStatus> {
   return readRuntimeInstallStatus({ harnessId: "claude-code" });
 }
 
+/** A list signed with the test key, as the published host would serve it. */
+function signedRevocations(sequence: number, revoked: Array<{ treeDigest: string; reason: string }>) {
+  const list = Buffer.from(
+    JSON.stringify({
+      schema: REVOCATION_SCHEMA,
+      sequence,
+      issuedAt: new Date().toISOString(),
+      revoked: revoked.map((entry) => ({ harnessId: "claude-code", ...entry })),
+    }),
+  );
+  return { list, signature: sign(null, list, keys.privateKey).toString("base64") };
+}
+
 async function publishRevocations(sequence: number, revoked: Array<{ treeDigest: string; reason: string }>): Promise<void> {
   const list = Buffer.from(
     JSON.stringify({
@@ -147,6 +167,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   resetRuntimeInstallStateForTests();
+  setRevocationFetchForTests(null);
   vi.restoreAllMocks();
   // Give a post-activation GC (fire-and-forget) a moment before removing its root.
   await new Promise((r) => setTimeout(r, 20));
@@ -382,6 +403,46 @@ describe("revocation", () => {
     expect(status).toMatchObject({ role: "permitted", packVersion: OLD });
     if (status.state !== "ready") throw new Error("unreachable");
     expect(status.update).toMatchObject({ state: "revoked" });
+  });
+
+  it("checks the published list before a new machine's FIRST install downloads anything", async () => {
+    // No cache yet: selection alone would know of no revocation, so the
+    // install path has to fetch the list before it decides to download.
+    pin(NEW);
+    serve(NEW);
+    const { list, signature } = signedRevocations(1, [{ treeDigest: digests[NEW]!, reason: "bad build" }]);
+    const requested: string[] = [];
+    setRevocationFetchForTests((async (url: string) => {
+      requested.push(url);
+      return new Response(url.endsWith(".sig") ? signature : list);
+    }) as unknown as typeof fetch);
+    expect(await startRuntimeInstall({ harnessId: "claude-code", trigger: "gesture" })).toMatchObject({
+      kind: "refused",
+      refusal: "revoked",
+    });
+    expect(requested).toHaveLength(2);
+    expect(await selected()).not.toMatchObject({ state: "ready" });
+  });
+
+  it("does not let one offline attempt hide a revocation for hours", async () => {
+    await machineOnOldPackWithUpdatePinned();
+    resetRevocationRefreshForTests();
+    const { list, signature } = signedRevocations(1, [{ treeDigest: digests[OLD]!, reason: "security fix" }]);
+    let online = false;
+    setRevocationFetchForTests((async (url: string) => {
+      if (!online) throw new TypeError("fetch failed");
+      return new Response(url.endsWith(".sig") ? signature : list);
+    }) as unknown as typeof fetch);
+
+    expect((await refreshRevocations()).state).toBe("failed");
+    online = true;
+    // Backed off briefly, so an offline machine is not hammering...
+    expect((await refreshRevocations()).state).toBe("skipped");
+    // ...but minutes later, not six hours later, the list arrives.
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + REVOCATION_RETRY_AFTER_FAILURE_MS + 1);
+    expect((await refreshRevocations()).state).toBe("updated");
+    expect(await selected()).not.toMatchObject({ state: "ready", packVersion: OLD });
   });
 
   it("never selects a revoked pack as a fallback either — launch fails closed with MCPJam's reason", async () => {

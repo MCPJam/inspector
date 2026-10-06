@@ -11,6 +11,7 @@ import { getLocalMachineId, grantLocalHarnessConsent, registerWorkspaceGrant, re
 import { readRuntimeInstallStatus, installRuntimePack, startRuntimeInstall, startBackgroundRuntimeUpdate, manifestWithExpectedBundleDigest, MANUAL_UPDATES_MESSAGE } from "./runtime-install.js";
 import { readLocalRuntimeUpdatePolicy, type RuntimeInstallTrigger } from "./runtime-update-policy.js";
 import { noteRuntimeMetricsActor } from "./runtime-metrics.js";
+import { refreshRevocations } from "./runtime-revocation.js";
 import { logger } from "../../logger.js";
 import { resolveManagedBundle } from "./runtime-identity.js";
 import { LOCAL_HARNESS_MANIFEST } from "./compatibility.js";
@@ -100,6 +101,10 @@ export async function ensureLocalHarnessTarget(args: {
     throw new LocalAutoApproveConsentRequiredError();
   }
   noteRuntimeMetricsActor(actor.subject);
+  // Selection reads revocations from the cache only. Keep it fresh for an
+  // Inspector that runs for days on its desired pack (rate-limited; never
+  // awaited here, so a turn is not delayed — the next readiness check sees it).
+  void refreshRevocations().catch(() => {});
   // The runtime this build SELECTS: its desired pack, or — while a newer
   // desired pack downloads and probes, or after a rollback — the permitted
   // previous one. A turn never waits on a download it does not need.

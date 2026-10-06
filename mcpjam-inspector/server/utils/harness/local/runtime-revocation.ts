@@ -8,9 +8,13 @@
  * repository, signed by `.github/workflows/local-harness-revocations.yml` in
  * the same protected environment as the packs and merged through a reviewed
  * bot PR, then served from main (`MCPJAM_LOCAL_HARNESS_REVOCATIONS_URL`
- * overrides the URL, e.g. for an mcpjam.com front or an internal mirror). It is fetched alongside update checks — at boot and with the
- * Playground's readiness check, at most every few hours — and CACHED under the
- * runtime root, so a machine offline after a revocation still honours it.
+ * overrides the URL, e.g. for an mcpjam.com front or an internal mirror). It is
+ * fetched at boot for any authorized harness (whatever the update policy: a
+ * refresh is a read, not an install), before every install that may download
+ * (so a new machine's FIRST install checks it), and with the Playground's
+ * readiness check — at most every few hours after a success, a few minutes
+ * after a failure — and CACHED under the runtime root, so a machine offline
+ * after a revocation still honours it.
  *
  * ── What is trusted ──────────────────────────────────────────────────────
  * Only a list whose detached signature verifies against a key this build
@@ -44,6 +48,11 @@ export const DEFAULT_REVOCATIONS_URL =
 
 /** How often a background caller may refetch. Explicit refreshes ignore it. */
 export const REVOCATION_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** After a FAILED fetch: soon enough that one offline boot does not hide a
+ *  revocation for hours, slow enough that an offline machine is not hammering. */
+export const REVOCATION_RETRY_AFTER_FAILURE_MS = 5 * 60 * 1000;
+/** Callers await a refresh before an install; a hung network must not hang it. */
+const REVOCATION_FETCH_TIMEOUT_MS = 10_000;
 const MAX_LIST_BYTES = 256 * 1024;
 
 export interface RevokedPack {
@@ -166,13 +175,22 @@ export type RevocationRefresh =
   | { state: "updated" | "unchanged"; list: RevocationList }
   | { state: "skipped" | "failed"; list: RevocationList | null; message?: string };
 
+/** Last SUCCESSFUL fetch (updated or unchanged); a failure never counts. */
 let lastRefreshAt = 0;
+let lastFailureAt = 0;
 let inflight: Promise<RevocationRefresh> | null = null;
+let fetchForTests: typeof fetch | null = null;
 
 /** Test seam. */
 export function resetRevocationRefreshForTests(): void {
   lastRefreshAt = 0;
+  lastFailureAt = 0;
   inflight = null;
+}
+
+/** Test seam: what a refresh without an explicit `fetchImpl` fetches with. */
+export function setRevocationFetchForTests(fetchImpl: typeof fetch | null): void {
+  fetchForTests = fetchImpl;
 }
 
 /**
@@ -188,44 +206,65 @@ export async function refreshRevocations(options: {
 } = {}): Promise<RevocationRefresh> {
   const root = options.root ?? runtimeInstallRoot();
   const keys = options.keys ?? trustedKeys;
-  if (!options.force && Date.now() - lastRefreshAt < REVOCATION_REFRESH_INTERVAL_MS) {
-    return { state: "skipped", list: await readCachedRevocations(root, keys) };
+  if (!options.force) {
+    const now = Date.now();
+    if (now - lastRefreshAt < REVOCATION_REFRESH_INTERVAL_MS || now - lastFailureAt < REVOCATION_RETRY_AFTER_FAILURE_MS) {
+      return { state: "skipped", list: await readCachedRevocations(root, keys) };
+    }
   }
   if (inflight !== null) return inflight;
-  inflight = (async (): Promise<RevocationRefresh> => {
-    lastRefreshAt = Date.now();
-    const cached = await readCachedRevocations(root, keys);
-    const url = options.url ?? revocationsUrl();
-    const fetcher = options.fetchImpl ?? (installerFetch as typeof fetch);
-    try {
-      const [listResponse, signatureResponse] = await Promise.all([fetcher(url), fetcher(`${url}.sig`)]);
-      if (!listResponse.ok || !signatureResponse.ok) {
-        return { state: "failed", list: cached, message: `${url} responded ${listResponse.status}/${signatureResponse.status}` };
+  inflight = fetchAndCache(root, keys, options)
+    .then((outcome) => {
+      // Only a list actually checked buys the long interval: stamping the
+      // ATTEMPT let one offline boot suppress every refresh for six hours.
+      if (outcome.state === "updated" || outcome.state === "unchanged") {
+        lastRefreshAt = Date.now();
+        lastFailureAt = 0;
+      } else {
+        lastFailureAt = Date.now();
       }
-      const bytes = Buffer.from(await listResponse.arrayBuffer());
-      const signature = await signatureResponse.text();
-      const parsed = parseRevocationList(bytes, signature, keys);
-      if (!parsed.ok) return { state: "failed", list: cached, message: parsed.message };
-      if (cached !== null && parsed.list.sequence < cached.sequence) {
-        return {
-          state: "failed",
-          list: cached,
-          message: `refusing revocation list ${parsed.list.sequence}: ${cached.sequence} is already cached`,
-        };
-      }
-      if (cached !== null && parsed.list.sequence === cached.sequence) return { state: "unchanged", list: cached };
-      await mkdir(root, { recursive: true, mode: 0o700 });
-      const tmp = `${cacheFile(root)}.${process.pid}.${randomUUID()}.tmp`;
-      const envelope: CacheEnvelope = { list: bytes.toString("utf8"), signature: signature.trim() };
-      await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 });
-      await rename(tmp, cacheFile(root));
-      logger.info("[local-harness] revocation list updated", { sequence: parsed.list.sequence, revoked: parsed.list.revoked.length });
-      return { state: "updated", list: parsed.list };
-    } catch (error) {
-      return { state: "failed", list: cached, message: error instanceof Error ? error.message : String(error) };
-    }
-  })().finally(() => {
-    inflight = null;
-  });
+      return outcome;
+    })
+    .finally(() => {
+      inflight = null;
+    });
   return inflight;
+}
+
+async function fetchAndCache(
+  root: string,
+  keys: readonly PackSigningKey[],
+  options: { url?: string; fetchImpl?: typeof fetch },
+): Promise<RevocationRefresh> {
+  const cached = await readCachedRevocations(root, keys);
+  const url = options.url ?? revocationsUrl();
+  const fetcher = options.fetchImpl ?? fetchForTests ?? (installerFetch as typeof fetch);
+  try {
+    const init = { signal: AbortSignal.timeout(REVOCATION_FETCH_TIMEOUT_MS) };
+    const [listResponse, signatureResponse] = await Promise.all([fetcher(url, init), fetcher(`${url}.sig`, init)]);
+    if (!listResponse.ok || !signatureResponse.ok) {
+      return { state: "failed", list: cached, message: `${url} responded ${listResponse.status}/${signatureResponse.status}` };
+    }
+    const bytes = Buffer.from(await listResponse.arrayBuffer());
+    const signature = await signatureResponse.text();
+    const parsed = parseRevocationList(bytes, signature, keys);
+    if (!parsed.ok) return { state: "failed", list: cached, message: parsed.message };
+    if (cached !== null && parsed.list.sequence < cached.sequence) {
+      return {
+        state: "failed",
+        list: cached,
+        message: `refusing revocation list ${parsed.list.sequence}: ${cached.sequence} is already cached`,
+      };
+    }
+    if (cached !== null && parsed.list.sequence === cached.sequence) return { state: "unchanged", list: cached };
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const tmp = `${cacheFile(root)}.${process.pid}.${randomUUID()}.tmp`;
+    const envelope: CacheEnvelope = { list: bytes.toString("utf8"), signature: signature.trim() };
+    await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 });
+    await rename(tmp, cacheFile(root));
+    logger.info("[local-harness] revocation list updated", { sequence: parsed.list.sequence, revoked: parsed.list.revoked.length });
+    return { state: "updated", list: parsed.list };
+  } catch (error) {
+    return { state: "failed", list: cached, message: error instanceof Error ? error.message : String(error) };
+  }
 }

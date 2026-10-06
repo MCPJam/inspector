@@ -1002,7 +1002,12 @@ export async function startRuntimeInstall(
 
   const trigger = options.trigger ?? "gesture";
 
-  // A withdrawn pack is never downloaded, whoever asks.
+  // A withdrawn pack is never downloaded, whoever asks. Refreshed first
+  // (rate-limited, soft-failing, bounded by a timeout): selection reads only
+  // the cache, and a new machine's first install has none, so without this a
+  // pack MCPJam already withdrew would install and run. Provisioning from a
+  // local archive is the offline path; it trusts the cache it has.
+  if (trigger !== "provision") await refreshRevocations();
   const revoked = await isPackRevoked(options.harnessId, expected.treeDigest);
   if (revoked !== null) {
     const message =
@@ -2023,11 +2028,14 @@ export function startLocalHarnessRuntimeMaintenance(options: {
           authorized,
           updates: policy.policy,
         });
-        if (!authorized || policy.policy !== "auto") continue;
+        if (!authorized) continue;
+        // Under either policy: a refresh is a read, not an install, and a
+        // `manual` fleet must still stop selecting a withdrawn pack.
         if (!refreshed) {
           refreshed = true;
           await refreshRevocations();
         }
+        if (policy.policy !== "auto") continue;
         const desired = await readDesiredRuntimeStatus({ harnessId });
         if (desired.state === "ready" || desired.state === "downloading" || desired.state === "verifying") continue;
         if (desired.state === "unsupported-platform") continue;
