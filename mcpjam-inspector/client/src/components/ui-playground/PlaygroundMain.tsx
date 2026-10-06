@@ -1952,6 +1952,10 @@ export function PlaygroundMain({
           workspaceId: extensionScope.pluginWorkspace.workspaceId,
         }
       : null,
+    // Not part of the workspace identity: switching Model context off must
+    // not tear down running model Apps, only stop the next turn and the
+    // composer from carrying their (now refused) context references.
+    pluginExtensions.capabilities.modelContext,
   );
   // Plugin-owned servers show their plugin's icons (composer icon, logo).
   // One subscription to the project's plugins; discovery names each

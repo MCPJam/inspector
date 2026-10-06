@@ -81,6 +81,10 @@ export const OwnedModelAppPortsProvider = ModelAppPortsContext.Provider;
 export function useOwnedModelAppWorkspace(
   sendMessage: OwnedModelAppPorts["sendMessage"],
   scope: ModelAppWorkspaceScope | null,
+  /** The client's current Model context toggle. Off hides every App's
+   * context from the composer and the next turn in the same render; the Apps
+   * keep running and their context returns when it is turned back on. */
+  contextEnabled = true,
 ) {
   // Rotate synchronously: old asynchronous publications cannot enter a new chat,
   // even before the previous leaf's passive cleanup has run.
@@ -198,7 +202,8 @@ export function useOwnedModelAppWorkspace(
     () => ({ publishContext, sendMessage: dispatch, registerMessageSource }),
     [publishContext, dispatch, registerMessageSource],
   );
-  const contexts = scope && state.epoch === epoch ? state.contexts : {};
+  const contexts =
+    scope && contextEnabled && state.epoch === epoch ? state.contexts : {};
   return {
     value,
     prepareMessage,

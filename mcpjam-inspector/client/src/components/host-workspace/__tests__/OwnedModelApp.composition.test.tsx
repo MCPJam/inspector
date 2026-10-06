@@ -392,3 +392,82 @@ describe("inline App and composer composition", () => {
     expect(mocks.renderCount).toBeLessThan(40);
   });
 });
+
+describe("the client's Model context toggle", () => {
+  function ToggledWorkspace({ contextEnabled }: { contextEnabled: boolean }) {
+    const workspace = useOwnedModelAppWorkspace(
+      sendMessage,
+      { ...marker, key: "actor:workspace" },
+      contextEnabled,
+    );
+    return (
+      <OwnedModelAppPortsProvider value={workspace.value}>
+        <output data-testid="references">
+          {JSON.stringify(workspace.references)}
+        </output>
+        {workspace.attachments.map((item) => (
+          <ContextAttachmentChip key={item.id} {...item} />
+        ))}
+        <OwnedModelApp
+          marker={marker}
+          renderProps={{
+            toolCallId: "original-call",
+            toolName: "fixture.part",
+            serverId: "saved-server",
+            resourceUri: "ui://part",
+            toolState: "output-available",
+            chatSessionId: "thread",
+          }}
+        />
+      </OwnedModelAppPortsProvider>
+    );
+  }
+
+  it("drops the App's reference and chip in the same render it turns off, keeping the App open", async () => {
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      if (url.endsWith("/model/open")) return reply(handle);
+      if (url.endsWith("/model/call"))
+        return reply({ status: "completed", result: { content: [] } });
+      if (url.endsWith("/model/context"))
+        return reply({
+          _meta: { "openai/modelContext": { updateId } },
+          snapshot: {
+            revision: 1,
+            sequence: body.sequence,
+            state: { updateId, ...body.params },
+          },
+        });
+      if (url.endsWith("/model/close")) return reply({ closed: true });
+      throw new Error("Unexpected API path");
+    });
+    const view = render(<ToggledWorkspace contextEnabled />);
+    await waitFor(() => expect(mocks.host).not.toBeNull());
+    await act(async () => {
+      await mocks.host!.services.updateModelContext!(params);
+    });
+    expect(screen.getByTestId("references")).toHaveTextContent(token);
+    expect(
+      screen.getByRole("button", { name: "Remove Triangle" }),
+    ).toBeInTheDocument();
+    // The host turns Model context off. The very next send must not carry the
+    // App's reference (the server would refuse the whole turn), with no
+    // effect or network round-trip in between.
+    view.rerender(<ToggledWorkspace contextEnabled={false} />);
+    expect(screen.getByTestId("references")).toHaveTextContent("[]");
+    expect(
+      screen.queryByRole("button", { name: "Remove Triangle" }),
+    ).not.toBeInTheDocument();
+    // The App itself keeps running.
+    expect(mocks.mounted).toBe(1);
+    expect(
+      mocks.fetch.mock.calls.some(([url]) =>
+        String(url).endsWith("/model/close"),
+      ),
+    ).toBe(false);
+    // Turning it back on attaches the App's still-held context again.
+    view.rerender(<ToggledWorkspace contextEnabled />);
+    expect(screen.getByTestId("references")).toHaveTextContent(token);
+    expect(mocks.mounted).toBe(1);
+  });
+});
