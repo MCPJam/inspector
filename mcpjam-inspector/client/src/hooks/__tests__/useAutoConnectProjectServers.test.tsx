@@ -13,6 +13,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   hosted: false,
+  toastDismiss: vi.fn(),
   toastError: vi.fn(),
   toastLoading: vi.fn(() => "reconnect-toast"),
   toastSuccess: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/lib/config", async (importOriginal) => ({
 
 vi.mock("sonner", () => ({
   toast: {
+    dismiss: mocks.toastDismiss,
     error: mocks.toastError,
     loading: mocks.toastLoading,
     success: mocks.toastSuccess,
@@ -99,6 +101,7 @@ describe("useAutoConnectProjectServers", () => {
     mocks.hosted = false;
     resetAutoConnectAttempts();
     localStorage.removeItem("mcpjam-auto-connect-servers");
+    mocks.toastDismiss.mockClear();
     mocks.toastError.mockClear();
     mocks.toastLoading.mockClear();
     mocks.toastSuccess.mockClear();
@@ -525,6 +528,44 @@ describe("useAutoConnectProjectServers", () => {
       4,
       "Reconnecting 1 server…",
     );
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("closes the reconnect toast when an in-flight batch is reset", async () => {
+    const ensureServersReady = vi.fn();
+    const pending: Array<() => void> = [];
+    const reconnectServer = vi.fn(
+      () => new Promise<void>((resolve) => pending.push(resolve)),
+    );
+    const appState = {
+      servers: { alpha: { name: "alpha", connectionStatus: "connected" } },
+    } as any;
+
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-reset-in-flight",
+          hostScopeKey,
+          serverNames: [],
+        }),
+      {
+        initialProps: { hostScopeKey: "host-a" },
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      },
+    );
+    await flushMicrotasks();
+    rerender({ hostScopeKey: "host-b" });
+    await flushMicrotasks();
+    expect(mocks.toastLoading).toHaveBeenCalledWith("Reconnecting 1 server…");
+
+    resetAutoConnectAttempts("proj-reset-in-flight");
+    expect(mocks.toastDismiss).toHaveBeenCalledWith("reconnect-toast");
+
+    // The dropped batch settles without reopening a toast.
+    pending[0]();
+    await flushMicrotasks();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
