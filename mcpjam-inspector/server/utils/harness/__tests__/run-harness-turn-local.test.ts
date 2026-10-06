@@ -318,6 +318,17 @@ describe("runHarnessTurn local continuity", () => {
     }
   });
 
+  it("runs a scenario-scoped turn on a local target: only a CLOUD scenario harness needs a box", async () => {
+    await runHarnessTurn(baseOptions({
+      executionScope: {
+        kind: "swarm", swarmId: "cb_1", accessVersion: 1,
+        projectId: "project-1", workspaceId: "ws_1",
+      },
+    }) as any, "none");
+    expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+  });
+
   it("binds preparation and first SDK session to one id without any cloud reservation", async () => {
     await runHarnessTurn(baseOptions() as any, "none");
     expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();

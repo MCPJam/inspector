@@ -141,6 +141,7 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-config.js";
 import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
@@ -782,13 +783,13 @@ export async function runHarnessTurn(
   // conversation's disposable box and nowhere else. With no binding the only
   // machine left to resolve is a persistent computer — the member's personal
   // one or the host's — which User Testing never uses, and which the backend
-  // now refuses the broker lease for. Fail here, before anything is reserved
-  // or woken, with the reason, rather than as an opaque 403 mid-turn.
+  // now refuses the broker lease for. The chat routes refuse this before the
+  // turn starts, with copy for the asker; this is the last resort, before
+  // anything is reserved or woken, and typed (a 409) so it never reads as a
+  // 500. It cannot tell a member from a participant, so it says what is safe
+  // for both.
   if (executionScope?.kind === "swarm" && !harnessSandboxBinding && !harnessExecutionTarget) {
-    throw new Error(
-      "runHarnessTurn: a scenario harness runs on the conversation's " +
-        "disposable computer, but none was provisioned for this turn",
-    );
+    throw new ScenarioHarnessRepublishRequiredError();
   }
   // An ephemeral binding and an execution scope MAY travel together: a
   // scenario conversation's harness runs on its disposable box while the scope

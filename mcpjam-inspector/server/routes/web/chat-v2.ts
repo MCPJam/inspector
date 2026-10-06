@@ -102,6 +102,7 @@ import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
   planScenarioSandbox,
+  scenarioHarnessRepublishRefusal,
   shouldWarnSecretsUndelivered,
   readScenarioEnvironment,
   readComputerSandboxMode,
@@ -1660,16 +1661,10 @@ chatV2.post("/", async (c) => {
     // is projected by `buildEnvironmentScenarioRuntimeConfig` alone), so a
     // host-bound Playground turn never reads it.
     //
-    // HARNESS TURNS ARE EXCLUDED, and not merely because harness-on-scenario is
-    // Phase 6. `run-harness-turn.ts` resolves its OWN machine through
-    // `resolveHarnessSandbox` — the acting member's personal computer — and
-    // `prepare.builtInTools` is forwarded to it verbatim alongside the MCP
-    // plane. Provisioning here would therefore produce a MIXED-MACHINE turn:
-    // the model's `bash` on the ephemeral box, the harness's own Shell and file
-    // edits on the personal one, with no relationship between the two
-    // filesystems. It would also suppress the image context that IS correct for
-    // the harness's machine. Leaving harness turns entirely alone is the only
-    // coherent state until Phase 6 moves the harness onto the same box.
+    // A cloud HARNESS turn takes the same box: the harness gets it as its
+    // binding, and the model's `bash`, when advertised, execs on it too, so
+    // the two never see different filesystems. A scenario harness with no box
+    // is refused below; it never falls back to a persistent computer.
     //
     // ORDERING: this block sits AFTER the manager authorization and the body
     // validations on purpose. Provisioning is the step that spends money, so a
@@ -1962,6 +1957,21 @@ chatV2.post("/", async (c) => {
         );
         suppressComputerResource = true;
       }
+    }
+    // A SCENARIO-scoped cloud harness with no box: the backend sent no marker
+    // (a host-backed scenario), so there is nothing to provision, and the only
+    // other machine is a persistent computer, which the backend refuses for a
+    // scenario scope. Refused here, before the turn starts, with copy that
+    // tells an author to republish rather than a 500 from deep in the harness.
+    if (
+      harnessWantsScenarioBox &&
+      executionScope?.kind === "swarm" &&
+      !scenarioBox
+    ) {
+      throw scenarioHarnessRepublishRefusal({
+        harness: resolvedExecution.harness!,
+        accessKind: hostRuntimeConfig?.accessKind,
+      });
     }
 
     // MATERIALIZED secrets resolved, and nowhere legitimate to put them.
