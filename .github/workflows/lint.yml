@@ -75,10 +75,10 @@ jobs:
       - name: Lint DESIGN.md against the pinned spec
         run: npm run design:lint
 
-      # Advisory: a moved fingerprint on a PR is what merging will publish,
-      # not a defect. `local-harness-pack-auto.yml` builds the pack on main and
-      # opens the pin PR that records it, so this only says which harness
-      # moves (in the job summary). The release gate is still strict.
+      # Advisory: a moved fingerprint on a PR is what the next release will
+      # publish, not a defect. Starting that release (`prepare-release.yml`)
+      # builds the pack and pins it in the version PR, so this only says which
+      # harness moves (in the job summary). The release gate is still strict.
       - name: Report local runtime input fingerprints
         run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory
 

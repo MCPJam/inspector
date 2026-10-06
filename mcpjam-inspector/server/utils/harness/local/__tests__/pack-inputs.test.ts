@@ -267,10 +267,10 @@ describe("the committed fingerprint file", () => {
     expect(Object.keys(committed.harnesses).sort()).toEqual(listPackHarnessIds());
   });
 
-  it("matches the sources, or says which pack merging will publish", async () => {
+  it("matches the sources, or says which pack the next release will publish", async () => {
     // ADVISORY in CI, like lint.yml's step: a PR that moves a fingerprint is
-    // not wrong, it is what merging publishes — the pack pipeline builds it on
-    // main and its pin PR records the new fingerprint. The release gate is
+    // not wrong, it is what the next release publishes — prepare-release
+    // builds it and its version PR records the new fingerprint. The release gate is
     // where a stale record blocks. Locally (no job summary) it still fails,
     // so a developer sees which harness their change republishes.
     const moved = movedFingerprints(committed, await computePackInputs(defaultPackInputIo));
@@ -282,7 +282,7 @@ describe("the committed fingerprint file", () => {
   });
 });
 
-describe("a pin PR's snapshot update", () => {
+describe("pinning one harness's snapshot", () => {
   const record = (fingerprint: string) => ({ fingerprint, inputs: { a: fingerprint } });
 
   it("moves exactly the named harness's record and carries the others byte for byte", () => {
@@ -304,9 +304,9 @@ describe("a pin PR's snapshot update", () => {
     const text = advisorySummary([
       { harnessId: "codex", recorded: `sha256:${"1".repeat(64)}`, computed: `sha256:${"2".repeat(64)}` },
     ]);
-    expect(text).toMatch(/Merging this publishes a new runtime pack/);
+    expect(text).toMatch(/The next release publishes a new runtime pack/);
     expect(text).toMatch(/\*\*codex\*\*/);
-    expect(text).toMatch(/local-harness-pack-auto\.yml/);
+    expect(text).toMatch(/prepare-release\.yml/);
   });
 });
 
