@@ -108,6 +108,15 @@ export interface LocalHarnessEnvOptions {
    * itself. Ignored on every other platform.
    */
   gitBashPath?: string;
+  /**
+   * Runtime directories the session must stay out of, on top of its sibling
+   * sessions: the Inspector layer and the vendor pack it is launched from.
+   * Neither is a session root; naming them here puts them in the agent's own
+   * file-tool deny rules. Defence in depth, not a sandbox — the agent runs as
+   * the same OS user — and the layer and pack are re-hashed before every exec
+   * regardless.
+   */
+  extraDeniedRoots?: readonly string[];
   platform?: NodeJS.Platform;
   base?: NodeJS.ProcessEnv;
 }
@@ -197,6 +206,12 @@ export function buildLocalHarnessEnv(
         if (entry.isDirectory() && ![opts.syntheticHome, opts.sessionRoot].some(active => active === root || active.startsWith(root + path.sep))) deniedRoots.push(root);
       }
     } catch { /* A new installation may not have any sibling sessions. */ }
+  }
+  for (const root of opts.extraDeniedRoots ?? []) {
+    if (!path.isAbsolute(root)) {
+      throw new LocalHarnessEnvError("a denied runtime root must be an absolute path");
+    }
+    if (!deniedRoots.includes(root)) deniedRoots.push(root);
   }
   env.MCPJAM_LOCAL_DENIED_ROOTS = JSON.stringify(deniedRoots);
 

@@ -27,7 +27,7 @@ vi.mock("../../../services/evals-runner.js", async (original) => ({
 }));
 vi.mock("../../../services/evals/route-helpers.js", async (original) => ({
   ...await original<typeof import("../../../services/evals/route-helpers.js")>(),
-  captureToolSnapshotForEvalAuthoring: async () => ({ toolSnapshot: {}, toolSnapshotDebug: {} }),
+  captureToolSnapshotForEvalAuthoring: async () => ({ toolSnapshot: { servers: [] }, toolSnapshotDebug: {} }),
   fetchReplayConfig: async () => ({ servers: [{ serverId: "s1" }] }),
   buildReplayManager: () => ({ disconnectAllServers: vi.fn() }),
   connectReplayManagerServers: async () => {},

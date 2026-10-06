@@ -29,6 +29,7 @@ import {
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
+import { logGuestAuthorityOnce } from "./utils/guest-authority.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
 import slackLinkRoutes from "./routes/slack-link/index.js";
@@ -46,7 +47,7 @@ import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
-import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
+import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS, LOCAL_HARNESS_ENABLED } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
 
@@ -83,11 +84,10 @@ import {
 } from "./env.js";
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
 import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
-import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
-import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
-import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
+import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
+import { fetchGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
@@ -134,6 +134,7 @@ export async function createHonoApp() {
   // could reach. An operator debugging "why are there no score rows" should
   // find the answer in the log, not in a flag dashboard.
   logGradingEngineModeOnce();
+  logGuestAuthorityOnce(appLogger);
 
   // Under Electron this process IS the main process, and it is the one that
   // ran out of heap in INSPECTOR-ELECTRON-W3 with no session telemetry at all.
@@ -159,14 +160,16 @@ export async function createHonoApp() {
   // loads in the background, idempotent, a no-op without the service token.
   startRevokedSessionCache();
 
-  startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
-  // Reports whether a local-harness runtime pack is present. Deliberately
-  // only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
-  // kill switch and a consent grant is installed when the user asks, never
-  // at startup and never during a session start.
-  reportLocalHarnessRuntimeStatusInBackground();
-  if (!HOSTED_MODE) void startLocalHarnessJanitor();
+  // Local runtime maintenance, after the janitor has reclaimed orphaned
+  // sessions: this Inspector's liveness record, GC of packs no live
+  // Inspector may select, and — only on a machine where somebody durably
+  // authorized the harness, under the `auto` update policy — a background
+  // prefetch of the desired pack. Never during a session start.
+  if (!HOSTED_MODE) {
+    const janitor = startLocalHarnessJanitor();
+    if (LOCAL_HARNESS_ENABLED) void startLocalHarnessRuntimeMaintenance({ afterJanitor: janitor });
+  }
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
@@ -494,7 +497,7 @@ export async function createHonoApp() {
   // Guest JWT JWKS compatibility endpoint — public, no auth required.
   // The canonical JWKS now lives on Convex; Inspector proxies it here.
   app.get("/guest/jwks", async () => {
-    const response = await fetchRemoteGuestJwks();
+    const response = await fetchGuestJwks();
     if (!response) {
       return Response.json(
         { error: "Guest JWKS unavailable" },

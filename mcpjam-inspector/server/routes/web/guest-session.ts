@@ -1,24 +1,33 @@
 import { Hono } from "hono";
 import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
+import type { Context } from "hono";
 import {
-  fetchConvexGuestPromotionProof,
-  fetchConvexGuestSession,
-  fetchConvexGuestSessionRevoke,
-  fetchRemoteGuestPromotionProof,
-  fetchRemoteGuestSession,
-  fetchRemoteGuestSessionRevoke,
+  fetchGuestPromotionProof,
+  fetchGuestSession,
+  fetchGuestSessionRevoke,
   type GuestSessionFetchContext,
+  type GuestSessionFetchResult,
   type GuestSessionRequestBody,
 } from "../../utils/guest-session-source.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import {
+  applyScopedCookieWrites,
+  usesScopedSessionCookies,
+} from "../../utils/scoped-cookie-context.js";
+import {
   GUEST_SESSION_COOKIE_NAME,
   allowMint,
   appendGuestSessionSetCookie,
   extractGuestSessionCookie,
-  shouldFetchGuestSessionFromConvex,
 } from "./guest-session-shared.js";
+import {
+  applyUpstreamGuestCookies,
+  clearScopedGuestCookie,
+  deleteMatchedLegacyGuestCookies,
+  resolveLocalGuestCookie,
+  upstreamGuestCookieHeader,
+} from "./guest-cookie-scope.js";
 import { ErrorCode, webError } from "./errors.js";
 
 const guestSession = new Hono();
@@ -54,15 +63,15 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
  * POST /api/web/guest-session
  *
  * Returns a guest bearer token for unauthenticated visitors. Inspector
- * forwards browser cookie/UA context to the upstream guest service so the
- * server can resolve a stable guest from the HttpOnly cookie. Spoofable
- * client IP headers are intentionally not forwarded. Set-Cookie
- * headers from upstream are passed through unchanged, with an additional
- * local HTTP-compatible cookie emitted for localhost/127.0.0.1 runtimes.
+ * forwards the guest cookie and UA to the ONE selected guest authority
+ * (`utils/guest-authority.ts`) so it can resolve a stable guest from the
+ * HttpOnly cookie. Spoofable client IP headers are intentionally not
+ * forwarded.
  *
- * Inspector rate-limits this endpoint locally and either:
- * - proxies to Convex in hosted web and local dev
- * - relays through hosted Inspector in local production runtimes
+ * On a deployment reached by its own hostname the authority's Set-Cookie is
+ * passed through unchanged. On a loopback Inspector the guest lives in this
+ * instance's namespace-scoped cookie instead (`guest-cookie-scope.ts`), so
+ * concurrent instances on one machine never share or overwrite a guest.
  *
  * Rate limited to 10 requests per minute per IP.
  */
@@ -106,19 +115,43 @@ guestSession.post("/", async (c) => {
   const clientIp = getSpendClientIp(c);
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
 
-  const context: GuestSessionFetchContext = {
-    cookie: extractGuestSessionCookie(c.req.header("cookie")),
+  const base = {
     userAgent: c.req.header("user-agent") ?? null,
-    body,
     ...(ipHash ? { ipHash } : {}),
   };
 
-  const result = shouldFetchGuestSessionFromConvex()
-    ? await fetchConvexGuestSession(context)
-    : await fetchRemoteGuestSession(context);
-
-  for (const cookie of result.setCookies) {
-    appendGuestSessionSetCookie(c, cookie);
+  let result: GuestSessionFetchResult;
+  if (usesScopedSessionCookies(c)) {
+    // Loopback: this instance's guest lives in its namespace's scoped cookie;
+    // a legacy shared cookie is migrated through `lookup_only` first.
+    const local = await resolveLocalGuestCookie(c, base);
+    if (local.kind === "migrated") {
+      applyScopedCookieWrites(c, [local.write]);
+      result = local.result;
+    } else if (local.kind === "lookup_failed") {
+      // A lookup never creates a guest, so its 429 is not the creation cap the
+      // 429 below tells the user to sign in over.
+      result = { ...local.result, status: 503 };
+    } else {
+      result = await fetchGuestSession({
+        ...base,
+        body,
+        cookie: local.upstream
+          ? upstreamGuestCookieHeader(local.upstream)
+          : null,
+      });
+      applyUpstreamGuestCookies(c, result.setCookies);
+    }
+  } else {
+    const context: GuestSessionFetchContext = {
+      ...base,
+      cookie: extractGuestSessionCookie(c.req.header("cookie")),
+      body,
+    };
+    result = await fetchGuestSession(context);
+    for (const cookie of result.setCookies) {
+      appendGuestSessionSetCookie(c, cookie);
+    }
   }
 
   if (result.kind === "session") {
@@ -209,27 +242,57 @@ function buildExpiredGuestSessionCookie(): string {
   ].join("; ");
 }
 
-guestSession.post("/revoke", async (c) => {
-  const context: GuestSessionFetchContext = {
-    cookie: extractGuestSessionCookie(c.req.header("cookie")),
+/** Loopback revoke: this namespace's guest only. */
+async function revokeLocalGuest(c: Context) {
+  const local = await resolveLocalGuestCookie(c, {
     userAgent: c.req.header("user-agent") ?? null,
-  };
+  });
+  if (local.kind === "lookup_failed") {
+    // A legacy guest might exist and could not be identified: answer like any
+    // upstream failure so the client retries, rather than report a revoke
+    // that left a resurrectable identity behind.
+    return { status: 503, setCookies: [], body: null };
+  }
+  const upstream = local.upstream;
+  const result = upstream
+    ? await fetchGuestSessionRevoke({
+        cookie: upstreamGuestCookieHeader(upstream),
+        userAgent: c.req.header("user-agent") ?? null,
+      })
+    : { status: 200, setCookies: [], body: { revoked: false } };
 
-  const result = shouldFetchGuestSessionFromConvex()
-    ? await fetchConvexGuestSessionRevoke(context)
-    : await fetchRemoteGuestSessionRevoke(context);
+  // Clearing THIS instance's guest is the load-bearing part, whatever the
+  // authority answered: a signed-in user must not resurrect their guest
+  // identity on sign-out. Legacy cookies holding the same identity go too;
+  // any other legacy identity is left for whoever owns it.
+  clearScopedGuestCookie(c);
+  if (upstream) deleteMatchedLegacyGuestCookies(c, upstream);
+  return result;
+}
 
-  // Forward the upstream's Set-Cookie when we got one. If the upstream is
-  // missing the route (404) or returned a server error, fall back to
-  // emitting the expired cookie ourselves — the row revocation is a
-  // defense-in-depth nicety, but clearing the browser cookie is the
-  // load-bearing part of the contract.
-  if (result.setCookies.length > 0) {
-    for (const cookie of result.setCookies) {
-      appendGuestSessionSetCookie(c, cookie);
-    }
+guestSession.post("/revoke", async (c) => {
+  let result: Awaited<ReturnType<typeof fetchGuestSessionRevoke>>;
+  if (usesScopedSessionCookies(c)) {
+    result = await revokeLocalGuest(c);
   } else {
-    appendGuestSessionSetCookie(c, buildExpiredGuestSessionCookie());
+    const context: GuestSessionFetchContext = {
+      cookie: extractGuestSessionCookie(c.req.header("cookie")),
+      userAgent: c.req.header("user-agent") ?? null,
+    };
+    result = await fetchGuestSessionRevoke(context);
+
+    // Forward the upstream's Set-Cookie when we got one. If the upstream is
+    // missing the route (404) or returned a server error, fall back to
+    // emitting the expired cookie ourselves — the row revocation is a
+    // defense-in-depth nicety, but clearing the browser cookie is the
+    // load-bearing part of the contract.
+    if (result.setCookies.length > 0) {
+      for (const cookie of result.setCookies) {
+        appendGuestSessionSetCookie(c, cookie);
+      }
+    } else {
+      appendGuestSessionSetCookie(c, buildExpiredGuestSessionCookie());
+    }
   }
 
   if (result.status >= 200 && result.status < 300) {
@@ -287,15 +350,30 @@ guestSession.post("/promotion-proof", async (c) => {
     );
   }
 
-  const context: GuestSessionFetchContext = {
-    cookie: extractGuestSessionCookie(c.req.header("cookie")),
+  const scoped = usesScopedSessionCookies(c);
+  let cookie: string | null;
+  if (scoped) {
+    const local = await resolveLocalGuestCookie(c, {
+      userAgent: c.req.header("user-agent") ?? null,
+    });
+    if (local.kind === "lookup_failed") {
+      return webError(
+        c,
+        503,
+        ErrorCode.INTERNAL_ERROR,
+        "Unable to obtain a guest promotion proof right now. Please try again."
+      );
+    }
+    if (local.kind === "migrated") applyScopedCookieWrites(c, [local.write]);
+    cookie = local.upstream ? upstreamGuestCookieHeader(local.upstream) : null;
+  } else {
+    cookie = extractGuestSessionCookie(c.req.header("cookie"));
+  }
+
+  const result = await fetchGuestPromotionProof({
+    cookie,
     userAgent: c.req.header("user-agent") ?? null,
-  };
-
-  const result = shouldFetchGuestSessionFromConvex()
-    ? await fetchConvexGuestPromotionProof(context)
-    : await fetchRemoteGuestPromotionProof(context);
-
+  });
   if (result.kind === "proof") {
     return c.json(result.proof);
   }
@@ -305,8 +383,12 @@ guestSession.post("/promotion-proof", async (c) => {
   }
 
   if (result.kind === "revoked") {
-    for (const cookie of result.setCookies) {
-      appendGuestSessionSetCookie(c, cookie);
+    if (scoped) {
+      clearScopedGuestCookie(c);
+    } else {
+      for (const setCookie of result.setCookies) {
+        appendGuestSessionSetCookie(c, setCookie);
+      }
     }
     return c.json(
       {

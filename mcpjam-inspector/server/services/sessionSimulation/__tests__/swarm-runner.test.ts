@@ -170,6 +170,9 @@ describe("swarm single-host runner — attempt ordering", () => {
     // engine's Playground default; a persona turn resends every tool result
     // on every step, so this is what bounds turn time and tokens.
     expect(adapter.runtime.maxSteps).toBe(10);
+    // …and its own output ceiling: the backend holds credits against it
+    // before every step, and the model-sized default overstated the hold.
+    expect(adapter.runtime.maxOutputTokens).toBe(16_384);
     expect(adapter.runtime.scenarioId).toBeUndefined();
     // A legacy host target pins no environment, so there is no grant boundary
     // to forward — and inventing one would let a harness turn believe a
@@ -920,6 +923,37 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
 });
 
 describe("swarm single-host runner — heartbeat", () => {
+  it("keeps only one heartbeat in flight when a poll is slow", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHeartbeat!: (status: string) => void;
+      heartbeatJourneyRunMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveHeartbeat = resolve;
+          }),
+      );
+      runSyntheticHostSessionMock.mockImplementation(
+        async (adapter: any) =>
+          new Promise((resolve) => {
+            adapter.abortSignal.addEventListener("abort", () =>
+              resolve({ outcome: "failed" }),
+            );
+          }),
+      );
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
+      resolveHeartbeat("failed");
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+      expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not execute a claim that resolves after the backend ends the run", async () => {
     vi.useFakeTimers();
     try {
@@ -932,7 +966,7 @@ describe("swarm single-host runner — heartbeat", () => {
       );
       heartbeatJourneyRunMock.mockResolvedValue("failed");
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(reportAttemptMock).toHaveBeenCalledTimes(1);
       resolveClaim({ ok: true, applied: true });
       await done;
@@ -964,7 +998,7 @@ describe("swarm single-host runner — heartbeat", () => {
         });
       });
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       resolveSession({ outcome: "succeeded" });
       await done;
       resolveHeartbeat("completed");
@@ -994,7 +1028,7 @@ describe("swarm single-host runner — heartbeat", () => {
           return { outcome: "failed", errorMessage: "aborted" };
         });
         const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
-        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(5_000);
         await done;
 
         expect(signal?.aborted).toBe(true);
@@ -1013,7 +1047,7 @@ describe("swarm single-host runner — heartbeat", () => {
     },
   );
 
-  it("fires the heartbeat on an independent 30s schedule (not gated on turn completion) and stops it on finally", async () => {
+  it("fires the heartbeat on an independent 5s schedule (not gated on turn completion) and stops it on finally", async () => {
     vi.useFakeTimers();
     try {
       let resolveRun!: () => void;
@@ -1028,9 +1062,9 @@ describe("swarm single-host runner — heartbeat", () => {
 
       // Session is still running (its core promise is pending) — the heartbeat
       // must still fire purely on the interval.
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(2);
 
       // Finish the session; the runner's finally clears the interval.
@@ -1499,6 +1533,21 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
     ).toBe("org_spend_cap");
   });
 
+  // What a stored row or a flattened error keeps: the backend's sentence, with
+  // no JSON, no structured reason and no hint. Blaming the user's provider for
+  // it (or halting the whole run as a spend cap) would both be wrong.
+  it("reads a hold from its sentence alone as temporary capacity", () => {
+    const held =
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish.";
+    expect(classifyRateLimit(held)).toBe("transient_capacity");
+    expect(classifyRateLimit(`${held} (user_rate_limit, HTTP 429)`)).toBe(
+      "transient_capacity",
+    );
+    expect(classifyRateLimit(held, { code: "user_rate_limit" })).toBe(
+      "transient_capacity",
+    );
+  });
+
   // `cap`/`quota`/`budget` were word-anchored from the start so "capacity",
   // "recap" and "escape" could not escalate one host's rate limit into a
   // whole-run stop. `spend` was not, and "suspended" contains it.
@@ -1675,5 +1724,19 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("swarm durable cancellation response", () => {
+  it("aborts the run on a refused canceled claim without executing or claiming another session", async () => {
+    reportAttemptMock.mockResolvedValueOnce({
+      ok: true,
+      applied: false,
+      canceled: true,
+    });
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+    expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 });
