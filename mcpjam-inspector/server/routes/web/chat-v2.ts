@@ -165,9 +165,9 @@ import {
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
-  isComputersDataPlaneConfigured,
   provisionScenarioSandbox,
 } from "../../utils/computers/control-plane-client.js";
+import { canProvisionHarnessBoxes } from "../../utils/harness/harness-box.js";
 import {
   isSandboxNoticeReason,
   type SandboxNoticeReason,
@@ -1696,7 +1696,7 @@ chatV2.post("/", async (c) => {
     const sandboxPlan = planScenarioSandbox({
       mode: computerSandboxMode,
       bashRequested: (turnBuiltInToolIds ?? []).includes(BASH_TOOL_NAME),
-      ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
+      ephemeralCloudAvailable: canProvisionHarnessBoxes(),
       hasChatSessionId: Boolean(body.chatSessionId),
       secretsUnavailable,
       environmentSelectsSecrets:

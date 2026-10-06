@@ -30,6 +30,7 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
+const touchSandboxMock = vi.fn(async () => "touched" as const);
 const resolveHostToolsMock = vi.fn();
 const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
@@ -161,6 +162,7 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
     provisionJourneySandbox: (...args: unknown[]) =>
       provisionJourneySandboxMock(...args),
     releaseSandbox: (...args: unknown[]) => releaseSandboxMock(...args),
+    touchSandbox: (...args: unknown[]) => touchSandboxMock(...(args as [])),
   };
 });
 
@@ -204,6 +206,8 @@ import {
   type StartJourneyRunOptions,
 } from "../swarm-runner.js";
 import type { PinnedHostExecutionSpec } from "../../swarm-agent.js";
+import { provisionAttemptSandbox } from "../swarm-sandbox.js";
+import { harnessBoxHeartbeatIntervalMs } from "../../../utils/harness/harness-box.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -1482,6 +1486,36 @@ describe("swarm runner — the attempt's recording comes off before the box does
 
     await startJourneyRun(baseOpts());
 
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  });
+});
+
+describe("swarm attempt box — the attempt's signal", () => {
+  it("a stopped run stops the box's heartbeat, and the release still tears it down", async () => {
+    vi.useFakeTimers();
+    const attempt = new AbortController();
+    const provisioned = await provisionAttemptSandbox({
+      bearer: "bearer",
+      runId: "run-1",
+      targetId: "environment:env-1",
+      sessionIdx: 0,
+      signal: attempt.signal,
+    });
+    if (!provisioned.ok) throw new Error("expected a box");
+    const beat = harnessBoxHeartbeatIntervalMs("swarm");
+    await vi.advanceTimersByTimeAsync(beat);
+    expect(touchSandboxMock).toHaveBeenCalledTimes(1);
+
+    // A session that never unwinds to its `finally` must not keep the box
+    // live: the stop alone ends the beat.
+    attempt.abort();
+    await vi.advanceTimersByTimeAsync(beat * 8);
+    expect(touchSandboxMock).toHaveBeenCalledTimes(1);
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
+
+    await provisioned.sandbox.release();
     expect(releaseSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxRowId: "row_1" }),
     );
