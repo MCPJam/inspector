@@ -369,7 +369,9 @@ enforced in code, not by convention.
 
 1. **Two trusted sources only.** Every executable component comes either from a
    verified vendor pack (signature, archive sha and tree digest —
-   `runtime-install.ts`, re-checked by `revalidateRuntime`) or from the Inspector
+   `runtime-install.ts`, re-checked by `revalidateRuntime`; and, before any
+   release may select it, build provenance from `local-harness-pack.yml` on main
+   — `check-local-harness-release.mjs --verify-attestations`) or from the Inspector
    distribution itself (the layer, `inspector-layer.ts`, re-hashed against the
    digest compiled into the build before every exec). `resolveManagedBundle`
    takes the launcher from the layer and `bin/node` (and the Windows job
@@ -392,7 +394,10 @@ enforced in code, not by convention.
    (`runtime-compat.generated.json`, generated, never hand-typed). A release
    proves it: conformance evidence for the build's layer digest × each pack it
    may select × every advertised target (`check-local-harness-release.mjs
-   --evidence`), attested as `runtime-contract.json`.
+   --evidence`), attested as `runtime-contract.json`. A pack becomes desired
+   only through its harness's pin PR, which `local-harness-pack-pipeline.yml`
+   opens after this layer passed conformance on it; the pack being replaced
+   stays permitted only if it passed too and its provenance verifies.
 5. **No automatic replay.** Falling back to a previous runtime changes which
    runtime NEW sessions select. It never replays a turn that may already have
    changed files.

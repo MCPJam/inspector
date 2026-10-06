@@ -1,12 +1,19 @@
 /**
  * Download and verify the exact pinned release bytes before native conformance.
  *
- * Usage: <version> <target> <output dir> [<harness id, default claude-code>]
+ * Usage: <version> <target> <output dir> [<harness id, default claude-code>] [--candidate]
  *
  * The pack's identity is its signed manifest and its tree digest, checked here
  * against the pack this checkout pins — as DESIRED or as PERMITTED previous
  * (`runtime-compat.generated.json`). Both roles need evidence: a release runs
  * this build's Inspector layer against every pack it may select.
+ *
+ * `--candidate` is the publication pipeline's one exception: a pack it has
+ * just published and not yet pinned (its pin PR is what this run's evidence
+ * lets it open). Nothing pins it yet, so the anchor is instead that its
+ * SIGNED manifest names this checkout's own inputs fingerprint — the pack was
+ * built from exactly this commit's pack inputs — and that the tree on disk
+ * hashes to the digest that manifest signs.
  *
  * Deliberately NOT checked: that the pack was built from this checkout's pack
  * inputs. That is the release gate's question (a pack-input change must be
@@ -23,7 +30,10 @@ import { tsImport } from 'tsx/esm/api';
 import { packAssetStem, packReleaseBaseUrl } from './local-harness-pack-harnesses.mjs';
 import { readRuntimeCompat } from './local-harness-pack-tables.mjs';
 
-const [version, target, output, harnessId = 'claude-code'] = process.argv.slice(2);
+const flags = process.argv.slice(2).filter(arg => arg.startsWith('--'));
+const [version, target, output, harnessId = 'claude-code'] = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
+if (flags.some(flag => flag !== '--candidate')) throw new Error(`Unknown flag: ${flags.join(' ')}`);
+const candidate = flags.includes('--candidate');
 if (!/^\d+\.\d+\.\d+$/.test(version ?? '') || !/^(darwin|linux)-(arm64|x64)$|^win32-x64$/.test(target ?? '') || !output) throw new Error('Expected version, platform target and output directory');
 if (!/^[a-z][a-z0-9-]{0,63}$/.test(harnessId)) throw new Error('Expected a harness id');
 const load = path => tsImport(path, { parentURL: import.meta.url, tsconfig: false });
@@ -31,9 +41,9 @@ const { verifyPackManifestSignature } = await load('../server/utils/harness/loca
 const { computeTreeDigest } = await load('../server/utils/harness/local/tree-digest.ts');
 
 const slot = readRuntimeCompat().harnesses[harnessId]?.targets[target];
-const pinned = [slot?.desired, slot?.permitted].find(ref => ref?.packVersion === version);
-if (!pinned) throw new Error(`${harnessId} ${version} is neither the desired nor the permitted pack this checkout pins for ${target}`);
-const role = pinned === slot.desired ? 'desired' : 'permitted';
+let pinned = [slot?.desired, slot?.permitted].find(ref => ref?.packVersion === version);
+let role = pinned === undefined ? null : pinned === slot.desired ? 'desired' : 'permitted';
+if (!pinned && !candidate) throw new Error(`${harnessId} ${version} is neither the desired nor the permitted pack this checkout pins for ${target}`);
 
 const root = resolve(output);
 await mkdir(root, { recursive: true });
@@ -48,6 +58,13 @@ const signature = await download('.manifest.json.sig');
 const verified = verifyPackManifestSignature(bytes, signature.toString('utf8').trim());
 if (!verified.ok) throw new Error(verified.message);
 const manifest = JSON.parse(bytes.toString('utf8'));
+if (!pinned) {
+  const { computeHarnessPackInputs } = await import('./check-local-harness-inputs.mjs');
+  const { fingerprint } = await computeHarnessPackInputs(harnessId);
+  if (manifest.inputsFingerprint !== fingerprint) throw new Error(`${harnessId} ${version} is not pinned, and its signed manifest was not built from this checkout's pack inputs`);
+  pinned = { packVersion: version, treeDigest: manifest.treeDigest };
+  role = 'candidate';
+}
 if (manifest.schema !== 'mcpjam.local-harness-pack/1' || manifest.platform !== target || manifest.harnessId !== harnessId || manifest.packVersion !== version || manifest.treeDigest !== pinned.treeDigest) throw new Error('Published pack differs from the pinned runtime identity');
 const archive = await download('.tar.gz');
 if (createHash('sha256').update(archive).digest('hex') !== manifest.archive.sha256) throw new Error('Published archive checksum mismatch');

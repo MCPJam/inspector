@@ -37,3 +37,21 @@ export declare function installedClosureDrift(io?: PackInputIo): Promise<string[
 export declare function readRecordedPackInputs(
   harnessId: string,
 ): Promise<{ fingerprint: string; inputs: Record<string, string> } | null>;
+export interface MovedFingerprint {
+  harnessId: string;
+  recorded: string | null;
+  computed: string | null;
+}
+/** Which recorded fingerprints differ from the computed ones; [] when none moved. */
+export declare function movedFingerprints(
+  recorded: { harnesses?: Record<string, { fingerprint: string }> } | null,
+  computed: { harnesses: Record<string, { fingerprint: string }> },
+): MovedFingerprint[];
+/** The snapshot with one harness's record replaced and the others carried over. */
+export declare function withHarnessRecord<T extends { fingerprint: string; inputs: Record<string, string> }>(
+  recorded: { schema: number; harnesses: Record<string, T> } | null,
+  computed: { schema: 2; harnesses: Record<string, T> },
+  harnessId: string,
+): { schema: 2; harnesses: Record<string, T> };
+/** The job-summary text for moved fingerprints ("" when none moved). */
+export declare function advisorySummary(moved: MovedFingerprint[]): string;

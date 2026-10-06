@@ -1,6 +1,16 @@
 /**
  * Fingerprint every input that produces a runtime pack, PER HARNESS.
- * `--write` updates the reviewed snapshot; the default checks it.
+ *
+ *   (no flag)              check the snapshot; exit 1 if any fingerprint moved
+ *   --advisory             report moved fingerprints (to the job summary in
+ *                          CI) and exit 0: on a pull request a moved
+ *                          fingerprint is not a defect, it is what merging
+ *                          will publish — `local-harness-pack-auto.yml` builds
+ *                          the pack and opens the pin PR that records it
+ *   --drift                only refuse an installed tree that is not the
+ *                          locked one (what a pack build needs)
+ *   --write [--harness id] update the snapshot — every harness's record, or
+ *                          only the named one's (the pin PR moves its own)
  *
  * ── What "per harness" has to mean ───────────────────────────────────────
  * Each harness's pack has its own version and its own release, so each needs
@@ -29,7 +39,7 @@
  * record byte-identical.
  */
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, readdir, lstat, realpath } from 'node:fs/promises';
+import { appendFile, readFile, writeFile, readdir, lstat, realpath } from 'node:fs/promises';
 import { resolve, relative, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { listPackHarnessIds, loadPackHarness, packRecipeModulePath } from './local-harness-pack-harnesses.mjs';
@@ -218,25 +228,91 @@ export async function readRecordedPackInputs(harnessId) {
   return recorded.harnesses?.[harnessId] ?? null;
 }
 
+/**
+ * Which recorded fingerprints differ from the computed ones, harness by
+ * harness: `[{ harnessId, recorded, computed }]`, empty when none moved.
+ */
+export function movedFingerprints(recorded, computed) {
+  const ids = [...new Set([...Object.keys(recorded?.harnesses ?? {}), ...Object.keys(computed.harnesses)])].sort();
+  return ids
+    .map(harnessId => ({
+      harnessId,
+      recorded: recorded?.harnesses?.[harnessId]?.fingerprint ?? null,
+      computed: computed.harnesses[harnessId]?.fingerprint ?? null,
+    }))
+    .filter(entry => entry.recorded !== entry.computed);
+}
+
+/**
+ * The snapshot with ONE harness's record replaced and every other carried
+ * over byte for byte — so a harness's pin PR moves exactly its own record.
+ */
+export function withHarnessRecord(recorded, computed, harnessId) {
+  if (!computed.harnesses[harnessId]) throw new Error(`no pack recipe for ${harnessId}`);
+  const harnesses = { ...(recorded?.schema === 2 ? recorded.harnesses : {}) };
+  harnesses[harnessId] = computed.harnesses[harnessId];
+  return {
+    schema: 2,
+    harnesses: Object.fromEntries(Object.entries(harnesses).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+  };
+}
+
+/** The job-summary text for moved fingerprints. */
+export function advisorySummary(moved) {
+  if (moved.length === 0) return '';
+  return [
+    '### Local harness pack inputs changed',
+    '',
+    'Merging this publishes a new runtime pack (or, if the rebuild reproduces the pinned bytes, records an equivalence) for:',
+    '',
+    ...moved.map(({ harnessId, recorded, computed }) => `- **${harnessId}**: \`${(recorded ?? 'none').slice(0, 19)}…\` → \`${(computed ?? 'removed').slice(0, 19)}…\``),
+    '',
+    'Nothing to do in this PR: `local-harness-pack-auto.yml` builds it on main and opens the pin PR that records it.',
+    '',
+  ].join('\n');
+}
+
+function refuseDrift(drift, what) {
+  if (drift.length === 0) return;
+  process.stderr.write(
+    `${what}: the installed tree is not the locked one, so the recorded recipe hashes would not match a clean install.\n` +
+      drift.map(problem => `  - ${problem}\n`).join('') +
+      'Run `npm ci --legacy-peer-deps` from the repo root (and unlink any linked adapter), then retry.\n',
+  );
+  process.exit(1);
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const write = process.argv.includes('--write');
+  const argv = process.argv.slice(2);
+  const write = argv.includes('--write');
+  const advisory = argv.includes('--advisory');
+  const driftOnly = argv.includes('--drift');
+  const harnessAt = argv.indexOf('--harness');
+  const onlyHarness = harnessAt === -1 ? null : argv[harnessAt + 1];
+  if (onlyHarness !== null && (!write || !/^[a-z][a-z0-9-]{0,63}$/.test(onlyHarness ?? ''))) {
+    throw new Error('--harness <id> is only for --write');
+  }
+  if (write || driftOnly) refuseDrift(await installedClosureDrift(), write ? 'Refusing to write pack-inputs.generated.json' : 'Refusing to build a pack');
+  if (driftOnly) {
+    process.stdout.write('The installed dependency tree is the locked one\n');
+    process.exit(0);
+  }
+  const computed = await computePackInputs();
+  const recordedText = await readFile(output, 'utf8').catch(() => '');
+  const recorded = recordedText === '' ? null : JSON.parse(recordedText);
   if (write) {
-    const drift = await installedClosureDrift();
-    if (drift.length > 0) {
-      process.stderr.write(
-        'Refusing to write pack-inputs.generated.json: the installed tree is not the locked one, so the ' +
-          'recorded recipe hashes would not match a clean install.\n' +
-          drift.map(problem => `  - ${problem}\n`).join('') +
-          'Run `npm ci --legacy-peer-deps` from the repo root (and unlink any linked adapter), then retry.\n',
-      );
-      process.exit(1);
+    const next = onlyHarness === null ? computed : withHarnessRecord(recorded, computed, onlyHarness);
+    await writeFile(output, `${JSON.stringify(next, null, 2)}\n`);
+    process.stdout.write(`Pack input fingerprints written: ${relative(root, output)}\n`);
+  } else if (recordedText !== `${JSON.stringify(computed, null, 2)}\n`) {
+    const moved = movedFingerprints(recorded, computed);
+    if (!advisory) {
+      throw new Error('Pack inputs changed. Run node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --write and review which harness fingerprints moved; publish a new pack for each before recording its digests.');
     }
+    const summary = advisorySummary(moved);
+    if (summary !== '' && process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
+    process.stdout.write(summary || 'No fingerprint moved; the snapshot differs only in formatting.\n');
+  } else {
+    process.stdout.write(`Pack input fingerprints verified: ${relative(root, output)}\n`);
   }
-  const result = `${JSON.stringify(await computePackInputs(), null, 2)}\n`;
-  if (write) await writeFile(output, result);
-  else {
-    const recorded = await readFile(output, 'utf8').catch(() => '');
-    if (recorded !== result) throw new Error('Pack inputs changed. Run node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --write and review which harness fingerprints moved; publish a new pack for each before recording its digests.');
-  }
-  process.stdout.write(`Pack input fingerprints verified: ${relative(root, output)}\n`);
 }

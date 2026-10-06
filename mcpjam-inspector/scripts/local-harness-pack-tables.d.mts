@@ -41,3 +41,10 @@ export declare function rewriteHarnessPackTables(
 export declare function parseManifestFacts(
   compatSource: string,
 ): Record<string, { nativePlatforms: string[]; nativeTargets?: string[] }>;
+export declare const TARGETS_BY_PLATFORM: Readonly<Record<string, readonly string[]>>;
+/** Every target a harness's manifest advertises, narrowed per D8 (`nativeTargets`). */
+export declare function advertisedTargetsOf(
+  facts: { nativePlatforms: string[]; nativeTargets?: string[] } | undefined,
+): string[];
+/** The targets one harness advertises, read from the committed `compatibility.ts`. */
+export declare function readAdvertisedTargets(harnessId: string): string[];

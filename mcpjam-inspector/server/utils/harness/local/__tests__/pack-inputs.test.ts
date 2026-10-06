@@ -1,11 +1,14 @@
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
+  advisorySummary,
   computePackInputs,
   defaultPackInputIo,
   installedClosureDrift,
+  movedFingerprints,
   SHARED_PACK_INPUTS,
+  withHarnessRecord,
   type PackInputIo,
 } from "../../../../../scripts/check-local-harness-inputs.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
@@ -254,17 +257,55 @@ describe("refusing to snapshot a tree that is not the locked one", () => {
 });
 
 describe("the committed fingerprint file", () => {
-  it("has one record per harness with a recipe, and matches the sources", async () => {
-    const committed = JSON.parse(
-      readFileSync(
-        new URL("../pack-inputs.generated.json", import.meta.url),
-        "utf8",
-      ),
-    );
+  const committed = JSON.parse(
+    readFileSync(new URL("../pack-inputs.generated.json", import.meta.url), "utf8"),
+  );
+
+  it("has one record per harness with a recipe", () => {
     expect(committed.schema).toBe(2);
     expect(Object.keys(committed.harnesses).sort()).toEqual(listPackHarnessIds());
-    // The same check CI runs: a stale record here is a pack nobody reviewed.
-    expect(await computePackInputs(defaultPackInputIo)).toEqual(committed);
+  });
+
+  it("matches the sources, or says which pack merging will publish", async () => {
+    // ADVISORY in CI, like lint.yml's step: a PR that moves a fingerprint is
+    // not wrong, it is what merging publishes — the pack pipeline builds it on
+    // main and its pin PR records the new fingerprint. The release gate is
+    // where a stale record blocks. Locally (no job summary) it still fails,
+    // so a developer sees which harness their change republishes.
+    const moved = movedFingerprints(committed, await computePackInputs(defaultPackInputIo));
+    if (moved.length > 0 && process.env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, advisorySummary(moved));
+      return;
+    }
+    expect(moved).toEqual([]);
+  });
+});
+
+describe("a pin PR's snapshot update", () => {
+  const record = (fingerprint: string) => ({ fingerprint, inputs: { a: fingerprint } });
+
+  it("moves exactly the named harness's record and carries the others byte for byte", () => {
+    const recorded = { schema: 2, harnesses: { alpha: record("a1"), beta: record("b1") } };
+    const computed = { schema: 2 as const, harnesses: { alpha: record("a2"), beta: record("b2") } };
+    expect(withHarnessRecord(recorded, computed, "beta")).toEqual({
+      schema: 2,
+      harnesses: { alpha: record("a1"), beta: record("b2") },
+    });
+    expect(movedFingerprints(recorded, computed)).toEqual([
+      { harnessId: "alpha", recorded: "a1", computed: "a2" },
+      { harnessId: "beta", recorded: "b1", computed: "b2" },
+    ]);
+    expect(() => withHarnessRecord(recorded, computed, "gamma")).toThrow(/no pack recipe/);
+  });
+
+  it("summarises moved fingerprints for a job summary, and says nothing when none moved", () => {
+    expect(advisorySummary([])).toBe("");
+    const text = advisorySummary([
+      { harnessId: "codex", recorded: `sha256:${"1".repeat(64)}`, computed: `sha256:${"2".repeat(64)}` },
+    ]);
+    expect(text).toMatch(/Merging this publishes a new runtime pack/);
+    expect(text).toMatch(/\*\*codex\*\*/);
+    expect(text).toMatch(/local-harness-pack-auto\.yml/);
   });
 });
 

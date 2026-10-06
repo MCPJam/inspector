@@ -234,3 +234,23 @@ export function parseManifestFacts(compatSource) {
   }
   return facts;
 }
+
+/** The pack targets each native platform needs. */
+export const TARGETS_BY_PLATFORM = {
+  darwin: ["darwin-arm64", "darwin-x64"],
+  linux: ["linux-x64", "linux-arm64"],
+  win32: ["win32-x64"],
+};
+
+/** Every target a harness's manifest advertises, narrowed per D8 (`nativeTargets`). */
+export function advertisedTargetsOf(facts) {
+  return (facts?.nativePlatforms ?? [])
+    .flatMap((platform) => TARGETS_BY_PLATFORM[platform] ?? [])
+    .filter((target) => !facts.nativeTargets || facts.nativeTargets.includes(target));
+}
+
+/** The targets one harness advertises, read from the committed `compatibility.ts`. */
+export function readAdvertisedTargets(harnessId) {
+  const source = readFileSync(join(scriptDir, "../server/utils/harness/local/compatibility.ts"), "utf8");
+  return advertisedTargetsOf(parseManifestFacts(source)[harnessId]);
+}

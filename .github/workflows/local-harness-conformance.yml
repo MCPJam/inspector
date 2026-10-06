@@ -50,6 +50,15 @@ on:
         required: false
         type: string
         default: "claude-code,codex"
+      candidate:
+        description: >-
+          The named version is a pack the publication pipeline has just
+          published and not yet pinned. It is accepted when its signed manifest
+          names this checkout's own pack inputs fingerprint (see
+          `prepare-published-harness-conformance.mjs --candidate`).
+        required: false
+        type: boolean
+        default: false
     outputs:
       conformance_version:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
@@ -93,7 +102,7 @@ concurrency:
   # The versions AND the harness selection: a release calls this twice (its
   # desired packs, then its permitted ones), and the two must not cancel each
   # other.
-  group: local-harness-conformance-${{ github.ref }}-${{ inputs.published_pack_version }}-${{ inputs.codex_published_pack_version }}-${{ inputs.harnesses }}
+  group: local-harness-conformance-${{ github.ref }}-${{ inputs.published_pack_version }}-${{ inputs.codex_published_pack_version }}-${{ inputs.harnesses }}-${{ inputs.candidate }}
   cancel-in-progress: true
 
 permissions:
@@ -150,8 +159,10 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
-      - name: Check reviewed pack inputs
-        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
+      # Advisory, as in lint.yml: merging publishes the pack a moved
+      # fingerprint describes. The release gate is where it must match.
+      - name: Report pack input fingerprints
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory
 
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
@@ -215,7 +226,8 @@ jobs:
         working-directory: mcpjam-inspector
         env:
           PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
-        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
+          CANDIDATE: ${{ inputs.candidate && '--candidate' || '' }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance" claude-code $CANDIDATE
 
       - name: Build the pack
         if: needs.plan.outputs.claude_pack_version == ''
@@ -368,7 +380,9 @@ jobs:
         if: needs.plan.outputs.claude_pack_version != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: published-pack-${{ matrix.platform_key }}
+          # Versioned: a release (and the publication pipeline) calls this
+          # workflow twice in one run, and artifact names are run-wide.
+          name: published-pack-claude-code-${{ matrix.platform_key }}-${{ needs.plan.outputs.claude_pack_version }}
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
@@ -457,7 +471,8 @@ jobs:
         working-directory: mcpjam-inspector
         env:
           PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
-        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance"
+          CANDIDATE: ${{ inputs.candidate && '--candidate' || '' }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key || 'win32-x64' }}" "$RUNNER_TEMP/conformance" claude-code $CANDIDATE
 
       - name: Build the pack
         if: needs.plan.outputs.claude_pack_version == ''
@@ -587,7 +602,7 @@ jobs:
         if: needs.plan.outputs.claude_pack_version != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: published-pack-windows-x64
+          name: published-pack-claude-code-win32-x64-${{ needs.plan.outputs.claude_pack_version }}
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
           if-no-files-found: error
 
@@ -644,7 +659,8 @@ jobs:
         working-directory: mcpjam-inspector
         env:
           PACK_VERSION: ${{ needs.plan.outputs.codex_pack_version }}
-        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key }}" "$RUNNER_TEMP/conformance" codex
+          CANDIDATE: ${{ inputs.candidate && '--candidate' || '' }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "${{ matrix.platform_key }}" "$RUNNER_TEMP/conformance" codex $CANDIDATE
 
       # Vendor bytes only: the recipe installs `@openai/codex` from the frozen
       # bootstrap lockfile and checks every file of the platform package

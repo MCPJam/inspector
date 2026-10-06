@@ -2,12 +2,12 @@
   "schema": 2,
   "harnesses": {
     "claude-code": {
-      "fingerprint": "sha256:fa44a7ded8eb08d781ce2921b8ff9d5aed8a9cec76370cd03a90f8b078eb159e",
+      "fingerprint": "sha256:4fe02608659cc99a40d68f4f251eb2cbe50e460e79baa7233b050b7288c5ed02",
       "inputs": {
         "pack-dependency-closure": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        ".github/workflows/local-harness-pack.yml": "sha256:64453065635db3132c3cb321a3058808a09075447669e7a92cb408436746818e",
+        ".github/workflows/local-harness-pack.yml": "sha256:6193d9b5e56c3c6ad3e62124aa739f2c358f474d0f2d221bd494b25eaf3c6ff3",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:26b2c8f101c2065ac6d529960ce923889a7787f964b9b6a12782c60ea6900048",
-        "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:0642a9f685a90a8963b40d465a67675eaa47b944e61c941d7b2a0460ce451ef3",
+        "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:01ca116c0def5b7f42249b5ffef3e96aed898aa572f791792ed2c072a47e68ac",
         "mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs": "sha256:89eda8f785d769cca750a58ddad4d5e954368a824e7e8916cc3c558c2b0bbeeb",
         "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/package.json": "sha256:652faef51198656a581814059293f14d1064f0f38fa2291cacc808b70a114605",
         "mcpjam-inspector/scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml": "sha256:4d4a6ff31f227944f0e55d9cf443f6c904b305dca10bc592472cf9be381b4c4e",
@@ -24,12 +24,12 @@
       }
     },
     "codex": {
-      "fingerprint": "sha256:0b605fc6e0806832d4244049494b021e21a527d23b4a37f0fab1b84dd9b993fd",
+      "fingerprint": "sha256:19cbdcf99e31fa80a69bed272f7ec90a533d849cf9f9bcb2656d9d91b2ae0736",
       "inputs": {
         "pack-dependency-closure": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-        ".github/workflows/local-harness-pack.yml": "sha256:64453065635db3132c3cb321a3058808a09075447669e7a92cb408436746818e",
+        ".github/workflows/local-harness-pack.yml": "sha256:6193d9b5e56c3c6ad3e62124aa739f2c358f474d0f2d221bd494b25eaf3c6ff3",
         "mcpjam-inspector/scripts/build-local-harness-pack.mjs": "sha256:26b2c8f101c2065ac6d529960ce923889a7787f964b9b6a12782c60ea6900048",
-        "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:0642a9f685a90a8963b40d465a67675eaa47b944e61c941d7b2a0460ce451ef3",
+        "mcpjam-inspector/scripts/check-local-harness-inputs.mjs": "sha256:01ca116c0def5b7f42249b5ffef3e96aed898aa572f791792ed2c072a47e68ac",
         "mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs": "sha256:89eda8f785d769cca750a58ddad4d5e954368a824e7e8916cc3c558c2b0bbeeb",
         "mcpjam-inspector/scripts/local-harness-pack-recipes/codex-vendor-checksums.json": "sha256:de5746e8bf52e4d5e49cbab954f94b88d7becc301d9c44a5126538ce257549d9",
         "mcpjam-inspector/scripts/local-harness-pack-recipes/codex.mjs": "sha256:da7fa95f82b52001629abc5001998bad2b7c4999abcc8164d19d125a5552e9ff",

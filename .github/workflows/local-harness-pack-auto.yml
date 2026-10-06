@@ -1,0 +1,85 @@
+# Publishes local-harness runtime packs without anyone having to remember to.
+#
+# On every push to main that can move a pack input (and on dispatch), runs
+# `local-harness-pack-pipeline.yml` once per harness with a pack recipe. Most
+# runs end at `plan` with "up-to-date"; when a harness's inputs fingerprint
+# moved, the pipeline builds, signs, attests and publishes its next pack (or
+# records an equivalence when the rebuild reproduced the pinned bytes), runs
+# conformance against it, and opens the pin PR that makes Inspectors select it.
+#
+# Concurrency is PER HARNESS and never cancels: a Codex publication never waits
+# on a Claude Code one, and a running publication is never killed halfway (it
+# would leave a draft for the next run to finish — safe, but slower). GitHub
+# keeps at most one PENDING run per group, replacing an older pending one; that
+# is correct here, because a run re-derives everything from the newest main.
+#
+# Resume any failure with:  gh workflow run local-harness-pack-auto.yml --ref main -f harness=<id>
+name: Local harness pack (automatic)
+
+on:
+  push:
+    branches: [main]
+    # Broad on purpose: a needless run ends at `plan` ("up-to-date") in a
+    # minute, and a missed one leaves a release blocked on an unpublished pack.
+    paths:
+      - ".github/workflows/local-harness-pack*.yml"
+      - ".github/scripts/local-harness-bot-pr.sh"
+      - "mcpjam-inspector/scripts/*local-harness*"
+      - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
+      - "mcpjam-inspector/scripts/local-harness-pack-recipes/**"
+      - "mcpjam-inspector/server/utils/harness/local/tree-digest.ts"
+      - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
+      - "package-lock.json"
+  workflow_dispatch:
+    inputs:
+      # A free string, validated against the recipe directory, like the pack
+      # workflow's: naming harnesses here would be one more list to keep.
+      harness:
+        description: Harness to publish (empty for every harness with a pack recipe).
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  harnesses:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Harnesses with a pack recipe
+        id: list
+        env:
+          ONLY: ${{ inputs.harness }}
+        run: |
+          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
+          import { listPackHarnessIds } from "./mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs";
+          const all = listPackHarnessIds();
+          const only = (process.env.ONLY ?? "").trim();
+          if (only !== "" && !all.includes(only)) throw new Error(`no pack recipe for ${only}; have ${all.join(", ")}`);
+          console.log(`list=${JSON.stringify(only === "" ? all : [only])}`);
+          JS
+
+  publish:
+    name: ${{ matrix.harness }}
+    needs: harnesses
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJSON(needs.harnesses.outputs.list) }}
+    concurrency:
+      group: local-harness-pack-auto-${{ matrix.harness }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/local-harness-pack-pipeline.yml
+    with:
+      harness: ${{ matrix.harness }}
+    secrets: inherit

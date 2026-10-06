@@ -1,6 +1,19 @@
 import { computeHarnessPackInputs, computePackInputs } from "./check-local-harness-inputs.mjs";
 import { packAssetStem, packReleaseBaseUrl } from "./local-harness-pack-harnesses.mjs";
-import { parseManifestFacts, parsePackTables, RUNTIME_COMPAT_PATH } from "./local-harness-pack-tables.mjs";
+import {
+  advertisedTargetsOf,
+  parseManifestFacts,
+  parsePackTables,
+  RUNTIME_COMPAT_PATH,
+  TARGETS_BY_PLATFORM,
+} from "./local-harness-pack-tables.mjs";
+import {
+  attestationVerifyArgs,
+  EQUIVALENCE_SIGNER_WORKFLOW,
+  PACK_SIGNER_WORKFLOW,
+  readEquivalenceRecords,
+  verifyAttestation,
+} from "./local-harness-publication.mjs";
 /**
  * The release gate for local harness execution, run for EVERY harness with a
  * compatibility manifest entry.
@@ -17,7 +30,15 @@ import { parseManifestFacts, parsePackTables, RUNTIME_COMPAT_PATH } from "./loca
  *      tag, its manifest is signed by the key this Inspector build carries,
  *      names this harness and target, and its tree digest and archive hash are
  *      byte-identical to the committed ones; and the DESIRED pack was built
- *      from this harness's reviewed inputs;
+ *      from this harness's reviewed inputs — its signed manifest carries this
+ *      checkout's inputs fingerprint, OR a committed equivalence record says a
+ *      clean rebuild from these inputs reproduced its tree on that target
+ *      (`scripts/local-harness-pack-equivalence/`);
+ *   3a. (with `--verify-attestations`) each of those assets has build
+ *      provenance from `local-harness-pack.yml` on main, and each equivalence
+ *      record relied on has provenance from `local-harness-pack-pipeline.yml`
+ *      on main (`gh attestation verify`): a pinned pack is not merely signed
+ *      by our key, it was built by our workflow from a reviewed commit;
  *   4. (with `--evidence <dir>`) conformance evidence exists for THIS commit's
  *      Inspector layer digest × each pack it selects × every advertised
  *      target. That replaces the old check that each pack carried the bridge
@@ -42,6 +63,8 @@ import { parseManifestFacts, parsePackTables, RUNTIME_COMPAT_PATH } from "./loca
  *     --base-url file:///tmp/pack-out            # a local artifact directory
  *   node scripts/check-local-harness-release.mjs --harness codex --require-ready
  *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets \
+ *     --verify-attestations                      # needs `gh` and GH_TOKEN
+ *   node scripts/check-local-harness-release.mjs --version 3.4.0 --assets \
  *     --evidence ./evidence --contract ./runtime-contract.json
  *
  * `--version` is the Inspector release and is informational: each harness's
@@ -54,7 +77,8 @@ import { parseManifestFacts, parsePackTables, RUNTIME_COMPAT_PATH } from "./loca
  * release cycles for one problem.
  */
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -94,12 +118,6 @@ async function readCommittedFacts() {
   }
   return facts;
 }
-
-const TARGETS_BY_PLATFORM = {
-  darwin: ["darwin-arm64", "darwin-x64"],
-  linux: ["linux-x64", "linux-arm64"],
-  win32: ["win32-x64"],
-};
 
 function parseArgs(argv) {
   const args = {};
@@ -150,11 +168,30 @@ async function fetchAsset(baseUrl, name) {
 }
 
 /**
+ * Whether the desired pack may stand for this checkout's inputs on one target:
+ * built from them (the signed manifest carries the fingerprint), or proven
+ * equivalent — a committed record that a clean rebuild from exactly these
+ * inputs reproduced exactly this pinned tree. Returns how, or null.
+ */
+export function fingerprintAcceptance({ harnessId, target, ref, manifestFingerprint, expectedFingerprint, equivalences }) {
+  if (expectedFingerprint === null) return null;
+  if (manifestFingerprint === expectedFingerprint) return { kind: "built" };
+  const record = equivalences.find(
+    (candidate) =>
+      candidate.harnessId === harnessId &&
+      candidate.fingerprint === expectedFingerprint &&
+      candidate.packVersion === ref.packVersion &&
+      candidate.digests?.[target] === ref.treeDigest,
+  );
+  return record === undefined ? null : { kind: "equivalent", record };
+}
+
+/**
  * One pinned pack's published assets against what this build pins. Every
  * mismatch is a blocker; nothing here is fetched from anywhere but the pack's
  * own release tag (or `--base-url`).
  */
-async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expectedFingerprint, publicKeys, blockers }) {
+async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expectedFingerprint, equivalences = [], attest = null, publicKeys, blockers }) {
   const label = `${harnessId} ${target} ${role} ${ref.packVersion}`;
   const stem = packAssetStem(harnessId, target, ref.packVersion);
   let manifestBytes;
@@ -187,8 +224,23 @@ async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expec
     return;
   }
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
-  if (expectedFingerprint !== undefined && (expectedFingerprint === null || manifest.inputsFingerprint !== expectedFingerprint)) {
-    blockers.push(`the published ${label} pack was built from different inputs; publish and pin a new ${harnessId} pack version`);
+  let accepted = null;
+  if (expectedFingerprint !== undefined) {
+    accepted = fingerprintAcceptance({
+      harnessId,
+      target,
+      ref,
+      manifestFingerprint: manifest.inputsFingerprint ?? null,
+      expectedFingerprint,
+      equivalences,
+    });
+    if (accepted === null) {
+      blockers.push(
+        `the published ${label} pack was built from different inputs, and no equivalence ` +
+          `record says a rebuild from this checkout's reproduced it. Merge the pin PR ` +
+          `local-harness-pack-auto.yml opened for ${harnessId} (or run it).`,
+      );
+    }
   }
   if (manifest.schema !== "mcpjam.local-harness-pack/1" || manifest.harnessId !== harnessId || manifest.platform !== target) {
     blockers.push(`the published ${label} manifest has the wrong identity`);
@@ -210,13 +262,31 @@ async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expec
   if (manifest.packVersion !== ref.packVersion) {
     blockers.push(`the published ${label} manifest is for pack version ${manifest.packVersion}.`);
   }
-}
-
-/** Every target a harness's manifest advertises, narrowed per D8. */
-function advertisedTargetsOf(facts) {
-  return facts.nativePlatforms
-    .flatMap((platform) => TARGETS_BY_PLATFORM[platform] ?? [])
-    .filter((target) => !facts.nativeTargets || facts.nativeTargets.includes(target));
+  if (attest !== null) {
+    // Provenance, not just a signature: these exact bytes were built by the
+    // pack workflow on main. Verified from the bytes this check downloaded.
+    const dir = await mkdtemp(join(tmpdir(), "mcpjam-attest-"));
+    try {
+      for (const [suffix, bytes] of [[".manifest.json", manifestBytes], [".tar.gz", archive]]) {
+        const path = join(dir, `${stem}${suffix}`);
+        await writeFile(path, bytes);
+        const failure = await attest.verify(path, { repo: attest.repo, workflow: PACK_SIGNER_WORKFLOW });
+        if (failure !== null) {
+          blockers.push(`the published ${label} ${suffix.slice(1)} has no verifiable build provenance from ${PACK_SIGNER_WORKFLOW} on main: ${failure}`);
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+    if (accepted?.kind === "equivalent" && !attest.verifiedRecords.has(accepted.record.file)) {
+      const failure = await attest.verify(accepted.record.file, { repo: attest.repo, workflow: EQUIVALENCE_SIGNER_WORKFLOW });
+      if (failure !== null) {
+        blockers.push(`the ${harnessId} equivalence record ${accepted.record.file} has no verifiable provenance from ${EQUIVALENCE_SIGNER_WORKFLOW} on main: ${failure}`);
+      } else {
+        attest.verifiedRecords.add(accepted.record.file);
+      }
+    }
+  }
 }
 
 /**
@@ -274,7 +344,7 @@ async function checkEvidence({ facts, dir, layers, commit, blockers, harnessFilt
   return covered;
 }
 
-async function checkHarness({ harnessId, facts, args, publicKeys, blockers, notShipped }) {
+async function checkHarness({ harnessId, facts, args, publicKeys, attest, blockers, notShipped }) {
   const version = facts.expectedVersion;
   const advertisedTargets = [];
   // Mirrors `localHarnessReleaseBlockers` in
@@ -375,6 +445,8 @@ async function checkHarness({ harnessId, facts, args, publicKeys, blockers, notS
           // Only the DESIRED pack has to be what this checkout's inputs build:
           // a permitted previous pack is older by definition.
           expectedFingerprint: role === "desired" ? fingerprint : undefined,
+          equivalences: readEquivalenceRecords(harnessId),
+          attest: typeof args["base-url"] === "string" ? null : attest,
           publicKeys,
           blockers,
         });
@@ -410,10 +482,22 @@ async function main() {
         "cannot be shown to have come from MCPJam.",
     );
   }
+  let attest = null;
+  if (args["verify-attestations"] === true) {
+    if (args.assets !== true) {
+      blockers.push("--verify-attestations needs --assets: it verifies the published assets' provenance");
+    } else {
+      attest = {
+        repo: process.env.GITHUB_REPOSITORY || "MCPJam/inspector",
+        verify: verifyAttestation,
+        verifiedRecords: new Set(),
+      };
+    }
+  }
   for (const [harnessId, harnessFacts] of Object.entries(facts)) {
     if (harnessFilter !== null && harnessFilter !== harnessId) continue;
     advertisedTargets.push(
-      ...(await checkHarness({ harnessId, facts: harnessFacts, args, publicKeys, blockers, notShipped })),
+      ...(await checkHarness({ harnessId, facts: harnessFacts, args, publicKeys, attest, blockers, notShipped })),
     );
   }
 
@@ -506,3 +590,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
 }
 
 export { readCommittedFacts };
+// The provenance rules live with the publication pipeline that produces what
+// they verify; re-exported so the gate's callers have one import.
+export { attestationVerifyArgs, EQUIVALENCE_SIGNER_WORKFLOW, PACK_SIGNER_WORKFLOW };

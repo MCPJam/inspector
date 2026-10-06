@@ -306,12 +306,18 @@ jobs:
       # release leaves `inspector_version` empty, and the checker rejects an
       # empty `--version` — failing the whole release over a gate that has
       # nothing to check.
+      #
+      # `--verify-attestations`: every pinned pack asset must carry build
+      # provenance from local-harness-pack.yml on main (and every equivalence
+      # record relied on, from local-harness-pack-pipeline.yml) — signed by our
+      # key is not enough on its own.
       - name: Local harness release consistency
         if: fromJSON(steps.plan.outputs.publish_inspector)
         working-directory: mcpjam-inspector
         env:
           INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
-        run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" --assets
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" --assets --verify-attestations
 
       # Every pack this build may SELECT: the desired one per harness, and the
       # one permitted previous (one version across targets; a record that
