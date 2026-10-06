@@ -20,8 +20,8 @@
  *     the same `notify` seam (the level was set once on connect via
  *     `logging/setLevel`; this fixture does not re-filter it server-side).
  *
- * Every era emits at least one record, so `MCPClientManager.onLogMessage`
- * receives notifications on both.
+ * The default fixture emits records on both eras, preserving the manager
+ * integration tests. Opt-in modes exercise conforming and broken logging.
  */
 
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
@@ -65,12 +65,27 @@ function atLeast(level: LoggingLevel, threshold: LoggingLevel): boolean {
   return SEVERITY_RANK[level] >= SEVERITY_RANK[threshold];
 }
 
+export interface LoggingFixtureOptions {
+  /** Default preserves the original unrequested-logging fixture. */
+  mode?:
+    | "unrequested"
+    | "conforming"
+    | "ignores-level"
+    | "silent"
+    | "tool-error";
+  /** Limit a tool error to one probe stage, or fail every call when absent. */
+  failAt?: "unrequested" | "debug" | "warning";
+  levels?: readonly LoggingLevel[];
+}
+
 /**
  * Build a fresh logging fixture server. `createMcpHandler` calls this per
  * request, so it must be side-effect-free and register the same surface each
  * time.
  */
-export function buildLoggingFixtureServer(): McpServer {
+export function buildLoggingFixtureServer(
+  options: LoggingFixtureOptions = {}
+): McpServer {
   const server = new McpServer(LOGGING_FIXTURE_SERVER_INFO, {
     // `logging` is what the manager's auto-`setLoggingLevel("debug")` gate keys
     // on; advertise it so the legacy path fires `logging/setLevel` on connect.
@@ -95,10 +110,36 @@ export function buildLoggingFixtureServer(): McpServer {
         | LoggingLevel
         | undefined;
 
-      for (const level of EMITTED_SEVERITIES) {
+      if (
+        options.mode === "tool-error" &&
+        (options.failAt === undefined ||
+          options.failAt === (requested ?? "unrequested"))
+      ) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: "logging tool failed" }],
+        };
+      }
+
+      for (const level of options.levels ?? EMITTED_SEVERITIES) {
+        if (options.mode === "silent") continue;
+        // Opt-in modes suppress modern logs without a requested level. The
+        // default deliberately violates this rule for existing negative tests.
+        if (
+          options.mode !== undefined &&
+          options.mode !== "unrequested" &&
+          envelope !== undefined &&
+          requested === undefined
+        ) {
+          continue;
+        }
         // Modern opt-in: emit only records at or above the requested level.
         // Absent opt-in (modern opt-out or legacy): emit every severity.
-        if (requested !== undefined && !atLeast(level, requested)) {
+        if (
+          requested !== undefined &&
+          options.mode !== "ignores-level" &&
+          !atLeast(level, requested)
+        ) {
           continue;
         }
         // `notify` ties the notification to the current request so it rides the
@@ -123,7 +164,7 @@ export function buildLoggingFixtureServer(): McpServer {
           },
         ],
       };
-    },
+    }
   );
 
   return server;
@@ -135,6 +176,8 @@ export function buildLoggingFixtureServer(): McpServer {
  * `handler.fetch(request)` in-process, or over a loopback port via
  * `toNodeHandler`.
  */
-export function createLoggingFixtureHandler() {
-  return createMcpHandler(buildLoggingFixtureServer);
+export function createLoggingFixtureHandler(
+  options: LoggingFixtureOptions = {}
+) {
+  return createMcpHandler(() => buildLoggingFixtureServer(options));
 }

@@ -5,6 +5,7 @@ import {
   formatRunId,
   computeIterationSummary,
   getTemplateKey,
+  isSubsetRerunRun,
 } from "./helpers";
 import { computeMeasuredIterationResult } from "./pass-criteria";
 import {
@@ -118,6 +119,9 @@ export function useSuiteData(
         // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
         // Do not fall back to their legacy-looking summary counts in charts.
         if (run.result === "inconclusive") return null;
+        // A subset rerun re-ran only what failed; its pass rate is biased by
+        // that selection and is not a point on the suite's trend.
+        if (isSubsetRerunRun(run)) return null;
         const runIterations = allIterations.filter(
           (iter) => iter.suiteRunId === run._id,
         );
@@ -184,9 +188,14 @@ export function useSuiteData(
   }, [runs, allIterations]);
 
   const modelStats = useMemo(() => {
+    // Subset reruns stay out: their trials would count the cases that already
+    // failed a second time.
+    const statRunIds = new Set(
+      runs.filter((run) => !isSubsetRerunRun(run)).map((run) => run._id),
+    );
     const activeIterations = allIterations.filter(
       (iteration) =>
-        !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId),
+        !iteration.suiteRunId || statRunIds.has(iteration.suiteRunId),
     );
 
     const modelMap = new Map<
@@ -243,7 +252,7 @@ export function useSuiteData(
 
     // Sort alphabetically by model name for consistent, fixed ordering
     return data.sort((a, b) => a.model.localeCompare(b.model));
-  }, [allIterations, activeRunIds]);
+  }, [allIterations, runs]);
 
   // Case groups
   const caseGroups = useMemo(() => {
@@ -478,6 +487,8 @@ export function useSuiteDataFromMetrics(
       .map((run) => {
         // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
         if (run.result === "inconclusive") return null;
+        // Subset reruns are not trend points (see `isSubsetRerunRun`).
+        if (isSubsetRerunRun(run)) return null;
         const metrics = metricsByRun.get(run._id);
         // Only decided iterations count - exclude pending/cancelled/timeouts.
         const realTimePassed = metrics?.results.passed ?? 0;
@@ -528,6 +539,8 @@ export function useSuiteDataFromMetrics(
       { passed: number; failed: number; total: number }
     >();
     for (const run of runs) {
+      // A subset rerun would count the cases that already failed twice.
+      if (isSubsetRerunRun(run)) continue;
       for (const row of metricsByRun.get(run._id)?.models ?? []) {
         // Terminal pass/fail only; a timeout counts as a failure.
         const failed = row.failed + row.timedOut;

@@ -3599,6 +3599,60 @@ describe("mcpjam-stream-handler", () => {
       expect((finishChunk as any).totalUsage).toBeUndefined();
     });
 
+    it("drops backend chunks the browser's AI SDK would reject, and reports each type once", async () => {
+      // A chunk type the browser's AI SDK does not know. On 2026-10-05 that was
+      // `{type:"custom"}` (an AI SDK 7 backend, an AI SDK 6 browser); this
+      // build's AI SDK accepts `custom`, so a made-up type stands in for the
+      // next drift.
+      const unknownChunk = {
+        type: "future-chunk",
+        kind: "provider.event",
+        providerMetadata: { anthropic: { id: "msg_1" } },
+      };
+      (global.fetch as any).mockReset();
+      (global.fetch as any) = vi.fn().mockResolvedValue(
+        createSseResponse([
+          { type: "start-step" },
+          unknownChunk,
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: "hello" },
+          { type: "text-end", id: "t1" },
+          unknownChunk,
+          { type: "finish-step" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      const types = writtenChunks
+        .filter((chunk) => chunk?.type !== "data-trace-event")
+        .map((chunk) => chunk.type);
+      expect(types).not.toContain("future-chunk");
+      expect(types).toEqual(
+        expect.arrayContaining(["start-step", "text-delta", "finish-step"]),
+      );
+
+      const rejected = (logger.systemEvent as any).mock.calls.filter(
+        ([event]: [string]) => event === "chat.stream.chunk_rejected",
+      );
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0][2]).toEqual({
+        chunkType: "future-chunk",
+        fields: ["type", "kind", "providerMetadata"],
+      });
+    });
+
     it("hashes IPv4 and ::ffff:-mapped IPv6 of the same client identically", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
 

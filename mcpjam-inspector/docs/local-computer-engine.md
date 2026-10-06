@@ -23,7 +23,7 @@ sweep. The machine is always ready.
 | Engine resolution + actor coercion | `server/utils/computers/engine.ts` |
 | Bash execution, env allowlist, workspace dirs, journal | `server/utils/computers/local-machine.ts` |
 | Consent capability (mint / verify / revoke) | `server/utils/computers/local-consent.ts`, `server/routes/mcp/computers.ts` |
-| Guest boundary | `server/utils/computers/local-engine-request.ts` (`isGuestChatRequest`) |
+| Member boundary | `server/utils/computers/local-engine-request.ts` (`classifyChatRequestActor`, `isVerifiedMember`) |
 | node-pty loader + availability probe | `server/utils/computers/local-pty.ts` |
 | PTY adapter onto the shared `createPtyWithCwd` | `server/utils/computers/local-pty-adapter.ts` |
 | Terminal handshake nonces | `server/utils/computers/local-terminal-auth.ts` |
@@ -71,7 +71,7 @@ Every entry point into local execution, with what gates it:
 | Entry point | Gates |
 | --- | --- |
 | Chat `bash` (playground) | non-hosted + kill switch + signed-in non-guest + server-verified consent + per-command approval |
-| Chat `bash` (guest / scenario / web route) | **never local** — `isGuestChatRequest` forces cloud |
+| Chat `bash` (anyone but a verified member / scenario / web route) | **never local** — only a bearer `classifyChatRequestActor` verifies as a WorkOS member passes `isVerifiedMember`; no bearer, a guest bearer, and an expired, forged or unverifiable bearer resolve cloud |
 | Comparison cards / org-model turns | same engine resolution as the playground; no separate path |
 | Terminal nonce mint (`POST /api/mcp/computers/local-terminal-token`) | inspector session + verified sign-in + non-guest + kill switch + server-verified consent + availability probe + validated project key |
 | Terminal WebSocket (`GET /api/web/computers/local-terminal`) | allowed `Origin` (**absent Origin rejected**) + availability probe + single-use, 60s, project-bound nonce + the nonce's consent fingerprint must still match the live capability |

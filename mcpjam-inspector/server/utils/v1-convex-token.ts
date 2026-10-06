@@ -301,7 +301,9 @@ export async function getBackgroundRunBearerForRequest(
   }
   const bearer = assertBearerToken(c);
   // Never elevate an unverified claim to service-token delegation.
-  const session = await verifyAuthKitToken(bearer).catch((error: unknown) => {
+  const verifyMcpSession = (token: string) =>
+    verifyAuthKitToken(token, undefined, { allowMcpResourceAudience: true });
+  const session = await verifyMcpSession(bearer).catch((error: unknown) => {
     if (error instanceof AuthKitVerificationError) {
       throw new WebRouteError(
         401,
@@ -321,7 +323,7 @@ export async function getBackgroundRunBearerForRequest(
   // Native installs have no service credential. Keep the verified member
   // bearer; expiration/revocation stops work rather than elevating it.
   if (!HOSTED_MODE) return async () => {
-    await verifyAuthKitToken(bearer);
+    await verifyMcpSession(bearer);
     assertSessionServable(session.sid, { requireFresh: false, path: c.req.path });
     return bearer;
   };

@@ -34,6 +34,9 @@ const DEVELOPMENT_WORKOS_CLIENT_ID = "client_01KTN2EWHHJCKRB8RSR307X4SG";
 const PRODUCTION_AUTHKIT_DOMAIN = "login.mcpjam.com";
 const STAGING_AUTHKIT_DOMAIN = "dynamic-echo-14-staging.authkit.app";
 const DEVELOPMENT_AUTHKIT_DOMAIN = "deep-vanilla-68-test.authkit.app";
+const PRODUCTION_MCP_RESOURCE = "https://mcp.mcpjam.com/mcp";
+const STAGING_MCP_RESOURCE = "https://mcp-staging.mcpjam.com/mcp";
+const DEVELOPMENT_MCP_RESOURCE = "http://localhost:8787/mcp";
 
 /** Raised when the server is missing the config needed to verify (→ 500). */
 export class AuthKitConfigError extends Error {
@@ -72,6 +75,22 @@ function deriveAuthkitDomain(clientId: string): string | undefined {
       return STAGING_AUTHKIT_DOMAIN;
     case DEVELOPMENT_WORKOS_CLIENT_ID:
       return DEVELOPMENT_AUTHKIT_DOMAIN;
+    default:
+      return undefined;
+  }
+}
+
+/** The exact MCP OAuth resource registered for each AuthKit client. */
+export function resolveMcpResourceIndicator(
+  clientId: string,
+): string | undefined {
+  switch (clientId) {
+    case PRODUCTION_WORKOS_CLIENT_ID:
+      return PRODUCTION_MCP_RESOURCE;
+    case STAGING_WORKOS_CLIENT_ID:
+      return STAGING_MCP_RESOURCE;
+    case DEVELOPMENT_WORKOS_CLIENT_ID:
+      return DEVELOPMENT_MCP_RESOURCE;
     default:
       return undefined;
   }
@@ -189,6 +208,7 @@ function defaultDeps(): AuthKitVerifyDeps {
 export async function verifyAuthKitToken(
   token: string,
   deps: AuthKitVerifyDeps = defaultDeps(),
+  options: { allowMcpResourceAudience?: boolean } = {},
 ): Promise<VerifiedSession> {
   // Read the (unverified) issuer ONLY to pick the matching JWKS. The actual
   // trust decision is `jwtVerify` below — signature + issuer pin + audience +
@@ -213,11 +233,21 @@ export async function verifyAuthKitToken(
   const getKey: JWTVerifyGetKey =
     typeof key === "function" ? (key as JWTVerifyGetKey) : async () => key;
 
+  // The MCP resource is an additional audience only for the matching
+  // AuthKit OAuth issuer, and only at the detached-run/local-harness call
+  // sites that explicitly opt in. All other callers remain client-id-only.
+  const mcpResource =
+    options.allowMcpResourceAudience &&
+    unverifiedIssuer === resolveAuthkitIssuer(deps.clientId)
+      ? resolveMcpResourceIndicator(deps.clientId)
+      : undefined;
+  const audiences = mcpResource ? [deps.clientId, mcpResource] : deps.clientId;
+
   let payload;
   try {
     ({ payload } = await jwtVerify(token, getKey, {
       issuer: unverifiedIssuer,
-      audience: deps.clientId,
+      audience: audiences,
       algorithms: ["RS256"],
       clockTolerance: 5,
     }));

@@ -18,7 +18,10 @@
 import type { SupportedLocalHarnessId } from "./targets.js";
 
 export interface RuntimeRehashPolicy {
-  /** Re-hashed on every spawn: the small scripts that constrain the bridge. */
+  /** Re-hashed on every spawn: the pack's JavaScript entrypoints, which are
+   *  small enough to read every time. (The bridge and its launcher are not
+   *  pack files any more: the Inspector layer re-hashes them in full before
+   *  every exec — `inspector-layer.ts`.) */
   always: readonly string[];
   /** Re-hashed under `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY=true`: the large
    *  binaries. Matched by pattern because vendor paths are platform-suffixed. */
@@ -31,7 +34,8 @@ export const RUNTIME_REHASH_POLICIES: Readonly<
   Record<SupportedLocalHarnessId, RuntimeRehashPolicy>
 > = {
   "claude-code": {
-    always: ["launcher.mjs", "bridge.mjs"],
+    // The agent SDK the layer's bridge imports in-process (~1.4 MB, a few ms).
+    always: ["node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"],
     strict: [
       BUNDLED_NODE,
       /(^|\/)claude-agent-sdk-[a-z0-9-]+\/(claude|claude\.exe)$/,
@@ -39,9 +43,8 @@ export const RUNTIME_REHASH_POLICIES: Readonly<
     ],
   },
   codex: {
-    // `host-tools-mcp.mjs` is the second entrypoint: Codex spawns it as its
-    // MCP server, so it executes exactly like the bridge does.
-    always: ["launcher.mjs", "bridge.mjs", "host-tools-mcp.mjs"],
+    // The wrapper the bridge runs with the pack's Node to find the CLI.
+    always: ["node_modules/@openai/codex/bin/codex.js"],
     strict: [
       BUNDLED_NODE,
       // `@openai/codex-<platform>/vendor/<triple>/…`: the CLI and its
@@ -54,10 +57,10 @@ export const RUNTIME_REHASH_POLICIES: Readonly<
   },
 };
 
-/** The policy for a harness; an id with none gets the strictest honest
- *  default — nothing beyond the bridge pair — rather than a throw at spawn. */
+/** The policy for a harness; an id with none gets the honest default —
+ *  only the bundled Node — rather than a throw at spawn. */
 export function rehashPolicyFor(harnessId: string): RuntimeRehashPolicy {
   return Object.prototype.hasOwnProperty.call(RUNTIME_REHASH_POLICIES, harnessId)
     ? RUNTIME_REHASH_POLICIES[harnessId as SupportedLocalHarnessId]
-    : { always: ["launcher.mjs", "bridge.mjs"], strict: [BUNDLED_NODE] };
+    : { always: [], strict: [BUNDLED_NODE] };
 }

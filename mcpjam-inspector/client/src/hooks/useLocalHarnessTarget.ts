@@ -20,12 +20,20 @@
  * async round trip, and the drift always shows up as a dialog that will not
  * close or a Send that will not enable.
  *
- * ── What never happens here ──────────────────────────────────────────────
- * Nothing in this hook downloads anything or mints anything on its own.
- * Mounting, polling, remounting, focusing and reconnecting are all reads.
- * A download happens on **Install & allow** and nowhere else; a grant is minted
- * only against an approval a human clicked, and only after the context it was
- * clicked under is re-checked.
+ * ── What happens on its own, and what never does ─────────────────────────
+ * A user who has authorized a harness on this machine keeps a working runtime
+ * without clicking anything: the readiness renewal below asks the server for a
+ * fresh grant, and the server (under the `auto` update policy) installs a newer
+ * pinned pack in the BACKGROUND while sessions keep running on the permitted
+ * previous one. When the server's selection moves to the new pack, renewal
+ * re-mints the grant onto it under the same durable authorization and the
+ * same permission profile — an update never widens what was approved.
+ *
+ * What never happens: polling, remounting, focusing and reconnecting are
+ * reads that start no install for a user who has NOT authorized the harness
+ * (that is **Install & allow**), and a grant is minted only against an
+ * approval a human clicked or the durable authorization it produced, after
+ * the context it was clicked under is re-checked.
  *
  * ── Why "unknown" is never resolved to a target ──────────────────────────
  * A failed availability fetch, a 401, and a first render before anything has
@@ -76,6 +84,43 @@ const STORAGE_PREFIX = "mcp-local-harness-target-v1";
 const TARGET_EVENT = "local-harness-target-changed";
 /** How often to re-read a running install. Matches the route's Retry-After. */
 const POLL_INTERVAL_MS = 1_000;
+
+/**
+ * Whether a stored grant still names what this machine would run now. One
+ * rule, used by the phase and by the send backstop, so the gate and the
+ * backstop cannot disagree.
+ *
+ * The runtime is compared with the one the server SELECTED — this build's
+ * desired pack, or its permitted previous one while an update installs or
+ * after a rollback — not with the desired pack alone: a grant on the
+ * permitted pack is exactly right while it is the one that runs. Version AND
+ * digest, because a pack rebuilt at the same version is a different tree and
+ * the tree is what consent named.
+ */
+export function localHarnessGrantIsCurrent(
+  grant: Pick<StoredLocalHarnessConsent, "runtime" | "target">,
+  status: LocalHarnessRuntimeStatus | null,
+  availability: Pick<
+    LocalHarnessAvailabilityView,
+    "expectedPack" | "policyVersion" | "permissionProfile" | "machineId"
+  >,
+): boolean {
+  const selected =
+    status?.state === "ready" && status.packVersion !== undefined && status.digest !== undefined
+      ? { packVersion: status.packVersion, treeDigest: status.digest }
+      : availability.expectedPack;
+  const staleRuntime =
+    selected !== null &&
+    (grant.runtime.packVersion !== selected.packVersion ||
+      grant.runtime.digest !== selected.treeDigest);
+  const stalePolicy =
+    grant.target.policyVersion !== availability.policyVersion ||
+    grant.target.permissionProfile !== availability.permissionProfile;
+  const staleMachine =
+    availability.machineId !== null &&
+    grant.target.machineId !== availability.machineId;
+  return !staleRuntime && !stalePolicy && !staleMachine;
+}
 
 function storageKey(
   projectId: string,
@@ -633,7 +678,16 @@ export function useLocalHarnessController(
     if (drifted) setPendingApproval(null);
   }, [pendingApproval, availability]);
 
-  // Reopen/reload and credential expiry never require another authorization click.
+  // The runtime the server currently selects. When it moves — a background
+  // update activated, or a rollback — the renewal below re-runs at once and
+  // re-mints the grant onto it, instead of waiting for the grant to expire.
+  const selectedRuntimeDigest =
+    (runtimeStatus ?? availability?.runtimeStatus)?.state === "ready"
+      ? ((runtimeStatus ?? availability?.runtimeStatus)?.digest ?? null)
+      : null;
+
+  // Reopen/reload, credential expiry and a runtime update never require
+  // another authorization click.
   useEffect(() => {
     if (!offerable || !inScope || !projectId || !userKey || availability?.preferredVenue !== "local") return;
     let cancelled = false;
@@ -656,7 +710,7 @@ export function useLocalHarnessController(
     const focus = () => { if (timer) clearTimeout(timer); void renew(); };
     window.addEventListener("focus", focus);
     return () => { cancelled = true; abort.abort(); if (timer) clearTimeout(timer); window.removeEventListener("focus", focus); };
-  }, [offerable, inScope, projectId, userKey, availability?.preferredVenue, harnessId]);
+  }, [offerable, inScope, projectId, userKey, availability?.preferredVenue, harnessId, selectedRuntimeDigest]);
 
   // ── The requested target ─────────────────────────────────────────────────
   const hostedAvailable = availability?.hostedAvailable ?? null;
@@ -754,25 +808,18 @@ export function useLocalHarnessController(
             "expects. Reinstall it.",
       };
     }
+    if (status.state === "revoked") {
+      return {
+        phase: "failed",
+        reason:
+          status.message ??
+          `MCPJam withdrew this ${harnessName} runtime. Update the Inspector.`,
+      };
+    }
     if (consent !== null && status.state === "ready") {
-      const expected = availability.expectedPack;
-      // Version AND digest. A pack rebuilt at the same version is a different
-      // tree, and the tree is what consent named — so comparing the version
-      // alone kept a grant `ready` across a rebuild, skipped the dialog, and
-      // sent a turn the server refuses on the runtime id it is bound to.
-      const staleRuntime =
-        expected !== null &&
-        (consent.runtime.packVersion !== expected.packVersion ||
-          consent.runtime.digest !== expected.treeDigest);
-      const stalePolicy =
-        consent.target.policyVersion !== availability.policyVersion ||
-        consent.target.permissionProfile !== availability.permissionProfile;
-      const staleMachine =
-        availability.machineId !== null &&
-        consent.target.machineId !== availability.machineId;
-      // Not `failed`: nothing went wrong. The terms simply moved, and the
-      // way back is the same dialog a first-time user sees.
-      if (!staleRuntime && !stalePolicy && !staleMachine) {
+      // Not `failed` when stale: nothing went wrong. The terms simply moved,
+      // and the way back is the same dialog a first-time user sees.
+      if (localHarnessGrantIsCurrent(consent, status, availability)) {
         return { phase: "ready", reason: null };
       }
       return {
@@ -1038,27 +1085,20 @@ export function useLocalHarnessController(
       readLocalHarnessConsentSnapshot(projectId, harnessId),
     );
     if (fresh === null) return null;
-    // The same staleness rule the phase applies, so the gate and this backstop
-    // cannot disagree. A grant naming a pack, a policy or a machine this build
-    // no longer expects is one the server will refuse — and a clear refusal
-    // here beats a round trip that fails, because this one leads back to the
-    // dialog rather than to a failed turn.
-    if (availability !== null) {
-      const expected = availability.expectedPack;
-      if (
-        (expected !== null &&
-          (fresh.runtime.packVersion !== expected.packVersion ||
-            fresh.runtime.digest !== expected.treeDigest)) ||
-        fresh.target.policyVersion !== availability.policyVersion ||
-        fresh.target.permissionProfile !== availability.permissionProfile ||
-        (availability.machineId !== null &&
-          fresh.target.machineId !== availability.machineId)
-      ) {
-        return null;
-      }
+    // The same staleness rule the phase applies — against the SELECTED
+    // runtime, so a grant on the permitted pack still sends while an update
+    // installs in the background. A grant naming a pack, a policy or a machine
+    // this build would not run is one the server will refuse — and a clear
+    // refusal here beats a round trip that fails, because this one leads back
+    // to the dialog rather than to a failed turn.
+    if (
+      availability !== null &&
+      !localHarnessGrantIsCurrent(fresh, runtimeStatus ?? availability.runtimeStatus, availability)
+    ) {
+      return null;
     }
     return { target: fresh.target, token: fresh.token, ...(fresh.serverAuthorized ? { serverAuthorized: true } : {}) };
-  }, [offerable, inScope, projectId, userKey, availability, harnessId]);
+  }, [offerable, inScope, projectId, userKey, availability, runtimeStatus, harnessId]);
 
   return {
     harnessId,
