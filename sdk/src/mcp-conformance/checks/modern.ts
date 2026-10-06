@@ -298,6 +298,13 @@ const MODERN_CHECK_METADATA = {
     description:
       "No log notifications are emitted for a request that carried no modern log level.",
   },
+  "modern-log-level-filtering": {
+    id: "modern-log-level-filtering",
+    category: "core",
+    title: "Log Level Filtering",
+    description:
+      "A supplied logging tool emits warning-or-higher logs when requested, without emitting lower-level logs.",
+  },
   "modern-no-session-id": {
     id: "modern-no-session-id",
     category: "transport",
@@ -1996,6 +2003,60 @@ async function runResourceNotFoundCheck(
     : passedResult(meta, Date.now() - startedAt, details);
 }
 
+/** Capture transport failures as missing evidence, not a logging violation. */
+async function captureLogProbe(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState,
+  meta: CheckMeta,
+  options: Parameters<typeof modernProbe>[1]
+): Promise<{ response: RawHttpResult } | { unavailable: MCPCheckResult }> {
+  try {
+    return { response: await track(state, modernProbe(ctx, options)) };
+  } catch (error) {
+    return {
+      unavailable: couldNotRunResult(
+        meta,
+        `Could not complete the logging probe: ${errorMessage(error)}`,
+        { probedTool: options.name, requestedLogLevel: options.logLevel }
+      ),
+    };
+  }
+}
+
+/** A tool error, rejected request, or unfinished body cannot prove silence. */
+function unavailableLogProbe(
+  meta: CheckMeta,
+  response: RawHttpResult,
+  probedTool: string
+): MCPCheckResult | undefined {
+  const result = jsonRpcResult(response);
+  if (
+    response.bodyError ||
+    response.status < 200 ||
+    response.status >= 300 ||
+    jsonRpcError(response) ||
+    !result ||
+    result.resultType !== COMPLETE_RESULT_TYPE ||
+    result.isError === true
+  ) {
+    return couldNotRunResult(
+      meta,
+      "Could not complete the supplied logging tool call",
+      {
+        probedTool,
+        httpStatus: response.status,
+        jsonRpcCode: jsonRpcError(response)?.code,
+        bodyError: response.bodyError,
+        resultType: result?.resultType,
+        toolError: result?.isError === true,
+      }
+    );
+  }
+  return undefined;
+}
+
+const SUPPLIED_TOOL_NO_LOGS = "the supplied tool produced no logs.";
+
 async function runLogLevelCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -2004,23 +2065,24 @@ async function runLogLevelCheck(
   const startedAt = Date.now();
   const probe = ctx.config.logProbe;
 
-  // Deliberately NO log level in the envelope: the modern era carries the
-  // logging opt-in per request, so a request without one must produce no log
-  // records at all. With a `logProbe` the request is a tool the operator says
-  // DOES log, which turns "no records" from an absence into evidence.
-  const silent = await track(
+  // First call without opt-in: any log records are a violation, even if the
+  // request subsequently fails. Only a completed call can prove silence.
+  const silent = await captureLogProbe(
+    ctx,
     state,
+    meta,
     probe
-      ? modernProbe(ctx, {
+      ? {
           id: 7900,
           method: "tools/call",
           params: { name: probe.toolName, arguments: probe.arguments ?? {} },
           name: probe.toolName,
-        })
-      : modernProbe(ctx, { id: 7900, method: "server/discover" })
+        }
+      : { id: 7900, method: "server/discover" }
   );
+  if ("unavailable" in silent) return silent.unavailable;
 
-  const unrequested = logRecords(silent);
+  const unrequested = logRecords(silent.response);
   if (unrequested.length > 0) {
     return failedResult(
       meta,
@@ -2033,51 +2095,121 @@ async function runLogLevelCheck(
     );
   }
 
-  // NOT a pass. Without a probe the request above is an ordinary
-  // `server/discover`, which no server logs about in the first place, so its
-  // silence is the absence of an observation rather than the observation of an
-  // absence — the same silence a server that ignores the opt-in gate entirely
-  // would produce. Passing on it credited every unprobed run with a MUST it
-  // never exercised, and this check is scored, so that credit landed in
-  // published numbers.
-  //
-  // `could-not-run` and deliberately NOT `not-applicable`: the requirement
-  // applies to every modern server, and only our ability to observe it is
-  // missing. `not-applicable` would drop the check from the denominator
-  // (`conformance-outcome.ts`), which turns one unearned pass into a smaller
-  // total and leaves the percentage just as flattering. This way the run
-  // reports `incomplete`, which is what an unexercised MUST actually means.
-  //
-  // The failing branch above still stands without a probe: log records on a
-  // request that carried no level are a violation no matter what provoked
-  // them. Only the silent branch is unprovable, and only it skips.
   if (!probe) {
     return couldNotRunResult(
       meta,
-      "No logProbe configured, so the run had no request the server is known to log about: the silence above cannot distinguish a working opt-in gate from a server that never logs. Configure `logProbe` with a tool that emits log records to assert this.",
+      "No logProbe configured, so the run had no request the server is known to log about. Configure a safe tool that produces logs when requested.",
       { logNotificationCount: 0 }
     );
   }
-
-  // Positive control: the SAME call carrying a log level. Records here prove
-  // the silence above was the opt-in gate working, not a server that never
-  // logs. Their absence is not a MUST violation, so it is reported, not failed.
-  const requested = await track(
-    state,
-    modernProbe(ctx, {
-      id: 7901,
-      method: "tools/call",
-      params: { name: probe.toolName, arguments: probe.arguments ?? {} },
-      name: probe.toolName,
-      logLevel: "debug",
-    })
+  const silentUnavailable = unavailableLogProbe(
+    meta,
+    silent.response,
+    probe.toolName
   );
+  if (silentUnavailable) return silentUnavailable;
 
-  return passedResult(meta, Date.now() - startedAt, {
+  // Supplying the tool is the caller's assertion that it logs. A completed
+  // requested call with no records breaks that assertion and fails the test.
+  const requested = await captureLogProbe(ctx, state, meta, {
+    id: 7901,
+    method: "tools/call",
+    params: { name: probe.toolName, arguments: probe.arguments ?? {} },
+    name: probe.toolName,
+    logLevel: "debug",
+  });
+  if ("unavailable" in requested) return requested.unavailable;
+  const requestedUnavailable = unavailableLogProbe(
+    meta,
+    requested.response,
+    probe.toolName
+  );
+  if (requestedUnavailable) return requestedUnavailable;
+
+  const details = {
     logNotificationCount: 0,
     probedTool: probe.toolName,
-    logNotificationCountWithLevel: logRecords(requested).length,
+    requestedLogLevel: "debug",
+    logNotificationCountWithLevel: logRecords(requested.response).length,
+  };
+  return details.logNotificationCountWithLevel === 0
+    ? failedResult(meta, Date.now() - startedAt, SUPPLIED_TOOL_NO_LOGS, details)
+    : passedResult(meta, Date.now() - startedAt, details);
+}
+
+/** Syslog severity order, from least to most severe. */
+const LOG_LEVELS = [
+  "debug",
+  "info",
+  "notice",
+  "warning",
+  "error",
+  "critical",
+  "alert",
+  "emergency",
+] as const;
+
+async function runLogLevelFilteringCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-log-level-filtering"];
+  const startedAt = Date.now();
+  const probe = ctx.config.logProbe;
+  if (!probe) {
+    return couldNotRunResult(
+      meta,
+      "No logProbe configured. Configure a safe tool that produces warning-or-higher logs when requested."
+    );
+  }
+
+  const requested = await captureLogProbe(ctx, state, meta, {
+    id: 7902,
+    method: "tools/call",
+    params: { name: probe.toolName, arguments: probe.arguments ?? {} },
+    name: probe.toolName,
+    logLevel: "warning",
   });
+  if ("unavailable" in requested) return requested.unavailable;
+  const unavailable = unavailableLogProbe(
+    meta,
+    requested.response,
+    probe.toolName
+  );
+  if (unavailable) return unavailable;
+
+  const records = logRecords(requested.response);
+  const details = {
+    probedTool: probe.toolName,
+    requestedLogLevel: "warning",
+    logNotificationCountWithLevel: records.length,
+  };
+  if (records.length === 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      SUPPLIED_TOOL_NO_LOGS,
+      details
+    );
+  }
+
+  const levels = records.map(
+    (record) => (record.params as Record<string, unknown> | undefined)?.level
+  );
+  const invalidOrLowerLevels = levels.filter(
+    (level) =>
+      typeof level !== "string" ||
+      LOG_LEVELS.indexOf(level as (typeof LOG_LEVELS)[number]) <
+        LOG_LEVELS.indexOf("warning")
+  );
+  return invalidOrLowerLevels.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        "Server emitted invalid or lower-than-warning log levels for a request that asked for warning logs",
+        { ...details, invalidOrLowerLevels }
+      )
+    : passedResult(meta, Date.now() - startedAt, { ...details, levels });
 }
 
 /** `notifications/message` records carried on a response. */
@@ -2556,6 +2688,8 @@ async function runModernCheck(
       return await runToolOutputSchemaCheck(ctx, state);
     case "modern-logs-require-log-level":
       return await runLogLevelCheck(ctx, state);
+    case "modern-log-level-filtering":
+      return await runLogLevelFilteringCheck(ctx, state);
     case "modern-no-session-id":
       return await runNoSessionIdCheck(ctx, state);
     case "modern-subscription-ack-precedes-notifications":

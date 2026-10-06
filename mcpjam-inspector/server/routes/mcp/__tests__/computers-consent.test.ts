@@ -23,6 +23,12 @@ vi.mock("node:os", async () => {
 const authState = vi.hoisted(() => ({
   verified: true,
   guest: false,
+  // Whether the caller is a POSITIVELY verified WorkOS member
+  // (`resolveLocalHarnessActor`). The verified-auth gate admits more than
+  // members — `sk_` keys, service tokens, any caller without AuthKit — and
+  // granting or spending shell consent requires the narrower one.
+  member: true,
+  memberSeen: 0,
   bearerSeen: 0,
   verifySeen: 0,
 }));
@@ -33,6 +39,32 @@ vi.mock("../../../middleware/bearer-auth.js", () => ({
     return next();
   },
 }));
+vi.mock("../../../utils/harness/local/acting-user.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/local/acting-user.js")
+  >("../../../utils/harness/local/acting-user.js");
+  return {
+    ...actual,
+    resolveLocalHarnessActor: async () => {
+      authState.memberSeen += 1;
+      return authState.member
+        ? {
+            ok: true,
+            actor: {
+              credential: "authkit",
+              userId: "authkit:user_1",
+              subject: "user_1",
+            },
+          }
+        : {
+            ok: false,
+            reason: "unsupported-credential",
+            status: 403,
+            message: "requires a signed-in member",
+          };
+    },
+  };
+});
 vi.mock("../../../middleware/require-verified-auth.js", () => ({
   requireVerifiedAuth: () => (c: any, next: any) => {
     authState.verifySeen += 1;
@@ -84,6 +116,8 @@ describe("local-consent routes", () => {
   beforeEach(() => {
     authState.verified = true;
     authState.guest = false;
+    authState.member = true;
+    authState.memberSeen = 0;
     authState.bearerSeen = 0;
     authState.verifySeen = 0;
     configState.localEnabled = true;
@@ -117,6 +151,26 @@ describe("local-consent routes", () => {
     authState.guest = true;
     const response = await post(makeApp(), "/local-consent/grant");
     expect(response.status).toBe(403);
+  });
+
+  it("refuses to GRANT for a verified credential that is not a member", async () => {
+    // e.g. an `sk_` key, a service token, or any caller on a deployment
+    // without AuthKit — all admitted by requireVerifiedAuth.
+    authState.member = false;
+    const response = await post(makeApp(), "/local-consent/grant");
+    expect(response.status).toBe(403);
+    expect(authState.memberSeen).toBe(1);
+  });
+
+  it("keeps verify and revoke on the wider gate (they never add access)", async () => {
+    authState.member = false;
+    const verified = await post(makeApp(), "/local-consent/verify", {
+      token: "nope",
+    });
+    expect(verified.status).toBe(200);
+    const revoked = await post(makeApp(), "/local-consent/revoke");
+    expect(revoked.status).toBe(200);
+    expect(authState.memberSeen).toBe(0);
   });
 
   it("grant → verify(token) → revoke → verify(false) round trip", async () => {

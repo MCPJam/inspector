@@ -30,6 +30,12 @@ vi.mock("node:os", async () => {
 const authState = vi.hoisted(() => ({
   verified: true,
   guest: false,
+  // Whether the caller is a POSITIVELY verified WorkOS member
+  // (`resolveLocalHarnessActor`). The verified-auth gate admits more than
+  // members — `sk_` keys, service tokens, any caller without AuthKit — and
+  // granting or spending shell consent requires the narrower one.
+  member: true,
+  memberSeen: 0,
   bearerSeen: 0,
   verifySeen: 0,
 }));
@@ -40,6 +46,32 @@ vi.mock("../../../middleware/bearer-auth.js", () => ({
     return next();
   },
 }));
+vi.mock("../../../utils/harness/local/acting-user.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/local/acting-user.js")
+  >("../../../utils/harness/local/acting-user.js");
+  return {
+    ...actual,
+    resolveLocalHarnessActor: async () => {
+      authState.memberSeen += 1;
+      return authState.member
+        ? {
+            ok: true,
+            actor: {
+              credential: "authkit",
+              userId: "authkit:user_1",
+              subject: "user_1",
+            },
+          }
+        : {
+            ok: false,
+            reason: "unsupported-credential",
+            status: 403,
+            message: "requires a signed-in member",
+          };
+    },
+  };
+});
 vi.mock("../../../middleware/require-verified-auth.js", () => ({
   requireVerifiedAuth: () => (c: any, next: any) => {
     authState.verifySeen += 1;
@@ -112,6 +144,8 @@ function mint(
 beforeEach(() => {
   authState.verified = true;
   authState.guest = false;
+  authState.member = true;
+  authState.memberSeen = 0;
   authState.bearerSeen = 0;
   authState.verifySeen = 0;
   configState.localEnabled = true;
@@ -150,6 +184,16 @@ describe("POST /api/mcp/computers/local-terminal-token", () => {
       "expiresAtMs",
       "nonce",
     ]);
+  });
+
+  it("refuses a verified credential that is not a member, even with consent", async () => {
+    const consent = await grantConsent();
+    authState.member = false;
+    const response = await mint(
+      { projectId: "proj_1" },
+      { [LOCAL_CONSENT_HEADER]: consent }
+    );
+    expect(response.status).toBe(403);
   });
 
   it("APPLIES the auth middleware stack exactly once", async () => {

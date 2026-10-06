@@ -593,10 +593,198 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
+  describe("local computer engine boundary", () => {
+    // A consent capability is a header; it outlives a sign-out. Only a
+    // POSITIVELY verified member may spend it on local bash — a guest of the
+    // selected authority, an expired/forged bearer, or no bearer at all never
+    // resolves the local engine, however valid the leftover consent is.
+    async function engineFor(actor: unknown, consentValid = true) {
+      const classifier = await import(
+        "../../../utils/computers/local-engine-request.js"
+      );
+      const consent = await import("../../../utils/computers/local-consent.js");
+      const registry = await import(
+        "../../../utils/built-in-tools/registry.js"
+      );
+      const classify = vi
+        .spyOn(classifier, "classifyChatRequestActor")
+        .mockResolvedValue(actor as never);
+      const verify = vi
+        .spyOn(consent, "verifyLocalComputerConsent")
+        .mockResolvedValue(consentValid);
+      const resolveTools = vi.spyOn(registry, "resolveHostTools");
+      try {
+        const res = await app.request("/api/mcp/chat-v2", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer some-bearer",
+            "x-mcpjam-local-consent": "leftover-member-consent",
+          },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "run ls" }],
+            model: { id: "gpt-4", provider: "openai" },
+            apiKey: "test-key",
+            projectId: "project-1",
+            computerEngine: "local",
+          }),
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        const context = resolveTools.mock.calls.at(-1)?.[1] as
+          | { computerEngine?: string; localComputerRequested?: boolean }
+          | undefined;
+        return {
+          engine: context?.computerEngine,
+          requested: context?.localComputerRequested,
+          consentChecked: verify.mock.calls.length > 0,
+        };
+      } finally {
+        classify.mockRestore();
+        verify.mockRestore();
+        resolveTools.mockRestore();
+      }
+    }
+
+    it.each([
+      ["a backend-issued guest", { kind: "guest", guestId: "g-1" }],
+      ["an arbitrary bearer", { kind: "unverified", reason: "unverified" }],
+      ["an expired token", { kind: "unverified", reason: "unverified" }],
+      ["no identity", { kind: "anonymous" }],
+    ])(
+      "%s carrying leftover member consent never gets the local engine",
+      async (_label, actor) => {
+        const result = await engineFor(actor);
+        expect(result.engine).not.toBe("local");
+        expect(result.requested).toBe(false);
+        // The capability is not even consulted for a non-member.
+        expect(result.consentChecked).toBe(false);
+      },
+    );
+
+    it("a verified member with valid consent gets the local engine", async () => {
+      const result = await engineFor({
+        kind: "member",
+        actor: {
+          credential: "authkit",
+          userId: "authkit:user_1",
+          subject: "user_1",
+        },
+      });
+      expect(result.engine).toBe("local");
+      expect(result.consentChecked).toBe(true);
+    });
+
+    it("a verified member without valid consent does not", async () => {
+      const result = await engineFor(
+        {
+          kind: "member",
+          actor: {
+            credential: "authkit",
+            userId: "authkit:user_1",
+            subject: "user_1",
+          },
+        },
+        false,
+      );
+      expect(result.engine).not.toBe("local");
+    });
+  });
+
+  describe("local browser engine boundary", () => {
+    // Same boundary as local bash: a browser-consent capability is a header
+    // that outlives a sign-out, so spending it on this machine takes a
+    // POSITIVELY verified member (or a guest the rollout admitted by id).
+    // "Not a guest of the selected authority" is not membership.
+    async function browserReadinessFor(actor: unknown) {
+      const classifier = await import(
+        "../../../utils/computers/local-engine-request.js"
+      );
+      const consent = await import(
+        "../../../utils/computers/browser-consent.js"
+      );
+      const rollout = await import(
+        "../../../utils/computers/browser-rollout.js"
+      );
+      const classify = vi
+        .spyOn(classifier, "classifyChatRequestActor")
+        .mockResolvedValue(actor as never);
+      const guestCheck = vi
+        .spyOn(classifier, "isGuestOrAnonymousRequest")
+        .mockResolvedValue(false);
+      const verify = vi
+        .spyOn(consent, "verifyLocalBrowserConsent")
+        .mockResolvedValue(true);
+      const resolveRollout = vi
+        .spyOn(rollout, "resolveBrowserRollout")
+        .mockResolvedValue({
+          enabled: true,
+          actor: { id: "test-member", guest: false },
+        });
+      try {
+        const res = await app.request("/api/mcp/chat-v2", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer some-bearer",
+            "x-mcpjam-browser-consent": "leftover-member-consent",
+          },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: "open the docs" }],
+            model: { id: "gpt-4", provider: "openai" },
+            apiKey: "test-key",
+            projectId: "project-1",
+            builtInToolIds: ["browser"],
+            browserEngine: "local",
+          }),
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        return capturedStreamEvents.find(
+          (event) => event.type === "data-browser-readiness",
+        )?.data.reason as string | null | undefined;
+      } finally {
+        classify.mockRestore();
+        guestCheck.mockRestore();
+        verify.mockRestore();
+        resolveRollout.mockRestore();
+      }
+    }
+
+    it.each([
+      ["an arbitrary bearer", { kind: "unverified", reason: "unverified" }],
+      ["an expired token", { kind: "unverified", reason: "unverified" }],
+      ["no identity", { kind: "anonymous" }],
+    ])(
+      "%s carrying leftover browser consent is asked to allow Browser again, not run locally",
+      async (_label, actor) => {
+        const reason = await browserReadinessFor(actor);
+        expect(reason).toContain("browser_consent_required");
+      },
+    );
+
+    it("a verified member with valid consent gets the local browser", async () => {
+      const reason = await browserReadinessFor({
+        kind: "member",
+        actor: {
+          credential: "authkit",
+          userId: "authkit:user_1",
+          subject: "user_1",
+        },
+      });
+      // Consent is accepted for a verified member; whether a local browser
+      // runtime is actually available on the test machine is a different
+      // reason and not this boundary's concern.
+      expect(reason ?? "").not.toContain("browser_consent_required");
+    });
+  });
+
   describe("success cases", () => {
     it("keeps guest local Browser independent of member-only project settings", async () => {
       const guest = await import("../../../utils/computers/local-engine-request.js");
-      const guestCheck = vi.spyOn(guest, "isGuestChatRequest").mockReturnValue(true);
+      const guestCheck = vi
+        .spyOn(guest, "isGuestOrAnonymousRequest")
+        .mockResolvedValue(true);
       const rollout = await import("../../../utils/computers/browser-rollout.js");
       const resolveRollout = vi.spyOn(rollout, "resolveBrowserRollout").mockResolvedValue({
         enabled: true, actor: { id: "guest-browser-user", guest: true },
