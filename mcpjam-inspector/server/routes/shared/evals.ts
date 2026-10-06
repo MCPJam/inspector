@@ -48,6 +48,7 @@ import {
   runEvalSuiteWithAiSdk,
   runFrozenSkillOptions,
   streamTestCase,
+  throwIfEvalToolSnapshotFailed,
   type EvalPinnedSkillSource,
   type EvalTestCase,
 } from "../../services/evals-runner";
@@ -2627,6 +2628,23 @@ export async function prepareEvalRun(
         logPrefix: "evals",
       },
     );
+  // A benchmark cell still launches: an unreachable target is evidence the
+  // benchmark scores as a failed child run, where a refusal here would leave
+  // the cell unattached and read as a coverage gap.
+  if (provenance.source !== "benchmark") {
+    throwIfEvalToolSnapshotFailed({
+      toolSnapshot,
+      mcpClientManager: clientManager,
+      environment: buildPersistedSuiteEnvironment({
+        resolvedServerIds,
+        persistedServerRefs,
+        serverNames:
+          environmentLaunch && !githubCheckEnvironmentLaunch
+            ? environmentServerNames(environmentLaunch)
+            : serverNames,
+      }),
+    });
+  }
 
   // Persist suite + cases (create or upsert). The suite/case persistence is
   // shared with the author-only public surface; `prepareEvalRun` then starts
@@ -3626,6 +3644,22 @@ export async function prepareSingleCaseExecution(
   let suiteHostConfig = liveHostConfig;
   let environment: PreparedSingleCaseExecution["environment"];
   if (environmentLaunch) {
+    // The commit reserves this case's iterations, so a server that cannot be
+    // listed is refused first, as the suite launch does.
+    const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      { logPrefix: "evals" },
+    );
+    throwIfEvalToolSnapshotFailed({
+      toolSnapshot,
+      mcpClientManager: clientManager,
+      environment: buildPersistedSuiteEnvironment({
+        resolvedServerIds,
+        persistedServerRefs: resolvedServerIds,
+        serverNames: environmentServerNames(environmentLaunch),
+      }),
+    });
     const committed = await commitEnvironmentQuickRun(convexClient, {
       testCaseId,
       testCaseSnapshot: buildQuickRunCommitSnapshot(

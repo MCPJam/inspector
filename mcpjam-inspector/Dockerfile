@@ -208,8 +208,13 @@ COPY --from=production-deps /usr/src/app/mcpjam-inspector/node_modules ./node_mo
 # Build-time egress required: cdn.playwright.dev (browser binary) and the
 # Debian apt mirrors (--with-deps system libs). If the build environment
 # blocks cdn.playwright.dev this step is where it fails — loudly, by design.
+#
+# Calls the CLI by path, not `npx playwright`: `playwright` and the dev-only
+# `@playwright/test` both declare the `playwright` bin, so `npm ci` links
+# `.bin/playwright` to the latter and the production-deps prune deletes that
+# link along with it, leaving `npx` with "playwright: not found".
 USER root
-RUN npx playwright install --with-deps chromium \
+RUN node /usr/src/app/node_modules/playwright/cli.js install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 USER node
 
