@@ -209,6 +209,9 @@ beforeEach(() => {
   vi.setSystemTime(Date.UTC(2026, 8, 1, 12, 0, 0));
   vi.stubEnv("CONVEX_HTTP_URL", "https://revocation-test.convex.site");
   vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+  // A hosted replica: it holds the service credential, so key management is
+  // served here rather than relayed to the hosted app (see api-keys-relay).
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "session-revocation-service-token");
   feed = createRevokedSessionFeed();
   backend.mode = "ok";
   backend.revokeCurrentSession = async (token) => {

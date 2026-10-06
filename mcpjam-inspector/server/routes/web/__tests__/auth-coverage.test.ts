@@ -244,12 +244,16 @@ async function probeResponses(
 
 describe("/api/web — credential-less requests", () => {
   // The sweep is about the HOSTED surface, so it runs as a hosted server does:
-  // holding the service credential. Without it, the hosted-only families
+  // holding the service credential (and the WorkOS admin key). Without it, the hosted-only families
   // (`/score`, `/bench`, `/caniuse`, `/server-connections`) answer the shared
   // hosted-only refusal to everyone before auth runs — asserted in the suite
   // below — and the sweep would test that gate instead of their auth.
   beforeAll(() => {
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "auth-coverage-service-token");
+    // With both of MCPJam's secrets, key management is served here rather
+    // than relayed to the hosted app — the relay would otherwise forward the
+    // sweep's anonymous probes to a real network origin.
+    vi.stubEnv("WORKOS_API_KEY", "sk_auth_coverage_admin");
   });
   afterAll(() => {
     vi.unstubAllEnvs();
