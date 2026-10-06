@@ -176,7 +176,12 @@ export type SandboxIntent =
 export function sandboxIntentFor(
   target: PinnedHostExecutionSpec,
   /** See `targetWantsBrowser`. Defaults to true for callers that cannot say. */
-  hostedBrowserAvailable = true
+  hostedBrowserAvailable = true,
+  /**
+   * The target's harness runs on the launching member's own machine, so it
+   * needs no box of its own (a shell or browser it advertises still might).
+   */
+  harnessRunsLocally = false
 ): SandboxIntent {
   if (!targetWantsSandbox(target, hostedBrowserAvailable)) {
     return { kind: "skip" };
@@ -208,6 +213,15 @@ export function sandboxIntentFor(
         "This environment has no computer image available, so this run has " +
           "no sandbox to execute in.",
     };
+  }
+  // A HARNESS target that pinned nothing, with nothing recorded as unavailable:
+  // it boots the deployment-default template. A harness has to run on a
+  // machine, so the control plane admits this one unpinned case (and only for
+  // a harness target), freezing the default per run. A target whose pin could
+  // not boot carries a reason and was refused just above — it asked for that
+  // image, and must not quietly get the default instead.
+  if (targetWantsHarnessBox(target) && !harnessRunsLocally) {
+    return { kind: "provision", runtimeKind: "terminal" };
   }
   // Pre-B-isolation snapshot: the backend never resolved an image for this
   // target because it did not know how to. Silently skip — announcing "no
