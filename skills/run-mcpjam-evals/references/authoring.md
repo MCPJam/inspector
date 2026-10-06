@@ -45,7 +45,7 @@ Two things worth getting right the first time:
 
 ## Scheduling
 
-`set_eval_suite_schedule` turns on automatic runs and sets `intervalMinutes`. Every scheduled run bills like a manual one — an aggressive interval on a large suite is a standing charge, so say the multiplication out loud before enabling it. Disabling preserves the stored interval and environment pin, so it is reversible.
+Scheduled runs are in beta, so this server has no tool that turns them on; `get_eval_suite` still shows a suite's current `schedule`. If a suite already runs on a schedule, remember that every scheduled run bills like a manual one — an aggressive interval on a large suite is a standing charge.
 
 ## Before running what you just built
 

@@ -232,10 +232,12 @@ jobs:
       - name: Build the pack
         if: needs.plan.outputs.claude_pack_version == ''
         working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
         run: |
           node scripts/build-local-harness-pack.mjs \
             --platform ${{ matrix.platform_key }} \
-            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
             --skip-archive
@@ -477,10 +479,12 @@ jobs:
       - name: Build the pack
         if: needs.plan.outputs.claude_pack_version == ''
         working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
         run: |
           node scripts/build-local-harness-pack.mjs \
             --platform win32-x64 \
-            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
             --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
@@ -669,11 +673,13 @@ jobs:
       - name: Build the Codex pack
         if: needs.plan.outputs.codex_pack_version == ''
         working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
         run: |
           node scripts/build-local-harness-pack.mjs \
             --harness codex \
             --platform ${{ matrix.platform_key }} \
-            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --pack-version "$SOURCE_PACK_VERSION" \
             --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
             --skip-archive

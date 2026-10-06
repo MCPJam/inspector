@@ -13335,7 +13335,7 @@ export const cancelGoalRunOperation: PlatformOperation<
   risk: "destructive",
   title: "Stop a running MCPJam goal run",
   description:
-    "Stop a goal run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+    "Request a stop for a running goal run. Acceptance returns immediately; cleanupPending means its sessions are still being settled in the background. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
   readOnly: false,
   permalink: noPermalink("mutation-only"),
   inputSchema: goalRunSelectorInput,
@@ -13976,7 +13976,7 @@ export const cancelJourneyRunOperation: PlatformOperation<
   risk: "destructive",
   title: "Stop a running MCPJam journey run",
   description:
-    "Stop a journey run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+    "Request a stop for a running journey run. Acceptance returns immediately; cleanupPending means its sessions are still being settled in the background. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
   readOnly: false,
   permalink: noPermalink("mutation-only"),
   inputSchema: journeyRunSelectorInput,
