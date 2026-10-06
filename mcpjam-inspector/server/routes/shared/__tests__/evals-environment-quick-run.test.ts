@@ -423,6 +423,7 @@ describe("environment quick runs", () => {
         "iter-1",
         "iter-2",
       ]);
+      expect(failed.every((row) => row.status === "setup_failed")).toBe(true);
       expect(streamTestCaseMock).not.toHaveBeenCalled();
     });
 
