@@ -188,9 +188,10 @@ describe("fetchXaaDcrAuthorizedTarget", () => {
 describe("ensureXaaDcrRegistration", () => {
   it("fails before registration when persistence infrastructure is unavailable", async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
-    await expect(ensureXaaDcrRegistration(base)).rejects.toThrow(
-      /persistence is not configured/i
-    );
+    await expect(ensureXaaDcrRegistration(base)).rejects.toMatchObject({
+      name: "ServiceCredentialUnavailableError",
+      feature: "XAA client registration",
+    });
     expect(postMock).not.toHaveBeenCalled();
     expect(proxyMock).not.toHaveBeenCalled();
   });

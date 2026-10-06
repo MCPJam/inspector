@@ -27,7 +27,6 @@ export function reportServiceCredentialAtBoot(hosted: boolean): void {
   );
   enforceHostedServiceCredential({
     hosted,
-    onProblem: (message) =>
-      logger.error(`[service-credential] ${message}`),
+    onProblem: (message) => logger.error(`[service-credential] ${message}`),
   });
 }

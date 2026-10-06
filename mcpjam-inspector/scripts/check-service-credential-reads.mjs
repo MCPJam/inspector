@@ -54,41 +54,10 @@ const MODULE = join("server", "services", "service-credential.ts");
  * silently re-permit a read later.
  */
 const ALLOWLIST = new Set([
-  "server/middleware/mcp-egress-rate-limit.ts",
-  "server/routes/internal/agent-turns.ts",
-  "server/routes/shared/eval-authoring.ts",
   "server/routes/v1/agent.ts",
-  "server/routes/v1/evals.ts",
-  "server/routes/web/auth.ts",
-  "server/routes/web/bench.ts",
-  "server/routes/web/caniuse.ts",
-  "server/routes/web/guest-token.ts",
   "server/routes/web/hosted-elicitation.ts",
-  "server/routes/web/score.ts",
-  "server/services/api-keys-relay.ts",
-  "server/services/bench-worker.ts",
-  "server/services/browserd/browser-sessions-client.ts",
-  "server/services/chat-stage/chat-session-stage-backend.ts",
-  "server/services/github-checks/service-route.ts",
-  "server/services/plugins/plugin-runtime-sessions.ts",
-  "server/services/production-checks-worker.ts",
-  "server/services/revoked-session-cache.ts",
-  "server/services/scheduled-evals-worker.ts",
-  "server/services/xaa-dcr.ts",
-  "server/utils/built-in-tools/exa-web-search.ts",
-  "server/utils/computers/control-plane-client.ts",
-  "server/utils/computers/runtime-config.ts",
-  "server/utils/guest-spend-ip.ts",
-  "server/utils/harness/harness-evidence-client.ts",
-  "server/utils/harness/harness-evidence-reader.ts",
-  "server/utils/harness/harness-rpc-log-sink.ts",
-  "server/utils/local-server-resolver.ts",
-  "server/utils/mcp-backpressure.ts",
-  "server/utils/mcpjam-stream-handler.ts",
   "server/utils/org-model-config.ts",
-  "server/utils/server-secrets.ts",
   "server/utils/tool-approval-token.ts",
-  "server/utils/v1-convex-token.ts",
 ]);
 
 const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"];
@@ -151,7 +120,8 @@ function lineOf(source, index) {
 
 function isTestPath(relPath) {
   const parts = relPath.split(sep);
-  if (parts.includes("__tests__") || parts.includes("__fixtures__")) return true;
+  if (parts.includes("__tests__") || parts.includes("__fixtures__"))
+    return true;
   if (parts[0] === "server" && parts[1] === "test") return true;
   const base = parts[parts.length - 1];
   return base.includes(".test.") || base.includes(".spec.");

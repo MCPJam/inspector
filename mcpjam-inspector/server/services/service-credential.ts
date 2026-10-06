@@ -62,6 +62,13 @@ export function hasServiceCredential(env: Env = process.env): boolean {
 }
 
 /**
+ * Human name of the `sk_…` API-key bearer path, shared by every site that
+ * needs the credential to act for a key (validation, delegated-token mint,
+ * acting-as calls) so the hosted-only answer reads the same everywhere.
+ */
+export const WORKOS_API_KEY_FEATURE = "Using an MCPJam API key (sk_…)";
+
+/**
  * Thrown by {@link requireServiceCredential}: this process cannot do `feature`
  * because it holds no service credential — the normal state of every
  * self-hosted build (npx, Docker, desktop), never a bug in the request.
@@ -245,7 +252,11 @@ export const SERVICE_CREDENTIAL_CAPABILITIES: readonly ServiceCredentialCapabili
       label: "Hosted elicitation",
       fallback: "hosted-only",
     },
-    { id: "xaa-dcr", label: "XAA client registration", fallback: "hosted-only" },
+    {
+      id: "xaa-dcr",
+      label: "XAA client registration",
+      fallback: "hosted-only",
+    },
     { id: "agent", label: "Agent endpoint", fallback: "hosted-only" },
     {
       id: "cloud-computers",
@@ -269,7 +280,10 @@ export interface ServiceCredentialReport {
   /** Capabilities that run with full (credentialed) behaviour. */
   on: string[];
   /** Capabilities that keep working without the credential, and how. */
-  degraded: { id: string; via: Exclude<ServiceCredentialFallback, "hosted-only"> }[];
+  degraded: {
+    id: string;
+    via: Exclude<ServiceCredentialFallback, "hosted-only">;
+  }[];
   /** Capabilities that refuse with the hosted-only answer. */
   off: string[];
 }
@@ -326,7 +340,8 @@ export function formatServiceCredentialReport(
         .join(", ")}`,
     );
   }
-  if (report.off.length) parts.push(`OFF (hosted-only): ${report.off.join(", ")}`);
+  if (report.off.length)
+    parts.push(`OFF (hosted-only): ${report.off.join(", ")}`);
   return parts.join("; ");
 }
 
@@ -391,10 +406,9 @@ export function enforceHostedServiceCredential(options: {
     throw new HostedServiceCredentialError(problem);
   }
   options.onProblem(
-    `${new HostedServiceCredentialError(problem).message.replace(
-      "; refusing to start half-configured.",
-      "",
-    ).replace("; refusing to start.", "")} Tool approvals and chat history ` +
+    `${new HostedServiceCredentialError(problem).message
+      .replace("; refusing to start half-configured.", "")
+      .replace("; refusing to start.", "")} Tool approvals and chat history ` +
       "provenance are disabled on this replica. This will fail startup in a " +
       "future release; set MCPJAM_REQUIRE_SERVICE_CREDENTIAL=true to fail now.",
   );

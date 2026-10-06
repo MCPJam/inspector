@@ -31,13 +31,15 @@ describe("getServiceCredential", () => {
 
   it("treats empty and whitespace-only as unset", () => {
     expect(getServiceCredential({ INSPECTOR_SERVICE_TOKEN: "" })).toBeNull();
-    expect(getServiceCredential({ INSPECTOR_SERVICE_TOKEN: " \n\t" })).toBeNull();
+    expect(
+      getServiceCredential({ INSPECTOR_SERVICE_TOKEN: " \n\t" }),
+    ).toBeNull();
   });
 
   it("trims a pasted trailing newline", () => {
-    expect(getServiceCredential({ INSPECTOR_SERVICE_TOKEN: ` ${TOKEN}\n` })).toBe(
-      TOKEN,
-    );
+    expect(
+      getServiceCredential({ INSPECTOR_SERVICE_TOKEN: ` ${TOKEN}\n` }),
+    ).toBe(TOKEN);
   });
 
   it("reads process.env at call time, so vi.stubEnv works per test", () => {
@@ -83,9 +85,9 @@ describe("requireServiceCredential", () => {
 describe("serviceCredentialHeaders", () => {
   it("omits the header entirely when unset — never sends an empty one", () => {
     expect(serviceCredentialHeaders({})).toEqual({});
-    expect(serviceCredentialHeaders({ INSPECTOR_SERVICE_TOKEN: "   " })).toEqual(
-      {},
-    );
+    expect(
+      serviceCredentialHeaders({ INSPECTOR_SERVICE_TOKEN: "   " }),
+    ).toEqual({});
   });
 
   it("sends the trimmed credential when set", () => {

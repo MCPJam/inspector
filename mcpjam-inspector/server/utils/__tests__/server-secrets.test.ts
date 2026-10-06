@@ -108,9 +108,12 @@ describe("fetchRuntimeServerSecrets", () => {
       accessScope: "chat_v2" as const,
     };
     delete process.env.INSPECTOR_SERVICE_TOKEN;
+    // Hosted-only: the typed error the route mapper answers as
+    // FEATURE_REQUIRES_HOSTED, never a 500 that pages someone.
     await expect(fetchRuntimeServerSecrets(args)).rejects.toMatchObject({
-      status: 500,
-      code: "INTERNAL_ERROR",
+      name: "ServiceCredentialUnavailableError",
+      code: "FEATURE_REQUIRES_HOSTED",
+      feature: "Shared scenario secrets",
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
@@ -221,7 +224,10 @@ describe("fetchRuntimeServerSecrets", () => {
         serviceName: "DCR",
         requireInspectorServiceToken: true,
       }),
-    ).rejects.toThrow(/INSPECTOR_SERVICE_TOKEN/);
+    ).rejects.toMatchObject({
+      name: "ServiceCredentialUnavailableError",
+      feature: "XAA client registration",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
 
     process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
