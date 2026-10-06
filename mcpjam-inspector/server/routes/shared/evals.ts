@@ -1435,6 +1435,12 @@ export type PreparedEvalRun = {
    *  on a replay, whatever the existing run actually is. */
   status?: string;
   /**
+   * The server preflight failed and was let through only because an earlier
+   * attempt with the same idempotency key had already started a run. Read it
+   * through {@link shouldSkipExecution}.
+   */
+  serverUnreachable?: boolean;
+  /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
    * terminal run status (completed/failed/cancelled); callers that detach
    * this (the async /api/v1 route) should still catch and defensively
@@ -1452,12 +1458,13 @@ export type PreparedEvalRun = {
 /**
  * Whether a prepared run has already been run and must NOT be executed again.
  *
- * TRUE for exactly one case: the platform replayed an existing run AND that run
- * is terminal. Executing then would re-run every case and bill for it, writing
- * over results that are already final — which is the double-spend an
- * idempotency key is sent to prevent.
+ * TRUE when the platform replayed an existing run AND that run is terminal.
+ * Executing then would re-run every case and bill for it, writing over results
+ * that are already final — which is the double-spend an idempotency key is
+ * sent to prevent.
  *
- * FALSE for a replay of a NON-terminal run, deliberately. Two situations are
+ * FALSE for a replay of a NON-terminal run whose server answered the
+ * preflight, deliberately. Two situations are
  * indistinguishable from here — a run genuinely in flight, and one abandoned
  * when its process died mid-execution — and they want opposite treatments. The
  * conservative answer preserves the behaviour that predates this check, so a
@@ -1474,12 +1481,22 @@ export type PreparedEvalRun = {
  * executed it would run the whole suite a second time and bill for it, against
  * a run whose trials are already recorded — the exact double-spend above, in a
  * status that is deliberately not terminal.
+ *
+ * TRUE for a replay whose server failed the preflight, whatever its status.
+ * Resuming a crashed run is only worth it against a server that answers; this
+ * one could not list its tools, so executing would fail every iteration,
+ * finalize the run as failed, and race the worker that may still be driving
+ * it.
  */
 export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
+  serverUnreachable?: boolean;
 }): boolean {
-  return prepared.deduped === true && isRunPastExecution(prepared.status);
+  return (
+    prepared.deduped === true &&
+    (prepared.serverUnreachable === true || isRunPastExecution(prepared.status))
+  );
 }
 
 /**
@@ -2653,6 +2670,7 @@ export async function prepareEvalRun(
   // A benchmark cell still launches: an unreachable target is evidence the
   // benchmark scores as a failed child run, where a refusal here would leave
   // the cell unattached and read as a coverage gap.
+  let serverUnreachable = false;
   if (provenance.source !== "benchmark") {
     try {
       throwIfEvalToolSnapshotFailed({
@@ -2678,6 +2696,7 @@ export async function prepareEvalRun(
       ) {
         throw refusal;
       }
+      serverUnreachable = true;
     }
   }
 
@@ -3252,6 +3271,7 @@ export async function prepareEvalRun(
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
+    ...(serverUnreachable ? { serverUnreachable } : {}),
     execute,
   };
 }

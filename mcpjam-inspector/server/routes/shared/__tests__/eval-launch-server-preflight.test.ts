@@ -20,7 +20,7 @@ vi.mock("convex/browser", () => ({
   },
 }));
 
-import { prepareEvalRun } from "../evals";
+import { prepareEvalRun, shouldSkipExecution } from "../evals";
 import { WebRouteError } from "../../web/errors";
 
 function manager(args: {
@@ -32,6 +32,7 @@ function manager(args: {
     hasServer: () => true,
     getConnectionStatus: () => args.status,
     listTools: args.listTools,
+    getServerReplayConfigs: () => [],
   };
 }
 
@@ -124,6 +125,33 @@ describe("eval launch server preflight", () => {
           idempotencyKey: "trigger-1",
         }),
       );
+    });
+
+    it("is handed its in-flight run without executing it", async () => {
+      answerLookup(async () => ({ runId: "run-1" }));
+      const lookup = mocks.query.getMockImplementation()!;
+      mocks.query.mockImplementation(async (name: string, args: unknown) =>
+        name === "testSuites:resolveRunPluginServersForExecution"
+          ? { servers: [], unavailable: [], droppedSnapshotServerIds: [] }
+          : lookup(name, args),
+      );
+      mocks.mutation.mockImplementation(async (name: string) =>
+        name === "testSuites:startTestSuiteRun"
+          ? { runId: "run-1", testCases: [], deduped: true, status: "running" }
+          : null,
+      );
+
+      const prepared = await launch(disconnected(), {
+        idempotencyKey: "trigger-1",
+      });
+
+      expect(prepared).toMatchObject({
+        runId: "run-1",
+        deduped: true,
+        status: "running",
+        serverUnreachable: true,
+      });
+      expect(shouldSkipExecution(prepared)).toBe(true);
     });
 
     it("with no run under its key is still refused", async () => {
