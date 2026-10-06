@@ -149,6 +149,7 @@ import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 import { ranTurnSelection } from "./session-model-selection";
+import type { HarnessBox } from "./harness/harness-box.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
   type HarnessMcpProxyStrategy,
@@ -209,6 +210,13 @@ export interface WebChatTurnPersistContext {
   /** Phase 3 execution scope (scenario/host runtime-config). Threaded into the
    *  harness path so the backend re-resolves live access + per-swarm caps. */
   executionScope?: ExecutionScope;
+  /**
+   * The scenario conversation's disposable box, held for this turn. A harness
+   * turn runs on it (`harnessSandboxBinding`), never on the member's personal
+   * computer; and its heartbeat is stopped when the turn's stream completes.
+   * Releasing it leaves the box for the conversation's next turn.
+   */
+  scenarioBox?: Pick<HarnessBox, "binding" | "release">;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
   authenticatedUserId?: string | null;
   /** UI messages from the inbound request — used to stamp `senderUserId`. */
@@ -1178,6 +1186,9 @@ export async function streamWebChatTurn(
     : null;
 
   const cleanupStream = async () => {
+    // The turn is over: its box stops heartbeating (and is left for the
+    // conversation's next turn). Idempotent, and never throws.
+    await persist.scenarioBox?.release();
     // Withdraw pending elicitation rows BEFORE dropping the connections: once
     // the stream is gone nobody can answer, and an abandoned row would stay
     // answerable until its TTL. Disposal is best-effort and must never block
@@ -1730,6 +1741,13 @@ export async function streamWebChatTurn(
     ...(persist.harness ? { harness: persist.harness } : {}),
     ...(persist.harness && persist.harnessExecutionTarget
       ? { harnessExecutionTarget: persist.harnessExecutionTarget }
+      : {}),
+    // The conversation's disposable box. Never alongside a local target:
+    // a local harness runs on the member's machine and is never given one.
+    ...(persist.harness &&
+    persist.scenarioBox &&
+    !persist.harnessExecutionTarget
+      ? { harnessSandboxBinding: persist.scenarioBox.binding }
       : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.
