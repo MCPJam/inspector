@@ -1,3 +1,23 @@
+import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
+import {
+  readOwnedTurnContext,
+  pluginContextReferencesSchema,
+} from "../../services/plugin-host/turn-context.js";
+import { pluginHostBindingDigest } from "../../services/plugin-host/bindings.js";
+import { createModelMrtrAdapter } from "../../services/plugin-host/model-mrtr.js";
+import { parseMrtrChatResumeRequest } from "@/shared/mrtr-continuation";
+import { installedFormClientCapabilities } from "../../services/plugin-host/owned-legacy.js";
+import { chatPluginFormPlan } from "./chat-v2-plugin-forms.js";
+import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
+import { admitPluginWorkspace, assertPluginWorkspaceRuntime } from "../../services/plugin-host/admission.js";
+import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
+import {
+  globalOwnerAdmission,
+  mergePluginContextMessages,
+  withGlobalOwnerFallback,
+} from "./chat-v2-global-owner.js";
+import { toolApprovalSubjectFromAuthHeader } from "../../utils/tool-approval-token.js";
+import { buildHostConnectionPins } from "../../services/host-connection-pins.js";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES } from "../../utils/harness/local/readiness.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
@@ -53,8 +73,6 @@ import {
 } from "../../utils/mrtr-hosted-chat.js";
 import {
   HOSTED_MRTR_VERSION,
-  isMrtrResumeSubmission,
-  type MrtrElicitationResponse,
 } from "@/shared/mrtr-continuation";
 import {
   parseScopeStepUpCancelRequest,
@@ -186,6 +204,10 @@ import {
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
+import {
+  applyPluginExtensionsToClientCapabilities,
+  resolvePluginExtensions,
+} from "@mcpjam/sdk/host-config/internal";
 
 const chatV2 = new Hono();
 
@@ -197,35 +219,7 @@ const chatV2 = new Hono();
  * (ownership, binding, round fence, per-response schema) is re-enforced
  * server-side against the durable record — this only rejects a broken body.
  */
-function parseMrtrResumeRequest(value: unknown): {
-  toolCallId: string;
-  serverId: string;
-  continuationId: string;
-  round: number;
-  responses: Record<string, MrtrElicitationResponse>;
-} | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "object") return null;
-  const v = value as Record<string, unknown>;
-  if (typeof v.toolCallId !== "string" || !v.toolCallId) return null;
-  if (typeof v.serverId !== "string" || !v.serverId) return null;
-  const submissionCandidate = {
-    continuationId: v.continuationId,
-    round: v.round,
-    responses: v.responses,
-  };
-  if (!isMrtrResumeSubmission(submissionCandidate)) return null;
-  return {
-    toolCallId: v.toolCallId,
-    serverId: v.serverId,
-    continuationId: submissionCandidate.continuationId as string,
-    round: submissionCandidate.round as number,
-    responses: submissionCandidate.responses as Record<
-      string,
-      MrtrElicitationResponse
-    >,
-  };
-}
+const parseMrtrResumeRequest = parseMrtrChatResumeRequest;
 
 chatV2.post("/", async (c) => {
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
@@ -1387,6 +1381,65 @@ chatV2.post("/", async (c) => {
       });
     }
 
+    const pluginWorkspace = parsePluginWorkspaceDescriptor(
+      body.pluginWorkspace,
+    );
+    let modelPluginAdmission:
+      | import("../../services/plugin-host/admission.js").PluginWorkspaceAdmission
+      | undefined;
+    let modelPluginBearer: string | undefined;
+    let modelPluginSubject: string | undefined;
+    let modelToolExecutor:
+      | import("../../utils/model-tool-executor.js").ModelToolExecutor
+      | undefined;
+    let modelFormDispatch:
+      | ReturnType<typeof createModelFormDispatch>
+      | undefined;
+    let modelMrtr: ReturnType<typeof createModelMrtrAdapter> | undefined;
+    // The client's OpenAI plugin extensions setting decides whether the OpenAI
+    // form extensions are advertised or handled at all.
+    const pluginExtensions = hostRuntimeConfig
+      ? resolvePluginExtensions(hostRuntimeConfig as Parameters<typeof resolvePluginExtensions>[0])
+      : undefined;
+    // Emulated and Codex harness turns (whose MCP tools run here, in process)
+    // take the same plugin executor; see `chatPluginFormPlan`.
+    const pluginFormPlan =
+      pluginWorkspace && hostRuntimeConfig && !isScenarioSession
+        ? (() => {
+            const pins = buildHostConnectionPins(hostRuntimeConfig as never, WEB_STREAM_TIMEOUT_MS);
+            return chatPluginFormPlan({
+              harness: resolvedExecution.harness,
+              serverIds: effectiveServerIds,
+              pinFor: (id) => pins.mcpProtocolVersionsByServerId?.[id] ?? pins.initializePins?.mcpProtocolVersion,
+              mrtrEnabled,
+              forms: pluginExtensions?.capabilities.forms,
+            });
+          })()
+        : undefined;
+    if (pluginWorkspace && hostRuntimeConfig && pluginFormPlan?.admitted) {
+      assertPluginWorkspaceRuntime({ harness: resolvedExecution.harness, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
+      modelPluginBearer = await getConvexBearerForRequest(c);
+      modelPluginSubject = toolApprovalSubjectFromAuthHeader(c.req.header("authorization"));
+      if (modelPluginSubject === "anonymous") throw new Error("Plugin model identity unavailable");
+      modelPluginAdmission = await admitPluginWorkspace({ descriptor: pluginWorkspace, projectId: hostedBody.projectId, bearer: modelPluginBearer, signal: c.req.raw.signal });
+      const hostId = hostRuntimeConfig.hostId;
+      if (typeof hostId !== "string") throw new Error("Plugin model host unavailable");
+      const { modernServerIds, legacyServerIds: eligibleServerIds } = pluginFormPlan;
+      if (modernServerIds.length) {
+        modelMrtr = createModelMrtrAdapter({ c, admission: modelPluginAdmission, bearer: modelPluginBearer, identity: { actorId: modelPluginAdmission.actorId, projectId: modelPluginAdmission.projectId, workspaceId: modelPluginAdmission.workspaceId, subject: modelPluginSubject }, hostId, hostRevision: pluginHostBindingDigest(hostRuntimeConfig), serverIds: modernServerIds, modelVisibleMcpToolResults });
+        modelToolExecutor = modelMrtr.execute;
+      }
+      // All of the turn's servers or none (shared connection capabilities).
+      if (eligibleServerIds.length) {
+        modelFormDispatch = createModelFormDispatch(eligibleServerIds);
+        modelToolExecutor = createModelFormExecutor({
+          c, admission: modelPluginAdmission, bearer: modelPluginBearer,
+          identity: { actorId: modelPluginAdmission.actorId, projectId: modelPluginAdmission.projectId, workspaceId: modelPluginAdmission.workspaceId, subject: modelPluginSubject },
+          hostId, hostRevision: pluginHostBindingDigest(hostRuntimeConfig), serverIds: effectiveServerIds, eligibleServerIds, dispatch: modelFormDispatch,
+        });
+      }
+    }
+
     // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)
@@ -1404,9 +1457,17 @@ chatV2.post("/", async (c) => {
       hostedBody.oauthTokens,
       // Scenario: advertise the HOST's capabilities, not the body's, so the
       // wire matches what we're prepared to honor.
-      effectiveClientCapabilities,
+      // OpenAI form extensions are claimed only with a handler installed.
+      installedFormClientCapabilities(
+        effectiveClientCapabilities && pluginExtensions
+          ? applyPluginExtensionsToClientCapabilities(effectiveClientCapabilities, pluginExtensions)
+          : effectiveClientCapabilities,
+        { ...(modelFormDispatch ? { legacy: { binding: modelFormDispatch.handlers } } : {}), mrtr: !!modelMrtr },
+        pluginExtensions?.capabilities.forms,
+      ),
       {
         multiConnection: true,
+        ...(modelFormDispatch ? { extensionRequestHandlers: modelFormDispatch.handlers } : {}),
         ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
         scenarioId,
         accessVersion,
@@ -1432,7 +1493,7 @@ chatV2.post("/", async (c) => {
         ...(mrtrBridge
           ? {
               mrtrInputCollectorForServer:
-                mrtrBridge.mrtrInputCollectorForServer,
+                (serverId: string) => modelMrtr?.collectorForServer(serverId) ?? mrtrBridge.mrtrInputCollectorForServer(serverId),
             }
           : {}),
         // Same scope the bash tool reserves under, so a plugin's stdio
@@ -1458,7 +1519,16 @@ chatV2.post("/", async (c) => {
     // the first model call and splices the result. `resolve` closes over the
     // freshly-authorized manager for the bound server.
     const mrtrEngineResume: MrtrEngineResume | undefined =
-      mrtrResumeRequest && convexBearer
+      mrtrResumeRequest?.owned
+        ? {
+            toolCallId: mrtrResumeRequest.toolCallId,
+            resolve: async (emit) => {
+              if (!modelMrtr) throw new Error("Original model continuation unavailable");
+              modelMrtr.attachStreamWriter({ write: emit });
+              return modelMrtr.resume(mrtrResumeRequest.owned!, mrtrResumeRequest.owned!.submission, mrtrResumeRequest.serverId);
+            },
+          }
+        : mrtrResumeRequest && convexBearer
         ? {
             toolCallId: mrtrResumeRequest.toolCallId,
             resolve: (emit) =>
@@ -1481,7 +1551,7 @@ chatV2.post("/", async (c) => {
                 submission: {
                   continuationId: mrtrResumeRequest.continuationId,
                   round: mrtrResumeRequest.round,
-                  responses: mrtrResumeRequest.responses,
+                  responses: mrtrResumeRequest.responses!,
                 },
                 authPrincipal: mrtrAuthPrincipal,
                 ...(modelVisibleMcpToolResults
@@ -2113,9 +2183,68 @@ chatV2.post("/", async (c) => {
           : {}),
       });
 
+      const contextReferences = pluginContextReferencesSchema.parse(
+        body.pluginContextReferences ?? [],
+      );
+      const globalContextReferences = pluginContextReferencesSchema.parse(
+        body.pluginGlobalContextReferences ?? [],
+      );
+      // Global Apps live in their own workspace and bind to this chat's turn.
+      const globalPluginAdmission = globalOwnerAdmission(
+        modelPluginAdmission,
+        body.pluginGlobalWorkspace,
+      );
+      if (
+        (contextReferences.length || globalContextReferences.length) &&
+        (!modelPluginAdmission || !modelPluginBearer || !modelPluginSubject)
+      )
+        throw new Error("App context unavailable for this chat");
+      const readTurnContext = (
+        references: string[],
+        admission: NonNullable<typeof modelPluginAdmission>,
+      ) =>
+        readOwnedTurnContext({
+          c,
+          references,
+          admission,
+          bearer: modelPluginBearer!,
+          actor: {
+            actorId: admission.actorId,
+            projectId: admission.projectId,
+            workspaceId: admission.workspaceId,
+            subject: modelPluginSubject!,
+          },
+        });
+      const pluginContext = mergePluginContextMessages(
+        contextReferences.length
+          ? await readTurnContext(contextReferences, modelPluginAdmission!)
+          : undefined,
+        globalContextReferences.length && globalPluginAdmission
+          ? await readTurnContext(globalContextReferences, globalPluginAdmission)
+          : undefined,
+      );
+      const appMessages = await withGlobalOwnerFallback(
+        (admission) =>
+          preparePluginMessageTurn({
+            c,
+            intent: body.pluginMessage,
+            messages: messages as import("ai").UIMessage[],
+            hostId:
+              typeof hostRuntimeConfig?.hostId === "string"
+                ? hostRuntimeConfig.hostId
+                : undefined,
+            serverIds: effectiveServerIds,
+            threadId: body.chatSessionId,
+            admission,
+            bearer: modelPluginBearer,
+          }),
+        modelPluginAdmission,
+        body.pluginMessage === undefined ? undefined : globalPluginAdmission,
+      );
       return await streamWebChatTurn({
         manager,
         prepare: {
+          ...(modelToolExecutor ? { modelToolExecutor } : {}),
           selectedServerIds: effectiveServerIds,
           modelDefinition,
           ...(routingSelection ? { routingSelection } : {}),
@@ -2147,7 +2276,8 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           customProviders: body.customProviders,
-          uiMessages: messages,
+          uiMessages: appMessages,
+          ...(pluginContext ? { pluginContext } : {}),
           ...(resolvedExecution.harness
             ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
@@ -2348,6 +2478,7 @@ chatV2.post("/", async (c) => {
           ...(sandboxNotices ? { sandboxNotices } : {}),
           ...(ackSandboxNotices ? { ackSandboxNotices } : {}),
           ...(mrtrBridge ? { mrtrBridge } : {}),
+          ...(modelMrtr ? { modelFormBridge: modelMrtr } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
           ...(scopeStepUpEnabled && convexBearer
