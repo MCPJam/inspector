@@ -29,7 +29,7 @@ import { setRuntimeProbeForTests } from "../runtime-probe.js";
 import { setRuntimeMetricsSinkForTests } from "../runtime-metrics.js";
 import { LAUNCH_FAILURE_THRESHOLD } from "../runtime-health.js";
 import { buildDoctorReport, redactDoctorReport, renderDoctorReport, suggestRepairs } from "../runtime-doctor.js";
-import { describeInstallerNetwork, installerFetch, redactProxyUrl } from "../runtime-fetch.js";
+import { describeInstallerNetwork, installerFetch, proxySettings, redactProxyUrl } from "../runtime-fetch.js";
 import { localPackTarget } from "../targets.js";
 
 const TARGET = localPackTarget()!;
@@ -239,6 +239,17 @@ describe("installing behind a proxy", () => {
       direct.closeAllConnections?.();
       await new Promise((r) => direct.close(() => r(undefined)));
     }
+  });
+
+  it("does not let an empty lowercase variable switch the proxy off", () => {
+    // undici reads `https_proxy` first with `??`, so `https_proxy=""` beside
+    // a real HTTPS_PROXY meant no proxy at all; this resolves it explicitly.
+    expect(proxySettings({ https_proxy: "", HTTPS_PROXY: "http://proxy.corp:3128", no_proxy: "", NO_PROXY: "localhost" })).toEqual({
+      httpsProxy: "http://proxy.corp:3128",
+      httpProxy: null,
+      noProxy: "localhost",
+    });
+    expect(proxySettings({ https_proxy: "http://lower:1", HTTPS_PROXY: "http://upper:2" }).httpsProxy).toBe("http://lower:1");
   });
 
   it("reports the proxy and CA settings without the proxy's credentials", () => {

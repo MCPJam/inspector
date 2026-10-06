@@ -147,3 +147,21 @@ describe("a turn never waits on a download it does not need", () => {
     expect(mocks.grant).not.toHaveBeenCalled();
   });
 });
+
+describe("an update never widens permissions (invariant 3)", () => {
+  it("re-mints the grant for the new runtime at the SAME profile and policy, under the existing authorization", async () => {
+    const { authorizeLocalHarness } = await import("../authorization.js");
+    mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime/1.0.0", packVersion: "1.0.0", digest: "sha256:old", role: "desired" });
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    const before = mocks.grant.mock.calls.at(-1)![0];
+    mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime/1.0.1", packVersion: "1.0.1", digest: "sha256:new", role: "desired" });
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    const after = mocks.grant.mock.calls.at(-1)![0];
+    expect(after.permissionProfile).toBe(before.permissionProfile);
+    expect(after.policyVersion).toBe(before.policyVersion);
+    expect(after.scope).toBe(before.scope);
+    expect(after.workspaceGrantId).toBe(before.workspaceGrantId);
+    // No new consent was recorded: the durable authorization carries over.
+    expect(authorizeLocalHarness).not.toHaveBeenCalled();
+  });
+});

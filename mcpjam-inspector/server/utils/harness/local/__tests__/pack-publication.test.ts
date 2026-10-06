@@ -334,3 +334,49 @@ describe("the pipeline's paper trail", () => {
     expect(equivalence.body).toMatch(/changes no bytes any user downloads/);
   });
 });
+
+describe("a re-run after a failure at each stage adopts the same version", () => {
+  // What exists after the pipeline stopped at each stage, for inputs fp(2)
+  // whose next version is 1.0.2, and what the re-run then does. Every row
+  // lands on 1.0.2: nothing is rebuilt that exists, nothing is minted twice.
+  const fingerprint = fp(2);
+  const rows: Array<[string, Array<ReturnType<typeof release>>, string]> = [
+    ["the build (nothing uploaded)", [release("1.0.1", fp(1))], "build"],
+    ["signing or upload (no release yet)", [release("1.0.1", fp(1))], "build"],
+    ["between upload and publish (a complete draft)", [release("1.0.1", fp(1)), release("1.0.2", fingerprint, { draft: true })], "finish-draft"],
+    ["conformance (published, not pinned)", [release("1.0.1", fp(1)), release("1.0.2", fingerprint)], "adopt"],
+    ["the pin PR (published, not pinned)", [release("1.0.1", fp(1)), release("1.0.2", fingerprint)], "adopt"],
+  ];
+  it.each(rows)("stopped at %s", (_stage, releases, action) => {
+    expect(decidePublication({ fingerprint, pinned, equivalences: [], releases })).toMatchObject({ action, version: "1.0.2" });
+  });
+
+  it("once the pin PR merges, the re-run has nothing to do", () => {
+    const merged = { version: "1.0.2", digests: digests(2), fingerprint };
+    expect(decidePublication({ fingerprint, pinned: merged, equivalences: [], releases: [release("1.0.2", fingerprint)] }).action).toBe("up-to-date");
+  });
+});
+
+describe("a workflow-only change publishes nothing, and the release passes on the equivalence", () => {
+  it("is equivalent after the build, then up-to-date, then accepted by the gate on every target", () => {
+    const changedInputs = fp(7);
+    expect(decideAfterBuild({ built: digests(1), pinned })).toEqual({ action: "equivalent", version: "1.0.1" });
+    const record = { harnessId: "codex", fingerprint: changedInputs, packVersion: "1.0.1", digests: digests(1) };
+    expect(decidePublication({ fingerprint: changedInputs, pinned, equivalences: [record], releases: [release("1.0.1", fp(1))] }).action).toBe(
+      "up-to-date",
+    );
+    for (const [target, treeDigest] of Object.entries(digests(1))) {
+      expect(
+        fingerprintAcceptance({
+          harnessId: "codex",
+          target,
+          ref: { packVersion: "1.0.1", treeDigest },
+          manifestFingerprint: fp(1),
+          expectedFingerprint: changedInputs,
+          equivalences: [record],
+        }),
+      ).toMatchObject({ kind: "equivalent" });
+    }
+  });
+});
+

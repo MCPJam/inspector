@@ -15,15 +15,37 @@
  */
 import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 
-const PROXY_VARS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] as const;
-
-/** The proxy URL in effect, if any (credentials included — redact before showing). */
-export function configuredProxy(env: NodeJS.ProcessEnv = process.env): string | null {
-  for (const name of PROXY_VARS) {
+/**
+ * The first NON-EMPTY of the named variables. Lowercase first, as curl and
+ * undici order them — but an empty value does not count: undici reads
+ * `https_proxy` with `??`, so an empty `https_proxy=""` beside a real
+ * `HTTPS_PROXY` silently meant "no proxy" and every request went direct.
+ */
+function firstSet(env: NodeJS.ProcessEnv, names: readonly string[]): string | null {
+  for (const name of names) {
     const value = env[name]?.trim();
     if (value) return value;
   }
   return null;
+}
+
+/** The proxy settings in effect, resolved once here and handed to undici explicitly. */
+export function proxySettings(env: NodeJS.ProcessEnv = process.env): {
+  httpsProxy: string | null;
+  httpProxy: string | null;
+  noProxy: string | null;
+} {
+  return {
+    httpsProxy: firstSet(env, ["https_proxy", "HTTPS_PROXY"]),
+    httpProxy: firstSet(env, ["http_proxy", "HTTP_PROXY"]),
+    noProxy: firstSet(env, ["no_proxy", "NO_PROXY"]),
+  };
+}
+
+/** The proxy URL in effect, if any (credentials included — redact before showing). */
+export function configuredProxy(env: NodeJS.ProcessEnv = process.env): string | null {
+  const settings = proxySettings(env);
+  return settings.httpsProxy ?? settings.httpProxy;
 }
 
 /** A proxy URL fit to print: user and password removed. */
@@ -49,7 +71,7 @@ export function describeInstallerNetwork(env: NodeJS.ProcessEnv = process.env): 
 } {
   return {
     proxy: redactProxyUrl(configuredProxy(env)),
-    noProxy: env.NO_PROXY?.trim() || env.no_proxy?.trim() || null,
+    noProxy: proxySettings(env).noProxy,
     extraCaCerts: env.NODE_EXTRA_CA_CERTS?.trim() || null,
   };
 }
@@ -59,11 +81,17 @@ let agentFor: string | null = null;
 
 /** `fetch`, through the environment's proxy when one is configured. */
 export function installerFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const proxy = configuredProxy();
-  if (proxy === null) return fetch(url, init);
-  if (agent === null || agentFor !== proxy) {
-    agent = new EnvHttpProxyAgent();
-    agentFor = proxy;
+  const settings = proxySettings();
+  if (settings.httpsProxy === null && settings.httpProxy === null) return fetch(url, init);
+  const key = JSON.stringify(settings);
+  if (agent === null || agentFor !== key) {
+    // Explicit, never left to undici's own environment reading (see firstSet).
+    agent = new EnvHttpProxyAgent({
+      ...(settings.httpsProxy ? { httpsProxy: settings.httpsProxy } : {}),
+      ...(settings.httpProxy ? { httpProxy: settings.httpProxy } : {}),
+      noProxy: settings.noProxy ?? "",
+    });
+    agentFor = key;
   }
   return undiciFetch(url, { ...(init as object), dispatcher: agent } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
 }

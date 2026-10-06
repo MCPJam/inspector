@@ -416,6 +416,24 @@ enforced in code, not by convention.
    `chooseRuntime` skips it). It never replays a turn that may already have
    changed files: nothing in the launch path retries a turn.
 
+Where each failure path is proven (the plan's acceptance tests):
+
+| Failure path                                                          | Test                                                                 |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Download cut off mid-way; active runtime usable; clean retry          | `runtime-acceptance.test.ts`                                         |
+| Disk exhausted → stage `disk-space`; candidate fails its probe        | `runtime-updates.test.ts` (install and update failures)              |
+| Crash between activation's renames is recovered                       | `runtime-updates.test.ts`, `runtime-install.test.ts`                 |
+| Bad activation rolls back to the permitted pack; no replay            | `runtime-updates.test.ts` (rollback)                                 |
+| Two Inspector versions on one root; GC deletes neither's packs        | `runtime-updates.test.ts` (cleanup), with a real second process      |
+| Revoked digest never selected, not even as a fallback                 | `runtime-updates.test.ts` (revocation), `runtime-selection.test.ts`  |
+| An update never widens permission scope                               | `readiness.test.ts`                                                  |
+| Tampered layer or pack file fails closed before exec                  | `inspector-layer.test.ts`, `runtime-identity.test.ts`                |
+| A session running during activation and GC keeps its tree             | `runtime-updates.test.ts` (cleanup)                                  |
+| Publication re-run after each stage adopts the same version           | `pack-publication.test.ts`                                           |
+| Workflow-only change publishes nothing; release passes on equivalence | `pack-publication.test.ts`                                           |
+| Install behind a CONNECT proxy with a custom CA                       | `runtime-acceptance.test.ts` (fresh process, `NODE_EXTRA_CA_CERTS`)  |
+| `--from` pre-provisioning with no network; `doctor --export` redacted | `runtime-supportability.test.ts`                                     |
+
 The layer lives at `<runtimeRoot>/inspector-layer/<digest>/`: content-addressed
 (two Inspector versions with different bridges get two directories), read-only,
 outside every session root, and named in every session's denied roots
