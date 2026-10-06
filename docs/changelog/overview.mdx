@@ -11,6 +11,10 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-10-06
 
+#### Changed
+
+- **A swarm harness target with no pinned computer image now runs on the deployment's default template** — previously, a swarm target configured with a harness (Claude Code or Codex) but no pinned computer environment was refused before its first session. It now receives a disposable terminal box on the deployment's default template; the control plane picks and freezes the image per run. Two cases are unchanged: a target whose pinned image **cannot boot** (for example, a personal draft) is still refused at launch with a message naming the fix — it asked for that image and does not fall back silently; and a bash-only target with no pinned image continues to run without a shell.
+
 #### Added
 
 - **Rerun a finished eval run's failed cases** — from the run detail page, the CLI (`mcpjam cloud eval rerun <run-id> --failed`), or the SDK (`rerunEvalRun`, `getEvalRunRerunPreview`), you can now start a new run that covers only the cases that did not pass. Add `--dry-run` to the CLI command to preview which cases would rerun and why without spending anything. The new run records `rerunOfRunId` and `rerunScope`; because it ran only a subset, it is never used as the suite's latest run, a trend point, or a comparison baseline.
