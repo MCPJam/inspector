@@ -75,7 +75,7 @@ test("does nothing when nothing is staged", () => {
   assert.match(result.stdout, /nothing staged/);
 });
 
-test("creates the PR once, then force-updates the same branch and edits the same PR", () => {
+test("a different pin force-updates the branch but never inherits the old PR's approval", () => {
   writeFileSync(join(work, "pin.json"), '{"v":2}\n');
   git(work, "add", "pin.json");
   const first = run(text("pin codex pack 1.0.2"));
@@ -92,7 +92,26 @@ test("creates the PR once, then force-updates the same branch and edits the same
   assert.equal(git(origin, "rev-list", "--count", "main..bot/local-harness-pack-codex"), "1");
 
   const calls = readFileSync(log, "utf8").trim().split("\n");
-  assert.equal(calls.filter((call) => call.startsWith("pr create")).length, 1);
-  assert.ok(calls.some((call) => call.startsWith("pr edit 41 --title pin codex pack 1.0.3")));
-  assert.equal(calls.filter((call) => call.startsWith("pr merge") && call.includes("--auto")).length, 2);
+  // The approved 1.0.2 PR is disarmed and closed before the push; 1.0.3 is a
+  // new PR that needs its own approval.
+  const disarm = calls.findIndex((call) => call.startsWith("pr merge 41 --disable-auto"));
+  const close = calls.findIndex((call) => call.startsWith("pr close 41"));
+  assert.ok(disarm >= 0 && close > disarm, calls.join("\n"));
+  assert.equal(calls.filter((call) => call.startsWith("pr create")).length, 2);
+  assert.ok(!calls.some((call) => call.startsWith("pr edit 41")));
+  assert.equal(calls.filter((call) => call.startsWith("pr merge") && call.includes("--auto") && !call.includes("--disable-auto")).length, 2);
+});
+
+test("a re-run with the same pin keeps the open PR and its approval", () => {
+  writeFileSync(log, "");
+  git(work, "switch", "-q", "main");
+  writeFileSync(join(work, "pin.json"), '{"v":3}\n');
+  git(work, "add", "pin.json");
+  const rerun = run(text("pin codex pack 1.0.3"), { existing: "42" });
+  assert.equal(rerun.status, 0, rerun.stderr);
+
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.ok(calls.some((call) => call.startsWith("pr edit 42 --title pin codex pack 1.0.3")), calls.join("\n"));
+  assert.ok(!calls.some((call) => call.startsWith("pr close")));
+  assert.ok(!calls.some((call) => call.startsWith("pr create")));
 });
