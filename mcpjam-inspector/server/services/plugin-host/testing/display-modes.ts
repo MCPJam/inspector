@@ -24,7 +24,7 @@ export async function createDisplayModesFixture() {
   for (const [name, variant] of Object.entries(cases)) {
     const guest = await build({
       stdin: {
-        resolveDir: fileURLToPath(new URL("../../../../", import.meta.url)),
+        resolveDir: fileURLToPath(new URL(".", import.meta.url)),
         loader: "ts",
         contents: `import { App } from "@modelcontextprotocol/ext-apps";
 const app = new App({name:"display-${name}",version:"1"},{availableDisplayModes:${JSON.stringify(
