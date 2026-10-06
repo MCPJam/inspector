@@ -859,30 +859,6 @@ export function useEvalHandlers({
         }
       }
 
-      if (
-        isEnvironmentSuite &&
-        projectId &&
-        !isHostedMode() &&
-        ensureServersReady != null
-      ) {
-        const blocked = await ensureLocalEnvironmentServers({
-          convex,
-          projectId,
-          environmentIds: suite.environmentIds ?? [],
-          ensureServersReady,
-        });
-        if (blocked) {
-          const message = formatEnsureServersReadyError(
-            blocked,
-            "run this suite",
-            projectServers,
-          );
-          if (options?.stayOnPage) throw new Error(message);
-          toast.error(message);
-          return;
-        }
-      }
-
       const executionContext = await getSuiteExecutionContext(suite);
       if (!executionContext) {
         if (options?.stayOnPage)
