@@ -411,6 +411,9 @@ export function createPluginRequestRuntime(
     // negotiates its era at connect (`auto`): both handlers are installed
     // before connect, the legacy claim is withheld again on a 2026 era
     // (`legacyClaim`), and the negotiated era selects which service answers.
+    // The standard `elicitation.form` claim is the MRTR collector's: the SDK
+    // keeps it off a 2025 `initialize` (no standard `elicitation/create`
+    // handler is installed here) and advertises it once the era is modern.
     const formsMode =
       options.ownedForms === false || !extensions.capabilities.forms
         ? ("none" as const)
