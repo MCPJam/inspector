@@ -1,0 +1,385 @@
+# The publication pipeline for ONE harness's runtime pack, end to end:
+#
+#   plan → build/adopt/finish-draft → conformance → pin PR
+#                   ↘ equivalent → equivalence record PR
+#
+# Called by `local-harness-pack-auto.yml` on every push to main that can move a
+# pack input, and on dispatch — one run per harness at a time, never cancelled.
+#
+# RESUMABLE BY CONSTRUCTION. Nothing here remembers anything: every run
+# re-derives its plan from what exists, keyed by (harness, inputs fingerprint)
+# — see `scripts/local-harness-publication.mjs`:
+#
+#   up-to-date    the pinned pack was built from these inputs, or an
+#                 equivalence record says a rebuild reproduced it. Nothing runs.
+#   adopt         a release from these inputs is already published (an earlier
+#                 run stopped after publishing): conformance, then the pin PR.
+#   finish-draft  a complete draft from these inputs exists (an earlier run
+#                 stopped between upload and release): finish it, then as adopt.
+#   build         build every target. A rebuild that reproduces the pinned tree
+#                 digests publishes nothing and records an attested
+#                 equivalence; anything else publishes the next patch version.
+#
+# So a failure at any stage is resumed by running the same thing again
+# (`gh workflow run local-harness-pack-auto.yml -f harness=<id>`), and the
+# `report` job says exactly that in the harness's failure issue.
+#
+# What reaches users is only ever the PIN PR: a pack is selectable once the PR
+# recording its digests merges, and that PR is reviewed (the approval rule on
+# main is the one human gate; the signing environment needs no reviewer).
+#
+# This file is NOT a pack input: it decides when packs are built, not what is
+# in them. `local-harness-pack.yml` is, and is what it calls to build.
+name: Local harness pack pipeline
+
+on:
+  workflow_call:
+    inputs:
+      harness:
+        description: Harness whose pack to publish (a recipe in scripts/local-harness-pack-recipes/).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: plan ${{ inputs.harness }}
+    runs-on: ubuntu-latest
+    # `contents: write` only so the release listing INCLUDES DRAFTS: GitHub
+    # shows drafts to push-capable tokens alone, and a plan that cannot see the
+    # draft a failed publish left behind re-plans the same version, rebuilds
+    # it, and then fails at publish on that draft — forever. Nothing here
+    # writes; the one PATCH (`finish-draft`) runs in the pack workflow.
+    permissions:
+      contents: write
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      version: ${{ steps.plan.outputs.version }}
+      fingerprint: ${{ steps.plan.outputs.fingerprint }}
+      pinned_version: ${{ steps.plan.outputs.pinned_version }}
+      pinned_digests: ${{ steps.plan.outputs.pinned_digests }}
+      # The conformance workflow takes one version input per harness.
+      claude_version: ${{ inputs.harness == 'claude-code' && steps.plan.outputs.version || '' }}
+      codex_version: ${{ inputs.harness == 'codex' && steps.plan.outputs.version || '' }}
+      claude_previous: ${{ inputs.harness == 'claude-code' && steps.plan.outputs.pinned_version || '' }}
+      codex_previous: ${{ inputs.harness == 'codex' && steps.plan.outputs.pinned_version || '' }}
+    steps:
+      - name: Enforce main
+        env:
+          HARNESS: ${{ inputs.harness }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "Pack publication runs from main only" >&2; exit 1; fi
+          echo "$HARNESS" | grep -Eq '^[a-z][a-z0-9-]{0,63}$' || { echo "not a harness id: $HARNESS" >&2; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+
+      # Builtins only: the fingerprint reads files and the lockfile, and the
+      # release listing is the REST API. No install, so planning is cheap and
+      # an up-to-date push costs one small job.
+      - name: Decide
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HARNESS: ${{ inputs.harness }}
+        run: |
+          set -euo pipefail
+          node mcpjam-inspector/scripts/local-harness-publication.mjs plan --harness "$HARNESS" | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "### ${HARNESS} pack: $(grep '^action=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
+            echo
+            echo "$(grep '^reason=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Build (or finish a draft of) the planned version. The pack workflow is
+  # itself resumable at one version: it adopts a release from these inputs,
+  # finishes a complete draft, and never overwrites anything else.
+  pack:
+    needs: plan
+    if: needs.plan.outputs.action == 'build' || needs.plan.outputs.action == 'finish-draft'
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/local-harness-pack.yml
+    with:
+      harness: ${{ inputs.harness }}
+      pack_version: ${{ needs.plan.outputs.version }}
+      publish: unless-equivalent
+    secrets: inherit
+
+  # A rebuild that reproduced the pinned pack on every target: record that,
+  # attested, so the release gate can accept the new fingerprint for the
+  # unchanged bytes. Nothing is published; no user downloads anything.
+  equivalence:
+    needs: [plan, pack]
+    if: needs.pack.outputs.equivalent == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      # No credential persisted into the checkout: `npm ci` runs next, and an
+      # install script must not find a push token in the git config. The bot
+      # PR step authenticates git itself, from its own GH_TOKEN.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+
+      # `--write` refuses a drifted install, so the recorded fingerprint is the
+      # one a clean install computes.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+
+      - name: Write the equivalence record
+        id: record
+        working-directory: mcpjam-inspector
+        env:
+          HARNESS: ${{ inputs.harness }}
+          FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
+          BUILT_FROM: ${{ needs.pack.outputs.fingerprint }}
+          PINNED: ${{ needs.plan.outputs.pinned_version }}
+          DIGESTS: ${{ needs.pack.outputs.flat }}
+        run: |
+          set -euo pipefail
+          if [ "$FINGERPRINT" != "$BUILT_FROM" ]; then echo "planned $FINGERPRINT but built $BUILT_FROM" >&2; exit 1; fi
+          name="$(node --input-type=module -e 'import { equivalenceFileName } from "./scripts/local-harness-publication.mjs"; process.stdout.write(equivalenceFileName(process.env.HARNESS, process.env.FINGERPRINT))')"
+          file="scripts/local-harness-pack-equivalence/$name"
+          node scripts/local-harness-publication.mjs equivalence --harness "$HARNESS" \
+            --fingerprint "$FINGERPRINT" --version "$PINNED" --digests "$DIGESTS" --out "$file"
+          node scripts/check-local-harness-inputs.mjs --write --harness "$HARNESS"
+          echo "file=mcpjam-inspector/$file" >> "$GITHUB_OUTPUT"
+
+      # The record's bytes are attested exactly as committed: the release gate
+      # runs `gh attestation verify` on the file in the repository.
+      - name: Attest the equivalence record
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: ${{ steps.record.outputs.file }}
+
+      - name: Open or refresh the PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          HARNESS: ${{ inputs.harness }}
+          FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
+          PINNED: ${{ needs.plan.outputs.pinned_version }}
+          RECORD: ${{ steps.record.outputs.file }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          text="$(node mcpjam-inspector/scripts/local-harness-publication.mjs pr-text --harness "$HARNESS" \
+            --kind equivalence --previous "$PINNED" --fingerprint "$FINGERPRINT" --run "$RUN_URL")"
+          git add "$RECORD" mcpjam-inspector/server/utils/harness/local/pack-inputs.generated.json
+          bash .github/scripts/local-harness-bot-pr.sh "$text"
+
+  # This commit's Inspector layer against the pack about to be pinned, on every
+  # target. The pack is published but selected by nothing yet, so it is named
+  # as a CANDIDATE: accepted because its signed manifest carries this
+  # checkout's own inputs fingerprint.
+  candidate-conformance:
+    needs: [plan, pack]
+    if: |
+      always() && needs.plan.result == 'success' &&
+      (needs.plan.outputs.action == 'build' || needs.plan.outputs.action == 'adopt' || needs.plan.outputs.action == 'finish-draft') &&
+      (needs.pack.result == 'success' || needs.pack.result == 'skipped') &&
+      needs.pack.outputs.equivalent != 'true'
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.plan.outputs.claude_version }}
+      codex_published_pack_version: ${{ needs.plan.outputs.codex_version }}
+      harnesses: ${{ inputs.harness }}
+      candidate: true
+
+  # The pack being replaced, against the same layer: a pass keeps it selectable
+  # as the one permitted previous pack (the fallback while an update is in
+  # flight). A failure here is not a pipeline failure — the pin goes ahead
+  # without a permitted previous, and the PR says so.
+  previous-conformance:
+    needs: [plan, pack]
+    if: |
+      always() && needs.plan.result == 'success' && needs.plan.outputs.pinned_version != '' &&
+      (needs.plan.outputs.action == 'build' || needs.plan.outputs.action == 'adopt' || needs.plan.outputs.action == 'finish-draft') &&
+      (needs.pack.result == 'success' || needs.pack.result == 'skipped') &&
+      needs.pack.outputs.equivalent != 'true'
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.plan.outputs.claude_previous }}
+      codex_published_pack_version: ${{ needs.plan.outputs.codex_previous }}
+      harnesses: ${{ inputs.harness }}
+
+  pin:
+    name: pin PR
+    needs: [plan, pack, candidate-conformance, previous-conformance]
+    if: |
+      always() && needs.candidate-conformance.result == 'success' &&
+      (needs.pack.result == 'success' || needs.pack.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      # No credential persisted into the checkout: `npm ci` runs next, and an
+      # install script must not find a push token in the git config. The bot
+      # PR step authenticates git itself, from its own GH_TOKEN.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+
+      - name: Collect this run's conformance evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: conformance-evidence-${{ inputs.harness }}-*
+          path: ${{ runner.temp }}/evidence
+          merge-multiple: true
+
+      # The digests come from the PUBLISHED release's signed manifests — the
+      # same for a fresh build, an adopted release and a finished draft.
+      - name: The published pack's digests
+        id: published
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HARNESS: ${{ inputs.harness }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          node mcpjam-inspector/scripts/local-harness-publication.mjs digests --harness "$HARNESS" --version "$VERSION" | tee -a "$GITHUB_OUTPUT"
+          built="$(grep '^fingerprint=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
+          if [ "$built" != "$FINGERPRINT" ]; then echo "$HARNESS $VERSION was built from $built, not $FINGERPRINT" >&2; exit 1; fi
+
+      # Not just "the job passed": a record per advertised target, for exactly
+      # this tree, from this commit.
+      - name: Conformance covers every advertised target
+        working-directory: mcpjam-inspector
+        env:
+          HARNESS: ${{ inputs.harness }}
+          DIGESTS: ${{ steps.published.outputs.digests }}
+          EVIDENCE: ${{ runner.temp }}/evidence
+        run: |
+          set -euo pipefail
+          result="$(node scripts/local-harness-publication.mjs evidence --harness "$HARNESS" --digests "$DIGESTS" --dir "$EVIDENCE")"
+          echo "$result"
+          grep -q '^covered=true$' <<<"$result" || { echo "no conformance evidence for: $(grep '^missing=' <<<"$result" | cut -d= -f2-)" >&2; exit 1; }
+
+      # The previous pack stays selectable only if the layer passed on it on
+      # every advertised target AND its provenance verifies — a pack published
+      # before provenance existed is not carried forward.
+      - name: May the previous pack stay selectable?
+        id: previous
+        working-directory: mcpjam-inspector
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          HARNESS: ${{ inputs.harness }}
+          PREVIOUS: ${{ needs.plan.outputs.pinned_version }}
+          PREVIOUS_DIGESTS: ${{ needs.plan.outputs.pinned_digests }}
+          PREVIOUS_RESULT: ${{ needs.previous-conformance.result }}
+          EVIDENCE: ${{ runner.temp }}/evidence
+        run: |
+          set -euo pipefail
+          permit=false
+          reason=""
+          if [ -z "$PREVIOUS" ]; then
+            reason="there is no previous pack"
+          elif [ "$PREVIOUS_RESULT" != "success" ]; then
+            reason="this commit's layer did not pass conformance on it ($PREVIOUS_RESULT)"
+          elif ! node scripts/local-harness-publication.mjs evidence --harness "$HARNESS" --digests "$PREVIOUS_DIGESTS" --dir "$EVIDENCE" | grep -q '^covered=true$'; then
+            reason="conformance evidence for it is missing on an advertised target"
+          else
+            attested="$(node scripts/local-harness-publication.mjs attested --harness "$HARNESS" --version "$PREVIOUS")"
+            if grep -q '^attested=true$' <<<"$attested"; then
+              permit=true
+            else
+              reason="$(grep '^reason=' <<<"$attested" | cut -d= -f2-)"
+            fi
+          fi
+          echo "permit=$permit" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "permit previous $PREVIOUS: $permit ${reason:+($reason)}"
+
+      - name: Write the pin
+        working-directory: mcpjam-inspector
+        env:
+          HARNESS: ${{ inputs.harness }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          DIGESTS: ${{ steps.published.outputs.digests }}
+          PERMIT: ${{ steps.previous.outputs.permit }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          permit=()
+          if [ "$PERMIT" = "true" ]; then permit=(--permit-previous); fi
+          node scripts/write-pack-digests.mjs --harness "$HARNESS" --version "$VERSION" --digests "$DIGESTS" \
+            --conformance "published-$HARNESS-$VERSION-${GITHUB_SHA::12}" --evidence "$RUN_URL" "${permit[@]}"
+          node scripts/check-local-harness-inputs.mjs --write --harness "$HARNESS"
+
+      - name: Open or refresh the pin PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          HARNESS: ${{ inputs.harness }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
+          PREVIOUS: ${{ needs.plan.outputs.pinned_version }}
+          PERMIT: ${{ steps.previous.outputs.permit }}
+          PERMIT_REASON: ${{ steps.previous.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          text="$(node mcpjam-inspector/scripts/local-harness-publication.mjs pr-text --harness "$HARNESS" \
+            --kind pin --version "$VERSION" --previous "$PREVIOUS" --permit-previous "$PERMIT" \
+            --permit-reason "$PERMIT_REASON" --fingerprint "$FINGERPRINT" --run "$RUN_URL")"
+          git add mcpjam-inspector/server/utils/harness/local/runtime-compat.generated.json \
+            mcpjam-inspector/server/utils/harness/local/pack-inputs.generated.json
+          bash .github/scripts/local-harness-bot-pr.sh "$text"
+
+  # One issue per harness, opened on the first failure, commented on by the
+  # next, closed by the run that gets through. Superseded runs say nothing.
+  report:
+    needs: [plan, pack, equivalence, candidate-conformance, previous-conformance, pin]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Open, update or close the failure issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HARNESS: ${{ inputs.harness }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: node mcpjam-inspector/scripts/local-harness-publication.mjs report --harness "$HARNESS"

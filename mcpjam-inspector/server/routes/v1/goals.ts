@@ -201,6 +201,8 @@ type JourneyRow = {
 };
 
 type JourneyRunRow = {
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
   _id: string;
@@ -333,6 +335,8 @@ function toGoalRunDto(row: JourneyRunRow, surface: Surface) {
     // a client does not have to know that, and does not render a deliberate
     // stop as a failure.
     canceled: row.error === "canceled",
+    cancelRequested: row.cancelRequested ?? row.error === "canceled",
+    cleanupPending: row.cleanupPending ?? false,
     // Likewise for the stale-runner sweep: the run did not fail on its merits,
     // its runner went silent.
     stale: row.error === "stale_runner",
@@ -1108,6 +1112,7 @@ both(
       canceled: true;
       alreadyCanceled: boolean;
       finalized: number;
+      cleanupPending?: boolean;
     };
     try {
       result = (await client.mutation(
@@ -1135,6 +1140,9 @@ both(
       alreadyCanceled: result.alreadyCanceled,
       /** Attempts this call moved to terminal. Zero on an idempotent replay. */
       finalized: result.finalized,
+      ...(result.cleanupPending !== undefined
+        ? { cleanupPending: result.cleanupPending }
+        : {}),
     });
   },
 );

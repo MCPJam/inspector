@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "generatedBy": "scripts/write-pack-digests.mjs — do not edit by hand",
+  "harnesses": {
+    "claude-code": {
+      "conformance": {
+        "version": "published-1.0.1-4e1989d1300c",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/37383078880"
+      },
+      "targets": {
+        "darwin-arm64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:e59586541b541e0673ca9f74f90bcf5b19bde4c553611c5e7745a67a7d9d80f1"
+          }
+        },
+        "darwin-x64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:c72405c79c67d5578c11fd0bc916594e2dd429e4f1220845c9f67c0002eae749"
+          }
+        },
+        "linux-arm64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:4b8f8b14f2fe403bcb6d56d6069f4dca661844619f946433bdb6676077cb89b7"
+          }
+        },
+        "linux-x64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:a21fcb7ccefb2057e7814a6028995a3cdb4ed47daf90bc179d7ee8ed3c748132"
+          }
+        },
+        "win32-x64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:58d48aa771a3b1d87d22a720504722afb81ac35f43726d49cd303d4c1572d4d0"
+          }
+        }
+      }
+    },
+    "codex": {
+      "conformance": {
+        "version": "published-codex-1.0.1-4e1989d1300c",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/37383078880"
+      },
+      "targets": {
+        "darwin-arm64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:4af884406dfadffff45db2d9b695239c88bb3e24ce5ed95af2729e4179d74428"
+          }
+        },
+        "darwin-x64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:5b9edbb89ede80eb096dc3f9bbe40b4dbd646a6346e7a0f31c5dedab546ca90d"
+          }
+        },
+        "linux-arm64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:32065a4edeb7a10c541b01e9080e62383ba5762a3a6960604839888784ae5ee5"
+          }
+        },
+        "linux-x64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:42d942ba6e9a9d71d51e3303accdf69a6461fbd8f7f425fda85a814360e840da"
+          }
+        },
+        "win32-x64": {
+          "desired": {
+            "packVersion": "1.0.1",
+            "treeDigest": "sha256:23eb29259906b95b138d78043639635d41063469b1bc6f0cb53ad732bc039cbf"
+          }
+        }
+      }
+    }
+  }
+}

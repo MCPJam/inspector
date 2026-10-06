@@ -6,6 +6,7 @@
  */
 import {
   compareRunsBySequence,
+  isSubsetRerunRun,
   iterationLatencyP50,
   iterationLatencyP95,
   runClientIdentity,
@@ -192,6 +193,8 @@ export function previousCompletedRunOf(
         (run) =>
           run._id !== current._id &&
           run.status === "completed" &&
+          // A subset rerun measured only what failed: never a baseline.
+          !isSubsetRerunRun(run) &&
           runClientIdentity(run).key === runClientIdentity(current).key &&
           // Same TARGET, not just the same model id: Sonnet at High is not
           // the baseline for Sonnet at Low. Falls back to the model id when
@@ -391,6 +394,7 @@ export function previousLaunchRuns(
       .filter(
         (run) =>
           run.status === "completed" &&
+          !isSubsetRerunRun(run) &&
           !currentIds.has(run._id) &&
           (newest.suiteId == null || run.suiteId === newest.suiteId) &&
           (!newest.runGroupId || run.runGroupId !== newest.runGroupId) &&
@@ -403,7 +407,9 @@ export function previousLaunchRuns(
   if (anchor.runGroupId) {
     const group = suiteRuns.filter(
       (run) =>
-        run.runGroupId === anchor.runGroupId && run.status === "completed",
+        run.runGroupId === anchor.runGroupId &&
+        run.status === "completed" &&
+        !isSubsetRerunRun(run),
     );
     if (group.length > 0) return group;
   }

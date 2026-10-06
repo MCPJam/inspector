@@ -44,7 +44,7 @@ import {
   startLocalModelGateway,
   type LocalModelGateway,
 } from "./model-gateway.js";
-import { readRuntimeInstallStatus } from "./runtime-install.js";
+import { noteRuntimeLaunch, readRuntimeInstallStatus } from "./runtime-install.js";
 import {
   reserveRuntimeUse,
   type RuntimeOperationKey,
@@ -310,7 +310,14 @@ export async function prepareLocalHarnessTurn(
   // The pack's install root is where availability looks for a runtime. Reading
   // it from the installer rather than a constant means the Electron override
   // and the npx default cannot disagree.
-  const runtimeStatus = await readRuntimeInstallStatus({ harnessId });
+  // SELECTED per build (desired, or the permitted previous while an update is
+  // in flight or after a rollback), preferring the runtime this target's grant
+  // names while it is still selectable — so an update that activated in the
+  // background does not refuse this turn; the client renews onto it.
+  const runtimeStatus = await readRuntimeInstallStatus({
+    harnessId,
+    preferRuntimeId: args.target.runtimeId,
+  });
   if (runtimeStatus.state !== "ready") {
     return {
       ok: false,
@@ -318,7 +325,9 @@ export async function prepareLocalHarnessTurn(
       message:
         runtimeStatus.state === "absent"
           ? `The local ${displayName} runtime is not installed on this machine yet.`
-          : `The local ${displayName} runtime is not usable (${runtimeStatus.state}).`,
+          : runtimeStatus.state === "revoked"
+            ? runtimeStatus.message
+            : `The local ${displayName} runtime is not usable (${runtimeStatus.state}).`,
     };
   }
 
@@ -459,6 +468,7 @@ async function prepareWithReservedRuntime(outer: {
     projectId: args.projectId,
     grantToken: args.target.grantToken,
     runtimeRoot: runtimeStatus.runtimeRoot,
+    runtimeDigest: runtimeStatus.digest,
     installedAdapterVersion:
       args.installedAdapterVersion ??
       (await readInstalledAdapterVersion(harnessId)),
@@ -588,11 +598,17 @@ async function prepareWithReservedRuntime(outer: {
       workspacePath: plan.workspacePath,
       workspaceGrantId: plan.target.workspaceGrantId,
       sessionStateDir,
-      ...(args.onSecretEnvDelivered && Object.keys(args.scopedEnv ?? {}).length
-        ? {
-            onBridgeStarted: async () => { args.onSecretEnvDelivered?.(); },
-          }
-        : {}),
+      onBridgeStarted: async () => {
+        void noteRuntimeLaunch({ harnessId, status: runtimeStatus, outcome: { ok: true } });
+        if (Object.keys(args.scopedEnv ?? {}).length) args.onSecretEnvDelivered?.();
+      },
+      onBridgeFailed: ({ phase, message }) => {
+        void noteRuntimeLaunch({
+          harnessId,
+          status: runtimeStatus,
+          outcome: { ok: false, reason: `${phase}: ${message.slice(0, 300)}` },
+        });
+      },
       targetKind: "local-native",
       bridgePort,
       scopedEnv: {
@@ -806,7 +822,10 @@ async function adoptParkedLocalTurn(
   };
   const verifyStartedAt = Date.now();
 
-  const runtimeStatus = await readRuntimeInstallStatus({ harnessId });
+  const runtimeStatus = await readRuntimeInstallStatus({
+    harnessId,
+    preferRuntimeId: args.target.runtimeId,
+  });
   if (runtimeStatus.state !== "ready") {
     return fail(
       "authorization-revoked",
@@ -831,6 +850,7 @@ async function adoptParkedLocalTurn(
     projectId: args.projectId,
     grantToken: args.target.grantToken,
     runtimeRoot: runtimeStatus.runtimeRoot,
+    runtimeDigest: runtimeStatus.digest,
     installedAdapterVersion:
       args.installedAdapterVersion ??
       (await readInstalledAdapterVersion(harnessId)),

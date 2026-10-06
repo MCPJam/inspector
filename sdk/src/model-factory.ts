@@ -10,7 +10,7 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogle } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
@@ -372,7 +372,7 @@ export function createModelFromString(
     }
 
     case "google": {
-      const google = createGoogleGenerativeAI({ apiKey });
+      const google = createGoogle({ apiKey });
       return google(model) as ProviderLanguageModel;
     }
 
@@ -680,7 +680,7 @@ export function buildOrgModelFromResolvedConfig(
     })(m) as unknown as LanguageModel;
   }
   if (providerKey === "google") {
-    return createGoogleGenerativeAI({
+    return createGoogle({
       apiKey: requireOrgSecret(config, "Google"),
     })(m) as unknown as LanguageModel;
   }

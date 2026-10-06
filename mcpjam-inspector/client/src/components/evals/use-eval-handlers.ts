@@ -892,6 +892,34 @@ export function useEvalHandlers({
         return;
       }
 
+      // The environments' servers are resolved server-side, but the LOCAL run
+      // route reads them from this inspector's connection pool and connects
+      // nothing itself — connect them first, as a quick run does. Hosted
+      // routes connect them.
+      if (
+        isEnvironmentSuite &&
+        projectId &&
+        !isHostedMode() &&
+        ensureServersReady != null
+      ) {
+        const blocked = await ensureLocalEnvironmentServers({
+          convex,
+          projectId,
+          environmentIds: suite.environmentIds ?? [],
+          ensureServersReady,
+        });
+        if (blocked) {
+          const message = formatEnsureServersReadyError(
+            blocked,
+            "run this suite",
+            projectServers,
+          );
+          if (options?.stayOnPage) throw new Error(message);
+          toast.error(message);
+          return;
+        }
+      }
+
       setRerunningSuiteId(suite._id);
 
       // Fan-out axis: attached project environments (one run per env, in

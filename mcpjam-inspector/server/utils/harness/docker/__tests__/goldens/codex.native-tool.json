@@ -1,0 +1,430 @@
+{
+  "stream": [
+    {
+      "data": {
+        "workdir": "/home/user/<session-dir>"
+      },
+      "transient": true,
+      "type": "data-harness-session"
+    },
+    {
+      "data": {
+        "engine": "harness",
+        "harness": "codex",
+        "promptIndex": 0,
+        "startedAtMs": "<time>",
+        "turnId": "<id-1>",
+        "type": "turn_start"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "input": {
+        "command": "/bin/bash -lc 'echo golden-$((6*7))'",
+        "commandActions": [
+          {
+            "command": "echo golden-$((6*7))",
+            "type": "unknown"
+          }
+        ],
+        "cwd": "."
+      },
+      "providerExecuted": true,
+      "toolCallId": "<id-2>",
+      "toolName": "bash",
+      "type": "tool-input-available"
+    },
+    {
+      "output": {
+        "durationMs": "<time>",
+        "exitCode": 0,
+        "output": "golden-42\n",
+        "status": "completed"
+      },
+      "providerExecuted": true,
+      "toolCallId": "<id-2>",
+      "type": "tool-output-available"
+    },
+    {
+      "data": {
+        "promptIndex": 0,
+        "snapshot": {
+          "actualToolCalls": [
+            {
+              "arguments": {
+                "command": "/bin/bash -lc 'echo golden-$((6*7))'",
+                "commandActions": [
+                  {
+                    "command": "echo golden-$((6*7))",
+                    "type": "unknown"
+                  }
+                ],
+                "cwd": "."
+              },
+              "toolCallId": "<id-2>",
+              "toolName": "bash"
+            }
+          ],
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "SHELL echo golden-$((6*7))",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "input": {
+                    "command": "/bin/bash -lc 'echo golden-$((6*7))'",
+                    "commandActions": [
+                      {
+                        "command": "echo golden-$((6*7))",
+                        "type": "unknown"
+                      }
+                    ],
+                    "cwd": "."
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "bash",
+                  "type": "tool-call"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "output": {
+                    "type": "json",
+                    "value": {
+                      "durationMs": "<time>",
+                      "exitCode": 0,
+                      "output": "golden-42\n",
+                      "status": "completed"
+                    }
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "bash",
+                  "type": "tool-result"
+                }
+              ],
+              "role": "tool"
+            }
+          ],
+          "promptIndex": 0,
+          "spans": [
+            {
+              "category": "tool",
+              "endMs": "<time>",
+              "id": "<id-3>",
+              "messageEndIndex": 2,
+              "messageStartIndex": 2,
+              "name": "bash",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0,
+              "toolCallId": "<id-2>",
+              "toolName": "bash"
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-4>",
+              "messageEndIndex": 1,
+              "messageStartIndex": 1,
+              "modelId": "<id-5>",
+              "name": "openai/gpt-5.5",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0
+            }
+          ],
+          "traceVersion": 1
+        },
+        "turnId": "<id-1>",
+        "type": "trace_snapshot"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "id": "<id-6>",
+      "type": "text-start"
+    },
+    {
+      "delta": "TOOL RESULT RECEIVED: Chunk ID: <id>\nWall time: <time> seconds\nProcess exited with code 0\nOriginal token count: 3\nOutput:\ngolden-42\n",
+      "id": "<id-6>",
+      "type": "text-delta"
+    },
+    {
+      "id": "<id-6>",
+      "type": "text-end"
+    },
+    {
+      "data": {
+        "promptIndex": 0,
+        "snapshot": {
+          "actualToolCalls": [
+            {
+              "arguments": {
+                "command": "/bin/bash -lc 'echo golden-$((6*7))'",
+                "commandActions": [
+                  {
+                    "command": "echo golden-$((6*7))",
+                    "type": "unknown"
+                  }
+                ],
+                "cwd": "."
+              },
+              "toolCallId": "<id-2>",
+              "toolName": "bash"
+            }
+          ],
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "SHELL echo golden-$((6*7))",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "input": {
+                    "command": "/bin/bash -lc 'echo golden-$((6*7))'",
+                    "commandActions": [
+                      {
+                        "command": "echo golden-$((6*7))",
+                        "type": "unknown"
+                      }
+                    ],
+                    "cwd": "."
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "bash",
+                  "type": "tool-call"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "output": {
+                    "type": "json",
+                    "value": {
+                      "durationMs": "<time>",
+                      "exitCode": 0,
+                      "output": "golden-42\n",
+                      "status": "completed"
+                    }
+                  },
+                  "toolCallId": "<id-2>",
+                  "toolName": "bash",
+                  "type": "tool-result"
+                }
+              ],
+              "role": "tool"
+            },
+            {
+              "content": [
+                {
+                  "text": "TOOL RESULT RECEIVED: Chunk ID: <id>\nWall time: <time> seconds\nProcess exited with code 0\nOriginal token count: 3\nOutput:\ngolden-42\n",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "promptIndex": 0,
+          "spans": [
+            {
+              "category": "tool",
+              "endMs": "<time>",
+              "id": "<id-3>",
+              "messageEndIndex": 2,
+              "messageStartIndex": 2,
+              "name": "bash",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0,
+              "toolCallId": "<id-2>",
+              "toolName": "bash"
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-4>",
+              "messageEndIndex": 1,
+              "messageStartIndex": 1,
+              "modelId": "<id-5>",
+              "name": "openai/gpt-5.5",
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 0
+            },
+            {
+              "category": "llm",
+              "endMs": "<time>",
+              "finishReason": "stop",
+              "id": "<id-7>",
+              "inputTokens": 2400,
+              "messageEndIndex": 3,
+              "messageStartIndex": 3,
+              "modelId": "<id-5>",
+              "name": "openai/gpt-5.5",
+              "outputTokens": 192,
+              "promptIndex": 0,
+              "startMs": "<time>",
+              "status": "ok",
+              "stepIndex": 1,
+              "totalTokens": 2592
+            }
+          ],
+          "traceVersion": 1,
+          "usage": {
+            "inputTokens": 2400,
+            "outputTokens": 192,
+            "totalTokens": 2592
+          }
+        },
+        "turnId": "<id-1>",
+        "type": "trace_snapshot"
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    },
+    {
+      "finishReason": "stop",
+      "messageMetadata": {
+        "inputTokens": 2400,
+        "outputTokens": 192,
+        "totalTokens": 2592
+      },
+      "type": "finish"
+    },
+    {
+      "data": {
+        "finishReason": "stop",
+        "promptIndex": 0,
+        "turnId": "<id-1>",
+        "type": "turn_finish",
+        "usage": {
+          "inputTokens": 2400,
+          "outputTokens": 192,
+          "totalTokens": 2592
+        }
+      },
+      "transient": true,
+      "type": "data-trace-event"
+    }
+  ],
+  "evidence": {
+    "history": [
+      {
+        "content": [
+          {
+            "text": "SHELL echo golden-$((6*7))",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "input": {
+              "command": "/bin/bash -lc 'echo golden-$((6*7))'",
+              "commandActions": [
+                {
+                  "command": "echo golden-$((6*7))",
+                  "type": "unknown"
+                }
+              ],
+              "cwd": "."
+            },
+            "toolCallId": "<id-2>",
+            "toolName": "bash",
+            "type": "tool-call"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "output": {
+              "type": "json",
+              "value": {
+                "durationMs": "<time>",
+                "exitCode": 0,
+                "output": "golden-42\n",
+                "status": "completed"
+              }
+            },
+            "toolCallId": "<id-2>",
+            "toolName": "bash",
+            "type": "tool-result"
+          }
+        ],
+        "role": "tool"
+      },
+      {
+        "content": [
+          {
+            "text": "TOOL RESULT RECEIVED: Chunk ID: <id>\nWall time: <time> seconds\nProcess exited with code 0\nOriginal token count: 3\nOutput:\ngolden-42\n",
+            "type": "text"
+          }
+        ],
+        "role": "assistant"
+      }
+    ],
+    "toolCalls": [
+      {
+        "input": {
+          "command": "/bin/bash -lc 'echo golden-$((6*7))'",
+          "commandActions": [
+            {
+              "command": "echo golden-$((6*7))",
+              "type": "unknown"
+            }
+          ],
+          "cwd": "."
+        },
+        "promptIndex": 0,
+        "stepIndex": 0,
+        "toolCallId": "<id-2>",
+        "toolName": "bash"
+      }
+    ],
+    "toolResults": [
+      {
+        "isError": false,
+        "output": {
+          "durationMs": "<time>",
+          "exitCode": 0,
+          "output": "golden-42\n",
+          "status": "completed"
+        },
+        "promptIndex": 0,
+        "stepIndex": 0,
+        "toolCallId": "<id-2>",
+        "toolName": "bash"
+      }
+    ]
+  }
+}

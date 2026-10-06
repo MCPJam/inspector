@@ -37,6 +37,8 @@ permissions:
   contents: read
   # `@changesets/changelog-github` looks up each changeset's PR and author.
   pull-requests: read
+  # The local harness gate verifies pinned packs' build provenance.
+  attestations: read
 
 concurrency:
   group: prepare-release
@@ -107,9 +109,11 @@ jobs:
       # `main`, rather than after, when fixing it takes another PR.
       - name: Local harness release consistency
         working-directory: mcpjam-inspector
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if jq -e '.releases[] | select(.name == "@mcpjam/inspector" and .type != "none")' "$RUNNER_TEMP/status.json" >/dev/null; then
-            node scripts/check-local-harness-release.mjs --assets --version "$(jq -r .version package.json)"
+            node scripts/check-local-harness-release.mjs --assets --verify-attestations --version "$(jq -r .version package.json)"
           fi
 
       - name: Open or refresh the version PR
