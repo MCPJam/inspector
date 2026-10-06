@@ -5,7 +5,6 @@ import { z } from "zod";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
-import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import "../../types/hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -64,30 +63,6 @@ const ReplayRunRequestSchema = z.object({
   passCriteria: passCriteriaSchema.optional(),
 });
 
-const TraceRepairStartSchema = z.discriminatedUnion("scope", [
-  z.object({
-    scope: z.literal("suite"),
-    suiteId: z.string().min(1),
-    sourceRunId: z.string().min(1),
-    convexAuthToken: z.string(),
-    modelApiKeys: z.record(z.string(), z.string()).optional(),
-  }),
-  z.object({
-    scope: z.literal("case"),
-    suiteId: z.string().min(1),
-    sourceRunId: z.string().min(1),
-    sourceIterationId: z.string().min(1),
-    testCaseId: z.string().min(1),
-    convexAuthToken: z.string(),
-    modelApiKeys: z.record(z.string(), z.string()).optional(),
-  }),
-]);
-
-const TraceRepairStopSchema = z.object({
-  jobId: z.string().min(1),
-  convexAuthToken: z.string(),
-});
-
 /**
  * Whether this launch may run locally at all: some local harness is eligible
  * for unattended work here. Which harness actually runs locally is decided
@@ -143,92 +118,6 @@ evals.post("/run", async (c) => {
       // Starting a suite is our orchestration; per-test failures are
       // reported from inside the run.
       source: "mcp.evals.run",
-      hop: "mcpjam_internal",
-    });
-    return jsonRouteError(c, error);
-  }
-});
-
-evals.post("/trace-repair/start", async (c) => {
-  try {
-    const body = await readRequestJson(c);
-    const parsed = TraceRepairStartSchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json(
-        {
-          error: "Invalid request body",
-          details: parsed.error.issues,
-        },
-        400,
-      );
-    }
-    const data = parsed.data;
-    const convexClient = createConvexClient(data.convexAuthToken);
-    const start = await convexClient.mutation(
-      "traceRepair:startTraceRepairJob" as any,
-      {
-        testSuiteId: data.suiteId,
-        sourceRunId: data.sourceRunId,
-        scope: data.scope,
-        targetTestCaseId: data.scope === "case" ? data.testCaseId : undefined,
-        targetSourceIterationId:
-          data.scope === "case" ? data.sourceIterationId : undefined,
-      },
-    );
-    const shouldSpawnWorker =
-      start.shouldSpawnWorker !== false &&
-      (start.shouldSpawnWorker === true || start.existing !== true);
-    if (shouldSpawnWorker) {
-      void runTraceRepairJob({
-        convexClient,
-        convexAuthToken: data.convexAuthToken,
-        jobId: start.jobId,
-        modelApiKeys: data.modelApiKeys,
-      }).catch((err) => {
-        reportRouteFailure("[trace-repair] background job failed", err, {
-          // A detached background job of ours. Nothing downstream of
-          // this catch reports it, so this is the only chance to see it.
-          source: "mcp.evals.trace-repair.job",
-          hop: "mcpjam_internal",
-          context: { jobId: start.jobId },
-        });
-      });
-    }
-    return c.json({
-      success: true,
-      jobId: start.jobId,
-      existing: Boolean(start.existing),
-    });
-  } catch (error) {
-    reportRouteFailure("[Error starting trace repair]", error, {
-      source: "mcp.evals.trace-repair.start",
-      hop: "mcpjam_internal",
-    });
-    return jsonRouteError(c, error);
-  }
-});
-
-evals.post("/trace-repair/stop", async (c) => {
-  try {
-    const body = await readRequestJson(c);
-    const parsed = TraceRepairStopSchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json(
-        {
-          error: "Invalid request body",
-          details: parsed.error.issues,
-        },
-        400,
-      );
-    }
-    const convexClient = createConvexClient(parsed.data.convexAuthToken);
-    await convexClient.mutation("traceRepair:stopTraceRepairJob" as any, {
-      jobId: parsed.data.jobId,
-    });
-    return c.json({ success: true });
-  } catch (error) {
-    reportRouteFailure("[Error stopping trace repair]", error, {
-      source: "mcp.evals.trace-repair.stop",
       hop: "mcpjam_internal",
     });
     return jsonRouteError(c, error);

@@ -288,12 +288,14 @@ describe("EffortControl", () => {
     });
     const trigger = screen.getByTestId("effort-control-trigger");
     expect(trigger).toBeDisabled();
-    // Check keyboard focus before the click, which closes Radix's tooltip.
     const wrapper = screen.getByTestId("effort-control-disabled");
-    act(() => wrapper.focus());
-    expect(
-      (await screen.findAllByText("Pick a saved model first")).length,
-    ).toBeGreaterThan(0);
+    // Check keyboard access before clicking: a click closes Radix's tooltip,
+    // and focusing an already-focused wrapper does not emit another focus event.
+    await userEvent.tab();
+    expect(wrapper).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Pick a saved model first",
+    );
     await userEvent.click(trigger);
     expect(screen.queryByRole("slider")).toBeNull();
     expect(onChange).not.toHaveBeenCalled();

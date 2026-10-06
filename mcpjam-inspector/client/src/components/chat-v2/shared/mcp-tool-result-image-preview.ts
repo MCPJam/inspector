@@ -3,9 +3,10 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import {
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
+  readModelOutputImage,
   type McpToolResultImageRenderingPolicy,
   type McpModelOutputContent,
-  type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/browser";
 import { readResource as readResourceApi } from "@/lib/apis/mcp-resources-api";
@@ -60,11 +61,12 @@ function unwrapJsonEnvelope(value: unknown): unknown {
 
 // A persisted tool result that has been round-tripped through the AI SDK
 // loses its raw MCP `result` and keeps only the model-facing output shape
-// (`{ type: "content", value: [{ type: "media", ... }] }`). When the model
-// was allowed to see the image, that surviving copy still carries the base64,
-// so we can render straight from it. Returns a content object narrowed to the
-// well-formed image media parts (dropping omission markers, non-image media,
-// and malformed entries), or undefined when there are none.
+// (`{ type: "content", value: [{ type: "file", ... }] }`, or `media` /
+// `image-data` in traces written before AI SDK 7). When the model was allowed
+// to see the image, that surviving copy still carries the base64, so we can
+// render straight from it. Returns a content object narrowed to the
+// well-formed image parts, as `file` parts (dropping omission markers,
+// non-image media, and malformed entries), or undefined when there are none.
 function asModelOutputImageContent(
   value: unknown
 ): McpModelOutputContent | undefined {
@@ -79,18 +81,22 @@ function asModelOutputImageContent(
   // Never trust the whole persisted array off a single match — filter to the
   // parts we can actually render so a malformed sibling can't crash the map or
   // emit a broken `data:` src.
-  const imageParts = unwrapped.value.filter(
-    (part) =>
-      isRecord(part) &&
-      part.type === "media" &&
-      isImageMimeType(part.mediaType) &&
-      typeof part.data === "string"
+  const imageParts = unwrapped.value.flatMap(
+    (part): McpModelOutputImagePart[] => {
+      const image = readModelOutputImage(part);
+      return image
+        ? [
+            {
+              type: "file",
+              mediaType: image.mediaType,
+              data: { type: "data", data: image.data },
+            },
+          ]
+        : [];
+    },
   );
   if (imageParts.length === 0) return undefined;
-  return {
-    type: "content",
-    value: imageParts,
-  } as unknown as McpModelOutputContent;
+  return { type: "content", value: imageParts };
 }
 
 function rendersDirectImages(
@@ -213,8 +219,11 @@ export function getMcpToolResultImagePreviewKey(
   const modelOutputContent = asModelOutputImageContent(result);
   if (modelOutputContent) {
     modelOutputContent.value.forEach((part) => {
-      if (part.type === "media" && isImageMimeType(part.mediaType)) {
-        keyParts.push(`media:${part.mediaType}:${imageDataSignature(part.data)}`);
+      const image = readModelOutputImage(part);
+      if (image) {
+        keyParts.push(
+          `media:${image.mediaType}:${imageDataSignature(image.data)}`,
+        );
       }
     });
     return keyParts.join("|");
@@ -273,13 +282,13 @@ function mediaPartsToPreviews(
   }
 
   return content.value
-    .filter(
-      (part): part is Extract<McpModelOutputContentPart, { type: "media" }> =>
-        part.type === "media" && part.mediaType.startsWith("image/")
-    )
-    .map((part, index) => ({
-      src: `data:${part.mediaType};base64,${part.data}`,
-      mediaType: part.mediaType,
+    .flatMap((part) => {
+      const image = readModelOutputImage(part);
+      return image ? [image] : [];
+    })
+    .map((image, index) => ({
+      src: `data:${image.mediaType};base64,${image.data}`,
+      mediaType: image.mediaType,
       alt: `Tool result image ${index + 1}`,
     }));
 }

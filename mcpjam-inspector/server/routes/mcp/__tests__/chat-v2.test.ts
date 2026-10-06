@@ -833,7 +833,7 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("maps direct MCP image tool history to media content before streaming", async () => {
+    it("maps direct MCP image tool history to AI SDK 7 file content before streaming", async () => {
       const { streamText } = await import("ai");
       manager.getToolsForAiSdk.mockResolvedValue({
         qa_return_image_tool_result: {
@@ -902,8 +902,8 @@ describe("POST /api/mcp/chat-v2", () => {
                     type: "content",
                     value: [
                       {
-                        type: "media",
-                        data: "aGVsbG8=",
+                        type: "file",
+                        data: { type: "data", data: "aGVsbG8=" },
                         mediaType: "image/png",
                       },
                     ],

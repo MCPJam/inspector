@@ -239,7 +239,7 @@ it("opens the credit wall for a live iteration failure once and preserves comple
   store.setState({
     authStatus: "signedIn",
     isOpen: false,
-    notifiedRunIds: new Set(),
+    notifiedKeys: new Set(),
   });
   let runs = [{ _id: "live-eval", status: "running" }];
   const completed = {
