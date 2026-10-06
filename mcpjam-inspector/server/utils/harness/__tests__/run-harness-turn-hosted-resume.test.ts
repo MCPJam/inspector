@@ -156,7 +156,6 @@ function options() {
 
 describe("runHarnessTurn hosted resume", () => {
   beforeEach(() => {
-    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
     harnessState.streamParts = [
