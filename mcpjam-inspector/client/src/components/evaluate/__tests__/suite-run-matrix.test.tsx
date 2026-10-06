@@ -3,9 +3,13 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ConvexError } from "convex/values";
 import { SuiteRunReview } from "../suite-run-review";
 import {
+  inEnvironmentBatches,
   plannedPreflight,
   planRunMatrix,
   seedRunMatrix,
+  seedSuiteRunGroup,
+  suiteCaseModels,
+  suiteRunClients,
 } from "../suite-run-matrix";
 import type { EvalSuite, EvalCase } from "../../evals/types";
 const {
@@ -14,15 +18,18 @@ const {
   mutation,
   capabilities,
   projectEnvironments,
+  groups,
+  projectDefault,
+  availableModels,
   useQueries,
   projectServers,
   userReady,
   composeCapable,
 } = vi.hoisted(() => ({
+  useQueries: vi.fn((_queries: Record<string, unknown>) => ({})),
   projectServers: { value: undefined as unknown[] | undefined },
   userReady: { value: true },
   composeCapable: { value: true },
-  useQueries: vi.fn((_queries: Record<string, unknown>) => ({})),
   ensure: vi.fn(),
   query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
   mutation: vi.fn(),
@@ -33,13 +40,19 @@ const {
     } | null,
   },
   projectEnvironments: { value: [] as unknown[] | undefined },
+  groups: { value: [] as unknown[] },
+  projectDefault: { value: null as { id?: string } | null | undefined },
+  availableModels: { value: [] as Array<{ id: string }> },
 }));
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
-  // The run preflight's reactive reads: only the project's servers matter here.
-  useQuery: (name: string) =>
-    name === "servers:getProjectServers" ? projectServers.value : undefined,
+  // `hostConfigsV2:getProjectDefault`; the preflight's other reads stay empty.
+  useQuery: (name: string, args: unknown) =>
+    args !== "skip" && name === "hostConfigsV2:getProjectDefault"
+      ? projectDefault.value
+      : undefined,
+  // The run preflight's environment resolutions.
   useQueries: (queries: Record<string, unknown>) => useQueries(queries),
 }));
 // A signed-in, ready user: the preflight only resolves environments then.
@@ -54,18 +67,44 @@ vi.mock("@/hooks/use-environment-capabilities", () => ({
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
     hosts: [
-      { hostId: "claude", name: "Claude", modelId: "sonnet" },
-      { hostId: "mcpjam", name: "MCPJam", modelId: "" },
+      {
+        hostId: "claude",
+        name: "Claude",
+        modelId: "sonnet",
+        hostConfigId: "cfg-claude",
+      },
+      {
+        hostId: "mcpjam",
+        name: "MCPJam",
+        modelId: "",
+        hostConfigId: "cfg-mcpjam",
+      },
     ],
     isLoading: false,
   }),
 }));
 vi.mock("@/hooks/use-available-models", () => ({
-  useAvailableModels: () => ({ availableModels: [] }),
+  useAvailableModels: () => ({ availableModels: availableModels.value }),
 }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useEnsureAdhocEnvironments: () => ensure,
   useProjectEnvironments: () => projectEnvironments.value,
+}));
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServerAttachments: ({
+    projectId,
+  }: {
+    projectId: string | null;
+  }) => ({
+    serverAttachments: projectId ? groups.value : [],
+    isLoading: false,
+  }),
+}));
+vi.mock("@/hooks/useProjects", () => ({
+  shouldQueryProjectId: (projectId: string | null | undefined) =>
+    Boolean(projectId),
+  // The preflight reads the project's servers; undefined while loading.
+  useProjectServers: () => ({ servers: projectServers.value }),
 }));
 vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
   useEvalComposeCapable: () => ({
@@ -73,25 +112,53 @@ vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
     pending: false,
   }),
 }));
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
+    value,
+    onChange,
+    emptyTriggerLabel,
+    disabled,
+  }: {
+    value: string | null;
+    onChange: (id: string) => void;
+    emptyTriggerLabel?: string;
+    disabled?: boolean;
+  }) => (
+    <button
+      data-testid="server-picker"
+      disabled={disabled}
+      onClick={() => onChange("picked-group")}
+    >
+      {value ?? emptyTriggerLabel}
+    </button>
+  ),
+}));
 vi.mock("../eval-target-matrix", () => ({
   EvalTargetMatrix: ({
     onModelSelectionChange,
+    modelSelectionsByHost,
     disabled,
   }: {
     onModelSelectionChange: (id: string, value: unknown) => void;
+    modelSelectionsByHost: unknown;
     disabled: boolean;
   }) => (
-    <button
-      disabled={disabled}
-      onClick={() =>
-        onModelSelectionChange("claude", {
-          includeClientDefaults: false,
-          explicitTargets: [{ modelId: "opus" }],
-        })
-      }
-    >
-      Change model
-    </button>
+    <>
+      <output data-testid="matrix">
+        {JSON.stringify(modelSelectionsByHost)}
+      </output>
+      <button
+        disabled={disabled}
+        onClick={() =>
+          onModelSelectionChange("claude", {
+            includeClientDefaults: false,
+            explicitTargets: [{ modelId: "opus" }],
+          })
+        }
+      >
+        Change model
+      </button>
+    </>
   ),
 }));
 const suite = {
@@ -578,6 +645,9 @@ beforeEach(() => {
   mutation.mockReset();
   capabilities.value = null;
   projectEnvironments.value = [];
+  groups.value = [];
+  projectDefault.value = null;
+  availableModels.value = [];
 });
 
 it("launches saved pairings without a temporary-environment flag or capability probe", async () => {
@@ -670,9 +740,8 @@ it("blocks Start when an attached environment has no server group", () => {
   expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
 });
 
-it("launches a suite without environments through its own configuration", async () => {
-  // No environments are composed from the legacy fields: the runtime knows
-  // where a legacy suite keeps its servers, this dialog does not.
+it("launches a suite without environments through its own configuration on a backend without one-run launches", async () => {
+  // `capabilities` is null: no one-run cells, so nothing is composed here.
   const onStart = vi.fn();
   const legacy = {
     ...suite,
@@ -779,16 +848,229 @@ it("launches a derived cell without modifying the suite", async () => {
   expect(suite.environmentIds).toEqual(["env"]);
 });
 
+describe("a suite without environments", () => {
+  const legacy = {
+    ...suite,
+    projectId: "project",
+    environmentIds: undefined,
+    serverAttachmentId: "excalidraw",
+    selectedSkillIds: ["skill-1"],
+    environment: {
+      servers: ["Excalidraw (App)"],
+      computerEnvironmentId: "image-1",
+    },
+    hostAttachments: [],
+  } as unknown as EvalSuite;
+  const legacyCases = [
+    {
+      _id: "draw",
+      runs: 1,
+      models: [{ model: "haiku", provider: "anthropic" }],
+    },
+    {
+      _id: "share",
+      runs: 1,
+      models: [
+        { model: "haiku", provider: "anthropic" },
+        // Not offered in this project: never pre-picked.
+        { model: "retired", provider: "anthropic" },
+      ],
+    },
+  ] as unknown as EvalCase[];
+  const renderLegacy = (
+    overrides: Partial<EvalSuite> = {},
+    onStart = vi.fn(),
+  ) =>
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={{ ...legacy, ...overrides }}
+        cases={legacyCases}
+        environments={[]}
+        hostNamesById={new Map()}
+        onStart={onStart}
+        onClose={vi.fn()}
+      />,
+    );
+  const matrixState = () =>
+    JSON.parse(screen.getByTestId("matrix").textContent ?? "{}");
+
+  beforeEach(() => {
+    capabilities.value = { ephemeralEnvironmentLaunch: true };
+    groups.value = [
+      {
+        _id: "excalidraw",
+        name: "Excalidraw",
+        serverIds: ["server-1"],
+        resolvedServerNames: ["Excalidraw (App)"],
+      },
+    ];
+    projectDefault.value = { id: "cfg-mcpjam" };
+    availableModels.value = [{ id: "haiku" }];
+  });
+
+  // Its cells run on the server group picked here, not on the servers the
+  // suite saved, so those are what the preflight checks.
+  it("preflights the picked group's servers, not the suite's own", () => {
+    projectServers.value = [{ _id: "server-1", name: "Excalidraw (App)" }];
+    renderLegacy({ environment: { servers: ["gone-from-project"] } } as never);
+    expect(screen.getByText(/Excalidraw \(App\) isn't connected/)).toBeTruthy();
+    expect(screen.queryByText(/gone-from-project/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  it("pre-fills its servers, the project's default client and the cases' models, then runs one-run cells", async () => {
+    ensure.mockResolvedValue([{ environment: { environmentId: "one-run" } }]);
+    const onStart = vi.fn();
+    renderLegacy({}, onStart);
+    expect(screen.queryByText("Suite configuration")).toBeNull();
+    expect(screen.getByTestId("server-picker")).toHaveTextContent("excalidraw");
+    expect(matrixState()).toEqual({
+      mcpjam: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "haiku" }],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    await waitFor(() =>
+      expect(onStart).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentIds: ["one-run"] }),
+        {
+          iterationOverride: 5,
+          ephemeralEnvironment: true,
+          throwOnFailure: true,
+        },
+      ),
+    );
+    // The suite's own skills and image ride along; the suite is not changed.
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "project",
+      stacks: [
+        {
+          hostId: "mcpjam",
+          modelId: "haiku",
+          serverAttachmentId: "excalidraw",
+          skillSelection: { mode: "explicit", skillIds: ["skill-1"] },
+          computerEnvironmentId: "image-1",
+        },
+      ],
+    });
+    expect(legacy.environmentIds).toBeUndefined();
+  });
+
+  it("starts from the clients it attaches that still exist", () => {
+    renderLegacy({
+      hostAttachments: [
+        {
+          namedHostId: "claude",
+          enabledOptionalServerIds: [],
+          hostName: "Claude",
+          resolvedServerNames: [],
+        },
+        {
+          namedHostId: "deleted",
+          enabledOptionalServerIds: [],
+          hostName: "Gone",
+          resolvedServerNames: [],
+        },
+      ],
+    });
+    expect(Object.keys(matrixState())).toEqual(["claude"]);
+  });
+
+  it("blocks Start until a server group is picked when its own is not in this project", () => {
+    groups.value = [];
+    renderLegacy();
+    const start = screen.getByRole("button", { name: "Start run" });
+    expect(screen.getByTestId("server-picker")).toHaveTextContent(
+      "Pick a server group",
+    );
+    expect(
+      screen.getByText("Pick a server group to run this suite."),
+    ).toBeVisible();
+    expect(start).toBeDisabled();
+    fireEvent.click(screen.getByTestId("server-picker"));
+    expect(start).toBeEnabled();
+  });
+
+  it("keeps the suite's own launch for a suite outside this project", () => {
+    renderLegacy({ projectId: "other-project" });
+    expect(screen.queryByTestId("server-picker")).toBeNull();
+    expect(screen.getByText("Suite configuration")).toBeVisible();
+  });
+});
+
 describe("an SDK suite", () => {
   const sdkSuite = {
     ...suite,
+    projectId: "project",
     source: "sdk",
     environmentIds: undefined,
+    serverAttachmentId: undefined,
     hostAttachments: [],
+    // The reporter's server names: never a source for the run's servers.
+    environment: { servers: ["foreflight"] },
   } as unknown as EvalSuite;
+  const renderSdk = (onStart = vi.fn()) =>
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={sdkSuite}
+        cases={cases}
+        environments={[]}
+        hostNamesById={new Map([["claude", "Claude"]])}
+        onStart={onStart}
+        onClose={vi.fn()}
+      />,
+    );
 
-  it("runs in the environment picked for this run, without attaching it", async () => {
+  beforeEach(() => {
     capabilities.value = { ephemeralEnvironmentLaunch: true };
+    groups.value = [
+      {
+        _id: "foreflight",
+        name: "foreflight",
+        serverIds: ["server-1"],
+        resolvedServerNames: ["foreflight"],
+      },
+    ];
+  });
+
+  it("runs a new setup on the picked servers without attaching it", async () => {
+    ensure.mockResolvedValue([{ environment: { environmentId: "one-run" } }]);
+    const onStart = vi.fn();
+    renderSdk(onStart);
+    // No saved environment with servers: nothing to switch to.
+    expect(
+      screen.queryByRole("radio", { name: "Saved environment" }),
+    ).toBeNull();
+    expect(screen.getByTestId("server-picker")).toHaveTextContent(
+      "Pick a server group",
+    );
+    const start = screen.getByRole("button", { name: "Start run" });
+    expect(start).toBeDisabled();
+    fireEvent.click(screen.getByTestId("server-picker"));
+    fireEvent.click(start);
+    await waitFor(() =>
+      expect(onStart).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentIds: ["one-run"] }),
+        {
+          iterationOverride: 5,
+          ephemeralEnvironment: true,
+          throwOnFailure: true,
+        },
+      ),
+    );
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "project",
+      stacks: [{ hostId: "claude", serverAttachmentId: "picked-group" }],
+    });
+  });
+
+  it("can run in a saved project environment instead", async () => {
     projectEnvironments.value = [
       {
         environmentId: "prod",
@@ -801,17 +1083,9 @@ describe("an SDK suite", () => {
       { environmentId: "empty", name: "Empty", hostId: "claude" },
     ];
     const onStart = vi.fn();
-    render(
-      <SuiteRunReview
-        projectId="project"
-        suite={sdkSuite}
-        cases={cases}
-        environments={[]}
-        hostNamesById={new Map([["claude", "Claude"]])}
-        onStart={onStart}
-        onClose={vi.fn()}
-      />,
-    );
+    renderSdk(onStart);
+    fireEvent.click(screen.getByRole("radio", { name: "Saved environment" }));
+    expect(screen.queryByTestId("server-picker")).toBeNull();
     expect(screen.queryByRole("radio", { name: /Empty/ })).toBeNull();
     const start = screen.getByRole("button", { name: "Start run" });
     expect(start).toBeDisabled();
@@ -819,7 +1093,10 @@ describe("an SDK suite", () => {
     fireEvent.click(start);
     await waitFor(() =>
       expect(onStart).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentIds: ["prod"] }),
+        expect.objectContaining({
+          environmentIds: ["prod"],
+          hostAttachments: [],
+        }),
         {
           iterationOverride: 5,
           ephemeralEnvironment: true,
@@ -827,39 +1104,159 @@ describe("an SDK suite", () => {
         },
       ),
     );
-  });
-
-  it("says what to do when the project has no environment to run it in", () => {
-    capabilities.value = { ephemeralEnvironmentLaunch: true };
-    projectEnvironments.value = [];
-    render(
-      <SuiteRunReview
-        projectId="project"
-        suite={sdkSuite}
-        cases={cases}
-        environments={[]}
-        hostNamesById={new Map()}
-        onStart={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/no environment with servers yet/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
+    expect(ensure).not.toHaveBeenCalled();
   });
 
   it("keeps the suite's own launch on a backend without ephemeral launches", () => {
     capabilities.value = { environmentDerivation: true };
-    render(
-      <SuiteRunReview
-        projectId="project"
-        suite={sdkSuite}
-        cases={cases}
-        environments={[]}
-        hostNamesById={new Map()}
-        onStart={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
+    renderSdk();
+    expect(screen.queryByTestId("server-picker")).toBeNull();
     expect(screen.queryByTestId("sdk-suite-run-environment")).toBeNull();
+    expect(screen.getByText("Suite configuration")).toBeVisible();
   });
+});
+
+describe("seeding a suite without environments", () => {
+  const selection = (effort: string) => ({
+    modelId: "sonnet",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    settings: { reasoningEffort: effort },
+  });
+  const runnable = new Set(["sonnet", "haiku", "default-model"]);
+
+  it("takes the cases' runnable models, skipping model-free cases and the SDK's n/a", () => {
+    const models = suiteCaseModels(
+      {},
+      [
+        {
+          models: [
+            {
+              model: "sonnet",
+              provider: "anthropic",
+              selection: selection("high"),
+            },
+            { model: "n/a", provider: "external" },
+            { model: "retired", provider: "anthropic" },
+          ],
+        },
+        // A render check runs no model, whatever it lists.
+        {
+          models: [{ model: "haiku", provider: "anthropic" }],
+          steps: [{ kind: "toolCall", toolName: "draw", arguments: {} }],
+        },
+      ] as never,
+      runnable,
+    );
+    expect(models.includeClientDefaults).toBe(false);
+    expect(models.explicitTargets).toEqual([
+      { modelId: "sonnet", selection: selection("high") },
+    ]);
+  });
+
+  it("keeps an old-format selection's model as a bare id", () => {
+    expect(
+      suiteCaseModels(
+        {},
+        [
+          {
+            models: [
+              {
+                model: "sonnet",
+                provider: "anthropic",
+                selection: { source: "legacy", modelId: "sonnet" },
+              },
+            ],
+          },
+        ] as never,
+        runnable,
+      ).explicitTargets,
+    ).toEqual([{ modelId: "sonnet" }]);
+  });
+
+  it("adds the suite default for a prompt case with no model, else the client's own model", () => {
+    const noModels = [{ models: [] }] as never;
+    expect(
+      suiteCaseModels(
+        { defaultConfig: { modelId: "default-model" } } as never,
+        noModels,
+        runnable,
+      ).explicitTargets,
+    ).toEqual([{ modelId: "default-model" }]);
+    expect(suiteCaseModels({}, noModels, runnable)).toEqual({
+      includeClientDefaults: true,
+      explicitTargets: [],
+    });
+  });
+
+  it("starts from the backend's default client when the suite attaches none", () => {
+    const hosts = [
+      {
+        hostId: "owned",
+        hostConfigId: "cfg-default",
+        ownerScope: { type: "journeys" as const },
+      },
+      { hostId: "first", hostConfigId: "cfg-first", ownerScope: null },
+      { hostId: "default", hostConfigId: "cfg-default" },
+    ];
+    expect(suiteRunClients({}, hosts, "cfg-default")).toEqual(["default"]);
+    expect(suiteRunClients({}, hosts, "cfg-unknown")).toEqual(["first"]);
+    expect(suiteRunClients({}, [], "cfg-default")).toEqual([]);
+  });
+
+  it("offers the suite's own group only while it is in this project with a live server", () => {
+    const group = { _id: "g", resolvedServerNames: ["billing"] };
+    expect(seedSuiteRunGroup({ serverAttachmentId: "g" }, [group])).toBe("g");
+    expect(
+      seedSuiteRunGroup({ serverAttachmentId: "g" }, [
+        { _id: "g", resolvedServerNames: ["[deleted server]"] },
+      ]),
+    ).toBeNull();
+    expect(
+      seedSuiteRunGroup({ serverAttachmentId: "other" }, [group]),
+    ).toBeNull();
+    expect(seedSuiteRunGroup({}, [group])).toBeNull();
+  });
+
+  it("plans a cell on the picked group, or blocks it without one", () => {
+    const legacy = {
+      ...suite,
+      environmentIds: undefined,
+      serverAttachmentId: "legacy-group",
+      selectedSkillIds: ["skill-1"],
+      environment: { servers: [], computerEnvironmentId: "image-1" },
+    } as unknown as EvalSuite;
+    const cells = {
+      mcpjam: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "haiku" }],
+      },
+    };
+    expect(planRunMatrix(legacy, [], cells, { group: "picked" })).toEqual([
+      {
+        stack: {
+          hostId: "mcpjam",
+          modelId: "haiku",
+          serverAttachmentId: "picked",
+          skillSelection: { mode: "explicit", skillIds: ["skill-1"] },
+          computerEnvironmentId: "image-1",
+        },
+      },
+    ]);
+    // Never the suite's own field unseen: the dialog pre-fills `group`.
+    expect(planRunMatrix(legacy, [], cells)).toEqual([
+      { stack: { hostId: "mcpjam", modelId: "haiku" }, missingGroup: true },
+    ]);
+  });
+});
+
+it("finds or creates environments ten at a time, in order", async () => {
+  const run = vi.fn(async (batch: number[]) => batch.map((item) => item * 2));
+  const items = Array.from({ length: 12 }, (_, index) => index);
+  await expect(inEnvironmentBatches(items, run)).resolves.toEqual(
+    items.map((item) => item * 2),
+  );
+  expect(run.mock.calls.map(([batch]) => batch.length)).toEqual([10, 2]);
+  await expect(inEnvironmentBatches([], run)).resolves.toEqual([]);
+  expect(run).toHaveBeenCalledTimes(2);
 });

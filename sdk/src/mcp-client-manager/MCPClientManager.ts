@@ -476,7 +476,7 @@ export class MCPClientManager {
         DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS
     );
 
-    // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
+    // Start connecting to all configured servers (unless lazyConnect: replay connects explicitly)
     if (!this.lazyConnect) {
       for (const [id, config] of Object.entries(servers)) {
         // Fire-and-forget prefetch: a failure here is NOT lost — the failed

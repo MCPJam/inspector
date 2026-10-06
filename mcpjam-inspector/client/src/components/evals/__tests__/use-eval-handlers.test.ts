@@ -240,6 +240,95 @@ describe("useEvalHandlers", () => {
       expect(body.serverIds ?? []).toEqual([]);
     });
 
+    describe("an environment suite in the local inspector", () => {
+      const envSuite = {
+        _id: "suite-env",
+        name: "Suite",
+        environment: { servers: [] },
+        environmentIds: ["env-1"],
+      } as any;
+      const readiness = (
+        overrides: Partial<{ readyServerNames: string[]; failedServerNames: string[] }>,
+      ) => ({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+        ...overrides,
+      });
+
+      beforeEach(() => {
+        const testCases = [
+          { _id: "case-1", title: "Case 1", query: "Q", runs: 1, models: [], expectedToolCalls: [] },
+        ];
+        mockConvexQuery.mockImplementation(async (name: string) =>
+          name === "projectEnvironments:resolveEnvironmentForLaunch"
+            ? { servers: [{ serverId: "srv-1", name: "billing" }] }
+            : testCases,
+        );
+      });
+
+      it("connects the environments' servers before the run starts", async () => {
+        const ensureServersReady = vi
+          .fn()
+          .mockResolvedValue(readiness({ readyServerNames: ["billing"] }));
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite, { ephemeralEnvironment: true });
+        });
+        expect(mockConvexQuery).toHaveBeenCalledWith(
+          "projectEnvironments:resolveEnvironmentForLaunch",
+          { projectId: "project-1", environmentId: "env-1", serverSource: "environment_only" },
+        );
+        expect(ensureServersReady).toHaveBeenCalledWith(["billing"]);
+        expect(ensureServersReady.mock.invocationCallOrder[0]!).toBeLessThan(
+          mockAuthFetch.mock.invocationCallOrder[0]!,
+        );
+      });
+
+      it("does not start when a server fails to connect", async () => {
+        const ensureServersReady = vi
+          .fn()
+          .mockResolvedValue(readiness({ failedServerNames: ["billing"] }));
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        await act(async () => {
+          await result.current.handleRerun(envSuite);
+        });
+        expect(toast.error).toHaveBeenCalled();
+        expect(
+          mockAuthFetch.mock.calls.find(([url]) => url === "/api/mcp/evals/run"),
+        ).toBeUndefined();
+      });
+
+      it("launches once when a second rerun starts while servers connect", async () => {
+        const connect = createDeferred<ReturnType<typeof readiness>>();
+        const ensureServersReady = vi.fn().mockReturnValue(connect.promise);
+        const { result } = renderHook(() =>
+          useEvalHandlers({ ...defaultProps, ensureServersReady }),
+        );
+        let first!: Promise<unknown>;
+        let second!: Promise<unknown>;
+        act(() => {
+          first = result.current.handleRerun(envSuite);
+          second = result.current.handleRerun(envSuite);
+        });
+        await act(async () => {
+          connect.resolve(readiness({ readyServerNames: ["billing"] }));
+          await Promise.all([first, second]);
+        });
+        expect(ensureServersReady).toHaveBeenCalledOnce();
+        expect(
+          mockAuthFetch.mock.calls.filter(
+            ([url]) => url === "/api/mcp/evals/run",
+          ),
+        ).toHaveLength(1);
+      });
+    });
+
     it("runs a model-less case on an environment suite even when the suite default model is not in the picker", async () => {
       mockConvexQuery.mockResolvedValue([
         { _id: "case-1", title: "Case 1", query: "Q", runs: 1, models: [], expectedToolCalls: [] },

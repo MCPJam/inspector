@@ -122,6 +122,7 @@ export function preflightTargets({
   hosts,
   environmentServerRefs,
   targets,
+  serverRefs,
 }: {
   suite: EvalSuite;
   cases: readonly EvalCase[];
@@ -130,13 +131,16 @@ export function preflightTargets({
   environmentServerRefs: readonly string[];
   /** The client/model cells the run will launch; else the attached ones. */
   targets?: readonly PreflightTarget[];
+  /** The servers those cells run on, when the sheet picks them (a group). */
+  serverRefs?: readonly string[];
 }): { serverRefs: string[]; models: { model: string; provider: string }[] } {
   const environmentIds = suite.environmentIds ?? [];
-  // An SDK suite runs in the environment picked in the sheet; its own
-  // servers and models are what its CI ran.
-  if (!environmentIds.length && suite.source === "sdk")
+  // Without planned cells, a suite without environments keeps its own launch:
+  // an SDK suite's servers and models are what its CI ran, a legacy suite's
+  // are its own.
+  if (!targets && !environmentIds.length && suite.source === "sdk")
     return { serverRefs: [], models: [] };
-  if (!environmentIds.length)
+  if (!targets && !environmentIds.length)
     return {
       serverRefs: normalizeSuiteServerRefs(getEffectiveSuiteServers(suite)),
       models: cases.flatMap((item) => item.models ?? []),
@@ -159,7 +163,7 @@ export function preflightTargets({
     const provider = model ? classifyModelIdProvider(model) : null;
     return model && provider ? [{ model, provider: provider.provider }] : [];
   });
-  return { serverRefs: [...environmentServerRefs], models };
+  return { serverRefs: [...(serverRefs ?? environmentServerRefs)], models };
 }
 
 /**
@@ -281,6 +285,8 @@ export function useSuiteRunPreflight({
     environmentIds: readonly string[];
     templateOnlyIds: readonly string[];
     targets: readonly PreflightTarget[];
+    /** The servers the cells run on, when the sheet picks them. */
+    serverRefs?: readonly string[];
   };
 }): RunPreflightState {
   const appState = useOptionalSharedAppState();
@@ -314,6 +320,7 @@ export function useSuiteRunPreflight({
       hosts,
       environmentServerRefs: environment.serverRefs,
       targets: planned?.targets,
+      serverRefs: planned?.serverRefs,
     }),
     refused: environment.refusals,
     refusalByEnvironment: environment.refusalByEnvironment,
@@ -344,7 +351,6 @@ export function useSuiteRunPreflight({
   };
 }
 
-/** A legacy suite's server problems, kept only for the clients selected. */
 /** An environment suite's refusals, kept only for the environments selected. */
 export function scopePreflightToEnvironments<T extends RunPreflight>(
   preflight: T,
@@ -364,6 +370,7 @@ export function scopePreflightToEnvironments<T extends RunPreflight>(
   };
 }
 
+/** A legacy suite's server problems, kept only for the clients selected. */
 export function scopePreflightToHosts<T extends RunPreflight>(
   preflight: T,
   suite: EvalSuite,

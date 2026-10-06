@@ -83,6 +83,10 @@ const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
     "GET /api/web/flags",
     "feature-flag values for the checked-in client allowlist only; anonymous visitors need them before sign-in, and a bearer, when sent, is verified",
   ],
+  [
+    "POST /api/web/guest-session/revoke",
+    "revokes the CALLER'S own guest, identified only by its cookie; on a loopback Inspector a caller with no guest cookie gets a local no-op that touches nothing",
+  ],
 ]);
 
 /**
@@ -100,10 +104,6 @@ const NON_AUTH_REFUSALS = new Map<string, string>([
   [
     "POST /api/web/guest-session",
     "public by design — minting a guest bearer is how an anonymous caller becomes an authenticated one; the 500 here is the absent Convex, not a refusal",
-  ],
-  [
-    "POST /api/web/guest-session/revoke",
-    "same router as the mint; 500 is the absent Convex",
   ],
   [
     "POST /api/web/guest-session/promotion-proof",

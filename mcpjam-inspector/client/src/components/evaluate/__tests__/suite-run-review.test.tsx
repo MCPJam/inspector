@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteRunReview, selectReviewTargets } from "../suite-run-review";
@@ -23,6 +23,8 @@ const environments = [
 const names = new Map([["claude", "Claude"]]);
 
 describe("suite run review", () => {
+  beforeEach(() => localStorage.clear());
+
   it.each([
     [undefined, undefined, 5],
     [2, undefined, 2],
@@ -103,6 +105,69 @@ describe("suite run review", () => {
       { iterationOverride: 4, throwOnFailure: true },
     );
     expect(close).toHaveBeenCalledOnce();
+  });
+  it("reopens with the iteration count of the last started run", async () => {
+    const user = userEvent.setup();
+    const props = {
+      suite: { ...suite, minIterations: undefined },
+      cases,
+      environments,
+      hostNamesById: names,
+      onStart: vi.fn(),
+      onClose: vi.fn(),
+    };
+    const { unmount } = render(<SuiteRunReview {...props} />);
+    for (let i = 0; i < 4; i++) {
+      await user.click(
+        screen.getByRole("button", { name: "Fewer iterations" }),
+      );
+    }
+    await user.click(screen.getByRole("button", { name: "Start run" }));
+    unmount();
+    render(<SuiteRunReview {...props} />);
+    expect(screen.getByLabelText("Iterations per case")).toHaveValue(1);
+  });
+  it("keeps a remembered count above the suite minimum and scoped to its suite", () => {
+    localStorage.setItem("mcpjam:suite-run-iterations:suite", "2");
+    localStorage.setItem("mcpjam:suite-run-iterations:other", "3");
+    const props = {
+      cases,
+      environments,
+      hostNamesById: names,
+      onStart: vi.fn(),
+      onClose: vi.fn(),
+    };
+    const { unmount } = render(
+      <SuiteRunReview {...props} suite={{ ...suite, minIterations: 4 }} />,
+    );
+    expect(screen.getByLabelText("Iterations per case")).toHaveValue(4);
+    unmount();
+    render(
+      <SuiteRunReview
+        {...props}
+        suite={{ ...suite, _id: "third", minIterations: undefined }}
+      />,
+    );
+    expect(screen.getByLabelText("Iterations per case")).toHaveValue(5);
+  });
+  it("does not remember a count when the run fails to start", async () => {
+    const user = userEvent.setup();
+    render(
+      <SuiteRunReview
+        suite={{ ...suite, minIterations: undefined }}
+        cases={cases}
+        environments={environments}
+        hostNamesById={names}
+        onStart={vi.fn().mockRejectedValue(new Error("No credits"))}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Fewer iterations" }));
+    await user.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText("No credits")).toBeVisible();
+    expect(
+      localStorage.getItem("mcpjam:suite-run-iterations:suite"),
+    ).toBeNull();
   });
   it("does not show its own in-progress launch as a blocker", async () => {
     let finish!: () => void;

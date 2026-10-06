@@ -11,6 +11,7 @@
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
 import {
   describeError,
@@ -89,6 +90,41 @@ export function describeProviderRateLimit(
   };
 }
 
+/**
+ * The card shown on a session that stopped while other requests held the last
+ * credits (`holds_committed`).
+ *
+ * It is deliberately not the catalog's `provider/mcpjam_limit` copy: that entry
+ * is titled "Out of MCPJam credits" and sends the user to upgrade or buy
+ * credits, and a hold is neither an empty balance nor something a purchase
+ * lifts. The slug and severity stay the catalog's so the card renders amber
+ * like every other MCPJam limit. The backend's own sentence stays as the body:
+ * it carries how many requests were holding credits.
+ *
+ * Two things in that entry are about buying credits and would contradict the
+ * title, so both are replaced: its "Learn more" link (the buy-credits section;
+ * a hold has its own note), and the backend's closing "Top up to add more
+ * credits." which it appends to a hold's details for an organization that can
+ * top up.
+ */
+export function describeHeldCredits(message: string): NormalizedError {
+  const base = describeAsSlug("provider/mcpjam_limit");
+  return {
+    ...base,
+    docsAnchor: base.docsAnchor.replace(/#.*$/, "#credits-temporarily-held"),
+    title: "Credits temporarily held",
+    oneLine: message.replace(/\s*Top up to add more credits\.?/i, "").trim(),
+    likelyCauses: [
+      "Other requests from your organization were in flight and held the remaining credits until they finished.",
+    ],
+    nextSteps: [
+      "Run the session again once your other sessions have finished.",
+      "Start fewer sessions at once if this keeps happening.",
+    ],
+    rawMessage: message,
+  };
+}
+
 /** Use the producer's humanized meaning, while retaining raw diagnostics. */
 export function describeSwarmAttemptFailure(
   rawMessage: string | null | undefined,
@@ -106,6 +142,15 @@ export function describeSwarmAttemptFailure(
   ) {
     return {
       ...describeProviderNotAllowlisted(info.message),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
+  // A hold is a wait, not an empty balance, and the limit branch below would
+  // card the same sentence as "Out of MCPJam credits".
+  if (isHeldCreditsRefusal(code, info.refusalReason, info.message)) {
+    return {
+      ...describeHeldCredits(info.message),
       rawMessage: rawMessage ?? info.message,
       rawCode: code,
     };

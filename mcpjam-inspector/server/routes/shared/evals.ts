@@ -48,6 +48,7 @@ import {
   runEvalSuiteWithAiSdk,
   runFrozenSkillOptions,
   streamTestCase,
+  throwIfEvalToolSnapshotFailed,
   type EvalPinnedSkillSource,
   type EvalTestCase,
 } from "../../services/evals-runner";
@@ -583,6 +584,18 @@ export const RunEvalsRequestSchema = z.object({
    * arms pass `false` so both arms replay the same frozen source.
    */
   useCurrentSuiteConfig: z.boolean().optional(),
+  /**
+   * A SUBSET rerun of `replayedFromRunId`. Both or neither, with
+   * `rerunOfRunId === replayedFromRunId`; the backend picks the cases (any
+   * case with a trial that did not complete and pass) and refuses
+   * `RERUN_NOTHING_TO_RERUN` when none qualify. Threaded into Convex
+   * `startTestSuiteRun` only when set.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  rerunOfRunId: z.string().min(1).optional(),
+  rerunScope: z.literal("failed_cases").optional(),
   /**
    * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
    *
@@ -2417,6 +2430,8 @@ export async function prepareEvalRun(
     toolDescriptionOverride,
     replayedFromRunId,
     useCurrentSuiteConfig,
+    rerunOfRunId,
+    rerunScope,
     ephemeralEnvironment,
     toolPolicy,
     importApprovals,
@@ -2613,6 +2628,23 @@ export async function prepareEvalRun(
         logPrefix: "evals",
       },
     );
+  // A benchmark cell still launches: an unreachable target is evidence the
+  // benchmark scores as a failed child run, where a refusal here would leave
+  // the cell unattached and read as a coverage gap.
+  if (provenance.source !== "benchmark") {
+    throwIfEvalToolSnapshotFailed({
+      toolSnapshot,
+      mcpClientManager: clientManager,
+      environment: buildPersistedSuiteEnvironment({
+        resolvedServerIds,
+        persistedServerRefs,
+        serverNames:
+          environmentLaunch && !githubCheckEnvironmentLaunch
+            ? environmentServerNames(environmentLaunch)
+            : serverNames,
+      }),
+    });
+  }
 
   // Persist suite + cases (create or upsert). The suite/case persistence is
   // shared with the author-only public surface; `prepareEvalRun` then starts
@@ -2712,6 +2744,8 @@ export async function prepareEvalRun(
     ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
     ...(replayedFromRunId ? { replayedFromRunId } : {}),
     ...(useCurrentSuiteConfig !== undefined ? { useCurrentSuiteConfig } : {}),
+    ...(rerunOfRunId ? { rerunOfRunId } : {}),
+    ...(rerunScope ? { rerunScope } : {}),
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
     // Named explicitly, like every other field in this call: `startSuiteRun-
     // WithRecorder` reconstructs the mutation args from its own parameters,
@@ -3610,6 +3644,22 @@ export async function prepareSingleCaseExecution(
   let suiteHostConfig = liveHostConfig;
   let environment: PreparedSingleCaseExecution["environment"];
   if (environmentLaunch) {
+    // The commit reserves this case's iterations, so a server that cannot be
+    // listed is refused first, as the suite launch does.
+    const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      { logPrefix: "evals" },
+    );
+    throwIfEvalToolSnapshotFailed({
+      toolSnapshot,
+      mcpClientManager: clientManager,
+      environment: buildPersistedSuiteEnvironment({
+        resolvedServerIds,
+        persistedServerRefs: resolvedServerIds,
+        serverNames: environmentServerNames(environmentLaunch),
+      }),
+    });
     const committed = await commitEnvironmentQuickRun(convexClient, {
       testCaseId,
       testCaseSnapshot: buildQuickRunCommitSnapshot(

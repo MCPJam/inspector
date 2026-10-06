@@ -5,6 +5,7 @@ import {
   type McpModelVisibleToolResultPolicy,
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
+  readModelOutputImage,
 } from "@mcpjam/sdk";
 import {
   readMcpToolOriginServerId,
@@ -183,14 +184,10 @@ function readReplayableImageModelOutput(
       continue;
     }
 
-    if (partRecord.type === "media" || partRecord.type === "image-data") {
-      if (
-        typeof partRecord.data !== "string" ||
-        typeof partRecord.mediaType !== "string" ||
-        !partRecord.mediaType.startsWith("image/")
-      ) {
-        return undefined;
-      }
+    // Any stored image shape (`file`, `image-data`, legacy `media`); the
+    // re-validation below re-emits it as AI SDK 7's `file` part.
+    const image = readModelOutputImage(partRecord);
+    if (image) {
       sawImageCandidate = true;
       if (!options.allowMedia) {
         value.push({
@@ -203,8 +200,8 @@ function readReplayableImageModelOutput(
         content: [
           {
             type: "image",
-            data: partRecord.data,
-            mimeType: partRecord.mediaType,
+            data: image.data,
+            mimeType: image.mediaType,
           },
         ],
       } as never);

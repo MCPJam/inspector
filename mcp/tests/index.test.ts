@@ -16,6 +16,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import worker from "../src/index.js";
 import { GUEST_ISSUER } from "../src/auth.js";
 import { EXCLUDED_FROM_CATALOG } from "../src/tools/platformTools.js";
+import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
+import { SKILLS_BUNDLE_CONTENTS } from "../src/generated/SkillsBundle.generated.js";
 
 const ORIGIN = "https://mcp.test";
 const CLIENT_ID = "client_test_0123456789";
@@ -323,12 +325,16 @@ describe("/mcp with guests (mixed)", () => {
   });
 
   describe("without the mint secret", () => {
+    let freshWorker: typeof worker;
+    beforeAll(async () => {
+      // Reset the isolate warning once. Loading the full SDK/tool registry is
+      // setup work and can exceed a test's 5s budget in the parallel CI lane.
+      vi.resetModules();
+      freshWorker = (await import("../src/index.js")).default;
+    }, 30_000);
+
     it("answers a tokenless request with the OAuth 401 and logs the misconfiguration once", async () => {
       stubOutboundFetch();
-      // A fresh module instance: the warning is once per isolate, and earlier
-      // tests in this file share the cached one.
-      vi.resetModules();
-      const { default: freshWorker } = await import("../src/index.js");
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
       const env = makeEnv({ guestAccess: "mixed" });
 
@@ -396,6 +402,18 @@ describe("held beta tools", () => {
       .sort();
     expect(held).toEqual([...HELD_TOOLS].sort());
   });
+
+  it("are not named by any skill this worker serves", () => {
+    // A served skill that teaches a held tool sends the model after a tool
+    // that tools/list never offered.
+    const named = Object.entries(SKILLS_BUNDLE_CONTENTS).flatMap(
+      ([uri, text]) =>
+        HELD_TOOLS.filter((name) => new RegExp(`\\b${name}\\b`).test(text)).map(
+          (name) => `${uri}: ${name}`
+        )
+    );
+    expect(named).toEqual([]);
+  });
 });
 
 describe("routes that need no token", () => {
@@ -461,5 +479,111 @@ describe("routes that need no token", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("access-control-allow-origin")).toBe("*");
     expect(await response.json()).toEqual(metadata);
+  });
+});
+
+/**
+ * What Claude's connector directory checks on every tool, read off the real
+ * `tools/list` and `initialize` a client receives — not off the registrar —
+ * so a tool registered by any path is held to it.
+ *
+ * https://claude.com/docs/connectors/building/review-criteria: every tool
+ * carries a title and the applicable hint, names fit in 64 characters, and
+ * no description tells the model to call a tool the user did not ask for or
+ * to pull instructions from somewhere else.
+ */
+describe("the served catalog meets Claude's directory criteria", () => {
+  async function servedCatalog() {
+    stubOutboundFetch();
+    const env = makeEnv({ guestAccess: "off" });
+    const token = await authkitToken();
+    const initialize = await jsonRpcResult(
+      await worker.fetch(mcpRequest("initialize", INITIALIZE_PARAMS, token), env)
+    );
+    const list = await jsonRpcResult(
+      await worker.fetch(mcpRequest("tools/list", {}, token), env)
+    );
+    return {
+      instructions: String(initialize.instructions ?? ""),
+      tools: list.tools as Array<{
+        name: string;
+        title?: string;
+        description?: string;
+        inputSchema?: unknown;
+        annotations?: Record<string, unknown>;
+      }>,
+    };
+  }
+
+  it("gives every tool a title annotation, a short name and an explicit hint", async () => {
+    const { tools } = await servedCatalog();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.name.length, tool.name).toBeLessThanOrEqual(64);
+      expect(String(tool.annotations?.title ?? "").trim(), tool.name).not.toBe(
+        ""
+      );
+      expect(tool.annotations?.title, tool.name).toBe(tool.title);
+      if (tool.annotations?.readOnlyHint === true) continue;
+      // Not left to the spec's "assume destructive" default: the directory
+      // wants the hint stated on every tool that is not read-only.
+      expect(tool.annotations?.readOnlyHint, tool.name).toBe(false);
+      expect(typeof tool.annotations?.destructiveHint, tool.name).toBe(
+        "boolean"
+      );
+    }
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const name of ["call_server_tool", "send_chat_message"]) {
+      expect(byName.get(name)?.annotations?.destructiveHint, name).toBe(true);
+    }
+  });
+
+  it("names only tools this server serves, and no outside instruction source", async () => {
+    const { tools } = await servedCatalog();
+    const served = new Set(tools.map((tool) => tool.name));
+    // Every operation name the SDK knows, served or not: a token in a
+    // description that matches one must be a tool the client can see.
+    const operationNames = new Set(
+      ALL_OPERATIONS.map((operation) => operation.name)
+    );
+    // Parameter descriptions are model-facing too, so they are held to the
+    // same rule as the tool's own description.
+    const schemaDescriptions = (node: unknown): string[] => {
+      if (Array.isArray(node)) return node.flatMap(schemaDescriptions);
+      if (node === null || typeof node !== "object") return [];
+      return Object.entries(node).flatMap(([key, value]) =>
+        key === "description" && typeof value === "string"
+          ? [value]
+          : schemaDescriptions(value)
+      );
+    };
+    for (const tool of tools) {
+      const description = [
+        String(tool.description ?? ""),
+        ...schemaDescriptions(tool.inputSchema),
+      ].join("\n");
+      for (const token of description.match(/\b[a-z]+(?:_[a-z0-9]+)+\b/g) ??
+        []) {
+        if (operationNames.has(token)) {
+          expect(served, `${tool.name} names ${token}`).toContain(token);
+        }
+      }
+      // Directions to read instructions elsewhere, or to drive another tool
+      // the user did not ask for.
+      expect(description, tool.name).not.toMatch(/\bHINT:/);
+      expect(description, tool.name).not.toMatch(/skill:\/\/|glossary` skill/);
+      expect(description, tool.name).not.toMatch(/\bmcpjam (cloud|eval)\b/);
+      expect(description, tool.name).not.toMatch(
+        /START THERE|CHECK THIS BEFORE|report it with send_feedback/
+      );
+    }
+  });
+
+  it("states facts in its instructions and steers toward no tool", async () => {
+    const { tools, instructions } = await servedCatalog();
+    expect(instructions).toContain("permalinks");
+    for (const tool of tools) {
+      expect(instructions, tool.name).not.toContain(tool.name);
+    }
   });
 });
