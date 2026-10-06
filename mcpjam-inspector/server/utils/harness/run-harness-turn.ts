@@ -1622,6 +1622,24 @@ export async function runHarnessTurn(
       // environment. The runtime process itself still receives it — it has to,
       // that is how the CLI authenticates. The BROKERED arm has no such
       // residue: the box never holds the value at any point.
+      // A NON-MEMBER PARTICIPANT never runs an external-account harness. Its
+      // credential is the project's own vendor key; brokered delivery keeps the
+      // raw value out of the box, but the box's agent still holds a shell and the
+      // egress proxy injects the key on the vendor's host, so a participant can
+      // have the CLI exchange it for a reusable vendor token (Cursor:
+      // `/auth/exchange_user_api_key`) and read it back. That crosses the
+      // project-to-guest boundary. Refused here, before any credential is
+      // planned or anything is provisioned, with copy that names neither the
+      // credential nor the project's settings.
+      if (
+        harnessAdapter.modelAccess === "external-account" &&
+        scenarioParticipant
+      ) {
+        throw new Error(
+          `${harnessAdapter.displayName} isn't available to participants of this study. ` +
+            "Ask the study owner to choose a different agent.",
+        );
+      }
       const externalAccountCredentialNames =
         harnessAdapter.modelAccess === "external-account"
           ? harnessAdapter.externalAccountCredentialEnv
