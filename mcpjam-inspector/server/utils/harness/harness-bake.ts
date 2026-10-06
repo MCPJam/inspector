@@ -78,13 +78,20 @@ export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
 export const HARNESS_BAKED_MARKER_AUTHOR = "mcpjam-harness-bake";
 
 /**
- * The toolchain the template pins and the bake is verified against. Equal to
- * `scripts/local-harness-toolchain.json` (asserted in `harness-bake.test.ts`),
- * which is the toolchain the local packs and the conformance suite already
- * run on — one set of versions the recipes are known to install with.
+ * The toolchain the template pins and the bake is verified against. Node is
+ * equal to `scripts/local-harness-toolchain.json` (asserted in
+ * `harness-bake.test.ts`), the toolchain the local packs and the conformance
+ * suite run on.
+ *
+ * pnpm is NOT: a hosted box has 1 GiB of memory, and pnpm 10 holds the Claude
+ * Code and Agent SDK native binaries (~392 MB unpacked each) in memory while
+ * extracting them, so the bake's `pnpm install` is OOM-killed there (974 MB
+ * peak on a live 1 GiB box). pnpm 12 streams them (638 MB peak) and is what
+ * the unpinned templates already ran. Local packs build on machines without
+ * that limit and keep the toolchain file's pnpm.
  */
 export const HARNESS_TEMPLATE_NODE_VERSION = "24.20.0";
-export const HARNESS_TEMPLATE_PNPM_VERSION = "10.18.1";
+export const HARNESS_TEMPLATE_PNPM_VERSION = "12.8.1";
 
 /**
  * The idempotent pnpm guard a provider runs before the framework's bootstrap.
