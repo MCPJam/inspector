@@ -127,6 +127,7 @@ export function RunSessionsProvider({
   runId,
   runSnapshot,
   journeyRefId,
+  organizationId,
   hosts,
   sessionsPerTarget,
   initialTargetKey,
@@ -136,6 +137,12 @@ export function RunSessionsProvider({
   runId: string;
   runSnapshot: JourneyRun;
   journeyRefId: string;
+  /**
+   * The organization the swarm belongs to, named on the limit notices this view
+   * raises so the run's wave is that organization's. Required, though the tab
+   * may not know one yet, so a caller cannot forget it.
+   */
+  organizationId: string | undefined;
   hosts: HostItem[];
   sessionsPerTarget: number;
   initialTargetKey?: string | null;
@@ -171,6 +178,7 @@ export function RunSessionsProvider({
   );
 
   const observedLiveRuns = useRef(new Set<string>());
+  const swarmRunGroupId = run.swarmRunGroupId;
   useEffect(() => {
     if (runStatus === "running" || runStatus === "pending")
       observedLiveRuns.current.add(runId);
@@ -178,14 +186,21 @@ export function RunSessionsProvider({
     for (const attempt of run.attempts ?? []) {
       notifyMCPJamLimitError({
         runId,
+        ...(swarmRunGroupId ? { swarmRunGroupId } : {}),
+        ...(organizationId ? { organizationId } : {}),
         code: attempt.errorCode ?? undefined,
         message: attempt.errorMessage,
         surface: "swarm",
       });
     }
-  }, [runId, runStatus, run.attempts]);
+  }, [runId, swarmRunGroupId, organizationId, runStatus, run.attempts]);
   const streamEnabled = runStatus === "running";
-  const stream = useJourneyRunStream(runId, streamEnabled);
+  const stream = useJourneyRunStream(
+    runId,
+    streamEnabled,
+    swarmRunGroupId,
+    organizationId,
+  );
 
   const [matrixSelection, setMatrixSelection] =
     useState<SwarmMatrixSelection | null>(null);

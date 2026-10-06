@@ -20,8 +20,8 @@ import { environmentsForModelCell } from "@/lib/reasoning-effort-selection";
 import { EvalTargetMatrix } from "../evaluate/eval-target-matrix";
 import { seedRunMatrix } from "../evaluate/suite-run-matrix";
 import {
-  adhocSkillSelection,
   chooseTemplate,
+  composeAdhocStack,
   environmentComposition,
   lacksServerSource,
   sharedServerGroup,
@@ -325,17 +325,7 @@ function deriveStack(
       "Pick a server group for this suite first. Without one, its runs connect no servers.",
     );
   }
-  const skillSelection = adhocSkillSelection(composition);
-  return {
-    hostId: cell.hostId,
-    ...(cell.modelId !== undefined ? { modelId: cell.modelId } : {}),
-    ...(cell.modelSelection ? { modelSelection: cell.modelSelection } : {}),
-    serverAttachmentId,
-    ...(skillSelection ? { skillSelection } : {}),
-    ...(composition.computerEnvironmentId
-      ? { computerEnvironmentId: composition.computerEnvironmentId }
-      : {}),
-  };
+  return composeAdhocStack({ ...composition, serverAttachmentId }, cell);
 }
 
 /** What sets one candidate setup apart, for the "which to copy" choice. */

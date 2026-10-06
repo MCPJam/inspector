@@ -18,7 +18,9 @@ export const GUEST_SESSION_FAILURE_REASONS = [
   "upstream_status",
   "bad_json",
   "bad_payload",
-  "provisioning",
+  // The guest authority could not be resolved from this install's
+  // configuration (see `server/utils/guest-authority.ts`).
+  "configuration",
 ] as const;
 
 export type GuestSessionFailureReason =

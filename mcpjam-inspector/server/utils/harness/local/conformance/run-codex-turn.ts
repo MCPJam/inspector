@@ -22,7 +22,7 @@
  * Every verdict is asserted; a run that observes a violation exits non-zero.
  */
 import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
@@ -32,7 +32,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { getHarnessAdapter } from "../../registry.js";
-import { withLocalPackBootstrap } from "../pack-bootstrap.js";
+import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
@@ -296,7 +296,6 @@ async function main() {
   if (!ws.ok) throw new Error(ws.message);
 
   const digest = await computeTreeDigest(BUNDLE);
-  const bridgeBytes = await readFile(join(BUNDLE, "bridge.mjs"));
   const base = LOCAL_HARNESS_MANIFEST.codex;
   // THIS scenario's manifest: conformance recorded, this target certified and
   // (for the unattended leg) its sandbox measured — the claims the run exists
@@ -308,13 +307,14 @@ async function main() {
     nativePlatforms: [...new Set([...base.nativePlatforms, PLATFORM])],
     nativeTargets: [...new Set([...(base.nativeTargets ?? []), PACK_TARGET])],
     unattendedSandboxTargets: UNATTENDED ? [PACK_TARGET] : [],
-    bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}`,
   } as typeof base;
   const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM });
   if (!rt.ok) throw new Error(`${rt.status}: ${rt.message}`);
-  if (rt.runtime.adapterVersion !== CODEX_LOCAL_ADAPTER_IDENTITY) {
-    note(`pack adapter ${rt.runtime.adapterVersion} vs Inspector ${CODEX_LOCAL_ADAPTER_IDENTITY}`);
-  }
+  // The bridge is this checkout's Inspector layer; the pack is vendor bytes
+  // (a published pack from before the split still carries its own bridge,
+  // which nothing reads). Either way the session runs THIS layer.
+  if (rt.runtime.layer === undefined) throw new Error("local Codex resolved without an Inspector layer");
+  console.log(`[codex-conformance] pack=${digest} layer=${rt.runtime.layer.digest}`);
   const machineId = await getLocalMachineId();
   const permissionProfile = UNATTENDED ? "unrestricted" as const : "workspace-edits" as const;
   const scope = UNATTENDED ? "unattended" as const : "attended" as const;
@@ -386,7 +386,7 @@ async function main() {
     auth: { CODEX_API_KEY: CAPABILITY, OPENAI_BASE_URL: gatewayUrl } as any,
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
   });
-  const localHarness = await withLocalPackBootstrap(harness, plan.runtime.rootPath);
+  const localHarness = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
     harness: (AUTO_APPROVE ? withAutoApprovedNativeRequests(localHarness) : localHarness) as any,
     sandbox: provider,

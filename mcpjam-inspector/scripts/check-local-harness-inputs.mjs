@@ -1,6 +1,16 @@
 /**
  * Fingerprint every input that produces a runtime pack, PER HARNESS.
- * `--write` updates the reviewed snapshot; the default checks it.
+ *
+ *   (no flag)              check the snapshot; exit 1 if any fingerprint moved
+ *   --advisory             report moved fingerprints (to the job summary in
+ *                          CI) and exit 0: on a pull request a moved
+ *                          fingerprint is not a defect, it is what the next
+ *                          release publishes — `prepare-release.yml` builds
+ *                          the pack and pins it in the version PR
+ *   --drift                only refuse an installed tree that is not the
+ *                          locked one (what a pack build needs)
+ *   --write [--harness id] update the snapshot — every harness's record, or
+ *                          only the named one's
  *
  * ── What "per harness" has to mean ───────────────────────────────────────
  * Each harness's pack has its own version and its own release, so each needs
@@ -14,10 +24,12 @@
  *
  *   - SHARED inputs: the generic orchestration every pack is built by (the
  *     build script, this script, the recipe loader, the workflow, the
- *     toolchain pins, the loopback launcher, the tree-digest module, the Job
- *     Object launcher). A change here invalidates EVERY harness's pack, and
- *     must: those bytes are in, or decide, every pack. Never drop a real
- *     input from this list to keep CI green — publish the affected packs.
+ *     toolchain pins, the tree-digest module, the Job Object launcher). A
+ *     change here invalidates EVERY harness's pack, and must: those bytes are
+ *     in, or decide, every pack. Never drop a real input from this list to
+ *     keep CI green — publish the affected packs. (The bridge and its
+ *     launcher are not here: they are the Inspector layer's, shipped with the
+ *     Inspector, and no pack carries them.)
  *   - PER-HARNESS inputs: the harness's recipe module, the sources its recipe
  *     declares, the locked dependency closure of its declared roots, and the
  *     recipe bytes it actually emits. Nothing another harness reads.
@@ -27,8 +39,8 @@
  * record byte-identical.
  */
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
-import { resolve, relative, dirname } from 'node:path';
+import { appendFile, readFile, writeFile, readdir, lstat, realpath } from 'node:fs/promises';
+import { resolve, relative, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { listPackHarnessIds, loadPackHarness, packRecipeModulePath } from './local-harness-pack-harnesses.mjs';
 
@@ -43,8 +55,7 @@ export const SHARED_PACK_INPUTS = [
   'mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs',
   'mcpjam-inspector/scripts/local-harness-toolchain.json',
   'mcpjam-inspector/scripts/read-local-harness-toolchain.mjs',
-  'mcpjam-inspector/server/utils/harness/local/pack/launcher.mjs',
-  'mcpjam-inspector/server/utils/harness/local/runtime-identity.ts',
+  'mcpjam-inspector/server/utils/harness/local/tree-digest.ts',
 ];
 const JOB_LAUNCHER_DIR = 'mcpjam-inspector/tools/mcpjam-job-launcher';
 
@@ -85,6 +96,31 @@ export function packDependencyClosure(packages, roots = ['@ai-sdk/harness-claude
 
 const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 
+/**
+ * What is actually installed at a lockfile key (`node_modules/x`,
+ * `mcpjam-inspector/node_modules/@scope/y`): `absent`, `linked` (the path, or
+ * a directory above it inside the repo, is a symlink — `npm link`, a `file:`
+ * dependency), or the installed `package.json` version.
+ */
+async function inspectInstalledPackage(key) {
+  const full = resolve(root, key);
+  try {
+    await lstat(full);
+  } catch {
+    return { kind: 'absent' };
+  }
+  // realpath, not lstat of the leaf: a linked `@ai-sdk` scope directory
+  // redirects every package under it while each leaf is a plain directory.
+  const [real, realRoot] = await Promise.all([realpath(full), realpath(root)]);
+  if (real !== join(realRoot, relative(root, full))) return { kind: 'linked', target: real };
+  try {
+    const pkg = JSON.parse(await readFile(join(full, 'package.json'), 'utf8'));
+    return { kind: 'installed', version: String(pkg.version ?? '') };
+  } catch {
+    return { kind: 'installed', version: '' };
+  }
+}
+
 /** The real filesystem and repo, for everything but tests. */
 export const defaultPackInputIo = {
   readFile: path => readFile(resolve(root, path)),
@@ -92,7 +128,55 @@ export const defaultPackInputIo = {
   readLockPackages: async () => JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8')).packages,
   listHarnesses: async () => listPackHarnessIds(),
   loadHarness: harnessId => loadPackHarness(harnessId),
+  inspectInstalled: key => inspectInstalledPackage(key),
 };
+
+/** Where an `@ai-sdk/harness*` package can be installed in this workspace. */
+const HARNESS_SCOPE_DIRS = ['node_modules/@ai-sdk', 'mcpjam-inspector/node_modules/@ai-sdk'];
+
+/**
+ * Why the installed tree cannot produce a trustworthy snapshot, or [] when it
+ * can.
+ *
+ * The recipe's EMITTED bytes — the Claude Code bridge, the Codex bundle — are
+ * read from whatever `node_modules` holds, not from the lockfile. A snapshot
+ * written from a stale install (#5823) or a linked adapter checkout records
+ * hashes no clean CI install will ever reproduce, and the pack built from the
+ * lock then fails the release check it was supposed to satisfy. These are the
+ * two ways that has actually happened, so `--write` refuses both:
+ *
+ *   - a package in any harness's locked closure is installed at a different
+ *     version than `package-lock.json` names (or not installed at all, unless
+ *     the lock marks it optional — a platform package for another OS);
+ *   - an `@ai-sdk/harness*` package, or anything in a closure, is a symlink.
+ */
+export async function installedClosureDrift(io = defaultPackInputIo) {
+  const packages = await io.readLockPackages();
+  const keys = new Set();
+  for (const harnessId of await io.listHarnesses()) {
+    const recipe = await io.loadHarness(harnessId);
+    for (const key of Object.keys(packDependencyClosure(packages, recipe.dependencyRoots))) keys.add(key);
+  }
+  for (const dir of HARNESS_SCOPE_DIRS) {
+    const names = await io.readdir(dir).catch(() => []);
+    for (const name of names) if (String(name).startsWith('harness')) keys.add(`${dir}/${name}`);
+  }
+  const problems = [];
+  for (const key of [...keys].sort()) {
+    const installed = await io.inspectInstalled(key);
+    const locked = packages[key];
+    if (installed.kind === 'linked') {
+      problems.push(`${key} is a symlink (to ${installed.target ?? 'elsewhere'}); a linked package's bytes are not the locked ones`);
+    } else if (installed.kind === 'absent') {
+      if (locked !== undefined && locked.optional !== true) problems.push(`${key} is not installed (package-lock.json has ${locked.version})`);
+    } else if (locked === undefined) {
+      problems.push(`${key} is installed (${installed.version}) but package-lock.json has no entry for it`);
+    } else if (installed.version !== locked.version) {
+      problems.push(`${key} is installed at ${installed.version || '(unknown)'} but package-lock.json has ${locked.version}`);
+    }
+  }
+  return problems;
+}
 
 /** Shared inputs, with the Go sources the Job Object launcher is built from. */
 async function sharedInputPaths(io) {
@@ -144,12 +228,91 @@ export async function readRecordedPackInputs(harnessId) {
   return recorded.harnesses?.[harnessId] ?? null;
 }
 
+/**
+ * Which recorded fingerprints differ from the computed ones, harness by
+ * harness: `[{ harnessId, recorded, computed }]`, empty when none moved.
+ */
+export function movedFingerprints(recorded, computed) {
+  const ids = [...new Set([...Object.keys(recorded?.harnesses ?? {}), ...Object.keys(computed.harnesses)])].sort();
+  return ids
+    .map(harnessId => ({
+      harnessId,
+      recorded: recorded?.harnesses?.[harnessId]?.fingerprint ?? null,
+      computed: computed.harnesses[harnessId]?.fingerprint ?? null,
+    }))
+    .filter(entry => entry.recorded !== entry.computed);
+}
+
+/**
+ * The snapshot with ONE harness's record replaced and every other carried
+ * over byte for byte — so pinning one harness moves exactly its own record.
+ */
+export function withHarnessRecord(recorded, computed, harnessId) {
+  if (!computed.harnesses[harnessId]) throw new Error(`no pack recipe for ${harnessId}`);
+  const harnesses = { ...(recorded?.schema === 2 ? recorded.harnesses : {}) };
+  harnesses[harnessId] = computed.harnesses[harnessId];
+  return {
+    schema: 2,
+    harnesses: Object.fromEntries(Object.entries(harnesses).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+  };
+}
+
+/** The job-summary text for moved fingerprints. */
+export function advisorySummary(moved) {
+  if (moved.length === 0) return '';
+  return [
+    '### Local harness pack inputs changed',
+    '',
+    'The next release publishes a new runtime pack (or, if the rebuild reproduces the pinned bytes, records an equivalence) for:',
+    '',
+    ...moved.map(({ harnessId, recorded, computed }) => `- **${harnessId}**: \`${(recorded ?? 'none').slice(0, 19)}…\` → \`${(computed ?? 'removed').slice(0, 19)}…\``),
+    '',
+    'Nothing to do in this PR: starting the next release (`prepare-release.yml`) builds it and pins it in the version PR.',
+    '',
+  ].join('\n');
+}
+
+function refuseDrift(drift, what) {
+  if (drift.length === 0) return;
+  process.stderr.write(
+    `${what}: the installed tree is not the locked one, so the recorded recipe hashes would not match a clean install.\n` +
+      drift.map(problem => `  - ${problem}\n`).join('') +
+      'Run `npm ci --legacy-peer-deps` from the repo root (and unlink any linked adapter), then retry.\n',
+  );
+  process.exit(1);
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const result = `${JSON.stringify(await computePackInputs(), null, 2)}\n`;
-  if (process.argv.includes('--write')) await writeFile(output, result);
-  else {
-    const recorded = await readFile(output, 'utf8').catch(() => '');
-    if (recorded !== result) throw new Error('Pack inputs changed. Run node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --write and review which harness fingerprints moved; publish a new pack for each before recording its digests.');
+  const argv = process.argv.slice(2);
+  const write = argv.includes('--write');
+  const advisory = argv.includes('--advisory');
+  const driftOnly = argv.includes('--drift');
+  const harnessAt = argv.indexOf('--harness');
+  const onlyHarness = harnessAt === -1 ? null : argv[harnessAt + 1];
+  if (onlyHarness !== null && (!write || !/^[a-z][a-z0-9-]{0,63}$/.test(onlyHarness ?? ''))) {
+    throw new Error('--harness <id> is only for --write');
   }
-  process.stdout.write(`Pack input fingerprints verified: ${relative(root, output)}\n`);
+  if (write || driftOnly) refuseDrift(await installedClosureDrift(), write ? 'Refusing to write pack-inputs.generated.json' : 'Refusing to build a pack');
+  if (driftOnly) {
+    process.stdout.write('The installed dependency tree is the locked one\n');
+    process.exit(0);
+  }
+  const computed = await computePackInputs();
+  const recordedText = await readFile(output, 'utf8').catch(() => '');
+  const recorded = recordedText === '' ? null : JSON.parse(recordedText);
+  if (write) {
+    const next = onlyHarness === null ? computed : withHarnessRecord(recorded, computed, onlyHarness);
+    await writeFile(output, `${JSON.stringify(next, null, 2)}\n`);
+    process.stdout.write(`Pack input fingerprints written: ${relative(root, output)}\n`);
+  } else if (recordedText !== `${JSON.stringify(computed, null, 2)}\n`) {
+    const moved = movedFingerprints(recorded, computed);
+    if (!advisory) {
+      throw new Error('Pack inputs changed. Run node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --write and review which harness fingerprints moved; publish a new pack for each before recording its digests.');
+    }
+    const summary = advisorySummary(moved);
+    if (summary !== '' && process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
+    process.stdout.write(summary || 'No fingerprint moved; the snapshot differs only in formatting.\n');
+  } else {
+    process.stdout.write(`Pack input fingerprints verified: ${relative(root, output)}\n`);
+  }
 }

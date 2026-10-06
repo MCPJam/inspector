@@ -4,21 +4,9 @@ const mockLogger = {
   info: vi.fn(),
   warn: vi.fn(),
 };
-const mockProvisionGuestAuthConfigToConvex = vi.fn();
-const mockGetGuestSessionSharedSecret = vi.fn();
 
 vi.mock("../logger", () => ({
   logger: mockLogger,
-}));
-
-vi.mock("../convex-guest-auth-sync.js", () => ({
-  provisionGuestAuthConfigToConvex: mockProvisionGuestAuthConfigToConvex,
-  isConvexProvisioningUnavailable: vi.fn(() => false),
-}));
-
-vi.mock("../guest-session-secret.js", () => ({
-  GUEST_SESSION_SECRET_HEADER: "x-mcpjam-guest-session-secret",
-  getGuestSessionSharedSecret: mockGetGuestSessionSharedSecret,
 }));
 
 describe("guest-auth", () => {
@@ -27,6 +15,7 @@ describe("guest-auth", () => {
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
   const originalRemoteUrl = process.env.MCPJAM_GUEST_SESSION_URL;
   const originalSharedSecret = process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+  const originalAuthorityOrigin = process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
 
   beforeEach(() => {
     vi.resetModules();
@@ -34,10 +23,9 @@ describe("guest-auth", () => {
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
-    mockProvisionGuestAuthConfigToConvex.mockResolvedValue(undefined);
-    mockGetGuestSessionSharedSecret.mockReturnValue(
-      "test-guest-session-secret",
-    );
+    // These tests assert the REAL default authority; the test setup points it
+    // at an unresolvable origin so nothing else can mint a production guest.
+    delete process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
     global.fetch = vi.fn();
   });
 
@@ -58,10 +46,15 @@ describe("guest-auth", () => {
     } else {
       process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = originalSharedSecret;
     }
+    if (originalAuthorityOrigin === undefined) {
+      delete process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+    } else {
+      process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN = originalAuthorityOrigin;
+    }
     global.fetch = originalFetch;
   });
 
-  it("fetches a Convex guest session in development by default", async () => {
+  it("uses the profile's own backend when it carries that backend's secret", async () => {
     process.env.NODE_ENV = "development";
     process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
       "test-guest-session-secret";
@@ -96,7 +89,7 @@ describe("guest-auth", () => {
     );
   });
 
-  it("fetches a hosted guest session in production by default", async () => {
+  it("uses the hosted guest authority by default (standard profile, no secrets)", async () => {
     process.env.NODE_ENV = "production";
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(

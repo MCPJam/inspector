@@ -215,6 +215,11 @@ export const PROTOCOL_CHECK_CATALOG = {
     description:
       "No log notifications are emitted for a request that carried no modern log level.",
   },
+  "modern-log-level-filtering": {
+    title: "Log Level Filtering",
+    description:
+      "A supplied logging tool emits warning-or-higher logs when requested, without emitting lower-level logs.",
+  },
   "modern-subscription-ack-precedes-notifications": {
     title: "Subscription Acknowledgement Ordering",
     description:

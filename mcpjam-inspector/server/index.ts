@@ -58,10 +58,9 @@ import {
   stopRevokedSessionCache,
 } from "./services/revoked-session-cache.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
-import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
-import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
+import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -183,6 +182,7 @@ import {
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
+import { logGuestAuthorityOnce } from "./utils/guest-authority.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";
@@ -222,6 +222,7 @@ import {
   HOSTED_MODE,
   ALLOWED_HOSTS,
   CANIUSE_LANDING_HOSTS,
+  LOCAL_HARNESS_ENABLED,
   SCORE_LANDING_HOSTS,
 } from "./config";
 import {
@@ -330,6 +331,7 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();
+logGuestAuthorityOnce(appLogger);
 
 // Immediately after the env load and before anything that can throw: the init
 // reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
@@ -350,14 +352,16 @@ startHostedModelCatalogRefresh();
 // waits for it. A no-op without the service token. Mirror of server/app.ts.
 startRevokedSessionCache();
 
-startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
-// Reports whether a local-harness runtime pack is present. Deliberately
-// only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
-// kill switch and a consent grant is installed when the user asks, never
-// at startup and never during a session start.
-reportLocalHarnessRuntimeStatusInBackground();
-if (!HOSTED_MODE) void startLocalHarnessJanitor();
+// Local runtime maintenance, after the janitor has reclaimed orphaned
+// sessions: this Inspector's liveness record, GC of packs no live
+// Inspector may select, and — only on a machine where somebody durably
+// authorized the harness, under the `auto` update policy — a background
+// prefetch of the desired pack. Never during a session start.
+if (!HOSTED_MODE) {
+  const janitor = startLocalHarnessJanitor();
+  if (LOCAL_HARNESS_ENABLED) void startLocalHarnessRuntimeMaintenance({ afterJanitor: janitor });
+}
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
