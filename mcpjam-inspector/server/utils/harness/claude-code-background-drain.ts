@@ -42,10 +42,13 @@
  *   5. APPROVALS. A request that needs approval from a BACKGROUND agent
  *      (`canUseTool` `options.agentID` names one) is denied: a turn is only
  *      ever paused for approval by the main thread. Foreground subagents carry
- *      an `agentID` too, so membership decides, not presence. An agent no
- *      task_started names (a workflow's, or one nested in another agent) is
- *      background only while an agent or workflow is pending: a background
- *      shell alone never makes a foreground subagent's request a denial.
+ *      an `agentID` too, so membership decides, not presence. A NESTED agent
+ *      reports `is_backgrounded: false` even inside a background agent, so
+ *      its spawning tool call is traced up through `parent_tool_use_id`: under
+ *      a background task it is background, otherwise foreground at any depth.
+ *      An agent no task_started names (a workflow's) is background only while
+ *      an agent or workflow is pending: a background shell alone never makes
+ *      a foreground subagent's request a denial.
  *      Main-thread approvals pause the cap.
  *   6. CAP. `min(drainStart + 10 min, turnStart + 25 min)`: the model broker
  *      lease is 30 min from turn start with no renewal. At the cap the
@@ -114,6 +117,8 @@ function mcpjamCreateBackgroundDrainState(input) {
     tasks: /* @__PURE__ */ new Map(),
     backgroundIds: /* @__PURE__ */ new Set(),
     foregroundAgentIds: /* @__PURE__ */ new Set(),
+    nestedBackgroundIds: /* @__PURE__ */ new Set(),
+    toolUseParents: /* @__PURE__ */ new Map(),
     live: /* @__PURE__ */ new Map(),
     pending: /* @__PURE__ */ new Map(),
     unanswered: /* @__PURE__ */ new Set(),
@@ -133,6 +138,16 @@ function mcpjamDrainTaskMeta(state, taskId, patch) {
 }
 function mcpjamDrainSettled(state, taskId) {
   if (!state.answeredTasks.has(taskId)) state.unanswered.add(taskId);
+}
+function mcpjamDrainUnderBackground(state, toolUseId) {
+  let parent = state.toolUseParents.get(toolUseId);
+  for (let depth = 0; parent !== void 0 && depth < 16; depth++) {
+    for (const [taskId, meta] of state.tasks) {
+      if (meta.toolUseId === parent && (state.backgroundIds.has(taskId) || state.nestedBackgroundIds.has(taskId))) return true;
+    }
+    parent = state.toolUseParents.get(parent);
+  }
+  return false;
 }
 function mcpjamDrainAcknowledge(state) {
   for (const taskId of state.unanswered) state.answeredTasks.add(taskId);
@@ -179,8 +194,12 @@ function mcpjamBackgroundDrainReducer(state, event) {
     if (event.is_backgrounded === true) {
       state.backgroundIds.add(event.task_id);
       state.foregroundAgentIds.delete(event.task_id);
-    } else if (meta.taskType === "local_agent" && (event.spawn_depth === void 0 || event.spawn_depth === 1) && !state.backgroundIds.has(event.task_id)) {
-      state.foregroundAgentIds.add(event.task_id);
+    } else if (meta.taskType === "local_agent" && !state.backgroundIds.has(event.task_id)) {
+      if (meta.toolUseId !== void 0 && mcpjamDrainUnderBackground(state, meta.toolUseId)) {
+        state.nestedBackgroundIds.add(event.task_id);
+      } else {
+        state.foregroundAgentIds.add(event.task_id);
+      }
     }
   } else if (type === "system" && event.subtype === "task_updated" && typeof event.task_id === "string") {
     if (event.patch?.is_backgrounded === true) {
@@ -204,6 +223,12 @@ function mcpjamBackgroundDrainReducer(state, event) {
     mainThread = true;
     if (state.promptLifecycle !== "queued") state.answerStarted = true;
     if (state.answered) state.followUpInProgress = true;
+  } else if (type === "assistant" && event.parent_tool_use_id != null && Array.isArray(event.message?.content)) {
+    for (const block of event.message.content) {
+      if (block?.type === "tool_use" && typeof block.id === "string") {
+        state.toolUseParents.set(block.id, event.parent_tool_use_id);
+      }
+    }
   } else if (type === "result") {
     mainThread = true;
     if (!state.answerStarted && event.subtype === "success" && !event.is_error && !(typeof event.result === "string" && event.result.trim())) {
@@ -403,11 +428,14 @@ function mcpjamCreateBackgroundDrainController(deps) {
     async isBackgroundAgentRequest(agentID) {
       if (typeof agentID !== "string" || agentID.length === 0) return false;
       const deadline = now() + MCPJAM_DRAIN_CLASSIFY_WAIT_MS;
-      while (!state.backgroundIds.has(agentID) && !state.foregroundAgentIds.has(agentID) && now() < deadline) {
+      while (!state.backgroundIds.has(agentID) && !state.nestedBackgroundIds.has(agentID) && !state.foregroundAgentIds.has(agentID) && now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      if (state.backgroundIds.has(agentID)) return true;
-      if (state.foregroundAgentIds.has(agentID)) return false;
+      if (state.backgroundIds.has(agentID) || state.nestedBackgroundIds.has(agentID)) return true;
+      if (state.foregroundAgentIds.has(agentID)) {
+        const toolUseId = state.tasks.get(agentID)?.toolUseId;
+        return toolUseId !== void 0 && mcpjamDrainUnderBackground(state, toolUseId);
+      }
       return state.pending.size > 0;
     },
     deniedBackgroundApproval(toolName) {

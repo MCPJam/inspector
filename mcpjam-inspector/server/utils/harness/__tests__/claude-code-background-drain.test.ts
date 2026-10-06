@@ -604,6 +604,68 @@ describe("background drain controller", () => {
       await expect(live).resolves.toBe(true);
     });
 
+    const spawnedBy = (parentToolUseId: string, toolUseId: string) => ({
+      type: "assistant",
+      parent_tool_use_id: parentToolUseId,
+      message: {
+        content: [
+          { type: "tool_use", id: toolUseId, name: "Agent", input: {} },
+        ],
+      },
+    });
+    const nestedStarted = (taskId: string, toolUseId: string) => ({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      task_type: "local_agent",
+      tool_use_id: toolUseId,
+      is_backgrounded: false,
+      spawn_depth: 2,
+    });
+
+    it("a nested agent of a FOREGROUND agent keeps its prompt while an unrelated workflow is pending", async () => {
+      controller.observe(taskStarted("f1", "local_agent", false));
+      controller.observe(spawnedBy("toolu_f1", "toolu_n1"));
+      controller.observe(nestedStarted("n1", "toolu_n1"));
+      controller.observe(tasksChanged(["w1", "local_workflow"]));
+      await expect(controller.isBackgroundAgentRequest("n1")).resolves.toBe(
+        false,
+      );
+    });
+
+    it("a nested agent of a BACKGROUND agent is background, though it reports is_backgrounded: false", async () => {
+      startDrain("a1");
+      controller.observe(spawnedBy("toolu_a1", "toolu_n2"));
+      controller.observe(nestedStarted("n2", "toolu_n2"));
+      await expect(controller.isBackgroundAgentRequest("n2")).resolves.toBe(
+        true,
+      );
+      // ...and two levels down.
+      controller.observe(spawnedBy("toolu_n2", "toolu_n3"));
+      controller.observe({
+        ...nestedStarted("n3", "toolu_n3"),
+        spawn_depth: 3,
+      });
+      await expect(controller.isBackgroundAgentRequest("n3")).resolves.toBe(
+        true,
+      );
+    });
+
+    it("a nested agent follows its parent into the background", async () => {
+      controller.observe(taskStarted("f1", "local_agent", false));
+      controller.observe(spawnedBy("toolu_f1", "toolu_n1"));
+      controller.observe(nestedStarted("n1", "toolu_n1"));
+      controller.observe({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "f1",
+        patch: { is_backgrounded: true },
+      });
+      await expect(controller.isBackgroundAgentRequest("n1")).resolves.toBe(
+        true,
+      );
+    });
+
     it("denials carry a message the model can act on", () => {
       expect(helpers.denial).toMatch(/run this in the foreground/);
     });
