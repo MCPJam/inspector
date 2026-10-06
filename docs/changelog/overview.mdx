@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-06
+
+#### Fixed
+
+- **Hosted Claude Code and Codex chats no longer stall for ~2 minutes on a follow-up message** — a second (or later) message in a hosted Claude Code or Codex chat was sitting for about two minutes before returning an empty reply. The agent's bridge process on the computer was being stopped roughly one minute after it started, so every subsequent turn spent its full reconnect timeout waiting for a bridge that was already gone before starting over. Bridges now stay up between turns, so follow-up messages connect in seconds. As a side effect, a chat paused on a tool approval no longer blocks other chats on the same computer while it waits for your decision.
+
 ### 2026-10-05
 
 #### Changed
