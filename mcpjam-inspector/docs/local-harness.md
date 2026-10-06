@@ -188,7 +188,18 @@ strict.
 There is no separate pack release. Starting a release (Soundcheck's "Start
 release", which dispatches `prepare-release.yml`) runs
 `local-harness-pack-pipeline.yml` once per harness with a recipe, side by side,
-before it opens the version PR. Each pipeline re-derives everything from what
+before it opens the version PR.
+
+Usually the pack is already built by then. `local-harness-pack-prebuild.yml`
+runs the same pipeline in the background whenever a push to main can move a
+pack input (and nightly, as a safety net): it builds, signs, publishes and
+conformance-tests the pack, and pins nothing. Starting the release then finds
+that pack and **adopts** it, so no build sits in the release's path, and a
+broken vendor bump opens its failure issue when it lands, not when someone
+releases. The two share one concurrency group per harness, and the prebuild
+stands down while a release is being prepared. (A tooling-only change whose
+rebuild reproduces the pinned bytes is the exception: its equivalence record is
+committed only by a release, so the release rebuilds once to record it.) Each pipeline re-derives everything from what
 exists, keyed by (harness, inputs fingerprint) — so it can stop anywhere and the
 next attempt picks up where it left off:
 

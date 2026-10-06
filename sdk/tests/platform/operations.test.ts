@@ -1616,14 +1616,15 @@ describe("eval run polling operations", () => {
       expect(description).toContain(`\`${state}\``);
     }
     // THE claim this whole vocabulary exists to protect.
-    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain("where the chain stopped, not its cause");
     expect(description).toContain(
-      "authorizes proposing a change to the server under test"
+      "describe a change to the server under test"
     );
-    // The full 29-reason vocabulary does not belong in a tool description; it
-    // belongs where an agent already fetches reference material. Named here so
-    // the pointer cannot be dropped while the skill stays served.
-    expect(description).toContain("user-value-chain-glossary");
+    // Facts, not orders, and no pointer to another source to read
+    // instructions from: Claude's directory review rejects both. The glossary
+    // skill is still served for a client that loads it on its own.
+    expect(description).not.toContain("user-value-chain-glossary");
+    expect(description).not.toContain("START THERE");
     // And the phrase that would make a client render a spend warning on a
     // read-only operation (mcp/tests/platformTools.test.ts ties it to
     // `risk: "spend"`, which a read must never declare).
