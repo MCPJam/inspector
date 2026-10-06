@@ -11,6 +11,14 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-10-06
 
+#### Changed
+
+- **Harness runs on the scenario's disposable computer in User Testing** — in an environment-backed User Testing scenario, a member's harness (Claude Code, Codex) now runs on the conversation's disposable box instead of the member's personal computer. The harness and the scenario's shell share one machine, so both tools operate on the same filesystem. This change takes effect when the backend marks the scenario for harness-on-box; scenarios backed by an older backend are unaffected and continue to use the personal computer.
+
+  If the scenario's computer image can't boot, the harness turn is refused (409) rather than falling back to the personal computer — fix or rebuild the image and retry. Scenarios that require a disposable box must be opened in the MCPJam web app; the standalone inspector cannot provision one and will refuse the turn with a clear message pointing to the web app.
+
+  If a harness turn was paused for tool approval and the conversation's box was recycled before the answer arrived, the turn now says: "This conversation's computer was recycled while waiting for your approval. Send your message again."
+
 #### Added
 
 - **Rerun a finished eval run's failed cases** — from the run detail page, the CLI (`mcpjam cloud eval rerun <run-id> --failed`), or the SDK (`rerunEvalRun`, `getEvalRunRerunPreview`), you can now start a new run that covers only the cases that did not pass. Add `--dry-run` to the CLI command to preview which cases would rerun and why without spending anything. The new run records `rerunOfRunId` and `rerunScope`; because it ran only a subset, it is never used as the suite's latest run, a trend point, or a comparison baseline.
