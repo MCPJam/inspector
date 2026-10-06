@@ -323,6 +323,10 @@ describe("/mcp with guests (mixed)", () => {
   });
 
   describe("without the mint secret", () => {
+    // The re-import below re-evaluates the worker's whole module graph, the
+    // platform operation catalog included, inside the test body. That is quick
+    // alone but passed the 5s default on a CI runner busy with every other
+    // workspace's suite, hence the longer timeout.
     it("answers a tokenless request with the OAuth 401 and logs the misconfiguration once", async () => {
       stubOutboundFetch();
       // A fresh module instance: the warning is once per isolate, and earlier
@@ -342,7 +346,7 @@ describe("/mcp with guests (mixed)", () => {
       expect(String(errors.mock.calls[0]?.[0])).toContain(
         "MCPJAM_INSPECTOR_SERVICE_TOKEN"
       );
-    });
+    }, 30_000);
 
     it("still verifies a presented guest token", async () => {
       stubOutboundFetch();
