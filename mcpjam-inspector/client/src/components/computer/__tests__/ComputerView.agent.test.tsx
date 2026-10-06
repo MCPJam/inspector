@@ -48,6 +48,7 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => [{ environmentId: "env-1", name: "My Image" }],
   useResetComputer: () => resetComputer,
+  useSetComputerSandboxImage: () => vi.fn(),
 }));
 
 // The non-member state renders <GuestSignInMessage>, which reads the WorkOS +

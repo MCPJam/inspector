@@ -277,6 +277,49 @@ describe("acquireHarnessBox — the heartbeat", () => {
     expect(touch).toHaveBeenCalledTimes(atCap);
   });
 
+  it("stops when the turn's signal aborts, and leaves teardown to release()", async () => {
+    const release = vi.fn(async () => {});
+    const touch = vi.fn(async () => "touched" as const);
+    const turn = new AbortController();
+    const acquired = await acquireHarnessBox({
+      surface: "eval",
+      provision: provisioned(),
+      release,
+      touch,
+      signal: turn.signal,
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    const beat = harnessBoxHeartbeatIntervalMs("eval");
+    await advance(beat);
+    expect(touch).toHaveBeenCalledTimes(1);
+
+    // The iteration is abandoned past its budget grace: nothing will ever
+    // call release(), so the abort alone has to stop the beat.
+    turn.abort();
+    await advance(beat * 8);
+    expect(touch).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+
+    // A late release still tears the owned box down, exactly once.
+    await acquired.box.release();
+    await acquired.box.release();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts no heartbeat for a turn that was already aborted", async () => {
+    const touch = vi.fn(async () => "touched" as const);
+    const acquired = await acquireHarnessBox({
+      surface: "swarm",
+      provision: provisioned(),
+      touch,
+      signal: AbortSignal.abort(),
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    await advance(HARNESS_BOX_SCOPES.swarm.idleTtlMs * 2);
+    expect(touch).not.toHaveBeenCalled();
+    await acquired.box.release();
+  });
+
   it("keeps beating through a failed touch", async () => {
     const touch = vi
       .fn<() => Promise<TouchSandboxOutcome>>()

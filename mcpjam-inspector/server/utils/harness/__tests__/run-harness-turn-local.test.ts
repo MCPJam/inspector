@@ -1,10 +1,10 @@
-vi.mock("../local/pack-bootstrap.js", () => ({ withLocalPackBootstrap: async (adapter: unknown) => adapter }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
 const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
 vi.mock("../local/approval-park.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../local/approval-park.js")>()),
   invalidateParkedLocalSession: parkRegistry.invalidate,
 }));
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const harnessState = vi.hoisted(() => ({
@@ -316,6 +316,17 @@ describe("runHarnessTurn local continuity", () => {
         skillsBase: "/private/local/home/.claude/skills",
       }));
     }
+  });
+
+  it("runs a scenario-scoped turn on a local target: only a CLOUD scenario harness needs a box", async () => {
+    await runHarnessTurn(baseOptions({
+      executionScope: {
+        kind: "swarm", swarmId: "cb_1", accessVersion: 1,
+        projectId: "project-1", workspaceId: "ws_1",
+      },
+    }) as any, "none");
+    expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
   });
 
   it("binds preparation and first SDK session to one id without any cloud reservation", async () => {

@@ -45,7 +45,10 @@ import {
 } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
-import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
+import {
+  needsEphemeralEvalSandbox,
+  singleCaseHarnessBoxRefusal,
+} from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -244,6 +247,7 @@ import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
+import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -1512,6 +1516,40 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   return flattened;
 }
 
+/**
+ * Refuses a launch whose tool snapshot could not list a server. Creating the
+ * run reserves iterations and charges `eval_step`, and the runner would then
+ * fail the same server in `getEvalToolsForAiSdkOrThrow` — so the caller gets
+ * that same setup error here, before anything is charged, not a failed run.
+ */
+export function throwIfEvalToolSnapshotFailed(args: {
+  toolSnapshot: ServerToolSnapshot;
+  mcpClientManager: MCPClientManager;
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+}): void {
+  const failures = args.toolSnapshot.servers.flatMap((server) => {
+    if (server.captureError === undefined) return [];
+    const connected =
+      args.mcpClientManager.getConnectionStatus(server.serverId) ===
+      "connected";
+    const phase: SetupPhase =
+      !connected || isMissingRuntimeServerError(server.captureError)
+        ? "connection"
+        : "discovery";
+    return [{ serverId: server.serverId, phase, error: server.captureError }];
+  });
+  // Same precedence as the runner: a connection failure is the one to report.
+  const chosen =
+    failures.find((failure) => failure.phase === "connection") ?? failures[0];
+  if (!chosen) return;
+  throwSetupPhaseError({
+    serverId: chosen.serverId,
+    phase: chosen.phase,
+    error: new Error(chosen.error),
+    environment: args.environment,
+  });
+}
+
 export function resolveConfiguredServerIds(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   mcpClientManager: MCPClientManager;
@@ -1916,8 +1954,16 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
+    /**
+     * A hosted HARNESS iteration keys its disposable computer to this row, and
+     * a harness with no box falls back to the member's personal computer. So a
+     * failed record refuses the run, carrying the backend's reason, instead of
+     * being swallowed.
+     */
+    requireRecord?: boolean;
   },
 ): Promise<string | undefined> {
+  let iterationId: string | undefined;
   try {
     // ACTION, not the mutation — same starter-pool contention as the suite
     // path above, retried server-side.
@@ -1947,13 +1993,38 @@ async function createIterationDirectly(
       },
     );
 
-    return result?.iterationId as string | undefined;
+    iterationId = result?.iterationId as string | undefined;
   } catch (error) {
     logger.error("[evals] Failed to create iteration:", error);
     if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
+    if (params.requireRecord) {
+      throw new HarnessIterationRecordError(
+        `${HARNESS_ITERATION_RECORD_REQUIRED}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
     return undefined;
   }
+  if (!iterationId && params.requireRecord) {
+    throw new HarnessIterationRecordError(
+      `${HARNESS_ITERATION_RECORD_REQUIRED}: the backend returned no iteration id`,
+    );
+  }
+  return iterationId;
 }
+
+const HARNESS_ITERATION_RECORD_REQUIRED =
+  "Could not record this eval iteration, which a hosted harness run needs " +
+  "to provision its own computer, so the run was refused";
+
+/**
+ * Typed so the quick-run settle loop rethrows it: a run refused before it took
+ * a row has nothing of its own to answer with, and the route would otherwise
+ * report the case's latest iteration, another run's, as this one's result.
+ */
+class HarnessIterationRecordError extends Error {}
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -4530,6 +4601,12 @@ export const runEvalSuiteWithAiSdk = async ({
           quickRunOutcomes.push(...outcomes);
         }
       } else {
+        if (
+          runId === null &&
+          result.reason instanceof HarnessIterationRecordError
+        ) {
+          throw result.reason;
+        }
         // Test failed entirely - log error but continue
         logger.error("[evals] Test case failed:", result.reason);
         // Count as one failed test
@@ -6333,7 +6410,13 @@ const runHostedIterationWithBrowser = async (
     ? precreatedIterationId
     : recorder
       ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+      : await createIterationDirectly(convexClient, {
+          ...iterationParams,
+          // A hosted harness box is keyed to this row (see the param).
+          ...(resolvedExecution.harness && !harnessExecutionTarget
+            ? { requireRecord: true }
+            : {}),
+        });
   if (iterationId) onIterationStarted?.(iterationId);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
@@ -6604,7 +6687,6 @@ const runHostedIterationWithBrowser = async (
       // tool to — paid, idle, and for the whole iteration.
       hostedBrowserAvailable: hostedBrowserAdvertisable(),
       runId,
-      iterationId,
     });
     if (harnessExecutionTarget) {
       assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
@@ -6623,6 +6705,23 @@ const runHostedIterationWithBrowser = async (
             : "This eval runs on a harness, which boots a disposable computer per iteration",
       );
       if (unavailable) throw new Error(unavailable);
+      if (!runId) {
+        // SINGLE-CASE: the box is keyed to the iteration row and is only ever
+        // a terminal, so refuse what it cannot carry before booting anything.
+        if (!iterationId) {
+          throw new Error(
+            "This single-case harness run has no iteration record to key its " +
+              "computer to, so it was refused rather than run on a personal " +
+              "computer.",
+          );
+        }
+        const singleCaseRefusal = singleCaseHarnessBoxRefusal({
+          builtInToolIds: resolvedExecution.builtInToolIds,
+          browserToolPolicy: resolvedExecution.browserToolPolicy,
+          hostedBrowserAvailable: hostedBrowserAdvertisable(),
+        });
+        if (singleCaseRefusal) throw new Error(singleCaseRefusal);
+      }
       const capacityBudgetMs = Math.min(
         EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
         Math.max(0, iterationDeadlineAt - Date.now()),
@@ -6671,6 +6770,10 @@ const runHostedIterationWithBrowser = async (
             : { ok: false as const, refusal: result };
         },
         release: releaseEvalBox,
+        // The ITERATION signal. Past its budget grace the iteration is
+        // abandoned and may never reach a release; the abort still stops the
+        // heartbeat, so the box goes idle and the reaper takes it.
+        ...(abortSignal ? { signal: abortSignal } : {}),
       });
       if (!acquired.ok) {
         const refusal = acquired.refusal;
@@ -6689,6 +6792,17 @@ const runHostedIterationWithBrowser = async (
         throw error;
       }
       evalBox = acquired.box;
+    }
+    // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
+    // falls through to `resolveHarnessSandbox`, the acting member's computer.
+    // Every path above boots one or throws; this is the last check before the
+    // first turn, so a future gap fails here instead of running there.
+    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+      throw new Error(
+        "This eval runs on a harness but no disposable computer was " +
+          "provisioned for it, so it was refused rather than run on a " +
+          "personal computer.",
+      );
     }
     const sandboxBinding =
       evalBox && sandboxNeed.needed
