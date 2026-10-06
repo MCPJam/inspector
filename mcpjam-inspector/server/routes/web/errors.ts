@@ -21,6 +21,7 @@ import {
   onlyFallbackAnswered,
   upstreamTransportStatus,
 } from "../../utils/hosted-connect-failure.js";
+import { HOSTED_MODE } from "../../config.js";
 import { isServiceCredentialUnavailableError } from "../../services/service-credential.js";
 import {
   DEFAULT_HOSTED_API_URL,
@@ -385,13 +386,29 @@ function hostedAppUrl(): string {
 /**
  * THE hosted-only answer: this Inspector cannot do `feature` because it holds
  * no MCPJam service credential (every self-hosted build), and the hosted app
- * can. `feature` is human copy, shown verbatim.
+ * can. `feature` is human copy, shown verbatim. On a hosted deployment the
+ * same condition is a misconfiguration and answers 500 instead.
  *
  * Reuses `FEATURE_NOT_SUPPORTED` rather than minting a code (the v1 code
  * table is a contract shared with the backend); the specific reason rides in
  * `details`, the convention `SESSION_REVOKED` already follows.
  */
-export function hostedOnlyRouteError(feature: string): WebRouteError {
+export function hostedOnlyRouteError(
+  feature: string,
+  hosted: boolean = HOSTED_MODE,
+): WebRouteError {
+  // On the hosted app itself a missing credential is a deployment fault, not
+  // a limitation of the build: telling a user to "use the hosted app" while
+  // they are on it would be wrong. Answer the generic hosted 500 (the detail
+  // stays in the request log and Sentry), the way the hosted startup check
+  // reports the same condition.
+  if (hosted) {
+    return new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      `${feature} is unavailable: this hosted server is missing its service credential.`,
+    );
+  }
   const hostedUrl = hostedAppUrl();
   return new WebRouteError(
     FEATURE_REQUIRES_HOSTED_STATUS,
@@ -403,7 +420,7 @@ export function hostedOnlyRouteError(feature: string): WebRouteError {
 
 /** Respond with {@link hostedOnlyRouteError} from a Hono handler. */
 export function hostedOnlyResponse(c: any, feature: string) {
-  return webErrorFromRoute(c, hostedOnlyRouteError(feature));
+  return webErrorFromRoute(c, mapRuntimeError(hostedOnlyRouteError(feature)));
 }
 
 export function parseErrorMessage(error: unknown): string {

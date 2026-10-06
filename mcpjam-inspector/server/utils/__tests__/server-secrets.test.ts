@@ -136,6 +136,28 @@ describe("fetchRuntimeServerSecrets", () => {
     });
   });
 
+  it("answers hosted-only, not a 502, for an API-key reveal without the credential", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    await expect(
+      fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://example.com/mcp",
+        bearerToken: "tester-token",
+        projectId: "project-1",
+        serverId: "server-1",
+        workosApiKeyActingAs: {
+          workosUserId: "user_1",
+          mcpjamOrganizationId: "org_1",
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: "ServiceCredentialUnavailableError",
+      code: "FEATURE_REQUIRES_HOSTED",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("forwards the backend's refusal for a repointed server", async () => {
     // The origin decision is the backend's; the inspector forwards it with
     // the details the client needs to say why and open the edit form.

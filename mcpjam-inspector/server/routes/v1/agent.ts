@@ -1213,15 +1213,11 @@ agent.post("/projects/:projectId/agent", async (c) => {
   // Graceful degradation on OSS/self-hosted installs: the hosted engine and
   // the delegated-token mint both require the backend wiring.
   if (!process.env.CONVEX_HTTP_URL || !hasServiceCredential()) {
-    // The shared hosted-only answer, so the copy and `details.reason` match
-    // every other credential-backed feature.
-    const hostedOnly = hostedOnlyRouteError("The agent endpoint");
-    return v1Error(
-      c,
-      "FEATURE_NOT_SUPPORTED",
-      hostedOnly.message,
-      hostedOnly.details,
-    );
+    // The shared hosted-only answer (thrown, so the v1 envelope maps it the
+    // same way as every other credential-backed feature: 422 with
+    // `details.reason` on a self-hosted build, 500 on a misconfigured
+    // hosted one).
+    throw hostedOnlyRouteError("The agent endpoint");
   }
 
   if (!isHostedCatalogModel(String(AGENT_API_MODEL.id), "anthropic")) {

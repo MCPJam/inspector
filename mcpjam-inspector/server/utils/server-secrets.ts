@@ -272,6 +272,11 @@ export async function fetchRuntimeServerSecrets(args: {
   const scenarioServiceToken = args.scenarioId
     ? requireServiceCredential("Shared scenario secrets")
     : undefined;
+  // Resolved BEFORE the request's try: a missing credential is the
+  // hosted-only answer, not a failure to reach the reveal service (502).
+  const actingAsServiceToken = args.workosApiKeyActingAs
+    ? requireServiceCredential(WORKOS_API_KEY_FEATURE)
+    : undefined;
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -286,9 +291,8 @@ export async function fetchRuntimeServerSecrets(args: {
         ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: scenarioServiceToken }
         : {}),
     };
-    if (args.workosApiKeyActingAs) {
-      const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
-      headers["Authorization"] = `Bearer ${serviceToken}`;
+    if (args.workosApiKeyActingAs && actingAsServiceToken) {
+      headers["Authorization"] = `Bearer ${actingAsServiceToken}`;
       headers["x-mcpjam-acting-as"] = args.workosApiKeyActingAs.workosUserId;
       headers["x-mcpjam-acting-in-org"] =
         args.workosApiKeyActingAs.mcpjamOrganizationId;

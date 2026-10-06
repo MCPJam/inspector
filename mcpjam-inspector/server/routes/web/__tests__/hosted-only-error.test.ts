@@ -33,6 +33,14 @@ describe("hosted-only route error", () => {
     expect(error.message).toMatch(/only available in the hosted MCPJam app/);
   });
 
+  it("is a sanitized 500 on a hosted deployment, where a missing credential is a fault", () => {
+    const error = hostedOnlyRouteError("Saving browser profiles", true);
+    expect(error.status).toBe(500);
+    expect(error.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(error.details).toBeUndefined();
+    expect(error.message).not.toMatch(/hosted MCPJam app/);
+  });
+
   it("names a configured hosted origin, and falls back when it is invalid", () => {
     vi.stubEnv("MCPJAM_HOSTED_API_URL", "https://staging.mcpjam.com");
     expect(hostedOnlyRouteError("X").details?.hostedUrl).toBe(
