@@ -152,6 +152,48 @@ describe("SharedSlackChannelCard", () => {
     ).not.toBeInTheDocument();
   });
 
+  it.each([
+    [
+      "owner_changed",
+      /We'll retry and invite the new owner/,
+      /Try again to finish setting it up/,
+    ],
+    [
+      "not_paid",
+      /Setup paused while your plan was inactive/,
+      /no longer has an active paid plan/,
+    ],
+    [
+      "stale_claim",
+      /We'll retry automatically/,
+      /Channel setup was interrupted. Try again/,
+    ],
+  ])(
+    "for %s, says we'll retry only while the worker owns the row",
+    (errorCode, retryingCopy, manualCopy) => {
+      for (const automaticInvitePending of [true, false]) {
+        mockUseQuery.mockReturnValue(
+          dto({
+            automaticInvitePending,
+            channel: { status: "error", errorCode, openUrl: null },
+          })
+        );
+        const { unmount } = render(
+          <SharedSlackChannelCard organizationId="org_1" />
+        );
+        const [shown, hidden] = automaticInvitePending
+          ? [retryingCopy, manualCopy]
+          : [manualCopy, retryingCopy];
+        expect(screen.getByText(shown)).toBeInTheDocument();
+        expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Retry" }) !== null).toBe(
+          !automaticInvitePending
+        );
+        unmount();
+      }
+    }
+  );
+
   it("shows a member that the invite is on its way to their owner", () => {
     mockUseQuery.mockReturnValue(
       dto({
@@ -314,7 +356,7 @@ describe("SharedSlackChannelCard", () => {
 
   it.each([
     ["invite_outcome_unknown", /Retrying won't send a second invite/, true],
-    ["owner_changed", /invite the new owner/, true],
+    ["owner_changed", /Try again to finish setting it up/, true],
     ["not_paid", /no longer has an active paid plan/, true],
     ["stale_claim", /Channel setup was interrupted/, true],
     ["provision_outcome_unknown", /Contact support to finish setting it up/, false],

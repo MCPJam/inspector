@@ -78,9 +78,12 @@ function formatExpiry(epochMs: number): string {
   });
 }
 
+// `retrying`: the automatic worker still owns the row and retries it itself
+// (Retry is hidden then). Otherwise the viewer has to retry.
 function errorCopy(
   errorCode: string | undefined,
-  invitedEmail?: string
+  invitedEmail?: string,
+  retrying = false
 ): string {
   switch (errorCode) {
     case "slack_config":
@@ -108,11 +111,17 @@ function errorCopy(
     case "invite_outcome_unknown":
       return "We couldn't confirm Slack sent your invite. Check your email, or retry to look for it again. Retrying won't send a second invite.";
     case "owner_changed":
-      return "Your organization's owner changed during setup. We'll retry and invite the new owner.";
+      return retrying
+        ? "Your organization's owner changed during setup. We'll retry and invite the new owner."
+        : "Your organization's owner changed during setup. Try again to finish setting it up.";
     case "not_paid":
-      return "Setup stopped because your organization no longer has an active paid plan.";
+      return retrying
+        ? "Setup paused while your plan was inactive. We'll retry automatically."
+        : "Setup stopped because your organization no longer has an active paid plan.";
     case "stale_claim":
-      return "Channel setup was interrupted. Try again.";
+      return retrying
+        ? "Channel setup was interrupted. We'll retry automatically."
+        : "Channel setup was interrupted. Try again.";
     case "rate_limited":
       return "Slack setup is busy. Try again in a minute.";
     case "possible_existing_channel":
@@ -429,7 +438,8 @@ export function SharedSlackChannelCard({
           <p className="text-[13px] text-foreground">
             {errorCopy(
               channel.errorCode ?? channel.status,
-              channel.invitedEmail
+              channel.invitedEmail,
+              dto.automaticInvitePending
             )}
           </p>
         </div>
