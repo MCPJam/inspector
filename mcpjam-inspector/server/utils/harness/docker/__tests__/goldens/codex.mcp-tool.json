@@ -2,6 +2,7 @@
   "stream": [
     {
       "data": {
+        "machine": "disposable",
         "workdir": "/home/user/<session-dir>"
       },
       "transient": true,
