@@ -7,14 +7,46 @@
  * the box's home. Transient (not persisted): the client caches the latest path and
  * passes it as the terminal `cwd`.
  */
+/**
+ * Which machine the turn ran on.
+ *
+ *  - `personal`   — the member's own computer (the Shell rail's terminal).
+ *  - `disposable` — this conversation's disposable box: a harness that signs in
+ *    with the member's own account, or a compare column. The workdir is a path
+ *    on THAT machine, so the Shell rail's terminal (which is the personal
+ *    computer) must not be opened there.
+ *
+ * Absent ⇒ `personal`: a server that predates the field only ever ran there.
+ */
+export type HarnessMachine = "personal" | "disposable";
+
 export interface HarnessSessionInfo {
   /** Absolute path of the harness session workdir on the computer. */
   workdir: string;
+  machine?: HarnessMachine;
 }
 
 export interface HarnessSessionDataPart {
   type: "data-harness-session";
   data: HarnessSessionInfo;
+}
+
+/**
+ * The transient part a harness turn streams for the Playground Shell rail.
+ * `disposable` is whether the turn ran on the conversation's own box rather
+ * than the member's personal computer.
+ */
+export function buildHarnessSessionDataPart(args: {
+  workdir: string;
+  disposable: boolean;
+}): HarnessSessionDataPart {
+  return {
+    type: "data-harness-session",
+    data: {
+      workdir: args.workdir,
+      machine: args.disposable ? "disposable" : "personal",
+    },
+  };
 }
 
 export function isHarnessSessionDataPart(
@@ -32,12 +64,16 @@ export function isHarnessSessionDataPart(
     return false;
   }
   const workdir = (data as Record<string, unknown>).workdir;
+  const machine = (data as Record<string, unknown>).machine;
   // The contract is an ABSOLUTE path (it becomes the terminal cwd) — reject
   // relative or whitespace-padded values instead of letting cwd drift.
   return (
     typeof workdir === "string" &&
     workdir === workdir.trim() &&
-    workdir.startsWith("/")
+    workdir.startsWith("/") &&
+    (machine === undefined ||
+      machine === "personal" ||
+      machine === "disposable")
   );
 }
 

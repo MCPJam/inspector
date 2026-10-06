@@ -638,6 +638,55 @@ export async function provisionPlaygroundSandbox(args: {
   return outOfTime();
 }
 
+/** The Playground conversation's disposable shell. */
+export interface PlaygroundTerminalSandbox {
+  sandboxId: string;
+  sandboxRowId: string;
+  /** Working directory the box starts in (backend-resolved). */
+  workdir?: string;
+}
+
+/**
+ * Provision (or re-obtain) the DISPOSABLE shell for one Playground
+ * conversation — the fallback for a turn that cannot run on the member's
+ * personal computer (a harness that needs a secret, or a compare column that
+ * needs a machine of its own).
+ *
+ * User-bearer auth, member-only. One box per conversation: a repeat call for
+ * the same `chatSessionId` returns the same box, so the shell's files carry
+ * across the conversation's turns. `projectEnvironmentId` names the project
+ * environment whose secrets the box holds; the backend validates it against
+ * the project and records it, so changing it between turns retires the box.
+ *
+ * Failure statuses the caller must distinguish:
+ *   403 — not a member, or the conversation belongs to another member.
+ *   409 — the environment is unavailable, or its image can't boot. Terminal
+ *         until the environment is fixed.
+ *   429 — the member already holds the maximum number of live Playground
+ *         computers (`code: "user_terminal_cap"`).
+ *   503 — at capacity, or a sibling call is still booting. Retryable.
+ */
+export async function provisionPlaygroundTerminalSandbox(args: {
+  bearer: string;
+  projectId: string;
+  chatSessionId: string;
+  projectEnvironmentId?: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<PlaygroundTerminalSandbox>> {
+  return postJson<PlaygroundTerminalSandbox>(
+    "/playground/sandbox/terminal/provision",
+    bearerHeader(args.bearer),
+    {
+      projectId: args.projectId,
+      chatSessionId: args.chatSessionId,
+      ...(args.projectEnvironmentId
+        ? { projectEnvironmentId: args.projectEnvironmentId }
+        : {}),
+    },
+    args.signal,
+  );
+}
+
 /**
  * Provision (or re-obtain) the ephemeral sandbox for ONE journey attempt —
  * user-bearer auth, the launching member's token.

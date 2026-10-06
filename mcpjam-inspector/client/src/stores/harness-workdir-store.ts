@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { HarnessMachine } from "@/shared/harness-session";
 
 /**
  * Caches the latest harness working directory streamed from the server, keyed by
@@ -20,20 +21,36 @@ function workdirKey(projectId: string | null, hostId: string | null): string {
 
 interface HarnessWorkdirState {
   byKey: Record<string, string>;
+  /**
+   * Which machine the latest turn for a (project, host) ran on. Only
+   * `disposable` is ever stored: absent means the personal computer, so a
+   * server that predates the field changes nothing.
+   */
+  disposableByKey: Record<string, true>;
   setWorkdir: (
     projectId: string | null,
     hostId: string | null,
     workdir: string,
+    machine?: HarnessMachine,
   ) => void;
 }
 
 export const useHarnessWorkdirStore = create<HarnessWorkdirState>((set) => ({
   byKey: {},
-  setWorkdir: (projectId, hostId, workdir) =>
+  disposableByKey: {},
+  setWorkdir: (projectId, hostId, workdir, machine) =>
     set((state) => {
       const key = workdirKey(projectId, hostId);
-      if (state.byKey[key] === workdir) return state;
-      return { byKey: { ...state.byKey, [key]: workdir } };
+      const disposable = machine === "disposable";
+      const sameMachine = Boolean(state.disposableByKey[key]) === disposable;
+      if (state.byKey[key] === workdir && sameMachine) return state;
+      const { [key]: _dropped, ...rest } = state.disposableByKey;
+      return {
+        byKey: { ...state.byKey, [key]: workdir },
+        disposableByKey: disposable
+          ? { ...state.disposableByKey, [key]: true }
+          : rest,
+      };
     }),
 }));
 
@@ -44,4 +61,18 @@ export function useHarnessWorkdir(
 ): string | undefined {
   const key = workdirKey(projectId, hostId);
   return useHarnessWorkdirStore((s) => s.byKey[key]);
+}
+
+/**
+ * Did the latest turn for this (project, host) run on the conversation's
+ * disposable computer rather than the personal one? The Shell rail uses it to
+ * say so, and to stop opening its (personal-computer) terminal at a path that
+ * only exists on the other machine.
+ */
+export function useHarnessRanOnDisposable(
+  projectId: string | null,
+  hostId: string | null,
+): boolean {
+  const key = workdirKey(projectId, hostId);
+  return useHarnessWorkdirStore((s) => Boolean(s.disposableByKey[key]));
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHarnessSessionDataPart,
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
 } from "../harness-session";
@@ -11,9 +12,9 @@ describe("isHarnessSessionDataPart", () => {
   });
 
   it("accepts an absolute workdir", () => {
-    expect(
-      isHarnessSessionDataPart(part("/home/user/claude-code-abc")),
-    ).toBe(true);
+    expect(isHarnessSessionDataPart(part("/home/user/claude-code-abc"))).toBe(
+      true,
+    );
   });
 
   it("rejects relative and whitespace-padded workdirs (cwd would drift)", () => {
@@ -30,9 +31,9 @@ describe("isHarnessSessionDataPart", () => {
     expect(isHarnessSessionDataPart({ type: "data-other", data: {} })).toBe(
       false,
     );
-    expect(
-      isHarnessSessionDataPart({ type: "data-harness-session" }),
-    ).toBe(false);
+    expect(isHarnessSessionDataPart({ type: "data-harness-session" })).toBe(
+      false,
+    );
   });
 });
 
@@ -45,13 +46,59 @@ describe("isHarnessResetDataPart", () => {
       "runtime-changed",
     ]) {
       expect(
-        isHarnessResetDataPart({ type: "data-harness-reset", data: { reason } }),
+        isHarnessResetDataPart({
+          type: "data-harness-reset",
+          data: { reason },
+        }),
       ).toBe(true);
     }
     expect(
       isHarnessResetDataPart({
         type: "data-harness-reset",
         data: { reason: "sandbox-id-e2b-123" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("which machine a harness turn ran on", () => {
+  it("is `personal` unless the turn ran on the conversation's box", () => {
+    expect(
+      buildHarnessSessionDataPart({
+        workdir: "/home/user/w",
+        disposable: false,
+      }).data.machine,
+    ).toBe("personal");
+    expect(
+      buildHarnessSessionDataPart({ workdir: "/home/user/w", disposable: true })
+        .data.machine,
+    ).toBe("disposable");
+  });
+
+  it("builds a part the client's own guard accepts", () => {
+    for (const disposable of [false, true]) {
+      expect(
+        isHarnessSessionDataPart(
+          buildHarnessSessionDataPart({ workdir: "/home/user/w", disposable }),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts a part with no machine (a server that predates the field)", () => {
+    expect(
+      isHarnessSessionDataPart({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/w" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a machine it does not know", () => {
+    expect(
+      isHarnessSessionDataPart({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/w", machine: "somewhere-else" },
       }),
     ).toBe(false);
   });

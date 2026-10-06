@@ -510,6 +510,14 @@ export interface UseChatSessionOptions {
    */
   builtInToolIds?: string[];
   /**
+   * This chat is one column of a Playground comparison. Every column runs the
+   * same host at once, so a harness column cannot share the member's one
+   * personal computer without overwriting its siblings' files; sending this
+   * asks the server to give the column's conversation a disposable computer of
+   * its own. Read through a ref so it reaches the body builder at POST time.
+   */
+  comparePane?: boolean;
+  /**
    * Definitions for those built-in tools, as the model is shown them — used by
    * the RAW view of a reopened session and nowhere else.
    *
@@ -2177,6 +2185,8 @@ export function useChatSession(
   const builtInToolIdsRef = useRef<string[] | undefined>(undefined);
   builtInToolIdsRef.current =
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
+  const comparePaneRef = useRef(false);
+  comparePaneRef.current = options.comparePane === true;
   // Read through a ref for the same reason the ids above are: the transport's
   // body builder is created once and must see the CURRENT value at POST time,
   // not the one captured when the transport was memoized.
@@ -2528,6 +2538,7 @@ export function useChatSession(
               hostedProjectId ?? null,
               hostedHostId ?? hostedPresentationHostId ?? null,
               part.data.workdir,
+              part.data.machine,
             );
         } else if (isHistoryNoticeDataPart(part)) {
           // Earlier replies in this chat are not in the model's context this
@@ -3510,6 +3521,7 @@ export function useChatSession(
             ? { expectedVersion: resumedVersionRef.current }
             : {}),
           ...(rewind ? { rewind } : {}),
+          ...(comparePaneRef.current ? { comparePane: true } : {}),
           // Preserve []: it explicitly disables the client's built-in tools.
           ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }

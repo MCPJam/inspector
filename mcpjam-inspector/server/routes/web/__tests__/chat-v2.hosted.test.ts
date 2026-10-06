@@ -171,6 +171,31 @@ vi.mock("../../../utils/scenario-runtime-config.js", async () => {
   };
 });
 
+// A Cursor Playground turn takes the conversation's disposable computer. The
+// decision and the refusals are the module's own (and tested there); what
+// these tests need is a box that provisions, so the turn reaches the engine.
+vi.mock("../../../utils/harness/playground-box.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/playground-box.js")
+  >("../../../utils/harness/playground-box.js");
+  return {
+    ...actual,
+    playgroundHarnessBoxUnavailableReason: vi.fn((): string | null => null),
+    acquirePlaygroundHarnessBox: vi.fn(async () => ({
+      ok: true as const,
+      box: {
+        surface: "playground" as const,
+        binding: {
+          sandboxRowId: "row_pg",
+          sandboxId: "sbx_pg",
+          runtimeKind: "terminal" as const,
+        },
+        release: async () => {},
+      },
+    })),
+  };
+});
+
 vi.mock("../apps.js", () => ({
   default: new Hono(),
 }));
@@ -197,6 +222,10 @@ vi.mock("../../../utils/computers/cloud-skill-tools.js", async () => {
 });
 
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
+import {
+  acquirePlaygroundHarnessBox,
+  playgroundHarnessBoxUnavailableReason,
+} from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 
 describe("web routes — chat-v2 hosted mode", () => {
@@ -1828,6 +1857,126 @@ describe("web routes — chat-v2 hosted mode", () => {
           hostModelId: "cursor/auto",
         })
       );
+    });
+  });
+
+  /**
+   * The Playground's disposable-computer fallback. A harness that signs in with
+   * the member's own account (Cursor) and every compare column run on the
+   * CONVERSATION's box — never the personal computer, which holds no
+   * credentials and is one machine however many columns ask.
+   */
+  describe("Playground disposable-computer fallback", () => {
+    const post = (
+      body: Record<string, unknown>,
+      host: Record<string, unknown>
+    ) => {
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: { selectedServerIds: ["server-1"], ...host },
+      });
+      const { app, token } = createWebTestApp();
+      return postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-1",
+          chatSessionId: "chat-pg-1",
+          messages: [{ role: "user", content: "go" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+          ...body,
+        },
+        token
+      );
+    };
+    const cursor = { modelId: "cursor/auto", harness: "cursor" };
+    const claudeCode = {
+      modelId: "anthropic/claude-haiku-4.5",
+      harness: "claude-code",
+    };
+
+    it("a Cursor turn runs on the conversation's box, and the engine gets the binding", async () => {
+      const response = await post({}, cursor);
+      expect(response.status).toBe(200);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "project-1",
+          chatSessionId: "chat-pg-1",
+        })
+      );
+      const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(engineArgs.harness).toBe("cursor");
+      expect(engineArgs.harnessSandboxBinding).toEqual({
+        sandboxRowId: "row_pg",
+        sandboxId: "sbx_pg",
+        runtimeKind: "terminal",
+      });
+    });
+
+    it("a plain Claude Code turn stays on the personal computer: no box, no binding", async () => {
+      const response = await post({}, claudeCode);
+      expect(response.status).toBe(200);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(
+        handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0]
+          .harnessSandboxBinding
+      ).toBeUndefined();
+    });
+
+    it("a compare column gets a box of its own even for Claude Code", async () => {
+      const response = await post({ comparePane: true }, claudeCode);
+      expect(response.status).toBe(200);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(
+        handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0]
+          .harnessSandboxBinding?.sandboxId
+      ).toBe("sbx_pg");
+    });
+
+    it("a compare column on a non-harness host boots nothing", async () => {
+      const response = await post({ comparePane: true }, {
+        modelId: "openai/gpt-5-mini",
+      });
+      expect(response.status).toBe(200);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("REFUSES rather than falling back to the personal computer when no box can be had", async () => {
+      vi.mocked(acquirePlaygroundHarnessBox).mockResolvedValueOnce({
+        ok: false,
+        refusal: {
+          status: 429,
+          error: "Live Playground computer limit (4) reached.",
+          code: "user_terminal_cap",
+        },
+      });
+      const response = await post({}, cursor);
+      expect(response.status).toBe(429);
+      expect(await response.text()).toMatch(/limit \(4\)/);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("answers 503 on a server that is not a data plane, booting nothing", async () => {
+      vi.mocked(playgroundHarnessBoxUnavailableReason).mockReturnValueOnce(
+        "The cursor harness signs in with your own account, which this server can't run."
+      );
+      const response = await post({}, cursor);
+      expect(response.status).toBe(503);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("needs a conversation id: the box is per conversation", async () => {
+      const response = await post({ chatSessionId: undefined }, cursor);
+      expect(response.status).toBe(400);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
     });
   });
 });

@@ -212,7 +212,10 @@ import {
   type HarnessOwnerRef,
   type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
-import type { HarnessResetReason } from "@/shared/harness-session";
+import {
+  buildHarnessSessionDataPart,
+  type HarnessResetReason,
+} from "@/shared/harness-session";
 import {
   buildHarnessProxyMcpJson,
   harnessServerKeyToName,
@@ -2818,8 +2821,13 @@ export async function runHarnessTurn(
           // the cached path by project + host (it knows both); we only need the
           // path. Fires every turn (fresh or resumed) — always the current dir.
           writer.write({
-            type: "data-harness-session",
-            data: { workdir: sessionWorkDir },
+            // Where that path lives: the Playground's Shell rail opens a
+            // terminal on the PERSONAL computer, so a turn that ran on the
+            // conversation's disposable box must say so.
+            ...buildHarnessSessionDataPart({
+              workdir: sessionWorkDir,
+              disposable: Boolean(harnessSandboxBinding),
+            }),
             transient: true,
           } as unknown as UIMessageChunk);
         },

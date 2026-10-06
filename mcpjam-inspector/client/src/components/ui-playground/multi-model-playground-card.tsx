@@ -393,6 +393,8 @@ export function MultiModelPlaygroundCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    // A comparison column never shares the member's one personal computer.
+    comparePane: true,
     selectedServers,
     usePageTools,
     hostedContext,
