@@ -1,4 +1,56 @@
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
+import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
+import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
+import type { PluginOnboardingSpec } from "@/shared/plugin-onboarding";
+import { createThreadAppApi } from "@/components/host-workspace/thread-app-api";
+import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
+import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
+import { useProjectPlugins } from "@/hooks/usePluginImportApi";
+import { usePluginMessage } from "@/hooks/use-plugin-message";
+import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
+import type { PluginMessageIntent } from "@/shared/plugin-message";
+import {
+  ChatPluginFormHosts,
+  OwnedPluginFormHost,
+} from "@/components/elicitation/OwnedPluginFormHost";
+import { cancelComposerForms } from "@/components/elicitation/composer-form-store";
+import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
+import {
+  pluginExtensionsForHost,
+  type PluginExtensionsHostConfig,
+} from "@/lib/client-config-v2-plugin-extensions";
+import { usePluginExtensionsAccess } from "@/hooks/usePluginExtensionsAccess";
+import {
+  OwnedModelAppPortsProvider,
+  useOwnedModelAppWorkspace,
+} from "@/components/host-workspace/OwnedModelApp";
+import { HostWorkspace } from "@/components/host-workspace/HostWorkspace";
+import { useThreadAppWorkspace } from "@/components/host-workspace/ThreadAppPanel";
+import {
+  dismissRail,
+  revealRail,
+  useExtensionChatRelease,
+  useExtensionOwners,
+  useExtensionRegistration,
+  usePublishPluginIcons,
+  useExtensionSlot,
+  useExtensionStore,
+  useExtensionWorkspaceState,
+} from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import { useElementViewportRect } from "@/components/host-workspace/use-element-rect";
+import {
+  WidgetFullscreenPlacementContext,
+  type WidgetFullscreenPlacement,
+} from "@mcpjam/widget-react";
+import {
+  chatOwnerScope,
+  chatOwnerWorkspace,
+  globalOwnerWorkspace,
+  type ExtensionOwnerIdentity,
+} from "@/components/host-workspace/extension-owners";
+import { openChatDeepLink } from "@/components/host-workspace/chat-deep-links";
+import { ChatDeepLinkProvider } from "@/components/chat-v2/thread/chat-links";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { ensureLocalHarnessReady } from "@/lib/local-harness-consent";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
@@ -132,6 +184,7 @@ import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { track } from "@/lib/analytics";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useSignOutStore } from "@/stores/sign-out-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -731,6 +784,7 @@ export function PlaygroundMain({
     useState<PlaygroundTraceViewMode>("chat");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
+  const [isTakeoverChatOpen, setIsTakeoverChatOpen] = useState(false);
   const [isPreparingServerForSend, setIsPreparingServerForSend] =
     useState(false);
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
@@ -1062,7 +1116,7 @@ export function PlaygroundMain({
     harnessId: previewedHarnessId,
     hostedMode: HOSTED_MODE,
     environmentId: isEnvironmentMode
-      ? playgroundEnvironment.environmentId ?? null
+      ? (playgroundEnvironment.environmentId ?? null)
       : null,
     requiresWebChatApi: isEnvironmentMode,
     // A shared transcript and another member's reopened one are both
@@ -1087,7 +1141,7 @@ export function PlaygroundMain({
     // tell "not answered yet" from "signed out" — it used to say `needs-signin`
     // for that whole window, to a user who was signed in.
     userKey: isConvexAuthenticated
-      ? currentUserForSender?._id ?? undefined
+      ? (currentUserForSender?._id ?? undefined)
       : null,
     inScope: localHarnessInScope,
     scopeKey: localHarnessScopeKey,
@@ -1161,6 +1215,87 @@ export function PlaygroundMain({
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
+  const hostStyle = usePreferencesStore((s) => s.hostStyle);
+  const hostStyleFamily = getScenarioHostFamily(hostStyle) ?? "claude";
+  const extensionsFlag =
+    useFeatureFlagEnabled("plugin-extensions-enabled") === true;
+  // A missing backend query reads as "off" instead of throwing (H8).
+  const extensionsAccess = usePluginExtensionsAccess({
+    flag: extensionsFlag,
+    isAuthenticated: isConvexAuthenticated,
+    projectId: convexProjectId,
+  });
+  // Per-client "OpenAI plugin extensions" setting (C1): on by default only
+  // for the ChatGPT and Codex styles, never by visual family.
+  const pluginExtensions = useMemo(
+    () =>
+      pluginExtensionsForHost({
+        hostStyle,
+        harness: previewedHost?.config?.harness,
+        mcpProfile: previewedHost?.config?.mcpProfile,
+      }),
+    [hostStyle, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
+  );
+  const pluginExtensionsEnabled = pluginExtensions.enabled;
+  // Who owns extension state for this client. Null turns every extension off.
+  const extensionIdentity = useMemo<ExtensionOwnerIdentity | null>(
+    () =>
+      extensionsFlag &&
+      extensionsAccess?.enabled === true &&
+      currentUserForSender?._id &&
+      convexProjectId &&
+      previewedHostId &&
+      pluginExtensionsEnabled
+        ? {
+            actorId: currentUserForSender._id,
+            projectId: convexProjectId,
+            hostId: previewedHostId,
+          }
+        : null,
+    [
+      extensionsFlag,
+      extensionsAccess?.enabled,
+      currentUserForSender?._id,
+      convexProjectId,
+      previewedHostId,
+      pluginExtensionsEnabled,
+    ],
+  );
+  const extensionWorkspaceForSession = useCallback(
+    (sessionId: string) =>
+      extensionIdentity
+        ? chatOwnerWorkspace(extensionIdentity, sessionId)
+        : undefined,
+    [extensionIdentity],
+  );
+  const extensionContextRefs = useRef<{
+    workspaceId: string;
+    tokens: string[];
+    global?: {
+      workspace: import("@/shared/plugin-workspace").PluginWorkspaceDescriptor;
+      references: string[];
+    };
+  } | null>(null);
+  const currentExtensionContext = useCallback(
+    (workspaceId: string) =>
+      extensionContextRefs.current?.workspaceId === workspaceId
+        ? extensionContextRefs.current.tokens
+        : [],
+    [],
+  );
+  // Global Apps bind to whichever chat sends the turn.
+  const currentGlobalExtensionContext = useCallback(
+    () => extensionContextRefs.current?.global,
+    [],
+  );
+  const pluginMessageDispatchRef = useRef<
+    (intent: PluginMessageIntent, isLive: () => boolean) => Promise<boolean>
+  >(async () => false);
+  const dispatchPluginMessage = useCallback(
+    (intent: PluginMessageIntent, isLive: () => boolean) =>
+      pluginMessageDispatchRef.current(intent, isLive),
+    [],
+  );
   const {
     messages,
     setMessages,
@@ -1223,6 +1358,9 @@ export function PlaygroundMain({
     urlElicitationRequired,
     dismissUrlElicitationRequired,
   } = useChatSession({
+    pluginWorkspace: extensionWorkspaceForSession,
+    pluginContextReferences: currentExtensionContext,
+    pluginGlobalContext: currentGlobalExtensionContext,
     selectedServers,
     reasoningEffortEnabled: true,
     // A harness turn offers only what its adapter verified (none today).
@@ -1233,6 +1371,16 @@ export function PlaygroundMain({
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     hostedContext: {
+      ...(shouldUseOwnedExtensionModelRoute({
+        flag: extensionsFlag,
+        admitted: extensionsAccess?.enabled === true,
+        extensionsEnabled: pluginExtensionsEnabled,
+        harness: previewedHost?.config?.harness,
+        hostId: previewedHostId,
+        actorId: currentUserForSender?._id,
+      })
+        ? { requiresWebChatApi: true }
+        : {}),
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
@@ -1334,9 +1482,15 @@ export function PlaygroundMain({
   // binds the watched browser to the same durable owner. Clearing is guarded
   // so an overlapping PlaygroundMain cannot erase a newer active session.
   const restoredSessionHasBrowser = useActiveChatSessionStore(
-    (state) => state.restoredSession?.sessionId === chatSessionId && !!state.restoredSession.browser,
+    (state) =>
+      state.restoredSession?.sessionId === chatSessionId &&
+      !!state.restoredSession.browser,
   );
-  const apiSessionViewOnly = useActiveChatSessionStore(state => state.restoredSession?.sessionId === chatSessionId && state.restoredSession.origin === "api");
+  const apiSessionViewOnly = useActiveChatSessionStore(
+    (state) =>
+      state.restoredSession?.sessionId === chatSessionId &&
+      state.restoredSession.origin === "api",
+  );
   const setActiveChatSessionId = useActiveChatSessionStore(
     (state) => state.setSessionId,
   );
@@ -1551,7 +1705,6 @@ export function PlaygroundMain({
 
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
-  const hostStyle = usePreferencesStore((s) => s.hostStyle);
   const hostCapabilitiesOverride = usePreferencesStore(
     (s) => s.hostCapabilitiesOverride,
   );
@@ -1561,7 +1714,290 @@ export function PlaygroundMain({
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const effectiveThreadTheme = extractHostTheme(hostContext) ?? globalThemeMode;
-  const hostStyleFamily = getScenarioHostFamily(hostStyle) ?? "claude";
+  const extensionScope = useMemo(
+    () =>
+      extensionIdentity && !multiModelEnabled
+        ? chatOwnerScope(extensionIdentity, chatSessionId)
+        : null,
+    [extensionIdentity, chatSessionId, multiModelEnabled],
+  );
+  const extensionServers = useMemo(
+    () =>
+      isEnvironmentMode
+        ? playgroundEnvironment.servers
+            .filter((server) => server.enabled)
+            .map((server) => ({ serverId: server.serverId, name: server.name }))
+        : selectedServers.flatMap((name) => {
+            const serverId = serversByName.get(name);
+            const server = servers[name];
+            // A new epoch after the first means a reconnect: entrypoints and
+            // open Apps' tool metadata are read again.
+            const connection =
+              server?.connectionStatus === "connected"
+                ? String(new Date(server.lastConnectionTime).getTime())
+                : undefined;
+            const icons = server?.initializationInfo?.serverVersion?.icons;
+            return serverId
+              ? [
+                  {
+                    serverId,
+                    name,
+                    ...(connection ? { connection } : {}),
+                    ...(Array.isArray(icons) && icons.length ? { icons } : {}),
+                  },
+                ]
+              : [];
+          }),
+    [
+      isEnvironmentMode,
+      playgroundEnvironment.servers,
+      selectedServers,
+      serversByName,
+      servers,
+    ],
+  );
+  // Compare lanes (Phase 7): each lane is its own client with its own owner,
+  // when that client has plugin extensions on.
+  const compareLaneBinding = useCallback(
+    (
+      hostId: string | null | undefined,
+      hostConfig: PluginExtensionsHostConfig | null | undefined,
+    ) => {
+      if (
+        !extensionsFlag ||
+        extensionsAccess?.enabled !== true ||
+        !currentUserForSender?._id ||
+        !convexProjectId ||
+        !hostId
+      )
+        return null;
+      const resolved = hostConfig
+        ? pluginExtensionsForHost(hostConfig)
+        : pluginExtensions;
+      if (!resolved.enabled) return null;
+      return {
+        identity: {
+          actorId: currentUserForSender._id,
+          projectId: convexProjectId,
+          hostId,
+        },
+        servers: extensionServers,
+        capabilities: resolved.capabilities,
+        profile: (hostConfig?.harness === "codex" ? "codex" : "chatgpt") as
+          | "codex"
+          | "chatgpt",
+      };
+    },
+    [
+      extensionsFlag,
+      extensionsAccess?.enabled,
+      currentUserForSender?._id,
+      convexProjectId,
+      pluginExtensions,
+      extensionServers,
+    ],
+  );
+  const onboardingOwnerKey = JSON.stringify([
+    currentUserForSender?._id,
+    convexProjectId,
+    previewedHostId,
+    extensionsFlag,
+    extensionsAccess?.enabled,
+  ]);
+  const onboardingLiveRef = useRef({
+    ownerKey: onboardingOwnerKey,
+    scope: extensionScope,
+    servers: extensionServers,
+  });
+  onboardingLiveRef.current = {
+    ownerKey: onboardingOwnerKey,
+    scope: extensionScope,
+    servers: extensionServers,
+  };
+  const runPluginOnboardingRef = useRef<RunPluginOnboarding>(async () => {
+    throw new Error("Onboarding is unavailable");
+  });
+  const sendPluginOnboardingRef = useRef<
+    (
+      spec: PluginOnboardingSpec,
+      serverId: string,
+      threadId: string,
+      ownerKey: string,
+      sourceSignal?: AbortSignal,
+    ) => Promise<void>
+  >(async () => {
+    throw new Error("Onboarding is unavailable");
+  });
+  // In the Playground, extension state lives in ExtensionWorkspaceProvider
+  // (around the whole panel group) and this center only registers its scope.
+  // Embedded chats without the provider keep their own inline workspace.
+  const extensionPorts = useMemo(
+    () => ({
+      sendMessage: dispatchPluginMessage,
+      runOnboarding: ((...args) =>
+        runPluginOnboardingRef.current(...args)) as RunPluginOnboarding,
+    }),
+    [dispatchPluginMessage],
+  );
+  const isSigningOut = useSignOutStore((state) => state.isSigningOut);
+  // Who is looking is momentarily UNKNOWN, not different: the session is
+  // refreshing or the user record is re-subscribing, while everything else
+  // that turns extensions on still holds. The owners keep their Apps through
+  // that gap; a sign-out, another user/project/client, or the master switch
+  // still closes them.
+  const extensionIdentityPending =
+    !extensionIdentity &&
+    !isSigningOut &&
+    extensionsFlag &&
+    pluginExtensionsEnabled &&
+    !multiModelEnabled &&
+    !!convexProjectId &&
+    !!previewedHostId &&
+    (extensionsAccess.status === "skipped" ||
+      extensionsAccess.status === "loading" ||
+      (extensionsAccess.enabled === true && !currentUserForSender?._id));
+  const hasExtensionProvider = useExtensionRegistration(
+    extensionScope && extensionIdentity
+      ? {
+          identity: extensionIdentity,
+          chatId: chatSessionId,
+          servers: extensionServers,
+          // The client's per-extension toggles (C1). One switched off removes
+          // only that capability; running Apps keep running.
+          capabilities: pluginExtensions.capabilities,
+          profile:
+            previewedHost?.config?.harness === "codex" ? "codex" : "chatgpt",
+          // A save re-checks open Apps; it never reloads them by itself.
+          hostRevision: previewedHost?.config?.id,
+        }
+      : extensionIdentityPending
+        ? { identity: null, chatId: chatSessionId, servers: [], hold: true }
+        : null,
+    extensionPorts,
+  );
+  const inlineThreadApps = useThreadAppWorkspace(
+    hasExtensionProvider ? null : extensionScope,
+    extensionServers,
+    {
+      sendMessage: dispatchPluginMessage,
+      runOnboarding: (...args) => runPluginOnboardingRef.current(...args),
+      capabilities: pluginExtensions.capabilities,
+      launchProfile:
+        previewedHost?.config?.harness === "codex" ? "codex" : "chatgpt",
+      hostRevision: previewedHost?.config?.id,
+    },
+  );
+  const extensionOwners = useExtensionOwners();
+  const setGlobalTakeoverSlot = useExtensionSlot("takeover");
+  const releaseExtensionChat = useExtensionChatRelease();
+  // A global App takes the client area over; closing it returns to the chat.
+  const globalTakeoverOpen =
+    useExtensionWorkspaceState(
+      (state) =>
+        !!state.global?.active &&
+        state.global.apps.some((row) => row.key === state.global!.active),
+    ) === true;
+  // The chat owner for THIS chat; a stale owner from the previous chat is
+  // never used while the provider catches up.
+  const chatOwnerApps = hasExtensionProvider
+    ? extensionScope &&
+      extensionOwners.chat?.scope?.pluginWorkspace.workspaceId ===
+        extensionScope.pluginWorkspace.workspaceId
+      ? extensionOwners.chat
+      : null
+    : inlineThreadApps;
+  const globalOwnerApps =
+    hasExtensionProvider && extensionScope ? extensionOwners.global : null;
+  const threadApps = {
+    fileActions: chatOwnerApps?.fileActions ?? null,
+    approveMention: (
+      challenge: { name: string; params: Record<string, unknown> },
+      signal: AbortSignal,
+    ) =>
+      chatOwnerApps
+        ? chatOwnerApps.approveMention(challenge, signal)
+        : Promise.resolve(false),
+    contextReferences: chatOwnerApps?.contextReferences ?? [],
+    globalContextReferences: globalOwnerApps?.contextReferences ?? [],
+    contextAttachments: [
+      ...(chatOwnerApps?.contextAttachments ?? []),
+      ...(globalOwnerApps?.contextAttachments ?? []),
+    ],
+    prepareMessage: async (
+      intent: PluginMessageIntent,
+      isCurrent: () => boolean,
+    ) =>
+      (await chatOwnerApps?.prepareMessage(intent, isCurrent)) ??
+      (await globalOwnerApps?.prepareMessage(intent, isCurrent)) ??
+      null,
+    // With the provider, Apps are tabs in the right rail (thread, file and
+    // quick-action) or take the client area over (global); only embedded
+    // chats keep the inline split.
+    navigation: hasExtensionProvider ? null : inlineThreadApps.navigation,
+    panel: hasExtensionProvider ? undefined : inlineThreadApps.panel,
+    open: hasExtensionProvider ? false : inlineThreadApps.open,
+  };
+  const ownedModelWorkspace = useOwnedModelAppWorkspace(
+    dispatchPluginMessage,
+    extensionScope
+      ? {
+          key: JSON.stringify([
+            currentUserForSender?._id,
+            extensionScope.projectId,
+            extensionScope.hostId,
+            extensionScope.pluginWorkspace.workspaceId,
+          ]),
+          projectId: extensionScope.projectId,
+          hostId: extensionScope.hostId,
+          workspaceId: extensionScope.pluginWorkspace.workspaceId,
+        }
+      : null,
+  );
+  // Plugin-owned servers show their plugin's icons (composer icon, logo).
+  // One subscription to the project's plugins; discovery names each
+  // server's plugin.
+  const pluginIconsById = usePluginIconsById(
+    useProjectPlugins(extensionScope?.projectId ?? null),
+  );
+  usePublishPluginIcons(pluginIconsById);
+  const composerMentions = useComposerMentions(
+    pluginExtensions.capabilities.mentions ? extensionScope : null,
+    extensionServers,
+    threadApps.approveMention,
+    pluginIconsById,
+  );
+  // Plugin deep links written in chat open the matching global App, through
+  // the same admitted navigation an App uses (`ui/open-link`).
+  const globalOwnerRef = useRef(globalOwnerApps);
+  globalOwnerRef.current = globalOwnerApps;
+  const chatDeepLinks = useMemo(
+    () =>
+      hasExtensionProvider && extensionScope
+        ? {
+            open: (url: string) =>
+              void openChatDeepLink(globalOwnerRef.current, url, (message) =>
+                toast.error(message),
+              ),
+          }
+        : null,
+    [hasExtensionProvider, extensionScope],
+  );
+  extensionContextRefs.current = extensionScope
+    ? {
+        workspaceId: extensionScope.pluginWorkspace.workspaceId,
+        tokens: [
+          ...threadApps.contextReferences,
+          ...ownedModelWorkspace.references,
+        ],
+        global:
+          extensionIdentity && globalOwnerApps
+            ? {
+                workspace: globalOwnerWorkspace(extensionIdentity),
+                references: threadApps.globalContextReferences,
+              }
+            : undefined,
+      }
+    : null;
   const hostBackgroundColor =
     getScenarioChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
@@ -2202,7 +2638,7 @@ export function PlaygroundMain({
   // axis only — the input model applies to every column.
   const leadHostId = selectedHostIds[0] ?? null;
   const leadHost = leadHostId
-    ? resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null
+    ? (resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null)
     : null;
   const sharedHostColumnModel = selectedModel ?? null;
 
@@ -2346,7 +2782,7 @@ export function PlaygroundMain({
           harnessId: columnHarness,
           hostedMode: HOSTED_MODE,
           environmentId: isEnvironmentMode
-            ? playgroundEnvironment.environmentId ?? null
+            ? (playgroundEnvironment.environmentId ?? null)
             : null,
           requiresWebChatApi: isEnvironmentMode,
           sharedRun: isSharedSession || replayingAnotherUsersThread,
@@ -2542,7 +2978,7 @@ export function PlaygroundMain({
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
       ? liveTraceEnvelope
-      : preludeTraceEnvelope ?? liveTraceEnvelope;
+      : (preludeTraceEnvelope ?? liveTraceEnvelope);
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
@@ -2558,13 +2994,24 @@ export function PlaygroundMain({
     !showPostConnectGuide;
   const multiModelTracePanelModel =
     selectedModel ?? resolvedSelectedModels[0] ?? null;
-  const { isStreamingActive, stopActiveChat } = useChatStopControls({
-    isCompareMode,
-    isStreaming,
-    multiModelSummaries: compareSummaries,
-    setStopBroadcastRequestId,
-    stop,
-  });
+  const { isStreamingActive, stopActiveChat: stopChatTurn } =
+    useChatStopControls({
+      isCompareMode,
+      isStreaming,
+      multiModelSummaries: compareSummaries,
+      setStopBroadcastRequestId,
+      stop,
+    });
+  // Stopping a run cancels this chat's pending extension forms once (D6).
+  // Streaming merely ending does not: MRTR rounds outlive their turn.
+  const extensionFormWorkspaceRef = useRef<string | null>(null);
+  extensionFormWorkspaceRef.current =
+    extensionScope?.pluginWorkspace.workspaceId ?? null;
+  const stopActiveChat = useCallback(() => {
+    const workspaceId = extensionFormWorkspaceRef.current;
+    if (workspaceId) cancelComposerForms(workspaceId);
+    stopChatTurn();
+  }, [stopChatTurn]);
 
   // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
   const composer = useComposerOnboarding({
@@ -2619,10 +3066,27 @@ export function PlaygroundMain({
     (localHarness.phase === "installing" ||
       localHarness.phase === "authorizing" ||
       localHarness.phase === "unavailable");
+  // Ongoing App admission excludes only this action's own connection preparation.
+  // Read-only, target, history and streaming denials remain live across awaits.
+  const pluginActionInteractivity = getChatComposerInteractivity({
+    isStreamingActive,
+    composerDisabled: apiSessionViewOnly || disableChatInput || submitBlocked,
+    submitDisabled:
+      disableChatInput ||
+      submitBlocked ||
+      composer.submitGatedByServer ||
+      isEnvironmentTargetPending ||
+      loadingHistorySessionId !== null ||
+      restoringTarget !== null ||
+      localHarnessBlocksSend,
+  });
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
     composerDisabled:
-      apiSessionViewOnly || disableChatInput || submitBlocked || isPreparingServerForSend,
+      apiSessionViewOnly ||
+      disableChatInput ||
+      submitBlocked ||
+      isPreparingServerForSend,
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
@@ -2894,7 +3358,10 @@ export function PlaygroundMain({
   // ref rather than a dependency — the send paths must not be re-created (and
   // re-armed) on every host or environment change.
   conversationSendBlockedRef.current =
-    apiSessionViewOnly || needsConversationTargetAck || loadingHistorySessionId !== null || restoringTarget !== null;
+    apiSessionViewOnly ||
+    needsConversationTargetAck ||
+    loadingHistorySessionId !== null ||
+    restoringTarget !== null;
   const acknowledgeConversationTarget = useCallback(() => {
     setRestoredConversation((previous) =>
       previous ? { ...previous, acknowledged: true } : previous,
@@ -3028,8 +3495,17 @@ export function PlaygroundMain({
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
-      useActiveChatSessionStore.getState().setRestoredSession({ sessionId: detail.chatSessionId, origin: detail.origin, browser: detail.browser });
-      if (detail.browser && detail.projectId) useActiveChatSessionStore.getState().setBrowserLocation({ projectId: detail.projectId, sessionId: detail.chatSessionId, engine: "cloud" });
+      useActiveChatSessionStore.getState().setRestoredSession({
+        sessionId: detail.chatSessionId,
+        origin: detail.origin,
+        browser: detail.browser,
+      });
+      if (detail.browser && detail.projectId)
+        useActiveChatSessionStore.getState().setBrowserLocation({
+          projectId: detail.projectId,
+          sessionId: detail.chatSessionId,
+          engine: "cloud",
+        });
       if (restoredModel) {
         setSelectedModel(restoredModel);
       }
@@ -3040,7 +3516,7 @@ export function PlaygroundMain({
         detail,
         widgetSnapshots,
       );
-      syncResumedVersion(detail.version);
+      syncResumedVersion(detail.version, detail.chatSessionId);
       void markHistorySessionRead(detail._id);
       return true;
     },
@@ -3199,7 +3675,10 @@ export function PlaygroundMain({
     );
     if (appliedHistoryContentSignatureRef.current === contentSignature) {
       setPendingDirectVisibility(reactiveHistorySession.directVisibility);
-      syncResumedVersion(reactiveHistorySession.version);
+      syncResumedVersion(
+        reactiveHistorySession.version,
+        reactiveHistorySession.chatSessionId,
+      );
       return;
     }
 
@@ -3235,20 +3714,39 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
+  const currentHistoryTargetRef = useRef({
+    chatSessionId,
+    projectId: convexProjectId,
+  });
+  currentHistoryTargetRef.current = {
+    chatSessionId,
+    projectId: convexProjectId,
+  };
+
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
           const detail = await getChatHistoryDetail({
-            sessionId: activeHistorySessionId ?? undefined,
             chatSessionId,
             projectId: convexProjectId ?? undefined,
           });
+          // A previous thread's request (or its still-rendered row id) must
+          // never attach its persistence cursor to the newly opened chat.
+          if (
+            currentHistoryTargetRef.current.chatSessionId !== chatSessionId ||
+            currentHistoryTargetRef.current.projectId !== convexProjectId ||
+            detail.session.chatSessionId !== chatSessionId
+          )
+            return null;
           setActiveHistorySessionId(detail.session._id);
           setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
-          syncResumedVersion(detail.session.version);
+          syncResumedVersion(
+            detail.session.version,
+            detail.session.chatSessionId,
+          );
           if (markRead) {
             void markHistorySessionRead(detail.session._id);
           }
@@ -3453,9 +3951,16 @@ export function PlaygroundMain({
               modelSource: detail.session.modelSource,
             }
           : null;
-        if (new URLSearchParams(window.location.search).get("browser") === "open") {
-          if (detail.session.browser) useBrowserWorkspaceStore.getState().openBrowser(detail.session.chatSessionId);
-          const url = new URL(window.location.href); url.searchParams.delete("browser"); window.history.replaceState(window.history.state, "", url);
+        if (
+          new URLSearchParams(window.location.search).get("browser") === "open"
+        ) {
+          if (detail.session.browser)
+            useBrowserWorkspaceStore
+              .getState()
+              .openBrowser(detail.session.chatSessionId);
+          const url = new URL(window.location.href);
+          url.searchParams.delete("browser");
+          window.history.replaceState(window.history.state, "", url);
         }
         restored = true;
         return "restored";
@@ -3552,6 +4057,9 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      // The source App is disposed by reset; its fullscreen overlay cannot own
+      // the new conversation’s composer.
+      setIsWidgetFullscreen(false);
       // Compare lanes hold their own useChatSession state; resetting the
       // root single-model session alone leaves the visible lane transcripts
       // intact and the user sees nothing happen.
@@ -3570,6 +4078,20 @@ export function PlaygroundMain({
       syncResumedVersion,
     ],
   );
+
+  const extensionThreadTransition = useChatThreadTransition({
+    threadId: chatSessionId,
+    destinationReady:
+      !isEnvironmentTargetPending &&
+      loadingHistorySessionId === null &&
+      restoringTarget === null,
+    ownerScope: JSON.stringify([
+      currentUserForSender?._id,
+      convexProjectId,
+      previewedHostId,
+    ]),
+    begin: handleNewChat,
+  });
 
   const handleArchiveAllComplete = useCallback(
     (hadActiveHistorySelection: boolean) => {
@@ -3609,6 +4131,16 @@ export function PlaygroundMain({
         | "unpin";
       session: ChatHistorySession;
     }) => {
+      // An archived chat's Apps close once it is no longer the shown chat,
+      // and its pending extension forms are cancelled once (D6).
+      if (action === "archive") {
+        releaseExtensionChat(session.chatSessionId);
+        if (extensionIdentity)
+          cancelComposerForms(
+            chatOwnerWorkspace(extensionIdentity, session.chatSessionId)
+              .workspaceId,
+          );
+      }
       if (
         (action === "share" || action === "unshare") &&
         session._id === activeHistorySessionId
@@ -3632,6 +4164,8 @@ export function PlaygroundMain({
       activeHistorySessionId,
       detachHistorySession,
       refreshCurrentHistorySession,
+      releaseExtensionChat,
+      extensionIdentity,
     ],
   );
 
@@ -3728,10 +4262,15 @@ export function PlaygroundMain({
   // visible feedback.
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
   useLayoutEffect(() => {
-    useActiveChatSessionStore.getState().setRestorationPending(
-      !!loadingHistorySessionId || isRestoringConversation || restoringTarget !== null,
-    );
-    return () => useActiveChatSessionStore.getState().setRestorationPending(false);
+    useActiveChatSessionStore
+      .getState()
+      .setRestorationPending(
+        !!loadingHistorySessionId ||
+          isRestoringConversation ||
+          restoringTarget !== null,
+      );
+    return () =>
+      useActiveChatSessionStore.getState().setRestorationPending(false);
   }, [loadingHistorySessionId, isRestoringConversation, restoringTarget]);
   useEffect(() => {
     // A URL restore is the same "fetching a transcript" wait, and it happens on
@@ -3971,7 +4510,14 @@ export function PlaygroundMain({
   );
 
   const ensureSelectedServerReadyForChat = useCallback(async () => {
-    if (!serverName || serverName === "none" || !ensureServersReady) {
+    // Environment turns resolve their saved IDs through the environment adapter.
+    // The unrelated standalone server selection must not block that target.
+    if (
+      isEnvironmentMode ||
+      !serverName ||
+      serverName === "none" ||
+      !ensureServersReady
+    ) {
       return true;
     }
 
@@ -4064,6 +4610,51 @@ export function PlaygroundMain({
         setLocalHarnessPreparing(false);
       }
     }, [localHarnessRequested, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+
+  const extensionOwnerScope = JSON.stringify([
+    currentUserForSender?._id,
+    convexProjectId,
+    previewedHostId,
+  ]);
+  const pluginMessage = usePluginMessage({
+    threadId: chatSessionId,
+    scope: JSON.stringify([extensionOwnerScope, chatSessionId]),
+    disabled:
+      !extensionScope ||
+      isCompareMode ||
+      composerDisabled ||
+      sendBlocked ||
+      isStreaming,
+    liveBlocked:
+      !extensionScope ||
+      isCompareMode ||
+      pluginActionInteractivity.composerDisabled ||
+      pluginActionInteractivity.sendBlocked ||
+      isStreaming,
+    gates: [
+      async () => !conversationSendBlockedRef.current,
+      ensureSelectedServerReadyForChat,
+      ensureThreadReadyForSend,
+      ensureLocalHarnessReadyForSend,
+    ],
+    newChat: {
+      threadId: chatSessionId,
+      ownerScope: extensionOwnerScope,
+      begin: extensionThreadTransition.begin,
+    },
+    prepareNew: async (intent, isCurrent) =>
+      (await ownedModelWorkspace.prepareMessage(intent, isCurrent)) ??
+      threadApps.prepareMessage(intent, isCurrent),
+    send: (intent, isCurrent) =>
+      sendMessage({
+        text: "",
+        pluginMessage: intent,
+        isCurrent,
+        metadata: outgoingSenderMetadata,
+      }),
+    onSent: onFirstMessageSent,
+  });
+  pluginMessageDispatchRef.current = pluginMessage.send;
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -4646,6 +5237,9 @@ export function PlaygroundMain({
   // expanded MCP prompt, a skill, a file. Text-only would disable Send on a
   // composer that visibly holds an attached skill.
   const composerHasContent =
+    composerMentions.selections.length > 0 ||
+    threadApps.contextAttachments.length > 0 ||
+    ownedModelWorkspace.attachments.length > 0 ||
     composer.input.trim().length > 0 ||
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
@@ -4766,12 +5360,15 @@ export function PlaygroundMain({
       if (prependMessages.length > 0) {
         setMessages((prev) => [...prev, ...prependMessages]);
       }
-      sendMessage({
+      const sent = await sendMessage({
         text: composerText,
         files,
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
+        pluginMentions: composerMentions.selections,
       });
+      if (!sent) return false;
+      composerMentions.clear();
       setModelContextQueue([]);
     }
 
@@ -4785,6 +5382,8 @@ export function PlaygroundMain({
   }, [
     composer,
     composerHasContent,
+    composerMentions.selections,
+    composerMentions.clear,
     mcpPromptResults,
     skillResults,
     fileAttachments,
@@ -4805,6 +5404,123 @@ export function PlaygroundMain({
     computerAttachmentsActive,
     computerAttachmentUpload,
   ]);
+
+  sendPluginOnboardingRef.current = async (
+    spec,
+    serverId,
+    threadId,
+    ownerKey,
+    sourceSignal,
+  ) => {
+    const target = onboardingLiveRef.current;
+    const isCurrent = () => {
+      const live = onboardingLiveRef.current;
+      return (
+        !sourceSignal?.aborted &&
+        live.ownerKey === ownerKey &&
+        live.scope?.threadId === threadId &&
+        live.servers.some((server) => server.serverId === serverId)
+      );
+    };
+    if (
+      !target.scope ||
+      !isCurrent() ||
+      isCompareMode ||
+      sendBlocked ||
+      composerDisabled ||
+      conversationSendBlockedRef.current
+    ) {
+      throw new Error("Onboarding is unavailable");
+    }
+    if (
+      !(await ensureSelectedServerReadyForChat()) ||
+      !isCurrent() ||
+      !(await ensureThreadReadyForSend()) ||
+      !isCurrent() ||
+      !(await ensureLocalHarnessReadyForSend()) ||
+      !isCurrent()
+    ) {
+      throw new Error("Onboarding was cancelled");
+    }
+    const timeout = AbortSignal.timeout(30_000);
+    const signal = sourceSignal
+      ? AbortSignal.any([sourceSignal, timeout])
+      : timeout;
+    // Re-read the same saved source under the destination's current authority.
+    // The source menu's cached bytes are never used to send a new chat turn.
+    const fresh = await createThreadAppApi(target.scope).onboarding(
+      serverId,
+      true,
+      signal,
+    );
+    if (
+      !isCurrent() ||
+      !fresh.spec ||
+      !fresh.available ||
+      fresh.spec.pluginVersionId !== spec.pluginVersionId ||
+      fresh.spec.bundleHash !== spec.bundleHash ||
+      fresh.spec.skill.skillId !== spec.skill.skillId ||
+      fresh.spec.skill.contentHash !== spec.skill.contentHash
+    ) {
+      throw new Error("Onboarding changed. Open its menu again.");
+    }
+    const skillMessages = buildSkillContextMessages([
+      {
+        name: fresh.spec.skill.name,
+        description: fresh.spec.skill.description,
+        content: fresh.spec.skill.content,
+        path: fresh.spec.onboarding.modelRef,
+      },
+    ]) as UIMessage[];
+    setMessages((previous) => [...previous, ...skillMessages]);
+    trackSendMessage({ single_model_send: true });
+    const sent = await sendMessage({
+      text: "Run the attached onboarding skill.",
+      metadata: outgoingSenderMetadata,
+    });
+    if (!sent) throw new Error("Onboarding could not start");
+    onFirstMessageSent?.();
+  };
+  runPluginOnboardingRef.current = async (
+    spec,
+    conversation,
+    signal,
+    serverId,
+  ) => {
+    const source = onboardingLiveRef.current;
+    const isSourceCurrent = () =>
+      !signal.aborted &&
+      !!source.scope &&
+      onboardingLiveRef.current.ownerKey === source.ownerKey &&
+      onboardingLiveRef.current.scope?.threadId === source.scope.threadId;
+    try {
+      if (
+        !source.scope ||
+        !isSourceCurrent() ||
+        sendBlocked ||
+        isCompareMode ||
+        conversationSendBlockedRef.current
+      )
+        throw new Error("Onboarding is unavailable");
+      const targetThread =
+        conversation === "new"
+          ? await extensionThreadTransition.begin(isSourceCurrent)
+          : source.scope.threadId;
+      if (!targetThread) throw new Error("Onboarding was cancelled");
+      // A successful ordinary new-chat transition ends the source lifetime.
+      // The destination is freshly admitted above; do not reuse its aborted signal.
+      await sendPluginOnboardingRef.current(
+        spec,
+        serverId,
+        targetThread,
+        source.ownerKey,
+        conversation === "current" ? signal : undefined,
+      );
+    } catch (error) {
+      toast.error("Couldn’t run onboarding. Try again.");
+      throw error;
+    }
+  };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -5187,9 +5903,21 @@ export function PlaygroundMain({
     localHarnessInScope &&
     (localHarness.phase !== "unavailable" || localHarnessRequested) ? (
       <LocalHarnessComposerNotice
-        controller={localHarnessPreparing ? { ...localHarness, phase: "authorizing" } : localHarness}
-        onRetry={() => { void ensureLocalHarnessReadyForSend().then(() => localHarness.refresh()); }}
-        onSetup={() => { void ensureLocalHarnessReadyForSend(true).then(() => localHarness.refresh()); }}
+        controller={
+          localHarnessPreparing
+            ? { ...localHarness, phase: "authorizing" }
+            : localHarness
+        }
+        onRetry={() => {
+          void ensureLocalHarnessReadyForSend().then(() =>
+            localHarness.refresh(),
+          );
+        }}
+        onSetup={() => {
+          void ensureLocalHarnessReadyForSend(true).then(() =>
+            localHarness.refresh(),
+          );
+        }}
       />
     ) : null;
   const localHarnessReadyNotice =
@@ -5200,7 +5928,8 @@ export function PlaygroundMain({
     ) : null;
   const apiSessionNotice = apiSessionViewOnly ? (
     <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
-      This conversation is driven by an agent. Continue it through the session API.
+      This conversation is driven by an agent. Continue it through the session
+      API.
       {restoredSessionHasBrowser ? " You can take over its browser here." : ""}
     </p>
   ) : null;
@@ -5284,6 +6013,14 @@ export function PlaygroundMain({
         };
 
   const sharedChatInputProps = {
+    mentions: composerMentions.mentions,
+    // Forms take the composer's place whether or not mentions are on.
+    formWorkspaceId: extensionScope?.pluginWorkspace.workspaceId,
+    contextAttachments: [
+      ...composerMentions.contextAttachments,
+      ...threadApps.contextAttachments,
+      ...ownedModelWorkspace.attachments,
+    ],
     value: composer.input,
     onChange: composer.handleInputChange,
     inputHistory: chatInputHistory,
@@ -5356,6 +6093,9 @@ export function PlaygroundMain({
       selectedServers.map((name) => [name, { name }]),
     ),
     systemPromptTokenCount: null,
+    // Launchers moved to the rails (global Apps on the left, side panels in
+    // the right rail's +); the composer keeps @ mentions only.
+    appNavigation: threadApps.navigation,
     systemPromptTokenCountLoading: false,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
@@ -5413,17 +6153,76 @@ export function PlaygroundMain({
   const isWidgetFullTakeover =
     isMobileFullTakeover || isTabletFullscreenTakeover;
 
+  // ChatGPT and Codex (plugin extensions on): a model-invoked chat App that
+  // goes fullscreen moves into a right-rail tab with "Exit full screen",
+  // and the chat stays beside it. Other clients keep the full overlay.
+  const railFullscreenEligible =
+    hasExtensionProvider &&
+    !!extensionScope &&
+    pluginExtensions.capabilities.displayModes &&
+    !isCompareMode &&
+    (storeDeviceType === "fill" || storeDeviceType === "desktop");
+  const showRailFullscreen =
+    railFullscreenEligible &&
+    displayMode === "fullscreen" &&
+    isWidgetFullscreen &&
+    !isWidgetFullTakeover;
   const showFullscreenChatOverlay =
     displayMode === "fullscreen" &&
     isWidgetFullscreen &&
     // "fill" is the desktop-like default layout — it keeps the overlay
     // composer/chat affordance fullscreen widgets had under "desktop".
     (storeDeviceType === "fill" || storeDeviceType === "desktop") &&
-    !isWidgetFullTakeover;
+    !isWidgetFullTakeover &&
+    !showRailFullscreen;
 
   useEffect(() => {
     if (!showFullscreenChatOverlay) setIsFullscreenChatOpen(false);
   }, [showFullscreenChatOverlay]);
+  const extensionStore = useExtensionStore();
+  const railSlotElement =
+    useExtensionWorkspaceState((state) => state.railSlot) ?? null;
+  const railFullscreenRect = useElementViewportRect(
+    showRailFullscreen ? railSlotElement : null,
+  );
+  const exitRailFullscreen = useRef(() => {});
+  exitRailFullscreen.current = () => handleDisplayModeChange("inline");
+  // The rail tab exists while the App is fullscreen; the App names itself
+  // (and its own exit) once it is placed.
+  useEffect(() => {
+    if (!extensionStore) return;
+    if (!showRailFullscreen) {
+      if (extensionStore.getState().modelFullscreen)
+        extensionStore.setState({ modelFullscreen: null });
+      return;
+    }
+    if (!extensionStore.getState().modelFullscreen)
+      extensionStore.setState({
+        modelFullscreen: {
+          label: "App",
+          exit: () => exitRailFullscreen.current(),
+        },
+      });
+    revealRail(extensionStore);
+  }, [extensionStore, showRailFullscreen]);
+  const railFullscreenPlacement = useMemo<WidgetFullscreenPlacement | null>(
+    () =>
+      railFullscreenEligible && extensionStore
+        ? {
+            rect: showRailFullscreen ? railFullscreenRect : null,
+            exitLabel: "Exit full screen",
+            onEnter: (app) => extensionStore.setState({ modelFullscreen: app }),
+            // Leaving from the App gives a narrow window its chat back.
+            onExit: () => dismissRail(extensionStore),
+          }
+        : null,
+    [
+      railFullscreenEligible,
+      extensionStore,
+      showRailFullscreen,
+      railFullscreenRect,
+    ],
+  );
 
   const showSingleModelEmptyStateComposer =
     !isAuthLoading &&
@@ -5451,82 +6250,115 @@ export function PlaygroundMain({
 
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
-    <div className="relative flex flex-col flex-1 min-h-0">
-      {showPinnedConversationTargetNotice ? (
-        <div
-          data-testid="pinned-conversation-target-notice"
-          className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
-        >
-          <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
-            {apiSessionNotice || conversationTargetNotice}
-          </div>
-        </div>
-      ) : null}
-      {isThreadEmpty ? (
-        // Empty state — centered (welcome + composer, or post-connect guide)
-        <div
-          data-testid="playground-empty-state-shell"
-          className={cn(
-            "flex flex-1 min-h-0 overflow-hidden",
-            // Text color stays family-keyed — built-ins doesn't carry
-            // a foreground token yet. Background comes from built-ins
-            // via `hostBackgroundColor` (already resolved at L553) so
-            // every tab paints the same color for the same host+theme.
-            hostStyleFamily === "chatgpt"
-              ? effectiveThreadTheme === "dark"
-                ? "text-neutral-50"
-                : "text-neutral-950"
-              : effectiveThreadTheme === "dark"
-                ? "text-[#F1F0ED]"
-                : "text-[rgba(61,57,41,1)]",
-          )}
-          style={{ backgroundColor: hostBackgroundColor }}
-        >
-          <div
-            className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden px-4"
-            data-testid="playground-empty-state-body"
-          >
+    <OwnedModelAppPortsProvider value={ownedModelWorkspace.value}>
+      <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
+      <ChatDeepLinkProvider value={chatDeepLinks}>
+      <WorkspaceFileActionsProvider value={threadApps.fileActions}>
+        <HostWorkspace appPanel={threadApps.panel} appOpen={threadApps.open}>
+          {/* Each chat keeps its pending forms (and their answers) while
+              another chat is shown. */}
+          <ChatPluginFormHosts
+            current={
+              extensionScope
+                ? {
+                    projectId: extensionScope.projectId,
+                    workspaceId: extensionScope.pluginWorkspace.workspaceId,
+                  }
+                : null
+            }
+            exclude={
+              extensionIdentity
+                ? [globalOwnerWorkspace(extensionIdentity).workspaceId]
+                : []
+            }
+          />
+          {/* Forms asked for by global Apps belong to the global owner. */}
+          {extensionScope && extensionIdentity && globalOwnerApps ? (
+            <OwnedPluginFormHost
+              projectId={extensionScope.projectId}
+              workspaceId={globalOwnerWorkspace(extensionIdentity).workspaceId}
+            />
+          ) : null}
+          {showPinnedConversationTargetNotice ? (
             <div
+              data-testid="pinned-conversation-target-notice"
+              className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
+            >
+              <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
+                {apiSessionNotice || conversationTargetNotice}
+              </div>
+            </div>
+          ) : null}
+          {isThreadEmpty ? (
+            // Empty state — centered (welcome + composer, or post-connect guide)
+            <div
+              data-testid="playground-empty-state-shell"
               className={cn(
-                "w-full max-w-4xl shrink-0",
-                !showPostConnectGuide && "py-8",
+                "flex flex-1 min-h-0 overflow-hidden",
+                // Text color stays family-keyed — built-ins doesn't carry
+                // a foreground token yet. Background comes from built-ins
+                // via `hostBackgroundColor` (already resolved at L553) so
+                // every tab paints the same color for the same host+theme.
+                hostStyleFamily === "chatgpt"
+                  ? effectiveThreadTheme === "dark"
+                    ? "text-neutral-50"
+                    : "text-neutral-950"
+                  : effectiveThreadTheme === "dark"
+                    ? "text-[#F1F0ED]"
+                    : "text-[rgba(61,57,41,1)]",
               )}
+              style={{ backgroundColor: hostBackgroundColor }}
             >
               <div
-                className={cn("w-full", !showPostConnectGuide && "text-center")}
+                className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden px-4"
+                data-testid="playground-empty-state-body"
               >
-                {isAuthLoading ? (
-                  <div className="space-y-4 text-center">
-                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                    <p className="text-sm text-muted-foreground">Loading...</p>
-                  </div>
-                ) : shouldShowUpsell ? (
-                  <div className="text-center">
-                    <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                  </div>
-                ) : showPostConnectGuide ? (
-                  <div className="space-y-6">
-                    {errorMessage && (
-                      <div className="w-full">
-                        <ErrorBox
-                          message={errorMessage.message}
-                          errorDetails={errorMessage.details}
-                          code={errorMessage.code}
-                          statusCode={errorMessage.statusCode}
-                          isRetryable={errorMessage.isRetryable}
-                          isMCPJamPlatformError={
-                            errorMessage.isMCPJamPlatformError
-                          }
-                          onResetChat={resetChat}
-                        />
-                      </div>
+                <div
+                  className={cn(
+                    "w-full max-w-4xl shrink-0",
+                    !showPostConnectGuide && "py-8",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "w-full",
+                      !showPostConnectGuide && "text-center",
                     )}
-                    <PostConnectGuide />
-                  </div>
-                ) : hideWelcomeHero ? null : (
-                  <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
-                    <div className="text-center max-w-md">
-                      {/*
+                  >
+                    {isAuthLoading ? (
+                      <div className="space-y-4 text-center">
+                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                        <p className="text-sm text-muted-foreground">
+                          Loading...
+                        </p>
+                      </div>
+                    ) : shouldShowUpsell ? (
+                      <div className="text-center">
+                        <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                      </div>
+                    ) : showPostConnectGuide ? (
+                      <div className="space-y-6">
+                        {errorMessage && (
+                          <div className="w-full">
+                            <ErrorBox
+                              message={errorMessage.message}
+                              errorDetails={errorMessage.details}
+                              code={errorMessage.code}
+                              statusCode={errorMessage.statusCode}
+                              isRetryable={errorMessage.isRetryable}
+                              isMCPJamPlatformError={
+                                errorMessage.isMCPJamPlatformError
+                              }
+                              onResetChat={resetChat}
+                            />
+                          </div>
+                        )}
+                        <PostConnectGuide />
+                      </div>
+                    ) : hideWelcomeHero ? null : (
+                      <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
+                        <div className="text-center max-w-md">
+                          {/*
                         BB-106: render both theme variants and toggle with CSS
                         rather than swapping `src`. During NUX `effectiveThreadTheme`
                         flips once `hostContext` resolves asynchronously; swapping the
@@ -5534,262 +6366,278 @@ export function PlaygroundMain({
                         frame (the logo "disappearing"). Both files download once, so
                         the theme flip is now instant with no refetch.
                       */}
-                      <img
-                        src="/mcp_jam_light.png"
-                        alt="MCPJam"
-                        draggable={false}
-                        aria-hidden={effectiveThreadTheme === "dark"}
-                        className={cn(
-                          "h-10 w-auto mx-auto mb-4",
-                          effectiveThreadTheme === "dark" && "hidden",
-                        )}
-                      />
-                      <img
-                        src="/mcp_jam_dark.png"
-                        alt="MCPJam"
-                        draggable={false}
-                        aria-hidden={effectiveThreadTheme !== "dark"}
-                        className={cn(
-                          "h-10 w-auto mx-auto mb-4",
-                          effectiveThreadTheme !== "dark" && "hidden",
-                        )}
-                      />
-                      <div className="space-y-3">
-                        <h3
-                          className={cn(
-                            "text-lg font-semibold",
-                            hostStyleFamily === "chatgpt"
-                              ? effectiveThreadTheme === "dark"
-                                ? "text-white"
-                                : "text-neutral-950"
-                              : effectiveThreadTheme === "dark"
-                                ? "text-[#F1F0ED]"
-                                : "text-[rgba(61,57,41,1)]",
-                          )}
-                        >
-                          {showPostConnectGuideCopy
-                            ? POST_CONNECT_GUIDE_COPY
-                            : "This is your playground for MCP."}
-                        </h3>
-                      </div>
-                    </div>
-                    <MultiModelStarterPromptsBlock
-                      onStarterPrompt={handleStarterPrompt}
-                    />
-                    {errorMessage && (
-                      <div className="w-full">
-                        <ErrorBox
-                          message={errorMessage.message}
-                          errorDetails={errorMessage.details}
-                          code={errorMessage.code}
-                          statusCode={errorMessage.statusCode}
-                          isRetryable={errorMessage.isRetryable}
-                          isMCPJamPlatformError={
-                            errorMessage.isMCPJamPlatformError
-                          }
-                          onResetChat={resetChat}
+                          <img
+                            src="/mcp_jam_light.png"
+                            alt="MCPJam"
+                            draggable={false}
+                            aria-hidden={effectiveThreadTheme === "dark"}
+                            className={cn(
+                              "h-10 w-auto mx-auto mb-4",
+                              effectiveThreadTheme === "dark" && "hidden",
+                            )}
+                          />
+                          <img
+                            src="/mcp_jam_dark.png"
+                            alt="MCPJam"
+                            draggable={false}
+                            aria-hidden={effectiveThreadTheme !== "dark"}
+                            className={cn(
+                              "h-10 w-auto mx-auto mb-4",
+                              effectiveThreadTheme !== "dark" && "hidden",
+                            )}
+                          />
+                          <div className="space-y-3">
+                            <h3
+                              className={cn(
+                                "text-lg font-semibold",
+                                hostStyleFamily === "chatgpt"
+                                  ? effectiveThreadTheme === "dark"
+                                    ? "text-white"
+                                    : "text-neutral-950"
+                                  : effectiveThreadTheme === "dark"
+                                    ? "text-[#F1F0ED]"
+                                    : "text-[rgba(61,57,41,1)]",
+                              )}
+                            >
+                              {showPostConnectGuideCopy
+                                ? POST_CONNECT_GUIDE_COPY
+                                : "This is your playground for MCP."}
+                            </h3>
+                          </div>
+                        </div>
+                        <MultiModelStarterPromptsBlock
+                          onStarterPrompt={handleStarterPrompt}
                         />
+                        {errorMessage && (
+                          <div className="w-full">
+                            <ErrorBox
+                              message={errorMessage.message}
+                              errorDetails={errorMessage.details}
+                              code={errorMessage.code}
+                              statusCode={errorMessage.statusCode}
+                              isRetryable={errorMessage.isRetryable}
+                              isMCPJamPlatformError={
+                                errorMessage.isMCPJamPlatformError
+                              }
+                              onResetChat={resetChat}
+                            />
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-              {showSingleModelEmptyStateComposer && (
-                <div
-                  className={cn(
-                    "w-full shrink-0",
-                    showPostConnectGuide ? "pt-6" : "pt-8",
-                  )}
-                >
-                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
-                  {!showPostConnectGuide && composer.sendNuxCtaVisible && (
-                    <HandDrawnSendHint
-                      hostStyle={hostStyle}
-                      theme={effectiveThreadTheme}
-                    />
+                  {showSingleModelEmptyStateComposer && (
+                    <div
+                      className={cn(
+                        "w-full shrink-0",
+                        showPostConnectGuide ? "pt-6" : "pt-8",
+                      )}
+                    >
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={false}
+                      />
+                      {!showPostConnectGuide && composer.sendNuxCtaVisible && (
+                        <HandDrawnSendHint
+                          hostStyle={hostStyle}
+                          theme={effectiveThreadTheme}
+                        />
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
-      ) : (
-        // Thread with messages
-        <StickToBottom
-          className="relative flex flex-1 flex-col min-h-0"
-          resize="smooth"
-          initial="smooth"
-        >
-          <div className="relative flex-1 min-h-0">
-            <StickToBottom.Content className="flex flex-col min-h-0">
-              <Thread
-                chatSessionId={chatSessionId}
-                messages={messages}
-                sendFollowUpMessage={handleSendFollowUp}
-                model={selectedModel}
-                isLoading={isStreaming}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                onWidgetStateChange={handleWidgetStateChange}
-                onModelContextUpdate={handleModelContextUpdate}
-                displayMode={displayMode}
-                onDisplayModeChange={handleDisplayModeChange}
-                onFullscreenChange={setIsWidgetFullscreen}
-                interactive={
-                  !apiSessionViewOnly && loadingHistorySessionId === null && restoringTarget === null
-                }
-                onToolApprovalResponse={(response) => {
-                  if (!conversationSendBlockedRef.current)
-                    return addToolApprovalResponse(response);
-                }}
-                toolRenderOverrides={mergedToolRenderOverrides}
-                mcpToolResultImageRendering={
-                  effectiveMcpToolResultImageRendering
-                }
-                showInlineEdit={!hideInlineEdit}
-                // Also gated on `isConvexAuthenticated`, not just compare mode
-                // and the evals panel's opt-out. Editing seeds a fresh session
-                // with the prefix and leaves the original behind, and the whole
-                // justification for that is the original SURVIVING — persisted
-                // under its own row, which is what the task author asked for
-                // ("if a user decides to rewind messages we shouldn't delete
-                // them, from our db"). Signed out there is no row and no
-                // persistence: every path needs a bearer token (the reactive
-                // Convex query in `use-chat-history.ts`, and the REST fallback
-                // whose endpoint `assertBearerToken`s in
-                // `server/routes/web/chat-history.ts`). A rewind there is a
-                // purely destructive truncation — exactly what this feature
-                // exists to replace.
-                //
-                // NOTE: this gate was originally justified by "signed out there
-                // is no way back to the original". That reason no longer
-                // separates the two cases — the way back (the branch notice and
-                // its "Open original" action) was removed for everyone. The gate
-                // now rests only on persistence, which is a narrower but still
-                // sufficient reason. Worth a second look if the retention
-                // requirement ever changes.
-                //
-                // Keyed on auth rather than `HOSTED_MODE` or a project id: a
-                // signed-in desktop user persists through the same API, and a
-                // signed-in user with no project still gets personal history.
-                // Withheld on harness hosts (Claude Code, Codex). Those
-                // runtimes keep the conversation on their own side, filed under
-                // the chat session id, and we send only the newest user message
-                // — `@ai-sdk/harness` exposes resume-this-exact-session and
-                // nothing else: no fork, no rewind, and the resume payload is
-                // opaque so the discarded tail cannot be trimmed out of it. A
-                // branch is a NEW session id, so there is no state to resume
-                // and the harness would answer the edited message with no
-                // memory of the conversation at all, while the persisted
-                // transcript still shows the full history — a stored turn that
-                // misrepresents what the model was given. Until the harness
-                // turn path flattens the copied prefix into the first prompt,
-                // withholding is the honest option.
-                onEditUserMessage={
-                  isCompareMode ||
-                  hideMessageEdit ||
-                  !isConvexAuthenticated ||
-                  previewedHostConfigUnresolved ||
-                  previewedHarnessId
-                    ? undefined
-                    : handleEditUserMessage
-                }
-                editDisabled={sendBlocked || needsConversationTargetAck}
-                renderUserMessageActions={
-                  chatSessionId && convexProjectId
-                    ? (message) => {
-                        const promptIndex = userPromptIndexById.get(message.id);
-                        if (promptIndex === undefined) return null;
-                        return (
-                          <SaveAsTestCaseAction
-                            chatSessionId={chatSessionId}
-                            promptIndex={promptIndex}
-                            promptPreview={extractUserMessageText(message)}
-                            projectId={convexProjectId}
-                          />
-                        );
-                      }
-                    : undefined
-                }
-                showSenderAvatars={showSenderAvatars}
-                resolveSenderAvatar={resolveSenderAvatar}
-                recorder={recorderWithResolver}
-              />
-              {/* Invoking indicator while tool execution is in progress */}
-              {isExecuting && executingToolName && (
-                <InvokingIndicator
-                  toolName={executingToolName}
-                  customMessage={invokingMessage}
-                />
-              )}
-            </StickToBottom.Content>
-            <ScrollToBottomButton />
-          </div>
-        </StickToBottom>
-      )}
+          ) : (
+            // Thread with messages
+            <StickToBottom
+              className="relative flex flex-1 flex-col min-h-0"
+              resize="smooth"
+              initial="smooth"
+            >
+              <div className="relative flex-1 min-h-0">
+                <StickToBottom.Content className="flex flex-col min-h-0">
+                  <Thread
+                    chatSessionId={chatSessionId}
+                    messages={messages}
+                    sendFollowUpMessage={handleSendFollowUp}
+                    model={selectedModel}
+                    isLoading={isStreaming}
+                    toolsMetadata={toolsMetadata}
+                    toolServerMap={toolServerMap}
+                    onWidgetStateChange={handleWidgetStateChange}
+                    onModelContextUpdate={handleModelContextUpdate}
+                    displayMode={displayMode}
+                    onDisplayModeChange={handleDisplayModeChange}
+                    onFullscreenChange={setIsWidgetFullscreen}
+                    interactive={
+                      !apiSessionViewOnly &&
+                      loadingHistorySessionId === null &&
+                      restoringTarget === null
+                    }
+                    onToolApprovalResponse={(response) => {
+                      if (!conversationSendBlockedRef.current)
+                        return addToolApprovalResponse(response);
+                    }}
+                    toolRenderOverrides={mergedToolRenderOverrides}
+                    mcpToolResultImageRendering={
+                      effectiveMcpToolResultImageRendering
+                    }
+                    showInlineEdit={!hideInlineEdit}
+                    // Also gated on `isConvexAuthenticated`, not just compare mode
+                    // and the evals panel's opt-out. Editing seeds a fresh session
+                    // with the prefix and leaves the original behind, and the whole
+                    // justification for that is the original SURVIVING — persisted
+                    // under its own row, which is what the task author asked for
+                    // ("if a user decides to rewind messages we shouldn't delete
+                    // them, from our db"). Signed out there is no row and no
+                    // persistence: every path needs a bearer token (the reactive
+                    // Convex query in `use-chat-history.ts`, and the REST fallback
+                    // whose endpoint `assertBearerToken`s in
+                    // `server/routes/web/chat-history.ts`). A rewind there is a
+                    // purely destructive truncation — exactly what this feature
+                    // exists to replace.
+                    //
+                    // NOTE: this gate was originally justified by "signed out there
+                    // is no way back to the original". That reason no longer
+                    // separates the two cases — the way back (the branch notice and
+                    // its "Open original" action) was removed for everyone. The gate
+                    // now rests only on persistence, which is a narrower but still
+                    // sufficient reason. Worth a second look if the retention
+                    // requirement ever changes.
+                    //
+                    // Keyed on auth rather than `HOSTED_MODE` or a project id: a
+                    // signed-in desktop user persists through the same API, and a
+                    // signed-in user with no project still gets personal history.
+                    // Withheld on harness hosts (Claude Code, Codex). Those
+                    // runtimes keep the conversation on their own side, filed under
+                    // the chat session id, and we send only the newest user message
+                    // — `@ai-sdk/harness` exposes resume-this-exact-session and
+                    // nothing else: no fork, no rewind, and the resume payload is
+                    // opaque so the discarded tail cannot be trimmed out of it. A
+                    // branch is a NEW session id, so there is no state to resume
+                    // and the harness would answer the edited message with no
+                    // memory of the conversation at all, while the persisted
+                    // transcript still shows the full history — a stored turn that
+                    // misrepresents what the model was given. Until the harness
+                    // turn path flattens the copied prefix into the first prompt,
+                    // withholding is the honest option.
+                    onEditUserMessage={
+                      isCompareMode ||
+                      hideMessageEdit ||
+                      !isConvexAuthenticated ||
+                      previewedHostConfigUnresolved ||
+                      previewedHarnessId
+                        ? undefined
+                        : handleEditUserMessage
+                    }
+                    editDisabled={sendBlocked || needsConversationTargetAck}
+                    renderUserMessageActions={
+                      chatSessionId && convexProjectId
+                        ? (message) => {
+                            const promptIndex = userPromptIndexById.get(
+                              message.id,
+                            );
+                            if (promptIndex === undefined) return null;
+                            return (
+                              <SaveAsTestCaseAction
+                                chatSessionId={chatSessionId}
+                                promptIndex={promptIndex}
+                                promptPreview={extractUserMessageText(message)}
+                                projectId={convexProjectId}
+                              />
+                            );
+                          }
+                        : undefined
+                    }
+                    showSenderAvatars={showSenderAvatars}
+                    resolveSenderAvatar={resolveSenderAvatar}
+                    recorder={recorderWithResolver}
+                  />
+                  {/* Invoking indicator while tool execution is in progress */}
+                  {isExecuting && executingToolName && (
+                    <InvokingIndicator
+                      toolName={executingToolName}
+                      customMessage={invokingMessage}
+                    />
+                  )}
+                </StickToBottom.Content>
+                <ScrollToBottomButton />
+              </div>
+            </StickToBottom>
+          )}
 
-      {/* Footer ChatInput: with messages, or empty when center has no composer
+          {/* Footer ChatInput: with messages, or empty when center has no composer
           (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
-      {!isWidgetFullTakeover &&
-        !showFullscreenChatOverlay &&
-        (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
-          <div
-            className={cn(
-              "mx-auto w-full max-w-4xl shrink-0",
-              isThreadEmpty ? "px-4 pb-4" : "p-3",
-            )}
-          >
-            {errorMessage && (
-              <div className="pb-3">
-                <ErrorBox
-                  message={errorMessage.message}
-                  errorDetails={errorMessage.details}
-                  code={errorMessage.code}
-                  statusCode={errorMessage.statusCode}
-                  isRetryable={errorMessage.isRetryable}
-                  isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
-                  onResetChat={resetChat}
+          {!isWidgetFullTakeover &&
+            !showFullscreenChatOverlay &&
+            (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
+              <div
+                className={cn(
+                  "mx-auto w-full max-w-4xl shrink-0",
+                  isThreadEmpty ? "px-4 pb-4" : "p-3",
+                )}
+              >
+                {errorMessage && (
+                  <div className="pb-3">
+                    <ErrorBox
+                      message={errorMessage.message}
+                      errorDetails={errorMessage.details}
+                      code={errorMessage.code}
+                      statusCode={errorMessage.statusCode}
+                      isRetryable={errorMessage.isRetryable}
+                      isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                      onResetChat={resetChat}
+                    />
+                  </div>
+                )}
+                <ChatInput
+                  {...sharedChatInputProps}
+                  hasMessages={!isThreadEmpty}
                 />
               </div>
             )}
-            <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
-          </div>
-        )}
 
-      {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
-      {showFullscreenChatOverlay && (
-        <FullscreenChatOverlay
-          chatSessionId={chatSessionId}
-          messages={messages}
-          open={isFullscreenChatOpen}
-          onOpenChange={setIsFullscreenChatOpen}
-          input={composer.input}
-          onInputChange={composer.setInput}
-          placeholder={placeholder}
-          disabled={composerDisabled}
-          // The overlay replaces the docked composer, so it carries the
-          // disclosure — and its "Continue here" button — itself. Disabling
-          // Send without this would leave the user unable to send AND unable
-          // to acknowledge, which is a worse failure than the one the gate
-          // exists to prevent. The same composed element, for the same reason:
-          // the local-setup status has to be reachable from whichever composer
-          // is actually on screen.
-          notice={composerNotice}
-          canSend={
-            !sendBlocked && composerHasContent && !needsConversationTargetAck
-          }
-          isThinking={isStreamingActive}
-          onStop={stopActiveChat}
-          // Same submit path as the docked composer. Its own copy dropped
-          // attached prompts/skills (it sent raw text and then cleared the
-          // prompt results), so an explicit attachment vanished from a
-          // fullscreen widget session.
-          onSend={() => {
-            void performComposerSubmit();
-          }}
-        />
-      )}
-    </div>
+          {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
+          {showFullscreenChatOverlay && (
+            <FullscreenChatOverlay
+              chatSessionId={chatSessionId}
+              messages={messages}
+              open={isFullscreenChatOpen}
+              onOpenChange={setIsFullscreenChatOpen}
+              input={composer.input}
+              onInputChange={composer.setInput}
+              placeholder={placeholder}
+              disabled={composerDisabled}
+              // The overlay replaces the docked composer, so it carries the
+              // disclosure — and its "Continue here" button — itself. Disabling
+              // Send without this would leave the user unable to send AND unable
+              // to acknowledge, which is a worse failure than the one the gate
+              // exists to prevent. The same composed element, for the same reason:
+              // the local-setup status has to be reachable from whichever composer
+              // is actually on screen.
+              notice={composerNotice}
+              canSend={
+                !sendBlocked &&
+                composerHasContent &&
+                !needsConversationTargetAck
+              }
+              isThinking={isStreamingActive}
+              onStop={stopActiveChat}
+              // Same submit path as the docked composer. Its own copy dropped
+              // attached prompts/skills (it sent raw text and then cleared the
+              // prompt results), so an explicit attachment vanished from a
+              // fullscreen widget session.
+              onSend={() => {
+                void performComposerSubmit();
+              }}
+            />
+          )}
+        </HostWorkspace>
+      </WorkspaceFileActionsProvider>
+      </ChatDeepLinkProvider>
+      </WidgetFullscreenPlacementContext.Provider>
+    </OwnedModelAppPortsProvider>
   );
 
   // Device frame container - display mode is passed to widgets via Thread
@@ -5856,6 +6704,43 @@ export function PlaygroundMain({
             : "bg-muted/20",
         )}
       >
+        {hasExtensionProvider ? (
+          // Global Apps are portaled in here: mounted once, never moved, and
+          // hidden (not unmounted) when you return to the chat.
+          <div
+            ref={setGlobalTakeoverSlot}
+            data-testid="global-app-takeover"
+            className={cn(
+              "absolute inset-0 z-30 flex flex-col bg-background",
+              !globalTakeoverOpen && "hidden",
+            )}
+          />
+        ) : null}
+        {hasExtensionProvider && globalTakeoverOpen ? (
+          // The chat fullscreen's floating composer, over the global App.
+          // Messages go to the current chat.
+          <FullscreenChatOverlay
+            contained
+            chatSessionId={chatSessionId}
+            messages={messages}
+            open={isTakeoverChatOpen}
+            onOpenChange={setIsTakeoverChatOpen}
+            input={composer.input}
+            onInputChange={composer.setInput}
+            placeholder={placeholder}
+            disabled={composerDisabled}
+            notice={composerNotice}
+            canSend={
+              !sendBlocked && composerHasContent && !needsConversationTargetAck
+            }
+            isThinking={isStreamingActive}
+            onStop={stopActiveChat}
+            onSend={() => {
+              setIsTakeoverChatOpen(true);
+              void performComposerSubmit();
+            }}
+          />
+        ) : null}
         {showLoadingOverlay && (
           <div
             className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
@@ -6061,6 +6946,14 @@ export function PlaygroundMain({
                     >
                       {multiHostColumns.map((column, columnIndex) => (
                         <MultiModelPlaygroundCard
+                          extensionBinding={compareLaneBinding(
+                            column.compareId,
+                            {
+                              hostStyle: column.hostConfig.hostStyle,
+                              harness: column.hostConfig.harness,
+                              mcpProfile: column.hostConfig.mcpProfile,
+                            },
+                          )}
                           browserWorkspace={{
                             id: chatSessionId,
                             order: columnIndex,
@@ -6172,6 +7065,17 @@ export function PlaygroundMain({
                         const { model, card } = entry;
                         return (
                           <MultiModelPlaygroundCard
+                            extensionBinding={compareLaneBinding(
+                              previewedHostId,
+                              previewedHost?.config
+                                ? {
+                                    hostStyle,
+                                    harness: previewedHost.config.harness,
+                                    mcpProfile:
+                                      previewedHost.config.mcpProfile,
+                                  }
+                                : null,
+                            )}
                             browserWorkspace={{
                               id: chatSessionId,
                               order: modelIndex,
@@ -6262,9 +7166,7 @@ export function PlaygroundMain({
                             onHasMessagesChange={
                               handleMultiModelHasMessagesChange
                             }
-                            showComparisonChrome={
-                              modelCompareCards.length > 1
-                            }
+                            showComparisonChrome={modelCompareCards.length > 1}
                             suppressThreadEmptyHint={false}
                             compareEnterVersion={multiCompareEnterVersion}
                             compareEnterMessages={multiCompareEnterMessages}
