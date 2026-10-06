@@ -261,6 +261,27 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
   });
 });
 
+describe("runHarnessTurn — a scenario harness never takes a persistent computer (5c)", () => {
+  it("throws before reserving anything when a scenario scope has no box", async () => {
+    await expect(
+      runHarnessTurn(
+        baseOptions({
+          executionScope: {
+            kind: "swarm",
+            swarmId: "cb_1",
+            accessVersion: 1,
+            projectId: "project-1",
+            workspaceId: "ws_1",
+          },
+        }) as never,
+        "none"
+      )
+    ).rejects.toThrow(/disposable computer/);
+    expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+  });
+});
+
 describe("runHarnessTurn — reserve, then start the baseline-preserving broker lease", () => {
   it("claims the box and only then asks for a credential", async () => {
     // Reserve → broker start → in-stream bootstrap. The lease keeps the box's
