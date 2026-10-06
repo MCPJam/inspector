@@ -5,16 +5,14 @@ import { Hono } from "hono";
 // guest-session source so the suite asserts the route's gate / lockdown /
 // rate-limit / passthrough behavior without a real Convex round-trip.
 
-const { fetchConvexGuestSessionMock, fetchRemoteGuestSessionMock } = vi.hoisted(
-  () => ({
-    fetchConvexGuestSessionMock: vi.fn(),
-    fetchRemoteGuestSessionMock: vi.fn(),
-  })
-);
+const { fetchGuestSessionMock } = vi.hoisted(() => ({
+  fetchGuestSessionMock: vi.fn(),
+}));
 
+// Every mint goes to the ONE selected guest authority; which authority that is
+// belongs to `guest-authority.test.ts`, not to this route.
 vi.mock("../../../utils/guest-session-source.js", () => ({
-  fetchConvexGuestSession: fetchConvexGuestSessionMock,
-  fetchRemoteGuestSession: fetchRemoteGuestSessionMock,
+  fetchGuestSession: fetchGuestSessionMock,
 }));
 
 import guestToken from "../guest-token.js";
@@ -51,7 +49,7 @@ describe("POST /api/web/guest-token", () => {
     vi.clearAllMocks();
     process.env.INSPECTOR_SERVICE_TOKEN = SERVICE_TOKEN;
     delete process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN;
-    fetchConvexGuestSessionMock.mockResolvedValue({
+    fetchGuestSessionMock.mockResolvedValue({
       kind: "session",
       session: { guestId: "g1", token: "guest.jwt.token", expiresAt: 123 },
       setCookies: [],
@@ -79,7 +77,7 @@ describe("POST /api/web/guest-token", () => {
   it("rejects a missing service token (401)", async () => {
     const res = await mint(makeApp(), { "x-mcpjam-client-ip": "1.1.1.1" });
     expect(res.status).toBe(401);
-    expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
+    expect(fetchGuestSessionMock).not.toHaveBeenCalled();
   });
 
   it("rejects a wrong service token (401)", async () => {
@@ -88,7 +86,7 @@ describe("POST /api/web/guest-token", () => {
       "x-mcpjam-client-ip": "1.1.1.2",
     });
     expect(res.status).toBe(401);
-    expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
+    expect(fetchGuestSessionMock).not.toHaveBeenCalled();
   });
 
   it("mints a guest token for a valid service token", async () => {
@@ -101,7 +99,7 @@ describe("POST /api/web/guest-token", () => {
       token: "guest.jwt.token",
       expiresAt: 123,
     });
-    expect(fetchConvexGuestSessionMock).toHaveBeenCalledTimes(1);
+    expect(fetchGuestSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("accepts the local-dev sentinel when opted in (non-production + flag)", async () => {
@@ -113,7 +111,7 @@ describe("POST /api/web/guest-token", () => {
       "x-mcpjam-client-ip": "3.3.3.1",
     });
     expect(res.status).toBe(200);
-    expect(fetchConvexGuestSessionMock).toHaveBeenCalledTimes(1);
+    expect(fetchGuestSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects the local-dev sentinel without the opt-in flag (non-production)", async () => {
@@ -124,7 +122,7 @@ describe("POST /api/web/guest-token", () => {
       "x-mcpjam-client-ip": "3.3.3.4",
     });
     expect(res.status).toBe(401);
-    expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
+    expect(fetchGuestSessionMock).not.toHaveBeenCalled();
   });
 
   it("rejects the local-dev sentinel in production even with the flag set", async () => {
@@ -135,23 +133,17 @@ describe("POST /api/web/guest-token", () => {
       "x-mcpjam-client-ip": "3.3.3.2",
     });
     expect(res.status).toBe(401);
-    expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
+    expect(fetchGuestSessionMock).not.toHaveBeenCalled();
   });
 
   it("still accepts the configured secret in production", async () => {
     process.env.NODE_ENV = "production";
-    // Production mints through the remote source, not Convex (shouldUseConvex).
-    fetchRemoteGuestSessionMock.mockResolvedValue({
-      kind: "session",
-      session: { guestId: "g1", token: "guest.jwt.token", expiresAt: 123 },
-      setCookies: [],
-    });
     const res = await mint(makeApp(), {
       "x-inspector-service-token": SERVICE_TOKEN,
       "x-mcpjam-client-ip": "3.3.3.3",
     });
     expect(res.status).toBe(200);
-    expect(fetchRemoteGuestSessionMock).toHaveBeenCalledTimes(1);
+    expect(fetchGuestSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("rate-limits per forwarded client IP (429 after the cap)", async () => {
@@ -169,7 +161,7 @@ describe("POST /api/web/guest-token", () => {
   });
 
   it("surfaces an upstream mint failure as 503", async () => {
-    fetchConvexGuestSessionMock.mockResolvedValue({
+    fetchGuestSessionMock.mockResolvedValue({
       kind: "error",
       status: 503,
       setCookies: [],

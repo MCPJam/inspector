@@ -54,7 +54,7 @@ import browserProfiles from "./browser-profiles.js";
 import clientFlags from "./flags.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
-import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
+import { fetchGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
 
@@ -323,9 +323,10 @@ web.route("/api-keys", apiKeys);
 // the same reason `/api-keys` does.
 web.route("/auth-session", authSession);
 
-// Public guest JWKS compatibility endpoint.
+// Public guest JWKS compatibility endpoint: the selected guest authority's
+// keys, read-only (it never provisions anything).
 web.get("/guest-jwks", async (c) => {
-  const response = await fetchRemoteGuestJwks();
+  const response = await fetchGuestJwks();
   if (!response) {
     return webError(c, 503, "INTERNAL_ERROR", "Guest JWKS unavailable");
   }

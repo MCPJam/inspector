@@ -1,6 +1,6 @@
 import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
-import { localDiskResumeState } from "../resume-state.js";
+import { diskResumeState } from "../resume-state.js";
 /**
  * TURN CONFORMANCE RUNNER — drives the merged local-harness foundation end to end on this
  * machine against a mock Anthropic upstream behind a loopback gateway.
@@ -717,7 +717,7 @@ async function main() {
 
   if (MODE === "delivery") {
     // Use the previously SAVED sidecar, as a stopped/failed chat turn does.
-    const afterStop = { s: await agent.createSession({ sessionId, resumeFrom: localDiskResumeState(resumeState) }) };
+    const afterStop = { s: await agent.createSession({ sessionId, resumeFrom: diskResumeState(resumeState) }) };
     const continued = await runTurn("after-stop-continues", agent, afterStop, "COUNT");
     const count = Number(/USER_TURNS=(\d+)/.exec(continued.text)?.[1] ?? 0);
     await afterStop.s.stop();
