@@ -1,3 +1,4 @@
+import { projectWorkspaceTranscript, workspacePresentationHostConfig } from "../../shared/unattended-workspace";
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
 import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
@@ -5034,6 +5035,7 @@ const runLocalIteration = async ({
   // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
   const browser = await createBrowserSessionContext({
+    getWorkspacePresentation: () => projectWorkspaceTranscript(acc.conversationMessages, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)),
     // Model-free (pinned-only) iterations pass no model: no Computer Use, but
     // the harness still renders pinned widgets and records observations.
     ...(caseNeedsModel ? { model: test.model } : {}),
@@ -6279,6 +6281,7 @@ const runHostedIterationWithBrowser = async (
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
+  browser.setWorkspacePresentation?.(() => projectWorkspaceTranscript(messageHistory, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)));
   /**
    * The TRACE transcript — `messageHistory`'s evidence-enriched twin (see the
    * acc contract on `DriveHostedEvalTurnParams`). Persisted and gate-read in
