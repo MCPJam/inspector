@@ -129,6 +129,7 @@ import {
 } from "../harness-model-broker.js";
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
+import { ScenarioHarnessRepublishRequiredError } from "../../scenario-runtime-config.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -259,6 +260,31 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
       kind: "sandbox",
       sandboxRowId: BINDING.sandboxRowId,
     });
+  });
+});
+
+describe("runHarnessTurn — a scenario harness never takes a persistent computer (5c)", () => {
+  it("throws a typed 409 before reserving anything when a scenario scope has no box", async () => {
+    const thrown = await runHarnessTurn(
+      baseOptions({
+        executionScope: {
+          kind: "swarm",
+          swarmId: "cb_1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws_1",
+        },
+      }) as never,
+      "none"
+    ).catch((error: unknown) => error);
+    // A WebRouteError, so the route answers 409 and never a 500 INTERNAL_ERROR.
+    expect(thrown).toBeInstanceOf(ScenarioHarnessRepublishRequiredError);
+    expect(thrown).toMatchObject({
+      status: 409,
+      details: { reason: "SCENARIO_HARNESS_REPUBLISH_REQUIRED" },
+    });
+    expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
   });
 });
 

@@ -225,16 +225,21 @@ vi.mock("../../../utils/guest-auth.js", () => ({
 // Scenario turns must NEVER skip host-owned config resolution — the route
 // resolves a guest bearer for the fetch when the request carries none.
 const fetchScenarioRuntimeConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("../../../utils/scenario-runtime-config.js", async () => ({
-  fetchScenarioRuntimeConfig: (...args: unknown[]) =>
-    fetchScenarioRuntimeConfigMock(...args),
-  // Pure; the real reader, so the route sees the marker exactly as served.
-  readComputerSandboxHarness: (
-    await vi.importActual<
-      typeof import("../../../utils/scenario-runtime-config.js")
-    >("../../../utils/scenario-runtime-config.js")
-  ).readComputerSandboxHarness,
-}));
+vi.mock("../../../utils/scenario-runtime-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/scenario-runtime-config.js")
+  >("../../../utils/scenario-runtime-config.js");
+  return {
+    fetchScenarioRuntimeConfig: (...args: unknown[]) =>
+      fetchScenarioRuntimeConfigMock(...args),
+    // Pure; the real ones, so the route sees the marker exactly as served and
+    // words its refusals exactly as it would live.
+    readComputerSandboxHarness: actual.readComputerSandboxHarness,
+    SCENARIO_HARNESS_REPUBLISH_REQUIRED:
+      actual.SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+    scenarioHarnessRepublishRefusal: actual.scenarioHarnessRepublishRefusal,
+  };
+});
 
 // Host-bound direct sessions (Playground `hostId`) resolve their host config
 // through this fetch; the task-created delivery tests use it to turn the
@@ -408,6 +413,55 @@ describe("POST /api/mcp/chat-v2", () => {
 
       const body = await res.json().catch(() => ({}));
       expect(body?.reason).not.toBe("not_a_data_plane");
+    });
+
+    // A HOST-BACKED scenario: a scenario scope and no marker, so no box exists
+    // anywhere for its harness.
+    const hostBacked = (accessKind: string) =>
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          harness: "claude-code",
+          computer: { kind: "personal" },
+          accessKind,
+          executionScope: {
+            kind: "swarm",
+            swarmId: "cbx_1",
+            accessVersion: 1,
+            projectId: "project-1",
+            workspaceId: "ws_1",
+          },
+        },
+      });
+
+    it("REFUSES a host-backed scenario's harness for a member with a 409 telling them to republish", async () => {
+      hostBacked("project_member");
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.code).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.error).toMatch(/Republish the scenario from an environment/);
+    });
+
+    it("REFUSES it for a participant with copy free of internals", async () => {
+      hostBacked("swarm_grant");
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.code).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.error).toBe(
+        "This study isn't available right now. Let the person who shared it know."
+      );
     });
 
     it("leaves a harness scenario whose marker lacks the harness field (an older backend) to the usual gates", async () => {

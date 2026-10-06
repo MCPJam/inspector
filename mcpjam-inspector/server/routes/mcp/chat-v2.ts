@@ -65,6 +65,8 @@ import {
 import {
   fetchScenarioRuntimeConfig,
   readComputerSandboxHarness,
+  SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+  scenarioHarnessRepublishRefusal,
 } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
@@ -1500,6 +1502,27 @@ chatV2.post("/", async (c) => {
           code: "SANDBOX_UNAVAILABLE",
           reason: "not_a_data_plane",
         },
+        409,
+      );
+    }
+    // No marker on a SCENARIO-scoped harness: a host-backed scenario, whose
+    // harness has no box to run on anywhere — the only other machine is a
+    // persistent computer, which the backend refuses for a scenario scope.
+    // Refused before the turn starts, as the web route does, rather than as a
+    // 500 from inside the harness.
+    if (
+      isScenarioSession &&
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      (hostRuntimeConfig?.executionScope as ExecutionScope | undefined)
+        ?.kind === "swarm"
+    ) {
+      const refusal = scenarioHarnessRepublishRefusal({
+        harness: resolvedExecution.harness,
+        accessKind: hostRuntimeConfig?.accessKind,
+      });
+      return c.json(
+        { error: refusal.message, code: SCENARIO_HARNESS_REPUBLISH_REQUIRED },
         409,
       );
     }

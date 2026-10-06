@@ -864,6 +864,60 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     ).toBeUndefined();
   });
 
+  describe("a HOST-BACKED scenario's harness (scenario scope, no marker)", () => {
+    // No marker means no box to provision, and the only other machine is a
+    // persistent computer, which the backend refuses for a scenario scope.
+    const hostBacked = (accessKind: string) =>
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: scenarioConfig(undefined, {
+          harness: "claude-code",
+          environment: undefined,
+          accessKind,
+          executionScope: {
+            kind: "swarm",
+            swarmId: "cbx_env",
+            accessVersion: 3,
+            projectId: "project-1",
+            workspaceId: "ws_1",
+          },
+        }),
+      });
+
+    it("tells a member to republish, with a 409 and a code, before the turn starts", async () => {
+      hostBacked("project_member");
+      const { app, token } = createWebTestApp();
+      const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.code).toBe("CONFLICT");
+      expect(body.details?.reason).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.message).toMatch(
+        /claude-code harness.*Republish the scenario from an environment/
+      );
+      expect(provisionScenarioSandboxMock).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("tells a participant the study is unavailable, in words free of internals", async () => {
+      hostBacked("swarm_grant");
+      const { app, token } = createWebTestApp();
+      const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.details?.reason).toBe("SCENARIO_HARNESS_REPUBLISH_REQUIRED");
+      expect(body.message).toBe(
+        "This study isn't available right now. Let the person who shared it know."
+      );
+      expect(body.message).not.toMatch(
+        /harness|computer|environment|republish/i
+      );
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("REFUSES a harness turn whose image is unavailable, rather than using the personal computer", async () => {
     fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: true,

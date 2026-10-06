@@ -22,6 +22,7 @@ import type {
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type {
   RuntimeServerSource,
   RuntimeSkillChannel,
@@ -399,7 +400,9 @@ export function planScenarioSandbox(args: {
   if (args.mode === "unavailable") {
     return { action: "suppress", suppressReason: "sandbox_mode_unavailable" };
   }
-  // Absent marker ⇒ an older backend: today's behaviour, for a harness too.
+  // Absent marker ⇒ nothing to provision. For bash that is today's behaviour;
+  // a scenario-scoped HARNESS is left with no box, which the route refuses
+  // (`scenarioHarnessRepublishRefusal`) rather than run it anywhere else.
   if (
     args.mode !== "ephemeral" ||
     (!args.bashRequested && args.harnessRequested !== true)
@@ -448,6 +451,52 @@ export function planScenarioSandbox(args: {
     return { action: "suppress", suppressReason: "no_chat_session_id" };
   }
   return { action: "provision" };
+}
+
+/**
+ * Machine-readable reason for a scenario harness turn with no disposable box
+ * to run on — a host-backed scenario, published before scenario harnesses
+ * moved onto the conversation's box. Only republishing it from an environment
+ * fixes that.
+ */
+export const SCENARIO_HARNESS_REPUBLISH_REQUIRED =
+  "SCENARIO_HARNESS_REPUBLISH_REQUIRED";
+
+/** What a participant sees: no harnesses, computers or environments. */
+const SCENARIO_UNAVAILABLE_TO_PARTICIPANT =
+  "This study isn't available right now. Let the person who shared it know.";
+
+/**
+ * A SCENARIO harness turn (`executionScope.kind === "swarm"`) with no box. Its
+ * harness runs on the conversation's disposable box and nowhere else: the only
+ * other machine is a persistent computer, which the backend refuses for a
+ * scenario scope. A 409, because nothing about the request is malformed — the
+ * scenario is in a state that cannot run it.
+ */
+export class ScenarioHarnessRepublishRequiredError extends WebRouteError {
+  constructor(message: string = SCENARIO_UNAVAILABLE_TO_PARTICIPANT) {
+    super(409, ErrorCode.CONFLICT, message, {
+      reason: SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+    });
+    this.name = "ScenarioHarnessRepublishRequiredError";
+  }
+}
+
+/**
+ * The refusal, worded for whoever is asking. The runtime config's advisory
+ * `accessKind` picks the copy and nothing else: a project member can republish
+ * the scenario, so they are told how; anyone else is a participant, who can do
+ * nothing about it.
+ */
+export function scenarioHarnessRepublishRefusal(args: {
+  harness: string;
+  accessKind?: unknown;
+}): ScenarioHarnessRepublishRequiredError {
+  return new ScenarioHarnessRepublishRequiredError(
+    args.accessKind === "project_member"
+      ? `This scenario runs the ${args.harness} harness, which now runs only on the disposable computer an environment-backed scenario gets. Republish the scenario from an environment, then retry.`
+      : SCENARIO_UNAVAILABLE_TO_PARTICIPANT,
+  );
 }
 
 export type ScenarioRuntimeConfigResult =
