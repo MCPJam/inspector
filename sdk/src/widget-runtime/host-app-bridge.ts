@@ -26,20 +26,23 @@
  * consumes this.
  */
 
+import * as apps from "@modelcontextprotocol/ext-apps/app-bridge";
 import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
-import {
-  ContentBlockSchema,
-  RequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+// app-bridge's extensionless type exports are not resolvable by NodeNext; same
+// vendor declaration workaround as tool-result-schema.ts.
+const { McpUiMessageRequestSchema } = apps as unknown as {
+  McpUiMessageRequestSchema: z.ZodObject<{
+    method: z.ZodLiteral<"ui/message">;
+    params: z.ZodObject;
+  }>;
+};
 // ext-apps' base ui/message schema strips params._meta. Owned extension
 // dispatch must receive the full envelope before enforcing target/send policy.
-const ownedMessageRequestSchema = RequestSchema.extend({
-  method: z.literal("ui/message"),
-  params: RequestSchema.shape.params.unwrap().extend({
-    role: z.literal("user"),
-    content: z.array(ContentBlockSchema),
+const ownedMessageRequestSchema = McpUiMessageRequestSchema.extend({
+  params: McpUiMessageRequestSchema.shape.params.extend({
+    _meta: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 class ExtensionAppBridge extends AppBridge {
