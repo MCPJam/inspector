@@ -95,6 +95,8 @@ vi.mock("../auth.js", async () => ({
         getConnectionStatus: () => (connected ? "connected" : "disconnected"),
         getServerConfig: () => (connected ? target : undefined),
         getInitializationInfo: () => ({ protocolVersion: "2025-06-18" }),
+        // An unpinned client prepares an MRTR collector before connect.
+        setMrtrInputCollector: () => {},
         getServerCapabilities: () => ({}),
         listTools: async () => {
           count("mcp-tools-list");

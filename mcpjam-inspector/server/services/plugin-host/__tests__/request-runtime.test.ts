@@ -15,6 +15,14 @@ const f = vi.hoisted(() => ({
   cancel: vi.fn(),
   hosted: false,
   registries: [] as { input: any; registry: any }[],
+  // The era the fixture connection negotiates, and the MRTR collectors it
+  // was given before connect.
+  negotiated: "2025-11-25",
+  collectors: [] as ((args: any) => Promise<unknown>)[],
+  // When set, owned MRTR services answer through this fixture instead.
+  fakeMrtr: undefined as
+    | undefined
+    | { execute: (...args: any[]) => unknown; collector: (args: any) => unknown },
 }));
 vi.mock("../../../config.js", async (original) => ({
   ...(await original<typeof import("../../../config.js")>()),
@@ -34,6 +42,18 @@ vi.mock("@mcpjam/sdk/internal/plugin-host", async (original) => {
       const registry = actual.createPluginCapabilityRegistry(input);
       f.registries.push({ input, registry });
       return registry;
+    },
+  };
+});
+vi.mock("../owned-mrtr.js", async (original) => {
+  const actual = await original<typeof import("../owned-mrtr.js")>();
+  return {
+    ...actual,
+    createOwnedPluginMrtr: (
+      deps: Parameters<typeof actual.createOwnedPluginMrtr>[0],
+    ) => {
+      const real = actual.createOwnedPluginMrtr(deps);
+      return f.fakeMrtr ? { ...real, ...f.fakeMrtr } : real;
     },
   };
 });
@@ -112,6 +132,9 @@ beforeEach(async () => {
   credentialId = "saved-credential";
   f.hosted = false;
   f.registries.length = 0;
+  f.negotiated = "2025-11-25";
+  f.collectors.length = 0;
+  f.fakeMrtr = undefined;
   target = {
     url: "https://fixture.invalid/mcp",
     requestInit: { headers: { Authorization: "fixture-credential" } },
@@ -156,8 +179,13 @@ beforeEach(async () => {
         },
         getConnectionStatus: () => (connected ? "connected" : "disconnected"),
         getServerConfig: () => (connected ? authorizedTarget : undefined),
-        getInitializationInfo: () => ({ protocolVersion: "2025-11-25" }),
-        setMrtrInputCollector: () => {},
+        getInitializationInfo: () => ({ protocolVersion: f.negotiated }),
+        setMrtrInputCollector: (
+          _serverId: string,
+          collect: (args: any) => Promise<unknown>,
+        ) => {
+          f.collectors.push(collect);
+        },
       },
     };
   });
@@ -499,6 +527,124 @@ describe("fresh request runtime admission", () => {
       await owner.release();
     },
   );
+  describe("an unpinned (Auto) client's form service follows the negotiated era", () => {
+    const host = { ...config, mcpProfile: {} };
+    const owner = {
+      actorId: "actor",
+      projectId: "project",
+      workspaceId: "workspace",
+      instanceId: "22222222-2222-4222-8222-222222222222",
+      generation: 1,
+      serverId: "server",
+      bindingId: pluginServerBindingDigest(identity()),
+      placement: "interactive" as const,
+    };
+    const authorization = {
+      owner,
+      origin: "app" as const,
+      revision: "tool-revision",
+      tool: { name: "app" },
+      enabled: true,
+      requiresApproval: false,
+      allowedOrigins: ["app" as const],
+    };
+    async function autoOwner() {
+      f.query.mockImplementation(async (_, args) => ({
+        actorId: "actor",
+        projectId: "project",
+        ...(args.hostId ? { hostConfig: host } : {}),
+        serverBindings: args.serverIds?.map((serverId: string) => ({
+          kind: "standalone",
+          serverId,
+        })),
+      }));
+      f.fakeMrtr = {
+        execute: vi.fn(async () => "modern-result"),
+        collector: vi.fn(async () => "collected"),
+      };
+      const live = await runtime({
+        hostRevision: pluginHostBindingDigest(host),
+        serverIdentity: { kind: "standalone" as const, serverId: "server" },
+        owner,
+      } as Parameters<typeof createPluginRequestRuntime>[4]);
+      const resolved = await live.resolve("app", new AbortController().signal);
+      const options = f.connect.mock.calls[0][3];
+      // Both handlers are prepared before connect: the era is not known yet.
+      expect(options.hostConfig.clientCapabilities).toMatchObject({
+        elicitation: { form: {} },
+        extensions: { "openai/elicitation": { form: {} } },
+      });
+      expect(options.extensionRequestHandlers.server[0]).toMatchObject({
+        method: "openai/elicitation/create",
+        legacyClaim: "openai/elicitation",
+      });
+      expect(f.collectors).toHaveLength(1);
+      return { live, resolved };
+    }
+
+    it("answers and dispatches MRTR when it negotiates 2026-07-28", async () => {
+      f.negotiated = "2026-07-28";
+      const { live, resolved } = await autoOwner();
+      expect(resolved.transport).toBe("mrtr");
+      // The connection's collector reaches this request's owned MRTR service.
+      await expect(f.collectors[0]({ requests: [] })).resolves.toBe(
+        "collected",
+      );
+      const run = vi.fn(async () => "original");
+      await expect(
+        live.runOwnedModern(
+          authorization,
+          "operation",
+          { name: "app" },
+          new AbortController().signal,
+          run,
+        ),
+      ).resolves.toBe("modern-result");
+      await expect(
+        live.runOwnedLegacy(
+          authorization,
+          "operation",
+          new AbortController().signal,
+          run,
+        ),
+      ).rejects.toMatchObject({ code: "INSTANCE_DENIED" });
+      expect(() => live.handleLegacyForm({})).toThrow("INSTANCE_DENIED");
+      await live.release();
+    });
+
+    it("keeps the legacy form service when it negotiates a 2025 era", async () => {
+      f.negotiated = "2025-11-25";
+      const { live, resolved } = await autoOwner();
+      expect(resolved.transport).toBe("legacy");
+      // A 2025 era has no MRTR rounds; nothing answers one.
+      await expect(f.collectors[0]({ requests: [] })).rejects.toMatchObject({
+        code: "INSTANCE_DENIED",
+      });
+      const run = vi.fn(async () => "original");
+      await expect(
+        live.runOwnedLegacy(
+          authorization,
+          "operation",
+          new AbortController().signal,
+          run,
+        ),
+      ).resolves.toBe("original");
+      expect(() =>
+        live.runOwnedModern(
+          authorization,
+          "operation",
+          { name: "app" },
+          new AbortController().signal,
+          run,
+        ),
+      ).toThrow("CONTINUATION_PROTOCOL_DENIED");
+      expect(f.fakeMrtr!.execute).not.toHaveBeenCalled();
+      await expect(live.handleLegacyForm({})).resolves.toMatchObject({
+        tag: expect.stringMatching(/^forms-/),
+      });
+      await live.release();
+    });
+  });
   it("claims no OpenAI form for an unpinned client with Forms off", async () => {
     const host = {
       ...config,

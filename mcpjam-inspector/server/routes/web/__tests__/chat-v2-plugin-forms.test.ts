@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { chatPluginFormPlan } from "../chat-v2-plugin-forms.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  chatPluginFormPlan,
+  chatPluginToolExecutor,
+} from "../chat-v2-plugin-forms.js";
 
 const plan = (
   input: Partial<Parameters<typeof chatPluginFormPlan>[0]> & {
@@ -42,6 +45,46 @@ describe("which OpenAI plugin form path a chat turn installs", () => {
     expect(plan({ forms: false }).legacyServerIds).toEqual([]);
   });
 
+  it("installs no MRTR adapter with Forms off, so ordinary calls still run", async () => {
+    const pins = { a: "2026-07-28", b: "2026-07-28" };
+    const turn = plan({ pins, forms: false });
+    expect(turn.modernServerIds).toEqual([]);
+    // The form-only adapter refuses any call it owns while Forms is off.
+    const refusing = vi.fn(async () => {
+      throw new Error("CONTINUATION_PROTOCOL_DENIED");
+    });
+    const executor = chatPluginToolExecutor({
+      ...(turn.modernServerIds.length
+        ? { modern: { serverIds: turn.modernServerIds, execute: refusing } }
+        : {}),
+      pinFor: (id) => pins[id as keyof typeof pins],
+      negotiatedVersion: () => "2026-07-28",
+    });
+    const run = vi.fn(async () => "tool result");
+    const execution = {
+      serverKey: "a",
+      toolName: "t",
+      toolCallId: "c",
+      input: {},
+    };
+    await expect(executor ? executor(execution, run) : run()).resolves.toBe(
+      "tool result",
+    );
+    expect(refusing).not.toHaveBeenCalled();
+  });
+
+  it("lets an unpinned (Auto) emulated server take either form path", () => {
+    expect(plan({})).toEqual({
+      admitted: true,
+      modernServerIds: ["a", "b"],
+      legacyServerIds: ["a", "b"],
+    });
+    expect(plan({ mrtrEnabled: false }).modernServerIds).toEqual([]);
+    expect(
+      plan({ pins: { a: "2025-11-25", b: undefined } }).modernServerIds,
+    ).toEqual(["b"]);
+  });
+
   it("never installs the MRTR adapter on a harness turn", () => {
     const pins = { a: "2026-07-28", b: "2026-07-28" };
     expect(plan({ pins }).modernServerIds).toEqual(["a", "b"]);
@@ -63,5 +106,59 @@ describe("which OpenAI plugin form path a chat turn installs", () => {
       modernServerIds: [],
       legacyServerIds: [],
     });
+  });
+});
+
+describe("which plugin executor a model tool call takes", () => {
+  const execution = (serverKey: string) => ({
+    serverKey,
+    toolName: "t",
+    toolCallId: "c",
+    input: {},
+  });
+  const setup = (negotiated: Record<string, string | undefined>) => {
+    const modern = vi.fn(async () => "modern");
+    const legacy = vi.fn(async () => "legacy");
+    const executor = chatPluginToolExecutor({
+      modern: { serverIds: ["auto", "pinned"], execute: modern },
+      legacy,
+      pinFor: (id) => (id === "pinned" ? "2026-07-28" : undefined),
+      negotiatedVersion: (id) => negotiated[id],
+    })!;
+    return { executor, modern, legacy };
+  };
+  const run = async () => "plain";
+
+  it("sends an Auto server that negotiated 2026-07-28 to the MRTR adapter", async () => {
+    const { executor, modern, legacy } = setup({ auto: "2026-07-28" });
+    await expect(executor(execution("auto"), run)).resolves.toBe("modern");
+    expect(modern).toHaveBeenCalledOnce();
+    expect(legacy).not.toHaveBeenCalled();
+  });
+
+  it("keeps an Auto server that negotiated a 2025 era on the legacy executor", async () => {
+    const { executor, modern, legacy } = setup({ auto: "2025-11-25" });
+    await expect(executor(execution("auto"), run)).resolves.toBe("legacy");
+    expect(legacy).toHaveBeenCalledOnce();
+    expect(modern).not.toHaveBeenCalled();
+  });
+
+  it("follows a 2026-07-28 pin, and runs as is with no legacy executor", async () => {
+    const { executor } = setup({});
+    await expect(executor(execution("pinned"), run)).resolves.toBe("modern");
+    const modernOnly = chatPluginToolExecutor({
+      modern: { serverIds: ["auto"], execute: async () => "modern" },
+      pinFor: () => undefined,
+      negotiatedVersion: () => "2025-11-25",
+    })!;
+    await expect(modernOnly(execution("auto"), run)).resolves.toBe("plain");
+    const legacy = async () => "legacy";
+    expect(
+      chatPluginToolExecutor({
+        legacy,
+        pinFor: () => undefined,
+        negotiatedVersion: () => undefined,
+      }),
+    ).toBe(legacy);
   });
 });
