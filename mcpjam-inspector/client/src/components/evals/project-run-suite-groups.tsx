@@ -17,6 +17,7 @@ import {
   type RunGitMetadataValue,
 } from "./run-git-metadata";
 import { resolveRunOrigin } from "@/lib/evals/run-origin";
+import { isSubsetRerunRun } from "./helpers";
 import {
   buildSuiteRunHistoryAggregates,
   buildSuiteRunHistoryAggregatesFromMetrics,
@@ -57,6 +58,19 @@ export function groupProjectRuns(
 }
 
 /** Withhold incomplete roll-ups, and weight pass rates by iterations, not runs. */
+/**
+ * The rows a SUITE's roll-up counts: every run but a subset rerun, which
+ * re-ran only the cases that failed and so would count them twice. The rerun
+ * is still listed among the suite's runs. A row whose detail has not loaded is
+ * kept, so the roll-up still waits for it.
+ */
+export function suiteRollupRows(
+  rows: ProjectRunRow[],
+  details: Map<string, ProjectRunHistoryDetail>,
+): ProjectRunRow[] {
+  return rows.filter((row) => !isSubsetRerunRun(details.get(row._id)?.run));
+}
+
 export function projectRunRollup(
   rows: ProjectRunRow[],
   details: Map<string, ProjectRunHistoryDetail>,
@@ -277,7 +291,10 @@ export function GroupSummaryRow({
   runCount?: number;
   suite?: boolean;
 }) {
-  const rollup = projectRunRollup(rows, details);
+  const rollup = projectRunRollup(
+    suite ? suiteRollupRows(rows, details) : rows,
+    details,
+  );
   const active = rows.filter((row) =>
     ["pending", "running", "grading"].includes(row.status),
   ).length;

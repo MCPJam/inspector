@@ -253,6 +253,9 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
         modelId: "gpt-5-mini",
         messages: [{ role: "assistant", content: "Done" }],
       }),
+      responseMessages: Promise.resolve([
+        { role: "assistant", content: "Done" },
+      ]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -413,6 +416,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
         modelId: "gpt-5-mini",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 0,
@@ -681,6 +685,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       consumeStream: async () => {},
       fullStream: (async function* () {})(),
       response: Promise.resolve({ modelId: "gpt-5-mini", messages }),
+      responseMessages: Promise.resolve(messages),
       steps: Promise.resolve(
         opts.toolCalls ? [{ toolCalls: opts.toolCalls }] : [],
       ),

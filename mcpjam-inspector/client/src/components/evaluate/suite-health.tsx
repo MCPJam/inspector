@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { runClientIdentity } from "../evals/helpers";
+import { isSubsetRerunRun, runClientIdentity } from "../evals/helpers";
 import {
   groupProjectRuns,
   projectRunRollup,
@@ -30,7 +30,13 @@ export function buildSuiteHealth(
     .flatMap((launch) => {
       const members = launch.runs.filter((row) => {
         const run = details.get(row._id)?.run;
-        return run && runClientIdentity(run).key === clientKey;
+        // A subset rerun's pass rate is biased by its selection: it is never
+        // a point on the suite's health trend or part of its average.
+        return (
+          run &&
+          !isSubsetRerunRun(run) &&
+          runClientIdentity(run).key === clientKey
+        );
       });
       // The detail's status too: the chart draws from the previous snapshot
       // while a refresh is in flight, so a run that just finished can still

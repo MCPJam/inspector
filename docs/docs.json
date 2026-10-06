@@ -46,6 +46,7 @@
           "installation",
           "hosted/overview",
           "hosted/slack",
+          "hosted/claude-connector",
           "hosted/sso",
           "github-checks",
           "troubleshooting/common-errors",
