@@ -16,6 +16,9 @@ import {
   reconnectServer,
   testConnection,
 } from "../mcp-api";
+import { serverCheckQueue } from "@/lib/server-check-queue";
+import { useStdioCommandApprovalStore } from "@/lib/stdio-command-approval";
+import { STDIO_COMMAND_APPROVAL_REQUIRED_REASON } from "@/shared/stdio-command-approval";
 
 function readBody(): Record<string, unknown> {
   expect(authFetchMock).toHaveBeenCalledTimes(1);
@@ -404,5 +407,108 @@ describe.each(["native", "fallback"])("local browser connection scheduling (%s)"
     for (const release of releases) release();
     await Promise.all(jobs);
     expect(queue.state(projectId, "oauth-0")).toBeUndefined();
+  });
+});
+
+describe("mcp-api local-mode stdio command approval handshake", () => {
+  const config = { command: "node", args: ["server.js"] } as unknown as MCPServerConfig;
+  const options = { projectId: "project_xyz", serverName: "Files" };
+  const TERMS = {
+    serverId: "srv-1",
+    fingerprint: "ab".repeat(32),
+    command: "node",
+    args: ["server.js"],
+    envNames: ["FOO"],
+    previouslyApproved: false,
+  };
+  const REFUSAL = {
+    success: false,
+    error: '"Files" runs a command this device has not approved yet.',
+    reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+    serverId: "srv-1",
+    approval: TERMS,
+  };
+  const refusal = () =>
+    new Response(JSON.stringify(REFUSAL), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  const ok = () =>
+    new Response(JSON.stringify({ success: true }), { status: 200 });
+
+  function answerNextPrompt(allowed: boolean) {
+    return new Promise<void>((resolve) => {
+      const unsubscribe = useStdioCommandApprovalStore.subscribe((state) => {
+        if (state.queue.length === 0) return;
+        unsubscribe();
+        state.settle(allowed);
+        resolve();
+      });
+    });
+  }
+
+  beforeEach(() => {
+    authFetchMock.mockReset();
+    useStdioCommandApprovalStore.setState({ queue: [] });
+  });
+
+  it("asks the user, records the approval and retries the connect", async () => {
+    authFetchMock
+      .mockResolvedValueOnce(refusal())
+      .mockResolvedValueOnce(ok())
+      .mockResolvedValueOnce(ok());
+    const answered = answerNextPrompt(true);
+
+    const result = await testConnection(config, "srv-1", options);
+    await answered;
+
+    expect(result).toEqual({ success: true });
+    expect(authFetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/mcp/connect",
+      "/api/mcp/servers/approve-command",
+      "/api/mcp/connect",
+    ]);
+    const approveBody = JSON.parse(
+      String((authFetchMock.mock.calls[1][1] as RequestInit).body),
+    );
+    expect(approveBody).toEqual({
+      projectId: "project_xyz",
+      serverId: "srv-1",
+      serverName: "Files",
+      fingerprint: TERMS.fingerprint,
+    });
+  });
+
+  it("returns the refusal untouched when the user declines", async () => {
+    authFetchMock.mockResolvedValue(refusal());
+    const answered = answerNextPrompt(false);
+
+    const result = await reconnectServer("srv-1", config, options);
+    await answered;
+
+    expect(result).toMatchObject({
+      success: false,
+      reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+    });
+    expect(authFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never prompts for an automatic connect", async () => {
+    serverCheckQueue.markAutomatic("project_xyz", ["Files"]);
+    authFetchMock.mockResolvedValue(refusal());
+    let prompted = false;
+    const unsubscribe = useStdioCommandApprovalStore.subscribe((state) => {
+      if (state.queue.length > 0) prompted = true;
+    });
+
+    const result = await reconnectServer("srv-1", config, options);
+    unsubscribe();
+
+    expect(prompted).toBe(false);
+    expect(result).toMatchObject({
+      success: false,
+      reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+    });
+    expect(authFetchMock).toHaveBeenCalledTimes(1);
   });
 });

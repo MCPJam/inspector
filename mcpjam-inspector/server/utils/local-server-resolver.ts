@@ -91,6 +91,12 @@ import {
   retainPluginLease,
 } from "../services/plugins/local-stdio.js";
 import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
+import {
+  readStdioLaunchApproval,
+  stdioCommandApprovalRequired,
+  stdioLaunchFingerprint,
+  type StdioLaunchSpec,
+} from "./stdio-command-approvals.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -1063,6 +1069,31 @@ async function applyLocalRuntimeResolution<
           : {}),
       },
     });
+    if (!materialized) {
+      // Plugin components are exempt: their bundle is verified against the
+      // plugin's hash at materialization and only a project admin manages
+      // them. Every other stdio row is editable by any workspace member and
+      // spawns here with the user's privileges, so this device must have
+      // approved the exact spec first (PLB-192). Checked after the secret
+      // reveal so env VALUES are part of what was approved.
+      const spec: StdioLaunchSpec = {
+        command: stdioConfig.command,
+        args: stdioConfig.args ?? [],
+        env: stdioConfig.env ?? {},
+        ...(stdioConfig.cwd !== undefined ? { cwd: stdioConfig.cwd } : {}),
+      };
+      const fingerprint = stdioLaunchFingerprint(spec);
+      const approval = await readStdioLaunchApproval(serverId, fingerprint);
+      if (approval !== "approved") {
+        throw stdioCommandApprovalRequired({
+          serverId,
+          serverDisplayName: args.serverDisplayName ?? args.managerKey,
+          spec,
+          fingerprint,
+          approval,
+        });
+      }
+    }
     if (materialized) {
       logger.debug("[plugin-stdio] materialized bundle for launch", {
         serverId,

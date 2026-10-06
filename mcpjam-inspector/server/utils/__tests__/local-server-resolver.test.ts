@@ -8,6 +8,13 @@ import {
   toMCPServerConfig,
 } from "../local-server-resolver.js";
 
+// This device has approved every stdio command: the per-device approval gate
+// (PLB-192) has its own suite, local-server-resolver.stdio-approval.test.ts.
+vi.mock("../stdio-command-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../stdio-command-approvals.js")>()),
+  readStdioLaunchApproval: async () => "approved" as const,
+}));
+
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
 describe("authorizeBatchLocal actor metadata parsing", () => {

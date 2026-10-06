@@ -14,8 +14,17 @@ import { reportRouteFailure, readRequestJson } from "../../utils/route-error-rep
 import {
   executeLocalServerConnect,
   parseLocalConnectRequestBody,
+  readAuthorizedStdioLaunchSpec,
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
+import {
+  approveStdioLaunch,
+  readStdioLaunchApproval,
+  stdioCommandApprovalTerms,
+  stdioLaunchFingerprint,
+} from "../../utils/stdio-command-approvals.js";
+import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { STDIO_COMMAND_APPROVAL_REQUIRED_REASON } from "../../../shared/stdio-command-approval.js";
 import { releasePluginLease } from "../../services/plugins/local-stdio.js";
 
 function hasBearerAuthorizationHeader(headers: unknown): boolean {
@@ -272,6 +281,106 @@ servers.post("/reconnect", async (c) => {
   return executeLocalServerConnect(c, parsed.params, {
     removeOnFailure: false,
   });
+});
+
+// Approve, on this device, the command a stdio server runs (PLB-192). Body:
+// {projectId, serverId, serverName, fingerprint}, the fingerprint being the
+// one the connect refusal showed. The row is re-read so the approval binds to
+// what would run NOW; a stale fingerprint gets the current terms back instead.
+servers.post("/approve-command", async (c) => {
+  let body: unknown;
+  try {
+    body = await readRequestJson(c);
+  } catch (error) {
+    return c.json(
+      {
+        success: false,
+        error: "Failed to parse request body",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      400
+    );
+  }
+
+  const parsed = parseLocalConnectRequestBody(c, body);
+  if (!parsed.ok) {
+    return respondWithLocalRouteError(c, parsed.error);
+  }
+  const claimed = (body as Record<string, unknown>).fingerprint;
+  if (typeof claimed !== "string" || !/^[0-9a-f]{64}$/.test(claimed)) {
+    return respondWithLocalRouteError(
+      c,
+      new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "fingerprint is required"
+      )
+    );
+  }
+
+  const { projectId, serverId, serverDisplayName, bearer } = parsed.params;
+  try {
+    const launch = await readAuthorizedStdioLaunchSpec({
+      bearerToken: bearer,
+      projectId,
+      serverId,
+      serverDisplayName,
+    });
+    const spec = {
+      command: launch.command,
+      args: launch.args,
+      env: launch.env,
+      ...(launch.workingDirectory !== undefined
+        ? { cwd: launch.workingDirectory }
+        : {}),
+    };
+    const fingerprint = stdioLaunchFingerprint(spec);
+    if (fingerprint !== claimed) {
+      const approval = await readStdioLaunchApproval(serverId, fingerprint);
+      // Another tab may have approved the current command already.
+      if (approval === "approved") {
+        return c.json({ success: true, fingerprint });
+      }
+      return respondWithLocalRouteError(
+        c,
+        new WebRouteError(
+          409,
+          ErrorCode.CONFLICT,
+          `The command "${serverDisplayName}" runs changed while you were reviewing it. Review the current command and approve again.`,
+          {
+            reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON,
+            serverId,
+            approval: stdioCommandApprovalTerms({
+              serverId,
+              spec,
+              fingerprint,
+              approval,
+            }),
+          }
+        )
+      );
+    }
+    await approveStdioLaunch(serverId, fingerprint);
+    return c.json({ success: true, fingerprint });
+  } catch (error) {
+    if (error instanceof WebRouteError) {
+      return respondWithLocalRouteError(c, error);
+    }
+    reportRouteFailure("Error approving server command", error, {
+      // Re-reads our own backend and writes a file under ~/.mcpjam.
+      source: "mcp.servers.approve-command",
+      hop: "mcpjam_internal",
+      context: { serverId },
+    });
+    return c.json(
+      {
+        success: false,
+        error: "Failed to approve the server command",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      500
+    );
+  }
 });
 
 // Stream JSON-RPC messages over SSE for all servers.

@@ -26,6 +26,10 @@ import {
   withCredentialRefusal,
 } from "@/lib/credential-refusal";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
+import {
+  obtainStdioCommandApproval,
+  readStdioCommandApprovalTerms,
+} from "@/lib/stdio-command-approval";
 
 
 /**
@@ -234,7 +238,7 @@ function buildResolverBody(
 
 // Only the network attempt owns a browser slot; OAuth interaction happens in
 // the caller before entering this function or after it has settled.
-async function localConnectionRequest(
+async function localConnectionAttempt(
   url: string,
   body: Record<string, unknown>,
   queueSignal: AbortSignal | undefined,
@@ -294,7 +298,7 @@ async function localConnectionRequest(
           Number(response.headers?.get("Retry-After") ?? 2) * 1000;
         if (isServerCheckQueueError(error)) throw error;
       }
-      return result;
+      return { result, intent: metadata.intent };
     } finally {
       done.abort();
       detach();
@@ -310,6 +314,42 @@ async function localConnectionRequest(
     },
     execute,
   );
+}
+
+// A connect the device has not yet approved (a project stdio server's
+// command, PLB-192) is refused with the terms it would run. The dialog runs
+// BETWEEN attempts, never inside one: an attempt holds a browser slot in the
+// check queue, and a dialog must not hold it. Auto-connect never prompts: the
+// card shows the refusal, and the user's own Connect click (or an eval Start)
+// is what asks. Bounded because a command edited between the approval and the
+// retry is refused again with new terms.
+const MAX_STDIO_APPROVAL_ROUNDS = 3;
+
+async function localConnectionRequest(
+  url: string,
+  body: Record<string, unknown>,
+  queueSignal: AbortSignal | undefined,
+  setStatus: (status: number) => void,
+) {
+  for (let round = 0; ; round++) {
+    const { result, intent } = await localConnectionAttempt(
+      url,
+      body,
+      queueSignal,
+      setStatus,
+    );
+    const terms =
+      intent === "manual" && round < MAX_STDIO_APPROVAL_ROUNDS
+        ? readStdioCommandApprovalTerms(result)
+        : null;
+    if (!terms) return result;
+    const approved = await obtainStdioCommandApproval({
+      projectId: String(body.projectId),
+      serverName: String(body.serverName ?? body.serverId),
+      terms,
+    });
+    if (!approved) return result;
+  }
 }
 
 export async function testConnection(
