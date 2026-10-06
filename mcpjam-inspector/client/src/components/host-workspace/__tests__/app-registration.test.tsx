@@ -1,7 +1,8 @@
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppRegistration } from "../ThreadAppPanel";
 const fixture = vi.hoisted(() => ({
+  context: vi.fn(),
   log: vi.fn(),
   upsert: vi.fn(),
   workspace: {
@@ -9,6 +10,18 @@ const fixture = vi.hoisted(() => ({
     surfaces: { getState: () => ({ upsertRegistration: fixture.upsert }) },
   },
 }));
+vi.mock("../thread-app-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../thread-app-api")>();
+  return {
+    ...original,
+    createThreadAppApi: (
+      ...args: Parameters<typeof original.createThreadAppApi>
+    ) => ({
+      ...original.createThreadAppApi(...args),
+      context: fixture.context,
+    }),
+  };
+});
 vi.mock("../extension-log", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../extension-log")>()),
   logExtensionEvent: fixture.log,
@@ -211,6 +224,42 @@ describe("per-extension toggles on a retained App", () => {
     // The same surface stays registered: nothing closes.
     expect(fixture.upsert.mock.calls.every((call) => call[0] === "i")).toBe(
       true,
+    );
+  });
+
+  it("publishes an unconfirmed Remove all as detached, not as an empty chip", async () => {
+    fixture.context.mockReset().mockRejectedValue(new Error("unavailable"));
+    const base = props({});
+    const publishContext = vi.fn();
+    const state = {
+      updateId: "u1",
+      content: [{ type: "text", text: "Selected view" }],
+    };
+    render(
+      <AppRegistration
+        {...base}
+        publishContext={publishContext}
+        row={{
+          ...base.row,
+          handle: {
+            ...base.row.handle!,
+            contextSnapshot: { revision: 1, sequence: 1, state },
+          },
+        }}
+      />,
+    );
+    const [, shown, options] = publishContext.mock.calls.at(-1)!;
+    expect(shown).toHaveLength(1);
+    expect(options).toEqual({ detached: false });
+    await act(async () => {
+      shown[0].group.removeAll();
+    });
+    await waitFor(() =>
+      expect(publishContext.mock.calls.at(-1)).toEqual([
+        "token",
+        [],
+        { detached: true },
+      ]),
     );
   });
 

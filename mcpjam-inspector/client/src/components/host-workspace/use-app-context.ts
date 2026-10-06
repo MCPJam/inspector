@@ -154,14 +154,13 @@ export function useAppContext(
   const [detached, setDetached] = useState<{ key: string; revision: number }>();
   const received =
     value.key === key ? value.snapshot : handle.contextSnapshot ?? EMPTY;
+  // Explicit, not inferred from the chip: the server may still hold this
+  // revision, and context with no chip (assistant-only) still reaches turns.
+  const isDetached =
+    detached?.key === key && received.revision <= detached.revision;
   const snapshot = useMemo(
-    () =>
-      detached?.key === key &&
-      received.state &&
-      received.revision <= detached.revision
-        ? { ...received, state: null }
-        : received,
-    [received, detached, key],
+    () => (isDetached && received.state ? { ...received, state: null } : received),
+    [received, isDetached],
   );
   const serverName = presentation.serverName;
   const pluginIcons = presentation.icons;
@@ -252,6 +251,8 @@ export function useAppContext(
   return {
     snapshot,
     attachments,
+    /** Remove all went unconfirmed: no turn may reference this App's context. */
+    detached: isDetached,
     error,
     update: owned.controller,
     refresh: owned.controller.refresh,
