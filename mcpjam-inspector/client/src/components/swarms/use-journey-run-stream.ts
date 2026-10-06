@@ -196,9 +196,24 @@ export function reduceSwarmStreamEvent(
 export function useJourneyRunStream(
   runId: string | null,
   enabled: boolean,
+  /** The run's wave, so a limit refusal opens the dialog once per swarm. */
+  swarmRunGroupId?: string,
+  /**
+   * The organization the swarm belongs to, so its wave is that organization's:
+   * a wave no notice attributed is treated as the buyer's by whichever
+   * organization starts a checkout next.
+   */
+  organizationId?: string,
 ): JourneyRunStreamState {
   const [state, setState] = useState<JourneyRunStreamState>(emptyRunStreamState);
   const genRef = useRef(0);
+  // Read at notify time: the run doc (and its wave id) can arrive after the
+  // stream opened, and the id must not reconnect the stream. The organization
+  // can load after it too.
+  const swarmRunGroupIdRef = useRef(swarmRunGroupId);
+  swarmRunGroupIdRef.current = swarmRunGroupId;
+  const organizationIdRef = useRef(organizationId);
+  organizationIdRef.current = organizationId;
 
   useEffect(() => {
     const gen = ++genRef.current;
@@ -217,18 +232,24 @@ export function useJourneyRunStream(
       runId,
       (event) => {
         if (genRef.current !== gen) return;
+        const wave = swarmRunGroupIdRef.current;
+        const organization = organizationIdRef.current;
         if (
           event.type === "attempt_status" ||
           event.type === "session_complete"
         ) {
           notifyMCPJamLimitError({
             runId,
+            ...(wave ? { swarmRunGroupId: wave } : {}),
+            ...(organization ? { organizationId: organization } : {}),
             message: event.errorMessage,
             surface: "swarm",
           });
         } else if (event.type === "error") {
           notifyMCPJamLimitError({
             runId,
+            ...(wave ? { swarmRunGroupId: wave } : {}),
+            ...(organization ? { organizationId: organization } : {}),
             message: event.message,
             details: event.details,
             surface: "swarm",

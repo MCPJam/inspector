@@ -1,10 +1,10 @@
 import {
-  localDiskResumeState,
+  diskResumeState,
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
 import { localHarnessEvidence } from "./local/evidence.js";
-import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
+import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
 import { invalidateParkedLocalSession } from "./local/approval-park.js";
 import { getManagerConnections } from "../mcp-connections.js";
@@ -2457,7 +2457,7 @@ export async function runHarnessTurn(
                 : {}),
             });
       if (localPrepared) {
-        harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
+        harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
         if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
           harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
             logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
@@ -2893,9 +2893,11 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            resumeFrom: localPrepared
-              ? localDiskResumeState(sessionResumeStateFrom(resumable.resumeState))
-              : sessionResumeStateFrom(resumable.resumeState),
+            // Hosted too, not only local: see `diskResumeState`. An approval
+            // continuation (above) still reattaches to its paused bridge.
+            resumeFrom: diskResumeState(
+              sessionResumeStateFrom(resumable.resumeState),
+            ),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {

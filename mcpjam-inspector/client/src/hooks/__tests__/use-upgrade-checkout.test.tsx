@@ -4,6 +4,7 @@ import {
   resolveUpgradeInterval,
   useUpgradeCheckout,
 } from "../use-upgrade-checkout";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const {
   billingState,
@@ -82,6 +83,9 @@ beforeEach(() => {
   toastInfo.mockReset();
   toastSuccess.mockReset();
   trackMock.mockReset();
+  useMCPJamLimitDialogStore.setState(
+    useMCPJamLimitDialogStore.getInitialState(),
+  );
   window.history.replaceState(null, "", "/evals");
 });
 
@@ -352,6 +356,92 @@ describe("useUpgradeCheckout", () => {
     expect(toastSuccess).toHaveBeenCalledWith(
       "Plan change scheduled for renewal.",
     );
+  });
+
+  // A plan change lifts a wall the same way a credit purchase does, so a swarm
+  // wave that ran out before it and runs out again after it is news, not a
+  // repeat: a create-flow Retry reuses its wave. Only the organization that is
+  // changing plan; another organization's balance did not move.
+  describe("swarm waves announced before the plan change", () => {
+    const announceWaves = () =>
+      useMCPJamLimitDialogStore.setState({
+        notifiedKeys: new Set([
+          "run:run-a",
+          "wave:wave-1",
+          "run:run-b",
+          "wave:wave-2",
+        ]),
+        waveOrganizations: { "wave:wave-1": "org-1", "wave:wave-2": "org-2" },
+      });
+    const startUpgrade = async () => {
+      const { result } = renderHook(() =>
+        useUpgradeCheckout({
+          organizationId: "org-1",
+          origin: "credits",
+          limitKind: "credits",
+        }),
+      );
+      await act(async () => {
+        await result.current.start();
+      });
+    };
+
+    it("become news again once checkout opens", async () => {
+      billingState.planCatalog = planCatalog(["annual"]);
+      startPlanChange.mockResolvedValue({
+        kind: "checkout",
+        checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+        subscription: { plan: "team" },
+      });
+      announceWaves();
+      const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+      (window as { isElectron?: boolean }).isElectron = true;
+
+      try {
+        await startUpgrade();
+        expect(useMCPJamLimitDialogStore.getState().staleWaveKeys).toEqual(
+          new Set(["wave:wave-1"]),
+        );
+      } finally {
+        delete (window as { isElectron?: boolean }).isElectron;
+        openSpy.mockRestore();
+      }
+    });
+
+    it("become news again once an in-place plan update lands", async () => {
+      billingState.planCatalog = planCatalog(["annual"]);
+      startPlanChange.mockResolvedValue({
+        kind: "updated",
+        subscription: { plan: "team" },
+      });
+      announceWaves();
+
+      await startUpgrade();
+
+      expect(useMCPJamLimitDialogStore.getState().staleWaveKeys).toEqual(
+        new Set(["wave:wave-1"]),
+      );
+    });
+
+    it("stay quiet when the change only takes effect at renewal, or never starts", async () => {
+      billingState.planCatalog = planCatalog(["annual"]);
+      announceWaves();
+
+      startPlanChange.mockResolvedValue({
+        kind: "scheduled",
+        subscription: { plan: "team" },
+      });
+      await startUpgrade();
+      expect(useMCPJamLimitDialogStore.getState().staleWaveKeys).toEqual(
+        new Set(),
+      );
+
+      startPlanChange.mockRejectedValue(new Error("Stripe is down"));
+      await startUpgrade();
+      expect(useMCPJamLimitDialogStore.getState().staleWaveKeys).toEqual(
+        new Set(),
+      );
+    });
   });
 
   it("reports only explicit interval choices, not the automatic fallback", async () => {

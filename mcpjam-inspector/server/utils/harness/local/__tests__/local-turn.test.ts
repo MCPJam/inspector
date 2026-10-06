@@ -75,6 +75,7 @@ vi.mock("../runtime-install.js", () => ({
   // file fail with EACCES on any machine that is not root, which is what CI
   // caught and a root-owned sandbox did not.
   runtimeInstallRoot: () => installRoot,
+  noteRuntimeLaunch: vi.fn(async () => {}),
 }));
 // Mutable so a test can drive the `keyId === null` refusal — an Inspector
 // whose local installation is not registered yet.
@@ -432,6 +433,22 @@ describe("local lane state lifetime", () => {
     expect(delivered).not.toHaveBeenCalled();
     await providerArgs.onBridgeStarted({ pid: 1, port: 1 });
     expect(delivered).toHaveBeenCalledOnce();
+    await result.prepared.discardState();
+  });
+
+  it("records each bridge start against the pack it ran on — the signal that rolls a bad update back", async () => {
+    const { noteRuntimeLaunch } = await import("../runtime-install.js");
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    if (!result.ok) throw new Error(result.message);
+    const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][]).at(-1)![0] as any;
+    await providerArgs.onBridgeStarted({ pid: 1, port: 1 });
+    expect(noteRuntimeLaunch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: { ok: true }, status: expect.objectContaining({ packVersion: "test-pack-1" }) }),
+    );
+    providerArgs.onBridgeFailed({ phase: "readiness", message: "bridge never listened" });
+    expect(noteRuntimeLaunch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: { ok: false, reason: "readiness: bridge never listened" } }),
+    );
     await result.prepared.discardState();
   });
 

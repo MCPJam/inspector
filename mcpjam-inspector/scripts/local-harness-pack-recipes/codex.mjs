@@ -1,28 +1,25 @@
 // The Codex runtime pack recipe: everything about building a pack that is
-// specific to Codex on MCPJam's app-server adapter. The generic orchestration
-// — bundled Node, the Windows Job Object launcher, link flattening, the tree
-// digest, archiving, signing — is `build-local-harness-pack.mjs`, shared by
-// every harness. This file is a pack input of the Codex pack ONLY, so editing
-// it never changes Claude Code's fingerprint.
+// specific to Codex. The generic orchestration — bundled Node, the Windows Job
+// Object launcher, link flattening, the tree digest, archiving, signing — is
+// `build-local-harness-pack.mjs`, shared by every harness. This file is a pack
+// input of the Codex pack ONLY, so editing it never changes Claude Code's
+// fingerprint.
 //
-// What goes in a Codex pack:
-//   - MCPJam's app-server bootstrap recipe (`package.json`, `pnpm-lock.yaml`,
-//     `bridge.mjs`, `host-tools-mcp.mjs`) — byte-identical to the recipe the
-//     application builds, because the bridge bundle is REBUILT here from the
-//     reviewed sources rather than taken from whatever generated file happens
-//     to be on disk. The supervised provider byte-compares the bridge at
-//     session start, so a single changed byte fails the session closed;
+// What goes in a Codex pack — VENDOR BYTES ONLY:
 //   - a hoisted, symlink-free `node_modules` with the `@openai/codex` wrapper
 //     (`bin/codex.js` is what the bridge runs) and EXACTLY one platform
 //     package, every file of which is checked against the checksums recorded
-//     from the published tarballs (`codex-vendor-checksums.json`).
+//     from the published tarballs (`codex-vendor-checksums.json`);
+//   - `bin/node` and, on Windows, the Job Object launcher (the shared build).
 //
-// THE RULE THIS IMPLIES: any change under `server/utils/harness/codex-appserver/`
-// that reaches the bundle changes `bridge.mjs`, so it needs a Codex pack bump
-// (and the data PR recording the new digests) before it can ship to local
-// users. The release check compares the published manifest's `bridgeDigest`
-// with the one the Inspector was built with, so a forgotten bump is caught
-// before release rather than as a failed session on someone's machine.
+// What does NOT: MCPJam's app-server bridge, its host-tools MCP entrypoint,
+// the loopback launcher and `ws`. They are the Inspector layer
+// (`server/utils/harness/local/inspector-layer.ts`), compiled into the
+// Inspector and written next to the pack at run time. So a change under
+// `server/utils/harness/codex-appserver/` is an ordinary Inspector change: it
+// needs no new pack. Only the vendor graph — the bootstrap `package.json` and
+// lockfile that pin `@openai/codex`, and the recorded checksums — is an input
+// of this pack.
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -41,40 +38,26 @@ export const harnessId = "codex";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const ADAPTER_DIR = "mcpjam-inspector/server/utils/harness/codex-appserver";
-
-/** Every TypeScript source directly in one adapter directory, repo-relative. */
-function adapterSources(subdir) {
-  const dir = join(repoRoot, ADAPTER_DIR, subdir);
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
-    .sort()
-    .map((name) => `${ADAPTER_DIR}/${subdir}/${name}`);
-}
+const BOOTSTRAP_DIR = `${ADAPTER_DIR}/bootstrap`;
 
 /**
- * Repo-relative sources whose bytes shape this recipe: the bundled bridge's
- * sources, the bundler, the bootstrap package and lockfile, and the vendor
- * checksums. The recipe's EMITTED bytes are fingerprinted too; these are
- * listed so a change to what produces them is visible in the input diff
- * rather than only in its output.
+ * Repo-relative sources whose bytes shape this pack: the manifest and lockfile
+ * the vendor graph is installed from, and the checksums every vendor file is
+ * checked against. Nothing about the bridge.
  */
 export const recipeSources = [
-  `${ADAPTER_DIR}/codex-appserver-bootstrap.ts`,
-  `${ADAPTER_DIR}/bootstrap/package.json`,
-  `${ADAPTER_DIR}/bootstrap/pnpm-lock.yaml`,
-  ...adapterSources("bridge"),
-  ...adapterSources("shared"),
-  "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs",
+  `${BOOTSTRAP_DIR}/package.json`,
+  `${BOOTSTRAP_DIR}/pnpm-lock.yaml`,
   "mcpjam-inspector/scripts/local-harness-pack-recipes/codex-vendor-checksums.json",
 ];
 
 /**
  * Packages whose locked closure (from the repo's package-lock) produces this
- * pack: the bridge kit the bundle inlines, and the bundler that inlines it.
- * An `@ai-sdk/harness` bump changes `bridge.mjs` without touching any file
- * above, so without it here a bump would leave the fingerprint unchanged.
+ * pack. None: the vendor graph comes from the bootstrap lockfile above, which
+ * pnpm installs frozen, and no Inspector dependency reaches the pack any more
+ * (the bridge kit and the bundler now produce the Inspector layer).
  */
-export const dependencyRoots = ["@ai-sdk/harness", "esbuild"];
+export const dependencyRoots = [];
 
 /** npm platform package suffix per pack target (`@openai/codex-<suffix>`). */
 const VENDOR_SUFFIX = {
@@ -107,59 +90,38 @@ function vendorChecksums() {
 }
 
 /**
- * The bootstrap recipe exactly as the application builds it.
- *
- * The bridge bundle is regenerated first: `bridge.mjs` is a build product of
- * the sources in `recipeSources`, and a pack built from a stale generated file
- * would carry a bridge nobody reviewed. Loaded through tsx only when asked for,
- * so importing this module (for its dependency roots, say) stays independent
- * of TypeScript and of esbuild.
+ * The files the pack build installs the vendor graph from: the bootstrap
+ * manifest and frozen lockfile, read straight from the repository. Nothing is
+ * generated, so neither TypeScript nor esbuild is involved in building a pack.
  */
 export async function loadRecipe() {
-  const { bundleCodexAppServerBridge } = await import(
-    "../bundle-codex-appserver-bridge.mjs"
-  );
-  await bundleCodexAppServerBridge();
-  const { tsImport } = await import("tsx/esm/api");
-  const { getCodexAppServerBootstrap } = await tsImport(
-    "../../server/utils/harness/codex-appserver/codex-appserver-bootstrap.ts",
-    { parentURL: import.meta.url, tsconfig: false },
-  );
-  const bootstrap = getCodexAppServerBootstrap();
-  return { bootstrapDir: bootstrap.bootstrapDir, files: bootstrap.files, bootstrap };
+  const bootstrapDir = ".harness-bootstrap/codex-appserver";
+  const files = ["package.json", "pnpm-lock.yaml"].map((name) => ({
+    path: `${bootstrapDir}/${name}`,
+    content: readFileSync(join(repoRoot, BOOTSTRAP_DIR, name), "utf8"),
+  }));
+  return { bootstrapDir, files };
 }
 
+/** What `stageRecipe` leaves behind besides `node_modules`: nothing. */
+const INSTALL_ONLY_FILES = ["package.json", "pnpm-lock.yaml", ".npmrc", "pnpm-workspace.yaml"];
+
 /**
- * Stage exactly the recipe the application writes, then install its frozen
- * graph. `bootstrap.json` is what a local session reads its recipe from
- * (`pack-bootstrap.ts`), so it is the recipe itself, not a summary of it.
+ * Install the frozen vendor graph, then remove everything the pack must not
+ * carry: the install manifests (vendor-graph inputs, not runtime) and `ws`,
+ * which the hosted bootstrap installs for the sandbox's bridge and which the
+ * Inspector layer's bridge has compiled in.
  */
 export async function stageRecipe(packRoot, installDependencies) {
-  const { bootstrapDir, files: recipeFiles, bootstrap } = await loadRecipe();
-  const prefix = `${bootstrapDir}/`;
+  const { bootstrapDir, files } = await loadRecipe();
   mkdirSync(packRoot, { recursive: true });
-  for (const file of recipeFiles) {
-    const name = file.path.slice(prefix.length);
-    if (
-      !file.path.startsWith(prefix) ||
-      !name ||
-      name === "." ||
-      name === ".." ||
-      name.includes("/") ||
-      name.includes("\\")
-    ) {
-      throw new Error(`Unexpected Codex bootstrap path: ${file.path}`);
-    }
-    writeFileSync(join(packRoot, name), file.content);
+  for (const file of files) {
+    writeFileSync(join(packRoot, file.path.slice(bootstrapDir.length + 1)), file.content);
   }
-  for (const required of ["bridge.mjs", "host-tools-mcp.mjs", "pnpm-lock.yaml"]) {
-    if (!existsSync(join(packRoot, required))) {
-      throw new Error(`Codex bootstrap is missing ${required}`);
-    }
-  }
-  writeFileSync(join(packRoot, "bootstrap.json"), JSON.stringify(bootstrap));
   await installDependencies();
-  return { bridgeDigest: `sha256:${sha256File(join(packRoot, "bridge.mjs"))}` };
+  for (const name of INSTALL_ONLY_FILES) rmSync(join(packRoot, name), { force: true });
+  rmSync(join(packRoot, "node_modules", "ws"), { recursive: true, force: true });
+  return {};
 }
 
 /**
@@ -253,12 +215,14 @@ export function verifyVendorBinary(packRoot, platformKey) {
 }
 
 /**
- * Remove what the pack must not carry, then scan the `@openai` scope: after
- * pruning, the wrapper and THIS target's platform package are the only
- * things allowed in it. Anything else is a vendor binary no checksum covers.
+ * Remove what the pack must not carry, then scan what is left: after pruning,
+ * `node_modules` holds the `@openai` scope and nothing else, and that scope
+ * holds the wrapper and THIS target's platform package. Anything else is code
+ * no checksum covers.
  */
 export function prunePack(packRoot, platformKey) {
-  const scope = join(packRoot, "node_modules", "@openai");
+  const modules = join(packRoot, "node_modules");
+  const scope = join(modules, "@openai");
   const suffix = platformKey === undefined ? undefined : VENDOR_SUFFIX[platformKey];
   const allowed = new Set(["codex", ...(suffix ? [`codex-${suffix}`] : [])]);
   for (const entry of readdirSync(scope)) {
@@ -270,6 +234,15 @@ export function prunePack(packRoot, platformKey) {
   if (remaining.length > 0) {
     throw new Error(
       `unexpected packages in the pack's @openai scope: ${remaining.join(", ")}`,
+    );
+  }
+  const strays = readdirSync(modules).filter(
+    (entry) => entry !== "@openai" && !entry.startsWith("."),
+  );
+  if (strays.length > 0) {
+    throw new Error(
+      `unexpected packages in the Codex pack's node_modules: ${strays.join(", ")} ` +
+        `(a Codex pack carries @openai/codex and its platform package only)`,
     );
   }
 }
@@ -285,42 +258,19 @@ export function vendorPackages(packRoot) {
       packages[`@openai/${entry}`] = JSON.parse(readFileSync(pkg, "utf8")).version;
     }
   }
-  const ws = join(packRoot, "node_modules", "ws", "package.json");
-  if (existsSync(ws)) packages.ws = JSON.parse(readFileSync(ws, "utf8")).version;
   return packages;
 }
 
 /**
- * The adapter identity recorded in the pack manifest: the app-server bundle
- * version plus the pinned CLI — the same string the compatibility manifest
- * pins (`CODEX_LOCAL_ADAPTER_IDENTITY`), so the two compare like for like.
- * Read from the generated bundle, which `loadRecipe()` regenerates; the build
- * asks for it only after staging.
+ * The identity recorded in the pack manifest: the pinned CLI. The app-server
+ * bridge is not in the pack, so its bundle hash is not part of what a pack is;
+ * the Inspector's own manifest pins the bridge (`CODEX_LOCAL_ADAPTER_IDENTITY`).
  */
 export function adapterVersion() {
-  const generated = join(
-    repoRoot,
-    ADAPTER_DIR,
-    "bootstrap/generated/codex-appserver-bridge.bundled.ts",
-  );
-  if (!existsSync(generated)) {
-    throw new Error(
-      "the Codex bridge bundle has not been generated; run " +
-        "scripts/bundle-codex-appserver-bridge.mjs (the pack build does)",
-    );
-  }
-  const bundleVersion = /export const CODEX_APPSERVER_BUNDLE_VERSION = "([0-9a-f]+)"/.exec(
-    readFileSync(generated, "utf8"),
-  )?.[1];
-  if (!bundleVersion) {
-    throw new Error("could not read CODEX_APPSERVER_BUNDLE_VERSION from the generated bundle");
-  }
-  const pkg = JSON.parse(
-    readFileSync(join(repoRoot, ADAPTER_DIR, "bootstrap/package.json"), "utf8"),
-  );
+  const pkg = JSON.parse(readFileSync(join(repoRoot, BOOTSTRAP_DIR, "package.json"), "utf8"));
   const cli = pkg.dependencies?.["@openai/codex"];
   if (typeof cli !== "string") {
     throw new Error("the Codex bootstrap package pins no @openai/codex version");
   }
-  return `app-server/${bundleVersion}+@openai/codex@${cli}`;
+  return `@openai/codex@${cli}`;
 }
