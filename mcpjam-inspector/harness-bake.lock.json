@@ -2,7 +2,7 @@
   "comment": "Recipe identities the MCPJam computer template is expected to bake. Regenerate with `node scripts/harness-bake-context.mjs --write-lock`; a change here means the template must be rebuilt from this commit and rolled out (mcpjam-backend templates/computer/README.md).",
   "pins": {
     "node": "24.20.0",
-    "pnpm": "10.18.1"
+    "pnpm": "12.8.1"
   },
   "recipes": [
     {
