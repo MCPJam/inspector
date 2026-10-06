@@ -6735,6 +6735,10 @@ const runHostedIterationWithBrowser = async (
             : { ok: false as const, refusal: result };
         },
         release: releaseEvalBox,
+        // The ITERATION signal. Past its budget grace the iteration is
+        // abandoned and may never reach a release; the abort still stops the
+        // heartbeat, so the box goes idle and the reaper takes it.
+        ...(abortSignal ? { signal: abortSignal } : {}),
       });
       if (!acquired.ok) {
         const refusal = acquired.refusal;
