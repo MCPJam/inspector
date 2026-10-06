@@ -825,6 +825,19 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
     });
 
+    it("releases the box when the harness runtime is unavailable after it was acquired", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
+        ok: false,
+        reason: "nope",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(503);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+      // No stream will carry the box to its release, so the route must.
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+    });
+
     it("releases the box when the engine throws before it streams", async () => {
       handleMCPJamFreeChatModelMock.mockRejectedValueOnce(new Error("boom"));
       const response = await post(cursor);
