@@ -586,11 +586,19 @@ describe("background drain controller", () => {
       await expect(pending).resolves.toBe(true);
     });
 
-    it("an unknown agent is background only while background work is live (a workflow's agents)", async () => {
+    it("an unknown agent is background only while an agent or workflow is pending (a workflow's agents)", async () => {
       const idle = controller.isBackgroundAgentRequest("x1");
       await vi.advanceTimersByTimeAsync(1_000);
       await expect(idle).resolves.toBe(false);
-      controller.observe(tasksChanged(["w1", "local_workflow"]));
+      // A background shell alone: a nested FOREGROUND subagent (spawn_depth 2,
+      // never recorded as foreground) must keep its approval prompt.
+      controller.observe(tasksChanged(["b1", "local_bash"]));
+      const shellOnly = controller.isBackgroundAgentRequest("x3");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(shellOnly).resolves.toBe(false);
+      controller.observe(
+        tasksChanged(["b1", "local_bash"], ["w1", "local_workflow"]),
+      );
       const live = controller.isBackgroundAgentRequest("x2");
       await vi.advanceTimersByTimeAsync(1_000);
       await expect(live).resolves.toBe(true);

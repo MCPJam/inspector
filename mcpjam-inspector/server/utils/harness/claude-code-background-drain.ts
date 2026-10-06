@@ -42,8 +42,11 @@
  *   5. APPROVALS. A request that needs approval from a BACKGROUND agent
  *      (`canUseTool` `options.agentID` names one) is denied: a turn is only
  *      ever paused for approval by the main thread. Foreground subagents carry
- *      an `agentID` too, so membership decides, not presence. Main-thread
- *      approvals pause the cap.
+ *      an `agentID` too, so membership decides, not presence. An agent no
+ *      task_started names (a workflow's, or one nested in another agent) is
+ *      background only while an agent or workflow is pending: a background
+ *      shell alone never makes a foreground subagent's request a denial.
+ *      Main-thread approvals pause the cap.
  *   6. CAP. `min(drainStart + 10 min, turnStart + 25 min)`: the model broker
  *      lease is 30 min from turn start with no renewal. At the cap the
  *      pending agents are stopped (`stopTask`), input closes, and 15 s later
@@ -405,7 +408,7 @@ function mcpjamCreateBackgroundDrainController(deps) {
       }
       if (state.backgroundIds.has(agentID)) return true;
       if (state.foregroundAgentIds.has(agentID)) return false;
-      return state.live.size > 0;
+      return state.pending.size > 0;
     },
     deniedBackgroundApproval(toolName) {
       if (!stopped) notice("denied a background agent's approval request for " + toolName);
