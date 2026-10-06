@@ -47,6 +47,7 @@ vi.mock("e2b", () => ({
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
 }));
 
+import { evictBridgePortCommand } from "../bridge-port-eviction.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 import { HARNESS_TEMPLATE_PNPM_VERSION } from "../harness-bake.js";
 import {
@@ -289,6 +290,72 @@ describe("abort plumbing", () => {
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
       expect.objectContaining({ signal: controller.signal })
+    );
+  });
+});
+
+describe("bridge spawn", () => {
+  // `commands.run` stands in for both the foreground eviction and the
+  // background bridge; only a background call gets a process handle.
+  beforeEach(() => {
+    sandboxState.run.mockImplementation(
+      async (_command: string, opts?: { background?: boolean }) =>
+        opts?.background
+          ? { pid: 42, wait: () => new Promise(() => {}), kill: vi.fn() }
+          : { exitCode: 0, stdout: "", stderr: "" },
+    );
+  });
+  const bridgeSpawn = {
+    command: "node /home/user/.bootstrap/bridge.mjs",
+    env: { BRIDGE_WS_PORT: "39271", BRIDGE_CHANNEL_TOKEN: "t" },
+  };
+
+  it("runs the bridge with no command timeout, so E2B cannot kill it after a minute", async () => {
+    // E2B's default command timeout (60s) applies to background commands too.
+    // It killed every bridge a minute after it started.
+    const session = await provider().createSession();
+    await session.spawn(bridgeSpawn);
+
+    const [, opts] = sandboxState.run.mock.calls.at(-1)!;
+    expect(opts).toMatchObject({ background: true, timeoutMs: 0 });
+  });
+
+  it("evicts the idle bridge on the bridge port before starting a fresh one", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+
+    await session.spawn(bridgeSpawn);
+
+    expect(sandboxState.run.mock.calls.map(([command]) => command)).toEqual([
+      evictBridgePortCommand(39271),
+      bridgeSpawn.command,
+    ]);
+    // Eviction needs no secrets; the session env stays with the bridge.
+    expect(sandboxState.run.mock.calls[0]![1]).not.toHaveProperty("envs");
+  });
+
+  it("evicts nothing for a spawn that binds no bridge port", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+
+    await session.spawn({ command: "tail -f /dev/null" });
+
+    expect(sandboxState.run.mock.calls.map(([command]) => command)).toEqual([
+      "tail -f /dev/null",
+    ]);
+  });
+
+  it("still starts the bridge when the eviction fails", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+    sandboxState.run.mockRejectedValueOnce(new Error("socket hang up"));
+
+    const proc = await session.spawn(bridgeSpawn);
+
+    expect(proc.pid).toBe(42);
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      bridgeSpawn.command,
+      expect.objectContaining({ background: true }),
     );
   });
 });

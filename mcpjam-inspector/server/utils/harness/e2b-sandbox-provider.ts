@@ -29,6 +29,11 @@ import type {
 } from "@ai-sdk/harness";
 import { confineToHome } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
+import {
+  BRIDGE_EVICTION_GRACE_MS,
+  bridgePortOf,
+  evictBridgePortCommand,
+} from "./bridge-port-eviction.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
@@ -64,9 +69,9 @@ export interface E2BHarnessSandboxProviderOptions {
   bridgePort?: number;
   /** Connect/keep-alive timeout handed to `Sandbox.connect`. */
   connectTimeoutMs?: number;
-  /** Per-command exec timeout for `run`. E2B foreground commands default to
-   *  ~60s — too short for the harness bootstrap (`pnpm install`) on a larger
-   *  dep tree. Background `spawn` is not subject to the foreground cap. */
+  /** Per-command exec timeout for `run`. E2B commands default to ~60s — too
+   *  short for the harness bootstrap (`pnpm install`) on a larger dep tree.
+   *  `spawn` does not use it: a bridge runs with no timeout at all. */
   commandTimeoutMs?: number;
   /**
    * SESSION-WIDE environment merged into every `run` and `spawn`.
@@ -189,9 +194,10 @@ export function createE2BHarnessSandboxProvider(
 ): HarnessV1SandboxProvider {
   const bridgePort = opts.bridgePort ?? 39271;
   const cwd = opts.defaultWorkingDirectory ?? "/home/user";
-  // E2B foreground `commands.run` defaults to a ~60s command timeout, separate
-  // from the sandbox's own lifetime — too short for the harness bootstrap
-  // (`pnpm install`). Background `spawn` is not subject to this cap.
+  // E2B `commands.run` defaults to a ~60s command timeout, separate from the
+  // sandbox's own lifetime — too short for the harness bootstrap
+  // (`pnpm install`). It applies to background commands too, which is why
+  // `spawn` below opts out of it explicitly.
   const commandTimeoutMs = opts.commandTimeoutMs ?? 10 * 60_000;
   // Frozen at provider construction. The session's env is fixed for its
   // lifetime by design: a harness session that changed its environment
@@ -286,6 +292,33 @@ export function createE2BHarnessSandboxProvider(
       }
       throw err;
     }
+
+    // Best-effort: a failure here never blocks the spawn. A bridge that still
+    // cannot bind fails its own startup, which names the problem better than
+    // anything this could add.
+    const evictStaleBridge = async (
+      port: number,
+      abortSignal?: AbortSignal,
+    ): Promise<void> => {
+      try {
+        const res = await sandbox.commands.run(evictBridgePortCommand(port), {
+          timeoutMs: BRIDGE_EVICTION_GRACE_MS + 10_000,
+          ...signalOpt(abortSignal),
+        });
+        const pids = res.stdout.trim();
+        if (pids) {
+          logger.info("[e2b-sandbox-provider] evicted an idle harness bridge", {
+            port,
+            pids,
+          });
+        }
+      } catch (err) {
+        logger.warn(
+          "[e2b-sandbox-provider] could not free the bridge port; starting the bridge anyway",
+          { port, error: err instanceof Error ? err.message : String(err) },
+        );
+      }
+    };
 
     const session: HarnessV1NetworkSandboxSession = {
       id: sandbox.sandboxId,
@@ -384,6 +417,10 @@ export function createE2BHarnessSandboxProvider(
 
       // ── spawn (long-lived; adapt E2B callbacks → ReadableStreams) ──────
       spawn: async ({ command, workingDirectory, env, abortSignal }) => {
+        // A bridge about to bind the shared bridge port first evicts the idle
+        // one another session left on it (see `bridge-port-eviction.ts`).
+        const port = bridgePortOf(env);
+        if (port !== undefined) await evictStaleBridge(port, abortSignal);
         let outCtl!: ReadableStreamDefaultController<Uint8Array>;
         let errCtl!: ReadableStreamDefaultController<Uint8Array>;
         let streamsClosed = false;
@@ -411,6 +448,14 @@ export function createE2BHarnessSandboxProvider(
           background: true,
           cwd: workingDirectory ?? cwd,
           envs: mergeEnv(env),
+          // 0, never the default: E2B kills a command when its timeout
+          // expires "even when `background` is set", and the default is 60s.
+          // With it, every bridge died a minute after it started — mid-turn
+          // for a longer turn, and always before the next turn could reattach,
+          // which then waited out the adapter's 120s handshake for nothing.
+          // A bridge now lives until the next fresh bridge evicts it (above)
+          // or the computer hibernates.
+          timeoutMs: 0,
           ...signalOpt(abortSignal),
           // Guard against enqueue-after-close once the process ends/is killed.
           onStdout: (d: string) => {

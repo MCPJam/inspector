@@ -1,11 +1,24 @@
-/** Local teardown proves the bridge stopped. Resume the disk conversation without retrying its dead socket. */
-export function localDiskResumeState<T>(state: T): T {
+/**
+ * Resume the conversation from disk on a fresh bridge, never by reattaching to
+ * the bridge the last turn left behind.
+ *
+ * Locally, teardown proves that bridge stopped. On a hosted computer it may
+ * still be running, but nothing proves it is THIS session's: every bridge on a
+ * computer binds the same port, so once another session's fresh bridge evicts
+ * it (`bridge-port-eviction.ts`) the port answers with a different token. The
+ * adapter retries a reattach that cannot succeed until its 120s startup
+ * timeout, swallows the failure and only then respawns — a two-minute stall
+ * on a turn that ends exactly where respawning first would have. A respawn
+ * costs about a second.
+ */
+export function diskResumeState<T>(state: T): T {
   if (!state || typeof state !== "object") return state;
   const record = state as Record<string, unknown>;
   // Codex's thread lives in its session-data dir (CODEX_HOME rollouts), so a
-  // stopped local Codex session resumes from disk the same way: the bridge is
-  // respawned and `thread/resume` reads the rollout, rather than retrying a
-  // dead socket. An approval continuation (`continue-turn`) is never stripped.
+  // Codex session resumes from disk the same way: the bridge is respawned and
+  // `thread/resume` reads the rollout, rather than retrying a dead socket. An
+  // approval continuation (`continue-turn`) is never stripped: its paused turn
+  // lives in the bridge, which is the one thing a respawn cannot rebuild.
   if ((record.harnessId !== "claude-code" && record.harnessId !== "codex") || record.type !== "resume-session" || !record.data || typeof record.data !== "object") return state;
   const { bridge: _bridge, ...data } = record.data as Record<string, unknown>;
   return { ...record, data } as T;
