@@ -54,6 +54,11 @@ COPY vitest/package.json ./vitest/package.json
 RUN npm ci --legacy-peer-deps
 
 ################################################################################
+# Keep test/build tools out of the shipped image while retaining workspace links.
+FROM deps AS production-deps
+RUN npm prune --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+
+################################################################################
 # Build the inspector and its workspace dependencies.
 FROM deps AS build
 
@@ -187,11 +192,11 @@ COPY sdk/package.json /usr/src/app/sdk/package.json
 COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
 
-COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
+COPY --from=production-deps /usr/src/app/node_modules /usr/src/app/node_modules
 # Workspace-local deps that can't hoist to root (e.g. @workos-inc/node@^10
 # while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
 # mcpjam-inspector/node_modules and must be carried into the runtime image.
-COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
+COPY --from=production-deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 
 # Bake in Chromium + its system libraries — the same command CI runs
 # (test.yml) — so widget probes render at runtime instead of recording

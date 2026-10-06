@@ -93,6 +93,8 @@ type AttributedSession = JourneySessionRow & { columnKey: string };
 
 type RunLiveSnapshot = {
   status: string;
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
   sessions: AttributedSession[];
   stream: JourneyRunStreamState;
   summaryTotal: number;
@@ -397,6 +399,8 @@ function RunLiveBridge({
     };
     onSnapshot(runId, {
       status: run.status,
+      cancelRequested: run.cancelRequested,
+      cleanupPending: run.cleanupPending,
       sessions: attributed.sessions,
       stream,
       summaryTotal: summary.total,
@@ -797,6 +801,8 @@ export function NewSwarmRunningStep({
         if (
           prev &&
           prev.status === snapshot.status &&
+          prev.cancelRequested === snapshot.cancelRequested &&
+          prev.cleanupPending === snapshot.cleanupPending &&
           prev.summaryDone === snapshot.summaryDone &&
           prev.summaryTotal === snapshot.summaryTotal &&
           prev.summarySucceeded === snapshot.summarySucceeded &&
@@ -928,6 +934,7 @@ export function NewSwarmRunningStep({
     () =>
       runs
         .filter((run) => {
+          if (snapshots[run.runId]?.cancelRequested) return false;
           const status = snapshots[run.runId]?.status;
           return (
             status === undefined || status === "running" || status === "pending"
@@ -939,7 +946,7 @@ export function NewSwarmRunningStep({
   const {
     stop: stopRun,
     busy: stopBusy,
-    stoppedHere,
+    stoppedRunIds,
   } = useStopSwarmRun(runningRunIds);
   /**
    * Set on confirm, before the cancel resolves. Convex can deliver the
@@ -947,6 +954,27 @@ export function NewSwarmRunningStep({
    * `stoppedHere` would let "Swarm complete!" fire for a run the viewer
    * just stopped.
    */
+  const cleanupPending = Object.values(snapshots).some(
+    (run) => run?.cleanupPending,
+  );
+  const cancellationRequested =
+    runs.some((run) => stoppedRunIds.includes(run.runId)) ||
+    Object.values(snapshots).some((run) => run?.cancelRequested);
+  const uncanceledSnapshots = Object.entries(snapshots).filter(
+    ([runId, run]) => !run.cancelRequested && !stoppedRunIds.includes(runId),
+  );
+  const uncanceledTotals = uncanceledSnapshots.reduce(
+    (totals, [, run]) => ({
+      succeeded: totals.succeeded + run.summarySucceeded,
+      failed: totals.failed + run.summaryFailed,
+      rateLimited: totals.rateLimited + run.summaryRateLimited,
+      total: totals.total + run.summaryTotal,
+    }),
+    { succeeded: 0, failed: 0, rateLimited: 0, total: 0 },
+  );
+  const uncanceledIssues = uncanceledSnapshots.some(([, run]) =>
+    ["failed", "partial", "rate_limited", "stale"].includes(run.status),
+  );
   const stopRequestedRef = useRef(false);
 
   // Read through a ref so the effect below depends on `allTerminal` alone:
@@ -979,13 +1007,14 @@ export function NewSwarmRunningStep({
       callbacksRef.current.onRunsComplete?.();
       // A stopped wave already said so ("Run stopped"); calling it complete
       // would contradict the viewer's own action.
-      if (!stopRequestedRef.current) toast.success("Swarm complete!");
+      if (!stopRequestedRef.current && !cancellationRequested)
+        toast.success("Swarm complete!");
     }
     const timer = window.setTimeout(() => {
       callbacksRef.current.onLeave();
     }, COMPLETION_TOAST_DWELL_MS);
     return () => window.clearTimeout(timer);
-  }, [allTerminal, chrome]);
+  }, [allTerminal, chrome, cancellationRequested]);
 
   /** Every terminal failure cause, including limits alongside other failures. */
   const runFailure = useMemo(() => {
@@ -994,9 +1023,10 @@ export function NewSwarmRunningStep({
     // A wave this viewer stopped reads as failed attempts, but nothing broke.
     if (
       !allTerminal ||
-      stoppedHere ||
-      succeeded > 0 ||
-      rateLimited + failed === 0
+      uncanceledSnapshots.some(([, run]) => run.summarySucceeded > 0) ||
+      !uncanceledSnapshots.some(
+        ([, run]) => run.summaryFailed + run.summaryRateLimited > 0,
+      )
     ) {
       return null;
     }
@@ -1009,7 +1039,7 @@ export function NewSwarmRunningStep({
         count: number;
       }
     >();
-    for (const snap of Object.values(snapshots)) {
+    for (const [, snap] of uncanceledSnapshots) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
           continue;
@@ -1037,7 +1067,7 @@ export function NewSwarmRunningStep({
       (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
     );
     return { ...(severe ?? causes[0]), causes };
-  }, [allTerminal, failed, rateLimited, snapshots, stoppedHere, succeeded]);
+  }, [allTerminal, failed, rateLimited, snapshots, stoppedRunIds, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
 
@@ -1069,7 +1099,7 @@ export function NewSwarmRunningStep({
   const providerRateLimit = useMemo(() => {
     let count = 0;
     const labels = new Set<string>();
-    for (const snap of Object.values(snapshots)) {
+    for (const [, snap] of uncanceledSnapshots) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited") continue;
         const info = humanizeSwarmAttemptError(
@@ -1104,8 +1134,8 @@ export function NewSwarmRunningStep({
     // Two providers throttling in the same run name neither: the banner would
     // otherwise blame whichever attempt was read first for both.
     const [only] = labels;
-    return { count, label: labels.size === 1 ? only ?? null : null };
-  }, [snapshots]);
+    return { count, label: labels.size === 1 ? (only ?? null) : null };
+  }, [snapshots, stoppedRunIds]);
 
   // The other half of that split: sessions MCPJam's own account limit stopped.
   // Skipping them above is right — no provider throttled anything — but on a
@@ -1120,7 +1150,7 @@ export function NewSwarmRunningStep({
     let message: string | null = null;
     let exhausted = 0;
     let held = 0;
-    for (const snap of Object.values(snapshots)) {
+    for (const [, snap] of uncanceledSnapshots) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed")
           continue;
@@ -1158,7 +1188,7 @@ export function NewSwarmRunningStep({
       accountLimit: count === 0 ? null : { count, message, exhausted },
       heldCredits: held === 0 ? null : { count: held },
     };
-  }, [snapshots]);
+  }, [snapshots, stoppedRunIds]);
 
   // The account-limit and held-credits callouts own their causes — count,
   // breakdown and the top-up links — so the grouped banner states every OTHER
@@ -1183,7 +1213,7 @@ export function NewSwarmRunningStep({
   }, [accountLimit, heldCredits, runFailure]);
 
   const selectedRunStatus = selection
-    ? snapshots[selection.runId]?.status ?? "running"
+    ? (snapshots[selection.runId]?.status ?? "running")
     : "running";
 
   const fallbackTrace = useMemo(
@@ -1234,13 +1264,15 @@ export function NewSwarmRunningStep({
                     className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
                     data-testid="new-swarm-running-title"
                   >
-                    {swarmRunningTitle({
+                    {cleanupPending
+                      ? "Stop requested"
+                      : swarmRunningTitle({
                       allTerminal,
                       succeeded,
                       rateLimited,
                       done,
                       total,
-                      stopped: stoppedHere,
+                          stopped: cancellationRequested && !uncanceledIssues,
                     })}
                   </h2>
                   <div className="flex shrink-0 items-center gap-2">
@@ -1333,14 +1365,14 @@ export function NewSwarmRunningStep({
                 >
                   <p className="font-medium">
                     {accountLimit.exhausted > 0 && allTerminal
-                      ? `Stopped: this organization's MCPJam credits ran out after ${succeeded} of ${total} sessions.`
+                      ? `Stopped: this organization's MCPJam credits ran out after ${uncanceledTotals.succeeded} of ${uncanceledTotals.total} sessions.`
                       : "Sessions stopped at an organization usage limit."}
                   </p>
                   <p className="mt-0.5">
-                    {`${succeeded} completed, ${Math.max(
+                    {`${uncanceledTotals.succeeded} completed, ${Math.max(
                       0,
-                      failed +
-                        rateLimited -
+                      uncanceledTotals.failed +
+                        uncanceledTotals.rateLimited -
                         accountLimit.count -
                         (heldCredits?.count ?? 0) -
                         (providerRateLimit?.count ?? 0),
@@ -1355,7 +1387,8 @@ export function NewSwarmRunningStep({
                   <p className="mt-0.5">
                     {accountLimit.exhausted > 0
                       ? "Out of MCPJam credits. View your credit options to continue testing. Swarm generation requires MCPJam credits even when you use your own API key."
-                      : accountLimit.message ?? "Review your organization's usage limits before retrying."}
+                      : (accountLimit.message ??
+                        "Review your organization's usage limits before retrying.")}
                   </p>
                   {accountLimit.exhausted > 0 && (
                     <p className="mt-0.5">

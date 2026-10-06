@@ -264,6 +264,8 @@ export interface RunLaunchFailures {
 }
 
 export interface JourneyRun {
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
   _id: string;
@@ -425,6 +427,8 @@ export interface SwarmOverviewTarget {
 }
 
 export interface SwarmOverviewRun {
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
   executionVenue?: "hosted" | "local" | "mixed";
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
@@ -1067,7 +1071,7 @@ export async function launchJourneyRun(
       typeof (parsed?.details as Record<string, unknown> | undefined)?.code ===
       "string"
         ? (parsed!.details as { code: string }).code
-        : code ?? undefined,
+        : (code ?? undefined),
       parsed?.details,
     );
   }
