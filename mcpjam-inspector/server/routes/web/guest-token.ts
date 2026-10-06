@@ -1,9 +1,6 @@
 import { Hono } from "hono";
 import { timingSafeEqual } from "crypto";
-import {
-  fetchConvexGuestSession,
-  fetchRemoteGuestSession,
-} from "../../utils/guest-session-source.js";
+import { fetchGuestSession } from "../../utils/guest-session-source.js";
 import { ErrorCode, webError } from "./errors.js";
 
 /**
@@ -23,11 +20,11 @@ import { ErrorCode, webError } from "./errors.js";
  * (`x-mcpjam-client-ip` — cf-connecting-ip is rewritten by Cloudflare on the
  * worker→inspector hop), and rate-limits per *client* IP.
  *
- * Keypair correctness: minting goes through the same Convex-backed guest path
- * (`fetchConvexGuestSession` / `fetchRemoteGuestSession`) that the public
+ * Keypair correctness: minting goes through the same selected guest authority
+ * (`fetchGuestSession`, see `utils/guest-authority.ts`) that the public
  * guest-session route uses, so the token is signed by the same authority whose
  * JWKS the worker verifies against (`/api/web/guest-jwks`). It must NOT use the
- * inspector-local `issueGuestToken()`, whose keypair may differ.
+ * inspector-local `issueGuestToken()`, whose keypair no backend trusts.
  */
 const guestToken = new Hono();
 
@@ -114,14 +111,6 @@ function serviceTokenMatches(provided: string | undefined): boolean {
   );
 }
 
-// Hosted web + local dev mint through Convex directly; local production
-// runtimes relay through the hosted Inspector. Mirrors
-// `shouldFetchGuestSessionFromConvex` in guest-session.ts.
-function shouldUseConvex(): boolean {
-  if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") return true;
-  return process.env.NODE_ENV !== "production";
-}
-
 guestToken.post("/", async (c) => {
   if (!serviceTokenMatches(c.req.header("x-inspector-service-token"))) {
     return webError(c, 401, ErrorCode.UNAUTHORIZED, "Invalid service token");
@@ -138,9 +127,7 @@ guestToken.post("/", async (c) => {
   }
 
   // No browser context → no cookie → always mints a fresh guest.
-  const result = shouldUseConvex()
-    ? await fetchConvexGuestSession()
-    : await fetchRemoteGuestSession();
+  const result = await fetchGuestSession();
 
   if (result.kind !== "session") {
     return webError(c, 503, ErrorCode.INTERNAL_ERROR, "Guest token unavailable");

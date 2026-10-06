@@ -101,10 +101,14 @@ import { getSpendClientIp } from "../../utils/client-ip.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
+  isScenarioParticipant,
+  participantSafeStudyError,
   planScenarioSandbox,
+  scenarioHarnessRepublishRefusal,
   shouldWarnSecretsUndelivered,
   readScenarioEnvironment,
   readComputerSandboxMode,
+  readComputerSandboxHarness,
   type ScenarioEnvironmentRuntime,
   type ScenarioSandboxPlan,
 } from "../../utils/scenario-runtime-config.js";
@@ -283,15 +287,21 @@ function scenarioHarnessBoxRefusal(
 function scenarioHarnessProvisionRefusal(
   harness: string,
   refusal: { status: number; error: string; code?: string } | undefined,
+  /** A non-member participant: never shown the owner-facing detail. */
+  participant = false,
 ): WebRouteError {
+  const participantMessage = participant
+    ? participantSafeStudyError(refusal ?? {})
+    : undefined;
   // A PARTICIPANT past the scenario's caps. The backend's sentence already
   // says which cap and when to come back; it is the whole message.
   if (refusal?.status === 429) {
     return new WebRouteError(
       429,
       ErrorCode.RATE_LIMITED,
-      refusal.error ||
-        "This scenario has reached its limit for participant sessions. Try again later.",
+      participantMessage ??
+        (refusal.error ||
+          "This scenario has reached its limit for participant sessions. Try again later."),
       {
         reason: "SCENARIO_PARTICIPANT_CAP",
         ...(refusal.code ? { code: refusal.code } : {}),
@@ -303,7 +313,8 @@ function scenarioHarnessProvisionRefusal(
     return new WebRouteError(
       refusal.status,
       refusal.status === 409 ? ErrorCode.CONFLICT : ErrorCode.FORBIDDEN,
-      `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started: ${refusal.error}`,
+      participantMessage ??
+        `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started: ${refusal.error}`,
       {
         reason: "SANDBOX_PROVISION_FAILED",
         ...(refusal.code ? { code: refusal.code } : {}),
@@ -314,9 +325,10 @@ function scenarioHarnessProvisionRefusal(
   return new WebRouteError(
     atCapacity ? 503 : 502,
     atCapacity ? ErrorCode.RATE_LIMITED : ErrorCode.INTERNAL_ERROR,
-    `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started` +
-      (refusal?.error ? `: ${refusal.error}` : ".") +
-      (atCapacity ? " Retry in a moment." : ""),
+    participantMessage ??
+      `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started` +
+        (refusal?.error ? `: ${refusal.error}` : ".") +
+        (atCapacity ? " Retry in a moment." : ""),
     {
       reason: "SANDBOX_PROVISION_FAILED",
       ...(refusal?.code ? { code: refusal.code } : {}),
@@ -1239,6 +1251,11 @@ chatV2.post("/", async (c) => {
         | null
         | undefined
     )?.executionScope;
+    // A non-member participant of this scenario: the refusals they see are
+    // reworded so they never name the study's credits, budget, organization or
+    // environment (`participantSafeStudyError`). Members keep the detail.
+    const scenarioParticipant =
+      isScenarioSession && isScenarioParticipant(hostRuntimeConfig);
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
@@ -1666,16 +1683,10 @@ chatV2.post("/", async (c) => {
     // is projected by `buildEnvironmentScenarioRuntimeConfig` alone), so a
     // host-bound Playground turn never reads it.
     //
-    // HARNESS TURNS ARE EXCLUDED, and not merely because harness-on-scenario is
-    // Phase 6. `run-harness-turn.ts` resolves its OWN machine through
-    // `resolveHarnessSandbox` — the acting member's personal computer — and
-    // `prepare.builtInTools` is forwarded to it verbatim alongside the MCP
-    // plane. Provisioning here would therefore produce a MIXED-MACHINE turn:
-    // the model's `bash` on the ephemeral box, the harness's own Shell and file
-    // edits on the personal one, with no relationship between the two
-    // filesystems. It would also suppress the image context that IS correct for
-    // the harness's machine. Leaving harness turns entirely alone is the only
-    // coherent state until Phase 6 moves the harness onto the same box.
+    // A cloud HARNESS turn takes the same box: the harness gets it as its
+    // binding, and the model's `bash`, when advertised, execs on it too, so
+    // the two never see different filesystems. A scenario harness with no box
+    // is refused below; it never falls back to a persistent computer.
     //
     // ORDERING: this block sits AFTER the manager authorization and the body
     // validations on purpose. Provisioning is the step that spends money, so a
@@ -1772,17 +1783,24 @@ chatV2.post("/", async (c) => {
       resolved: runtimeSecrets ?? [],
     });
 
-    // Read for a HARNESS turn too: a backend that runs a member's harness on
-    // the conversation's box says so with this marker, and its absence (an
-    // older backend) keeps today's behaviour for both.
+    // A CLOUD harness needs a machine whether or not it asks for `bash`, and
+    // takes the conversation's box ONLY when the backend says its harness runs
+    // there (`computerSandbox.harness`). Without that field — an older backend,
+    // or an actor its reserve would refuse — a harness turn keeps its old path
+    // and reads no marker at all, as before. A local harness runs on the
+    // member's own machine and never takes a box.
+    const harnessWantsScenarioBox =
+      Boolean(resolvedExecution.harness) &&
+      !harnessExecutionTarget &&
+      isScenarioSession &&
+      Boolean(scenarioId) &&
+      readComputerSandboxHarness(hostRuntimeConfig);
     const computerSandboxMode =
-      isScenarioSession && scenarioId
+      isScenarioSession &&
+      scenarioId &&
+      (!resolvedExecution.harness || harnessWantsScenarioBox)
         ? readComputerSandboxMode(hostRuntimeConfig)
         : null;
-    // A CLOUD harness needs a machine whether or not it asks for `bash`. A
-    // local one runs on the member's own machine and needs no box.
-    const harnessWantsScenarioBox =
-      Boolean(resolvedExecution.harness) && !harnessExecutionTarget;
     let sandboxBinding: TrustedSandboxBinding | undefined;
     let sandboxNotices: SandboxNoticeReason[] | undefined;
     // Set only when the backend PEEKED (returned notices still pending). The
@@ -1953,6 +1971,7 @@ chatV2.post("/", async (c) => {
         throw scenarioHarnessProvisionRefusal(
           resolvedExecution.harness!,
           provisioned?.ok === false ? provisioned : undefined,
+          scenarioParticipant,
         );
       } else {
         // Degrade to a turn with no shell rather than failing the turn: the
@@ -1968,6 +1987,25 @@ chatV2.post("/", async (c) => {
         );
         suppressComputerResource = true;
       }
+    }
+    // A SCENARIO-scoped cloud harness with no box bound to it: the backend sent
+    // no harness marker (a host-backed scenario, or a backend older than the
+    // `computerSandbox.harness` field), so there is nothing to provision, and
+    // the only other machine is a persistent computer, which the backend
+    // refuses for a scenario scope. Keyed on the harness itself, not on
+    // `harnessWantsScenarioBox` (which needs that marker). Refused here, before
+    // the turn starts, with copy that tells an author to republish rather than
+    // a 500 from deep in the harness.
+    if (
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      executionScope?.kind === "swarm" &&
+      !scenarioBox
+    ) {
+      throw scenarioHarnessRepublishRefusal({
+        harness: resolvedExecution.harness!,
+        accessKind: hostRuntimeConfig?.accessKind,
+      });
     }
 
     // ── PLAYGROUND FALLBACK: a disposable computer for THIS conversation ──
@@ -2489,6 +2527,7 @@ chatV2.post("/", async (c) => {
           // The conversation's box: its binding for a harness turn, and its
           // heartbeat to stop when the turn's stream completes.
           ...(scenarioBox ? { scenarioBox } : {}),
+          ...(scenarioParticipant ? { scenarioParticipant: true } : {}),
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness

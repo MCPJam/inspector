@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   planScenarioSandbox,
+  readComputerSandboxHarness,
   readComputerSandboxMode,
   readScenarioEnvironment,
   shouldWarnSecretsUndelivered,
@@ -55,6 +56,39 @@ describe("readComputerSandboxMode", () => {
  * inspector, but a server without the E2B credentials can never exec in the
  * box — the old code stranded a billable sandbox whose every command failed.
  */
+describe("readComputerSandboxHarness", () => {
+  it("is true only when a well-formed marker says the harness runs on the box", () => {
+    expect(
+      readComputerSandboxHarness({
+        computerSandbox: { mode: "ephemeral", harness: true },
+      }),
+    ).toBe(true);
+    expect(
+      readComputerSandboxHarness({
+        computerSandbox: { mode: "unavailable", reason: "x", harness: true },
+      }),
+    ).toBe(true);
+  });
+
+  it("is false for a shell-only marker (an older backend), an absent one, or garbage", () => {
+    expect(
+      readComputerSandboxHarness({ computerSandbox: { mode: "ephemeral" } }),
+    ).toBe(false);
+    expect(readComputerSandboxHarness({ computer: { kind: "personal" } })).toBe(
+      false,
+    );
+    expect(readComputerSandboxHarness(undefined)).toBe(false);
+    expect(
+      readComputerSandboxHarness({
+        computerSandbox: { mode: "ephemeral", harness: "true" },
+      }),
+    ).toBe(false);
+    expect(
+      readComputerSandboxHarness({ computerSandbox: { harness: true } }),
+    ).toBe(false);
+  });
+});
+
 describe("planScenarioSandbox", () => {
   const ephemeral = {
     mode: "ephemeral" as const,

@@ -1,10 +1,10 @@
 import {
-  localDiskResumeState,
+  diskResumeState,
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
 import { localHarnessEvidence } from "./local/evidence.js";
-import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
+import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
 import { invalidateParkedLocalSession } from "./local/approval-park.js";
 import { getManagerConnections } from "../mcp-connections.js";
@@ -120,6 +120,7 @@ import {
   selectDeliverableServerIds,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
+import { participantSafeStudyError } from "../scenario-runtime-config.js";
 import {
   createUiChunkProvenanceSigner,
   historyProvenanceContextFor,
@@ -141,6 +142,7 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-config.js";
 import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
@@ -749,6 +751,7 @@ export async function runHarnessTurn(
     harnessSandboxBinding,
     harnessExecutionTarget,
     executionScope,
+    scenarioParticipant,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
@@ -785,13 +788,13 @@ export async function runHarnessTurn(
   // conversation's disposable box and nowhere else. With no binding the only
   // machine left to resolve is a persistent computer — the member's personal
   // one or the host's — which User Testing never uses, and which the backend
-  // now refuses the broker lease for. Fail here, before anything is reserved
-  // or woken, with the reason, rather than as an opaque 403 mid-turn.
+  // now refuses the broker lease for. The chat routes refuse this before the
+  // turn starts, with copy for the asker; this is the last resort, before
+  // anything is reserved or woken, and typed (a 409) so it never reads as a
+  // 500. It cannot tell a member from a participant, so it says what is safe
+  // for both.
   if (executionScope?.kind === "swarm" && !harnessSandboxBinding && !harnessExecutionTarget) {
-    throw new Error(
-      "runHarnessTurn: a scenario harness runs on the conversation's " +
-        "disposable computer, but none was provisioned for this turn",
-    );
+    throw new ScenarioHarnessRepublishRequiredError();
   }
   // An ephemeral binding and an execution scope MAY travel together: a
   // scenario conversation's harness runs on its disposable box while the scope
@@ -2411,11 +2414,19 @@ export async function runHarnessTurn(
           // Typed: lease installation is OUR platform layer, not the model.
           // The backend's own code rides along when it sent one (a billing
           // refusal, a box that is gone), so it is classified as what it is.
-          throw new HarnessInfraSetupError(broker.error, {
-            source: "platform_setup",
-            code: broker.code ?? "harness_broker_unavailable",
-            httpStatus: broker.status,
-          });
+          // A scenario's non-member participant never sees the owner-facing
+          // detail ("add credits", "Organization → Budget", "share link");
+          // the code and status still classify the failure.
+          throw new HarnessInfraSetupError(
+            scenarioParticipant && executionScope?.kind === "swarm"
+              ? participantSafeStudyError(broker)
+              : broker.error,
+            {
+              source: "platform_setup",
+              code: broker.code ?? "harness_broker_unavailable",
+              httpStatus: broker.status,
+            },
+          );
         }
         // The lease is recorded, which consumed this turn's claim on the box; the
         // lease's own per-box fence covers the rest of the turn. Releasing now
@@ -2471,7 +2482,7 @@ export async function runHarnessTurn(
                 : {}),
             });
       if (localPrepared) {
-        harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
+        harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
         if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
           harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
             logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
@@ -2893,7 +2904,16 @@ export async function runHarnessTurn(
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
       if (isApprovalResume && !resumeFromApproval) {
-        throw new Error("The session for this approval is no longer available; the pending action will not run. Start a new turn.");
+        // A scenario conversation's box stops heartbeating when a turn pauses
+        // for approval, and idles out if the answer comes late; this turn was
+        // handed its replacement. Say what happened and what to do.
+        throw new Error(
+          sourceType === "scenario" &&
+          harnessSandboxBinding &&
+          eligibility.reason === "sandbox-replaced"
+            ? "This conversation's computer was recycled while waiting for your approval. Send your message again."
+            : "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
+        );
       }
       for (const continuation of approvalContinuations) {
         logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalId, approvalDecision: "user" });
@@ -2912,9 +2932,11 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            resumeFrom: localPrepared
-              ? localDiskResumeState(sessionResumeStateFrom(resumable.resumeState))
-              : sessionResumeStateFrom(resumable.resumeState),
+            // Hosted too, not only local: see `diskResumeState`. An approval
+            // continuation (above) still reattaches to its paused bridge.
+            resumeFrom: diskResumeState(
+              sessionResumeStateFrom(resumable.resumeState),
+            ),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {

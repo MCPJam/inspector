@@ -72,7 +72,9 @@ import {
 } from "../../config";
 import {
   fetchScenarioRuntimeConfig,
-  readComputerSandboxMode,
+  readComputerSandboxHarness,
+  SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+  scenarioHarnessRepublishRefusal,
 } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
@@ -168,7 +170,12 @@ import {
   LOCAL_CONSENT_HEADER,
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
-import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
+import {
+  classifyChatRequestActor,
+  isGuestOrAnonymousRequest,
+  isVerifiedMember,
+  type ChatRequestActor,
+} from "../../utils/computers/local-engine-request.js";
 import {
   resolveBrowserRollout,
   guestBrowserProject,
@@ -1001,6 +1008,25 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+    // Who is asking, each answer computed at most once per turn and only when
+    // a decision needs it:
+    //  - `requestIsGuestOrAnonymous`: no bearer, or a guest of the SELECTED
+    //    guest authority. Enough where the next hop verifies the member itself
+    //    (local-harness readiness, a bearer forwarded to Convex).
+    //  - `requestActor`: a POSITIVE classification — a verified AuthKit
+    //    member, or not. Required where nothing downstream checks, i.e. local
+    //    bash. A guest, an expired or forged bearer, and no bearer are never
+    //    members. See `classifyChatRequestActor`.
+    let guestCheckPromise: Promise<boolean> | undefined;
+    const requestIsGuestOrAnonymous = () =>
+      (guestCheckPromise ??= isGuestOrAnonymousRequest(
+        c.req.header("authorization"),
+      ));
+    let requestActorPromise: Promise<ChatRequestActor> | undefined;
+    const requestActor = () =>
+      (requestActorPromise ??= classifyChatRequestActor(
+        c.req.header("authorization"),
+      ));
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
       overrides: {
@@ -1030,7 +1056,7 @@ chatV2.post("/", async (c) => {
         typeof body.projectId === "string" &&
         body.projectId &&
         c.req.header("authorization") &&
-        !isGuestChatRequest(c.req.header("authorization"))
+        !(await requestIsGuestOrAnonymous())
       ) {
         try {
           enabled = await readLocalBrowserSetting(
@@ -1449,7 +1475,7 @@ chatV2.post("/", async (c) => {
       actingUserId: localHarnessActingUserId,
       serverEnabled: localSelected,
       actorEligible:
-        !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
+        !(await requestIsGuestOrAnonymous()) && !isScenarioSession,
     });
     if (harnessTargetParse.kind === "refused") {
       return c.json({ error: harnessTargetParse.reason }, 400);
@@ -1459,7 +1485,9 @@ chatV2.post("/", async (c) => {
         ? harnessTargetParse.target
         : undefined;
 
-    if (localSelected && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
+    // Readiness verifies the member positively (`verifyLocalHarnessMember`);
+    // this keeps guests of the selected authority from reaching it at all.
+    if (localSelected && !(await requestIsGuestOrAnonymous()) && !isScenarioSession) {
       if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: `Sign in and choose a project to run ${localHarnessName} locally` }, 403);
       try {
         harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended", harnessId: localHarnessId, requireToolApproval: resolvedExecution.requireToolApproval })).target;
@@ -1471,16 +1499,16 @@ chatV2.post("/", async (c) => {
     }
 
     // A scenario whose backend runs its harness on the conversation's
-    // DISPOSABLE box (the `computerSandbox` marker) cannot run here: this route
+    // DISPOSABLE box (`computerSandbox.harness`) cannot run here: this route
     // has no box to provision, and the only other machine is the member's
     // personal computer, which that harness must never run on. Refused before
-    // anything starts, naming where it does run. A marker-less config (an older
-    // backend) keeps today's behaviour.
+    // anything starts, naming where it does run. Without that field (an older
+    // backend, or a shell-only marker) the harness keeps today's behaviour.
     if (
       isScenarioSession &&
       resolvedExecution.harness &&
       !harnessExecutionTarget &&
-      readComputerSandboxMode(hostRuntimeConfig) !== null
+      readComputerSandboxHarness(hostRuntimeConfig)
     ) {
       return c.json(
         {
@@ -1488,6 +1516,27 @@ chatV2.post("/", async (c) => {
           code: "SANDBOX_UNAVAILABLE",
           reason: "not_a_data_plane",
         },
+        409,
+      );
+    }
+    // No marker on a SCENARIO-scoped harness: a host-backed scenario, whose
+    // harness has no box to run on anywhere — the only other machine is a
+    // persistent computer, which the backend refuses for a scenario scope.
+    // Refused before the turn starts, as the web route does, rather than as a
+    // 500 from inside the harness.
+    if (
+      isScenarioSession &&
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      (hostRuntimeConfig?.executionScope as ExecutionScope | undefined)
+        ?.kind === "swarm"
+    ) {
+      const refusal = scenarioHarnessRepublishRefusal({
+        harness: resolvedExecution.harness,
+        accessKind: hostRuntimeConfig?.accessKind,
+      });
+      return c.json(
+        { error: refusal.message, code: SCENARIO_HARNESS_REPUBLISH_REQUIRED },
         409,
       );
     }
@@ -1642,16 +1691,23 @@ chatV2.post("/", async (c) => {
       rawEnginePref === "local" || rawEnginePref === "cloud"
         ? rawEnginePref
         : undefined;
-    // A GUEST must never resolve the local engine — bash on the local machine
-    // has no backend reserve gate (unlike the cloud path), so the request-level
-    // guest check IS the boundary (see isGuestChatRequest).
-    const requestIsGuest = isGuestChatRequest(requestAuthHeader);
+    // Only a POSITIVELY verified WorkOS member may resolve the local engine —
+    // bash on the local machine has no backend reserve gate (unlike the cloud
+    // path), so this check IS the boundary. A guest carrying a consent
+    // capability left over from a member session, a backend-issued guest
+    // token, an expired token, and an arbitrary bearer all land here as
+    // non-members (see classifyChatRequestActor).
+    const requestIsGuest = await requestIsGuestOrAnonymous();
+    const actorForEngine =
+      enginePref === "local" && !isScenarioSession
+        ? await requestActor()
+        : null;
     const localPrefEligible =
-      enginePref === "local" && !requestIsGuest && !isScenarioSession;
+      actorForEngine !== null && isVerifiedMember(actorForEngine);
     if (enginePref === "local" && !localPrefEligible) {
       logger.debug(
         "[mcp/chat-v2] computerEngine=local ignored for an ineligible request",
-        { isScenarioSession, isGuest: requestIsGuest },
+        { isScenarioSession, actorKind: actorForEngine?.kind ?? "scenario" },
       );
     }
     const localConsentValid = localPrefEligible
@@ -1684,9 +1740,23 @@ chatV2.post("/", async (c) => {
         ? browserRollout.actor.id
         : undefined;
     const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
+    // Spending a browser-consent capability on THIS machine takes a POSITIVELY
+    // verified member, or a guest the rollout explicitly admitted
+    // (`localBrowserGuestId`). `!requestIsGuest` is neither: an expired, forged
+    // or foreign bearer is "not a guest" too. Same boundary as local bash
+    // above; the actor is resolved once per turn and only when it is needed.
+    const browserActor =
+      localBrowserRequested &&
+      browserRollout.enabled &&
+      !isScenarioSession &&
+      !localBrowserGuestId
+        ? await requestActor()
+        : null;
+    const browserMemberVerified =
+      browserActor !== null && isVerifiedMember(browserActor);
     const browserConsentValid =
       browserRollout.enabled &&
-      (!requestIsGuest || Boolean(localBrowserGuestId)) &&
+      (browserMemberVerified || Boolean(localBrowserGuestId)) &&
       !isScenarioSession &&
       (await verifyLocalBrowserConsent(browserConsentToken));
     let browserEngine = resolveBrowserEngine({

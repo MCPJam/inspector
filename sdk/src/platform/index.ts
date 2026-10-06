@@ -11,6 +11,7 @@ export {
   PLATFORM_V1_ERROR_CODES,
   PlatformApiError,
   describePlatformRefusal,
+  isFeatureUnavailable,
   isPlatformApiError,
   platformRefusalHint,
   type PlatformApiErrorCode,

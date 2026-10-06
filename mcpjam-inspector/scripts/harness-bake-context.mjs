@@ -261,19 +261,20 @@ export async function resolveHarnessBake() {
   const { HARNESS_PINNED_VERSIONS } = await tsModule(
     "../shared/harness-model-support.ts",
   );
-  const pins = readPins();
-  // The template and the inspector's own pnpm fallback must agree with the
-  // toolchain file; a drift here would bake one pnpm and fall back to another.
-  if (
-    pins.node !== bake.HARNESS_TEMPLATE_NODE_VERSION ||
-    pins.pnpm !== bake.HARNESS_TEMPLATE_PNPM_VERSION
-  ) {
+  const toolchain = readPins();
+  // Node must agree with the toolchain file. pnpm deliberately does not: the
+  // hosted pin is memory-bound (see HARNESS_TEMPLATE_PNPM_VERSION), and the
+  // template and the inspector's own pnpm fallback both use it.
+  if (toolchain.node !== bake.HARNESS_TEMPLATE_NODE_VERSION) {
     throw new Error(
-      `harness-bake.ts pins node ${bake.HARNESS_TEMPLATE_NODE_VERSION} / pnpm ` +
-        `${bake.HARNESS_TEMPLATE_PNPM_VERSION}, but local-harness-toolchain.json ` +
-        `pins ${pins.node} / ${pins.pnpm}`,
+      `harness-bake.ts pins node ${bake.HARNESS_TEMPLATE_NODE_VERSION}, but ` +
+        `local-harness-toolchain.json pins ${toolchain.node}`,
     );
   }
+  const pins = {
+    node: bake.HARNESS_TEMPLATE_NODE_VERSION,
+    pnpm: bake.HARNESS_TEMPLATE_PNPM_VERSION,
+  };
 
   const registry = await loadHarnessRegistry();
   const { createClaudeCode } = await import("@ai-sdk/harness-claude-code");
