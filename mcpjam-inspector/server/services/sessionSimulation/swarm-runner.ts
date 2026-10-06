@@ -7,6 +7,7 @@ import {
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
 import { SwarmSetupError } from "./swarm-setup-turn";
+import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
@@ -557,7 +558,9 @@ export function classifyRateLimit(
   hint?: SpendRefusal,
 ): "org_spend_cap" | "provider_rate_limit" | "transient_capacity" {
   const refusal = hint ?? humanizeSwarmAttemptError(message);
-  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason))
+  // The message is the fallback for a hold that lost its structured reason: a
+  // bare sentence would otherwise read as the user's provider throttling.
+  if (isTransientSpendRefusal(refusal.code, refusal.refusalReason, message))
     return "transient_capacity";
   if (!message) return "provider_rate_limit";
   if (isCreditExhaustion(message)) return "org_spend_cap";
@@ -1376,6 +1379,7 @@ async function runJourneyFanOut(
                 ? { reasoningEffort: targetSettings.reasoningEffort }
                 : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
+              maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,

@@ -170,6 +170,9 @@ describe("swarm single-host runner — attempt ordering", () => {
     // engine's Playground default; a persona turn resends every tool result
     // on every step, so this is what bounds turn time and tokens.
     expect(adapter.runtime.maxSteps).toBe(10);
+    // …and its own output ceiling: the backend holds credits against it
+    // before every step, and the model-sized default overstated the hold.
+    expect(adapter.runtime.maxOutputTokens).toBe(16_384);
     expect(adapter.runtime.scenarioId).toBeUndefined();
     // A legacy host target pins no environment, so there is no grant boundary
     // to forward — and inventing one would let a harness turn believe a
@@ -1497,6 +1500,21 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
         refusalReason: "allowance_exhausted",
       }),
     ).toBe("org_spend_cap");
+  });
+
+  // What a stored row or a flattened error keeps: the backend's sentence, with
+  // no JSON, no structured reason and no hint. Blaming the user's provider for
+  // it (or halting the whole run as a spend cap) would both be wrong.
+  it("reads a hold from its sentence alone as temporary capacity", () => {
+    const held =
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish.";
+    expect(classifyRateLimit(held)).toBe("transient_capacity");
+    expect(classifyRateLimit(`${held} (user_rate_limit, HTTP 429)`)).toBe(
+      "transient_capacity",
+    );
+    expect(classifyRateLimit(held, { code: "user_rate_limit" })).toBe(
+      "transient_capacity",
+    );
   });
 
   // `cap`/`quota`/`budget` were word-anchored from the start so "capacity",

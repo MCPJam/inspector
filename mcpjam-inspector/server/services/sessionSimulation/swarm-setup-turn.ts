@@ -10,6 +10,7 @@ import type { JourneyManagerFactory } from "./swarm-runner";
 import { withDeadline } from "../../utils/run-supervisor/deadline";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 import { drainAssistantTurn } from "./runner";
+import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { abortable, type DiscoveryTool } from "./target-discovery";
 import { computeSetupExcludedToolNames } from "./swarm-setup-policy";
 import {
@@ -210,6 +211,7 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
         mcpClientManager: connection.manager,
         tools,
         maxSteps: GROUNDING_LIMITS.setupSteps,
+        maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
         abortSignal: deadline.signal,
       }),
       deadline.signal,
