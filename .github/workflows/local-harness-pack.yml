@@ -4,12 +4,19 @@
 # (`local-harness-pack-v<ver>` for Claude Code, which keeps the names it first
 # shipped under; `local-harness-pack-<harness>-v<ver>` for every other one).
 #
-# The pack cannot ship inside the npm package or the DMG (~515 MB on disk, and
+# The pack cannot ship inside the npm package or the DMG (~500 MB on disk, and
 # coupling Electron notarization to a third-party binary of that size is its own
-# problem), so it is built here, signed, attached to the release, and downloaded
-# on first use. That means this workflow is the ONLY place a digest comes from:
-# `pack-digests.generated.ts` is written from its output, and an Inspector build
-# refuses any pack that does not hash to what it carries.
+# problem), so it is built here, signed, attested, attached to its own release,
+# and downloaded on first use. That means this workflow is the ONLY place a
+# digest comes from: `runtime-compat.generated.json` is written from its output,
+# and an Inspector build refuses any pack that does not hash to what it carries.
+#
+# RESUMABLE. Re-running it for a version that already exists never overwrites
+# anything: a release published from the same inputs is adopted (nothing is
+# built), a complete draft from the same inputs is finished, and anything from
+# other inputs is refused — a new version is the only way past it. The automated
+# pipeline (`local-harness-pack-pipeline.yml`) is what normally calls this;
+# a manual dispatch follows exactly the same rules.
 name: Local harness runtime pack
 
 on:
@@ -28,13 +35,31 @@ on:
         type: string
       enforce_committed_digests:
         description: >-
-          Fail if `pack-digests.generated.ts` does not already carry the
+          Fail if `runtime-compat.generated.json` does not already carry the
           digests this build produced. True for a release, false for the
           dispatch that produces the digests in the first place.
         required: false
         type: boolean
         default: false
+      publish:
+        description: >-
+          `always`: sign and publish what was built. `unless-equivalent`: if
+          every target's tree digest equals the pinned (desired) pack's, the
+          inputs changed but the bytes did not — sign and publish nothing, and
+          report `equivalent` so the caller records an equivalence attestation.
+        required: false
+        type: string
+        default: always
     outputs:
+      state:
+        description: What existed at this version before the run (none, published, draft).
+        value: ${{ jobs.preflight.outputs.state }}
+      equivalent:
+        description: "'true' when the build reproduced the pinned pack and nothing was published."
+        value: ${{ jobs.collect.outputs.equivalent }}
+      fingerprint:
+        description: The harness's pack inputs fingerprint this run built from.
+        value: ${{ jobs.preflight.outputs.fingerprint }}
       digests:
         description: JSON map of platform key to {packVersion, treeDigest}.
         value: ${{ jobs.collect.outputs.digests }}
@@ -69,34 +94,53 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    # `contents: write` only so the release listing includes DRAFTS (GitHub
+    # shows them to push-capable tokens alone): a preflight that cannot see a
+    # complete draft classifies it `none`, rebuilds, and fails at publish.
+    permissions:
+      contents: write
+    outputs:
+      state: ${{ steps.existing.outputs.state }}
+      fingerprint: ${{ steps.existing.outputs.fingerprint }}
     steps:
       - name: Validate publication request
-        uses: actions/github-script@v9
         env:
           PACK_VERSION: ${{ inputs.pack_version }}
           HARNESS: ${{ inputs.harness }}
-        with:
-          script: |
-            if (context.ref !== 'refs/heads/main') throw new Error('Pack publication requires main');
-            if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(process.env.PACK_VERSION)) throw new Error('pack_version must be an independent semver, e.g. 1.0.0');
-            if (!/^[a-z][a-z0-9-]{0,63}$/.test(process.env.HARNESS)) throw new Error('harness must be a harness id, e.g. claude-code');
-            // Mirrors packReleaseTag in scripts/local-harness-pack-harnesses.mjs.
-            const tag = process.env.HARNESS === 'claude-code'
-              ? `local-harness-pack-v${process.env.PACK_VERSION}`
-              : `local-harness-pack-${process.env.HARNESS}-v${process.env.PACK_VERSION}`;
-            const releases = await github.paginate(github.rest.repos.listReleases, { ...context.repo, per_page: 100 });
-            if (releases.some(release => release.tag_name === tag)) throw new Error(`Release ${tag} already exists (including drafts)`);
-            for (const check of [
-              () => github.rest.repos.getReleaseByTag({ ...context.repo, tag }),
-              () => github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` }),
-            ]) {
-              try { await check(); }
-              catch (error) { if (error.status === 404) continue; throw error; }
-              throw new Error('Pack tag or release already exists; publish a new version');
-            }
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "Pack publication requires main" >&2; exit 1; fi
+          echo "$PACK_VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+            || { echo "pack_version must be an independent semver, e.g. 1.0.0" >&2; exit 1; }
+          echo "$HARNESS" | grep -Eq '^[a-z][a-z0-9-]{0,63}$' \
+            || { echo "harness must be a harness id, e.g. claude-code" >&2; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Adopt rather than refuse. What exists at this version is classified by
+      # the inputs fingerprint its signed manifests carry: the same inputs are
+      # this run's own earlier attempt (published: nothing to do; complete
+      # draft: finish it), anything else is never overwritten.
+      - name: What already exists at this version
+        id: existing
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PACK_VERSION: ${{ inputs.pack_version }}
+          HARNESS: ${{ inputs.harness }}
+        run: |
+          set -euo pipefail
+          node mcpjam-inspector/scripts/local-harness-publication.mjs existing \
+            --harness "$HARNESS" --version "$PACK_VERSION" | tee -a "$GITHUB_OUTPUT"
+          state="$(grep '^state=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
+          if [ "$state" = "conflict" ]; then
+            echo "A release or draft for $HARNESS $PACK_VERSION exists from different inputs (or is incomplete); it is never overwritten. Publish a new version." >&2
+            exit 1
+          fi
 
   build:
     needs: preflight
+    # Nothing to build when this exact version already exists from these inputs.
+    if: needs.preflight.outputs.state == 'none'
     name: ${{ inputs.harness }} ${{ matrix.platform_key }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -155,8 +199,12 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
 
-      - name: Check reviewed pack inputs
-        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
+      # The fingerprint stamped into the manifest is computed from this
+      # checkout; it only describes the bytes if the install is the locked one.
+      # (Whether the fingerprint was REVIEWED is the pin PR's question: a pack
+      # is selectable only once the PR recording its digests merges.)
+      - name: The installed tree is the locked one
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --drift
 
       # The pack ships an official nodejs.org build, not the runner's Node:
       # the runner's is not signed the way a binary we ask users to execute
@@ -272,6 +320,11 @@ jobs:
           jq -nc --arg k "$PLATFORM_KEY" --arg d "$digest" '{($k): $d}' \
             > "$RUNNER_TEMP/pack-out/digest.json"
 
+      # The installer is server code, and resolving a runtime writes the
+      # Inspector layer from a generated module. Nothing of it reaches the pack.
+      - name: Generate the Inspector layer module
+        run: node mcpjam-inspector/scripts/bundle-local-harness-layer.mjs
+
       # Proves the pack the installer would download actually verifies, before
       # it is published. A pack that fails here never reaches a release.
       - name: Verify the pack installs from its own archive
@@ -303,6 +356,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     outputs:
+      equivalent: ${{ steps.equivalent.outputs.equivalent }}
       digests: ${{ steps.merge.outputs.digests }}
       # The FLAT map too. `docs/local-harness.md` tells an operator to paste
       # this into `write-pack-digests.mjs`, and it was a step output only — so
@@ -313,7 +367,11 @@ jobs:
       - name: Download every pack
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: local-harness-pack-*
+          # Scoped to this harness and version, here and in `sign`/`publish`:
+          # artifact names are run-wide, and `local-harness-pack-auto.yml`
+          # builds every harness in ONE run, so a bare `local-harness-pack-*`
+          # picks up the other harness's packs too.
+          pattern: local-harness-pack-${{ inputs.harness }}-*-${{ inputs.pack_version }}
           path: packs
           merge-multiple: true
 
@@ -347,6 +405,30 @@ jobs:
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
 
+      # A rebuild that reproduces the pinned pack on EVERY target means the
+      # inputs changed (a workflow edit, a script refactor) but the bytes did
+      # not. Publishing would make every user download an identical tree under
+      # a new version, so the caller records an equivalence attestation instead.
+      - name: Did this build reproduce the pinned pack?
+        id: equivalent
+        working-directory: mcpjam-inspector
+        env:
+          HARNESS: ${{ inputs.harness }}
+          DIGESTS: ${{ steps.merge.outputs.flat }}
+          MODE: ${{ inputs.publish }}
+        run: |
+          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
+          import { readRuntimeCompat } from "./scripts/local-harness-pack-tables.mjs";
+          import { decideAfterBuild } from "./scripts/local-harness-publication.mjs";
+          const built = JSON.parse(process.env.DIGESTS);
+          const targets = readRuntimeCompat().harnesses[process.env.HARNESS]?.targets ?? {};
+          const pinnedDigests = Object.fromEntries(Object.entries(targets).map(([t, s]) => [t, s.desired.treeDigest]));
+          const version = Object.values(targets)[0]?.desired.packVersion;
+          const decision = decideAfterBuild({ built, pinned: version ? { version, digests: pinnedDigests } : null });
+          const equivalent = process.env.MODE === "unless-equivalent" && decision.action === "equivalent";
+          console.log(`equivalent=${equivalent}`);
+          JS
+
       # The gate that makes the checked-in digest table load-bearing.
       #
       # Deliberately a CHECK and not a write. `pack-digests.generated.ts` is
@@ -368,15 +450,24 @@ jobs:
           node scripts/write-pack-digests.mjs \
             --check --harness "$HARNESS" --version "$PACK_VERSION" --digests "$DIGESTS"
 
+  # The signing key lives in the `local-harness-pack-release` environment,
+  # restricted to main. Promotion is controlled by the attested provenance
+  # below and by the pin PR that has to merge before any Inspector selects the
+  # pack — not by a person approving this job (see docs/local-harness.md).
   sign:
     needs: [build, collect]
+    if: needs.collect.outputs.equivalent != 'true'
     environment: local-harness-pack-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          pattern: local-harness-pack-*
+          pattern: local-harness-pack-${{ inputs.harness }}-*-${{ inputs.pack_version }}
           path: packs
           merge-multiple: true
       # No vendor code or install scripts execute in the job holding this key.
@@ -403,22 +494,49 @@ jobs:
             writeFileSync('packs/' + name + '.sig', signature.toString('base64') + '\n');
           }
           JS
+      # Build provenance for every archive and signed manifest, so the release
+      # gate can prove (`gh attestation verify`) that a pinned asset was built
+      # by THIS workflow on main, not merely signed by a key.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: |
+            packs/local-harness-pack-*.tar.gz
+            packs/local-harness-pack-*.manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: signed-local-harness-pack
+          name: signed-local-harness-pack-${{ inputs.harness }}-${{ inputs.pack_version }}
           path: packs/local-harness-pack-*
           if-no-files-found: error
 
+  # Finishing a complete draft this harness's earlier run left behind: its
+  # assets are already uploaded, signed and from these inputs (preflight
+  # checked), so the only missing step is the one that failed.
+  finish-draft:
+    needs: preflight
+    if: needs.preflight.outputs.state == 'draft' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Publish the draft
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PACK_VERSION: ${{ inputs.pack_version }}
+          HARNESS: ${{ inputs.harness }}
+        run: node mcpjam-inspector/scripts/local-harness-publication.mjs finish-draft --harness "$HARNESS" --version "$PACK_VERSION"
+
   publish:
     needs: [sign, collect]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.collect.outputs.equivalent != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: signed-local-harness-pack
+          name: signed-local-harness-pack-${{ inputs.harness }}-${{ inputs.pack_version }}
           path: packs
           merge-multiple: true
       - name: Publish a new immutable pack version
@@ -436,13 +554,17 @@ jobs:
           else
             tag="local-harness-pack-$HARNESS-v$PACK_VERSION"
           fi
-          # This job has contents:write and can see unpublished drafts.
+          # This job has contents:write and can see unpublished drafts. Preflight
+          # adopted or finished anything from these inputs, so a release here
+          # now is a race with another run, and is never replaced.
           releases="$(gh api "repos/$GH_REPO/releases" --paginate --jq '.[].tag_name')"
           if printf '%s\n' "$releases" | grep -Fx "$tag"; then
             echo "A release or draft already exists for $tag; choose a new version." >&2
             exit 1
           fi
           # No upload --clobber or release-edit retry: an existing version is never replaced.
+          # A failure between create and edit leaves a complete DRAFT, which the
+          # next run's preflight finds and finishes.
           gh release create "$tag" packs/local-harness-pack-* \
             --target "$PACK_SHA" --title "Local harness pack $HARNESS $PACK_VERSION" \
             --notes "Signed local $HARNESS runtime for Node and Electron." --draft --latest=false

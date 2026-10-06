@@ -1,11 +1,12 @@
 # Use specific Node.js version to match local/CI runtimes and dependency engines.
 # 24.21 runs ahead of CI's 24.14 deliberately: its bundled npm carries the
 # node-tar fix for CVE-2026-59873, and the Container Scan workflow's gate
-# verifies the Debian layer on every change. Build-time apt/npm upgrades are NOT
-# the way to fix base-image CVEs here — Railway caches that layer while CI
-# rebuilds cold, so the scanned image silently drifts from the deployed one.
-# When the weekly Container Scan fails on a fixable CRITICAL from the base,
-# bump this pin.
+# verifies the Debian layer on every change. UNPINNED build-time apt/npm
+# upgrades are not the way to fix base-image CVEs here — Railway caches that
+# layer while CI rebuilds cold, so the scanned image silently drifts from the
+# deployed one. A pinned version (the perl-base step below) is deterministic
+# either way. When the weekly Container Scan fails on a fixable CRITICAL from
+# the base, bump this pin.
 ARG NODE_VERSION=24.21.0
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
@@ -13,6 +14,15 @@ ARG NODE_VERSION=24.21.0
 # monitors + browser-render evals) needs a launchable Chromium in this image.
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 WORKDIR /usr/src/app
+
+# The newest node:24 bookworm-slim build ships perl-base 5.36.0-7+deb12u3,
+# which carries CRITICAL CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376.
+# bookworm-security has the fix. Pinned, as the header above explains; the
+# install fails loudly once a later security update replaces this version in
+# the archive. Delete this step once the NODE_VERSION image ships deb12u4.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+    && rm -rf /var/lib/apt/lists/*
 
 ################################################################################
 # Install workspace dependencies with a single root lockfile.
@@ -42,6 +52,11 @@ COPY discord-app/package.json ./discord-app/package.json
 COPY vitest/package.json ./vitest/package.json
 
 RUN npm ci --legacy-peer-deps
+
+################################################################################
+# Keep test/build tools out of the shipped image while retaining workspace links.
+FROM deps AS production-deps
+RUN npm prune --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund
 
 ################################################################################
 # Build the inspector and its workspace dependencies.
@@ -112,11 +127,15 @@ COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 # transport: its bridge and the MCP server Codex spawns are uploaded into a
 # sandbox and executed there, so nothing in the import graph reaches them and
 # `codex-appserver-bootstrap.ts` imports the generated const at top level.
+# `bundle:local-harness-layer` likewise: the local runtime's Inspector layer
+# (launcher + bridges) is a generated const `local/inspector-layer.ts` imports,
+# even though a hosted server never runs a local harness.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run bundle:plugin-shim -w @mcpjam/inspector && \
-    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector
+    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector && \
+    npm run bundle:local-harness-layer -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
@@ -173,11 +192,11 @@ COPY sdk/package.json /usr/src/app/sdk/package.json
 COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
 
-COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
+COPY --from=production-deps /usr/src/app/node_modules /usr/src/app/node_modules
 # Workspace-local deps that can't hoist to root (e.g. @workos-inc/node@^10
 # while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
 # mcpjam-inspector/node_modules and must be carried into the runtime image.
-COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
+COPY --from=production-deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 
 # Bake in Chromium + its system libraries — the same command CI runs
 # (test.yml) — so widget probes render at runtime instead of recording
