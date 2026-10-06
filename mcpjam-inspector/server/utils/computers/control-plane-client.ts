@@ -343,20 +343,29 @@ export interface EvalSandbox {
  * Every other failure (409, auth, a malformed body) is returned untouched on
  * the first attempt: only capacity is worth waiting on.
  */
-export async function provisionEvalSandbox(args: {
-  bearer: string;
-  runId: string;
-  iterationId?: string;
-  runtimeKind?: RuntimeKind;
-  signal?: AbortSignal;
-  /**
-   * Shorter aggregate wait than the policy's default. The caller knows what is
-   * LEFT of the iteration's clock; this function only knows the policy, and a
-   * capacity wait that outlives the iteration it is blocking is pure waste.
-   */
-  timeoutMs?: number;
-  onWait?: (info: { delayMs: number; resource?: string }) => void;
-}): Promise<ControlPlaneResult<EvalSandbox>> {
+export async function provisionEvalSandbox(
+  args: (
+    | { runId: string; iterationId?: string }
+    /**
+     * A SINGLE-CASE run has no suite run: the body names the iteration alone,
+     * and the control plane authorizes the iteration itself. Terminal only —
+     * a quick run boots a box for a harness, never a desktop.
+     */
+    | { runId?: undefined; iterationId: string; runtimeKind?: "terminal" }
+  ) & {
+    bearer: string;
+    runtimeKind?: RuntimeKind;
+    signal?: AbortSignal;
+    /**
+     * Shorter aggregate wait than the policy's default. The caller knows what
+     * is LEFT of the iteration's clock; this function only knows the policy,
+     * and a capacity wait that outlives the iteration it is blocking is pure
+     * waste.
+     */
+    timeoutMs?: number;
+    onWait?: (info: { delayMs: number; resource?: string }) => void;
+  },
+): Promise<ControlPlaneResult<EvalSandbox>> {
   type Result = ControlPlaneResult<EvalSandbox>;
   const atCapacity = (result: Result): boolean =>
     !result.ok && result.status === 503 && result.code === "at_capacity";
@@ -370,7 +379,9 @@ export async function provisionEvalSandbox(args: {
         "/evals/sandbox/provision",
         bearerHeader(args.bearer),
         {
-          runId: args.runId,
+          // Byte-identical to every suite-run request: `runId` first, and
+          // absent only for a single-case iteration.
+          ...(args.runId ? { runId: args.runId } : {}),
           ...(args.iterationId ? { iterationId: args.iterationId } : {}),
           ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
         },
