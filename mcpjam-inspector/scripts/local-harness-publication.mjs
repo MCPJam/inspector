@@ -1,7 +1,8 @@
 // Automated, resumable publication of a local-harness runtime pack.
 //
-// Driven by `.github/workflows/local-harness-pack-pipeline.yml` (one harness
-// per run, never two at once for the same harness). Every step is safe to
+// Driven by `.github/workflows/local-harness-pack-pipeline.yml`, which
+// `prepare-release.yml` calls once per harness before it opens the version PR
+// (one release preparation at a time). Every step is safe to
 // re-run, because every decision is re-derived from what already exists —
 // published releases, drafts, the committed pin, committed equivalence
 // records — keyed by (harness, inputs fingerprint):
@@ -31,12 +32,13 @@
 //   node scripts/local-harness-publication.mjs equivalence --harness codex --digests '{…}' --out <file>
 //   node scripts/local-harness-publication.mjs evidence --harness codex --digests '{…}' --dir <dir>
 //   node scripts/local-harness-publication.mjs attested --harness codex --version 1.0.1
-//   node scripts/local-harness-publication.mjs pr-text --harness codex --kind pin --version 1.0.2 …
+//   node scripts/local-harness-publication.mjs intent --harness codex --kind pin --version 1.0.2 … --out <file>
+//   node scripts/local-harness-publication.mjs apply-pins --dir <downloaded intents> --summary <file.md>
 //   node scripts/local-harness-publication.mjs report --harness codex   (NEEDS = toJSON(needs))
 //
 // GitHub access is `GITHUB_TOKEN` (or `GH_TOKEN`) against `GITHUB_REPOSITORY`.
 import { execFile } from "node:child_process";
-import { createPublicKey, verify as edVerify } from "node:crypto";
+import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,7 +46,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { computeHarnessPackInputs } from "./check-local-harness-inputs.mjs";
-import { packAssetStem, packReleaseTag } from "./local-harness-pack-harnesses.mjs";
+import { listPackHarnessIds, packAssetStem, packReleaseTag } from "./local-harness-pack-harnesses.mjs";
 import { PACK_TABLE_TARGETS, readAdvertisedTargets, readRuntimeCompat } from "./local-harness-pack-tables.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -210,14 +212,14 @@ export function missingEvidence({ harnessId, targets, digests, records, commit }
  * The stages of `local-harness-pack-pipeline.yml`, in order, and what each one
  * failing means. Every resume is the same command, because every run
  * re-derives its plan from what exists: a published release is adopted, a
- * complete draft is finished, a pin PR is force-updated, never duplicated.
+ * complete draft is finished, and the pin is handed to the release again.
  */
 export const PIPELINE_STAGES = [
   { job: "plan", stage: "plan", meaning: "could not decide what to publish (fingerprint or release listing failed)" },
   { job: "pack", stage: "build-and-publish", meaning: "building, signing, attesting or publishing the pack failed; nothing half-published is ever overwritten, and a complete draft is finished by the next run" },
-  { job: "equivalence", stage: "equivalence", meaning: "recording the equivalence attestation or its PR failed" },
+  { job: "equivalence", stage: "equivalence", meaning: "recording or attesting the equivalence record failed" },
   { job: "candidate-conformance", stage: "conformance", meaning: "this commit's Inspector layer failed conformance on the new pack; the pack is published but NOT pinned, and no Inspector selects it" },
-  { job: "pin", stage: "pin", meaning: "writing or opening the pin PR failed; the pack is published but not pinned" },
+  { job: "pin", stage: "pin", meaning: "handing the pin to the release failed; the pack is published but not pinned" },
 ];
 
 /**
@@ -236,8 +238,13 @@ export function pipelineOutcome(needs) {
 
 export const failureIssueTitle = (harnessId) => `Local harness pack pipeline failing: ${harnessId}`;
 
-/** The command that resumes a harness's pipeline from wherever it stopped. */
-export const resumeCommand = (harnessId) => `gh workflow run local-harness-pack-auto.yml --ref main -f harness=${harnessId}`;
+/**
+ * The command that resumes a harness's pipeline from wherever it stopped:
+ * preparing the release again (Soundcheck's "Start release" dispatches the
+ * same workflow). Every harness's pipeline re-plans, and finished ones are
+ * up to date in a minute.
+ */
+export const resumeCommand = (_harnessId) => "gh workflow run prepare-release.yml --ref main";
 
 /** The failure issue's body (or the comment added to an open one). */
 export function failureIssueBody({ harnessId, stage, meaning, runUrl, commit }) {
@@ -248,49 +255,98 @@ export function failureIssueBody({ harnessId, stage, meaning, runUrl, commit }) 
     `- Run: ${runUrl}`,
     `- Resume (safe to repeat; it adopts or finishes whatever already exists): \`${resumeCommand(harnessId)}\``,
     "",
-    "Users are unaffected until a pin PR merges: shipped Inspectors keep selecting the pinned pack.",
+    "Users are unaffected: shipped Inspectors keep selecting the pinned pack, and no version PR opens until every harness's pack is pinned.",
   ].join("\n");
 }
 
+// ── Handing pins to the release ─────────────────────────────────────────────
+
 /**
- * The bot PR's title and body. One branch per harness
- * (`bot/local-harness-pack-<harness>`), force-pushed and edited, never a
- * second PR: a newer run's pin replaces an older one.
+ * What one harness's pipeline hands the release that called it. The pipeline
+ * itself writes nothing to `main`: `prepare-release.yml` applies every
+ * harness's intent to the version branch, so the version PR carries the new
+ * versions AND the packs Inspectors will select, under one review.
+ *
+ *   pin          a published pack that passed conformance: write its digests.
+ *   equivalence  a rebuild reproduced the pinned pack: commit the attested
+ *                record (byte for byte; `sha256` is checked) — no download.
+ *   up-to-date   nothing to change; listed so the PR says so.
  */
-export function pinPullRequest(input) {
-  const { harnessId, kind, version, previous, permitPrevious, permitReason, fingerprint, runUrl, commit } = input;
-  const branch = `bot/local-harness-pack-${harnessId}`;
-  if (kind === "equivalence") {
-    return {
-      branch,
-      title: `chore(local-harness): record ${harnessId} pack equivalence (inputs ${fingerprint.slice(7, 19)})`,
-      body: [
-        `A clean rebuild of the **${harnessId}** pack from \`${commit?.slice(0, 12) ?? "main"}\` reproduced the pinned ${previous} pack byte for byte on every target, so nothing was published.`,
-        "",
-        `This records that (an attested equivalence record) and moves ${harnessId}'s reviewed inputs fingerprint to \`${fingerprint}\`, which is what the release gate checks.`,
-        "",
-        `- Pipeline run: ${runUrl}`,
-        "- Merging changes no bytes any user downloads.",
-      ].join("\n"),
-    };
-  }
-  return {
-    branch,
-    title: `chore(local-harness): pin ${harnessId} pack ${version}`,
-    body: [
-      `Pins the **${harnessId}** runtime pack **${version}** (built from inputs \`${fingerprint}\` at \`${commit?.slice(0, 12) ?? "main"}\`).`,
-      "",
-      `- Built, signed and attested by \`local-harness-pack.yml\`; this commit's Inspector layer passed conformance on it on every advertised target.`,
-      previous
-        ? permitPrevious
-          ? `- **${previous}** stays selectable as the one permitted previous pack: the layer passed conformance on it too, and its provenance verifies.`
-          : `- **${previous}** is NOT kept as a permitted previous pack: ${permitReason}.`
-        : "- There was no previous pack.",
-      `- Pipeline run: ${runUrl}`,
-      "",
-      "Merging is what makes Inspectors select this pack. A build that cannot verify it keeps using the one it has.",
-    ].join("\n"),
+export const PIN_INTENT_SCHEMA = "mcpjam.local-harness-pin-intent/1";
+const INTENT_KINDS = new Set(["pin", "equivalence", "up-to-date"]);
+const EQUIVALENCE_RECORD_PREFIX = "mcpjam-inspector/scripts/local-harness-pack-equivalence/";
+
+/** Validate one intent; returns it, or throws naming what is wrong. */
+export function checkPinIntent(intent) {
+  const fail = (why) => {
+    throw new Error(`pin intent for ${intent?.harness ?? "?"}: ${why}`);
   };
+  if (intent?.schema !== PIN_INTENT_SCHEMA) fail(`schema is not ${PIN_INTENT_SCHEMA}`);
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(String(intent.harness ?? ""))) fail("no harness id");
+  if (!INTENT_KINDS.has(intent.kind)) fail(`unknown kind ${intent.kind}`);
+  if (intent.kind === "pin") {
+    if (!VERSION.test(String(intent.version ?? ""))) fail("a pin needs a pack version");
+    const digests = intent.digests;
+    if (digests === null || typeof digests !== "object" || Object.keys(digests).length === 0) fail("a pin needs digests");
+    for (const [target, digest] of Object.entries(digests)) {
+      if (!/^sha256:[0-9a-f]{64}$/.test(String(digest))) fail(`${target} digest is not sha256:<hex>`);
+    }
+    // The same rules `write-pack-digests.mjs` applies, checked here so a bad
+    // intent fails in the pipeline that wrote it, not in the release.
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(String(intent.conformance ?? ""))) fail("a pin needs its conformance stamp");
+    if (!/^https:\/\/github\.com\/[^\s]+$/.test(String(intent.run ?? ""))) fail("a pin needs its https://github.com/... run URL");
+  }
+  if (intent.kind === "equivalence") {
+    const record = String(intent.record ?? "");
+    if (!record.startsWith(EQUIVALENCE_RECORD_PREFIX) || record.includes("..") || record.slice(EQUIVALENCE_RECORD_PREFIX.length).includes("/")) {
+      fail(`record ${record} is not a file in ${EQUIVALENCE_RECORD_PREFIX}`);
+    }
+    if (!/^[0-9a-f]{64}$/.test(String(intent.sha256 ?? ""))) fail("an equivalence needs the record's sha256");
+  }
+  return intent;
+}
+
+/** Exactly one valid intent per harness with a pack recipe, or throw. */
+export function checkPinIntents(intents, harnessIds) {
+  const seen = new Map();
+  for (const intent of intents) {
+    checkPinIntent(intent);
+    if (seen.has(intent.harness)) throw new Error(`two pin intents for ${intent.harness}`);
+    seen.set(intent.harness, intent);
+  }
+  const missing = harnessIds.filter((id) => !seen.has(id));
+  if (missing.length > 0) {
+    throw new Error(`no pin intent for ${missing.join(", ")}: its pipeline did not finish, so this release cannot say what it pins`);
+  }
+  const unknown = [...seen.keys()].filter((id) => !harnessIds.includes(id));
+  if (unknown.length > 0) throw new Error(`pin intents for unknown harnesses: ${unknown.join(", ")}`);
+  return harnessIds.map((id) => seen.get(id));
+}
+
+/** The version PR's section on runtime packs, one line per harness. */
+export function pinSummary(intents) {
+  const lines = ["### Local runtime packs", ""];
+  for (const intent of intents) {
+    const run = intent.run ? ` ([run](${intent.run}))` : "";
+    if (intent.kind === "pin") {
+      const previous = intent.previous
+        ? intent.permitPrevious
+          ? ` ${intent.previous} stays selectable as the permitted previous pack.`
+          : ` ${intent.previous} is NOT kept as a permitted previous pack: ${intent.permitReason || "conformance or provenance did not hold"}.`
+        : "";
+      lines.push(
+        `- **${intent.harness}**: pins new pack **${intent.version}** (inputs \`${String(intent.fingerprint ?? "").slice(0, 19)}…\`), built, signed, attested and conformance-tested on every advertised target.${previous}${run}`,
+      );
+    } else if (intent.kind === "equivalence") {
+      lines.push(
+        `- **${intent.harness}**: no new pack. A clean rebuild reproduced ${intent.previous || "the pinned pack"} byte for byte, so this records an attested equivalence and users download nothing.${run}`,
+      );
+    } else {
+      lines.push(`- **${intent.harness}**: unchanged${intent.version ? ` (${intent.version})` : ""}.`);
+    }
+  }
+  lines.push("", "Merging this PR is what makes Inspectors select a new pack.");
+  return `${lines.join("\n")}\n`;
 }
 
 // ── GitHub IO ────────────────────────────────────────────────────────────────
@@ -590,19 +646,95 @@ async function attestedCommand(harnessId, version) {
   output({ attested: "true", reason: "" });
 }
 
-function prTextCommand(harnessId, args) {
-  const text = pinPullRequest({
-    harnessId,
-    kind: args.kind === "equivalence" ? "equivalence" : "pin",
-    version: typeof args.version === "string" ? args.version : "",
-    previous: typeof args.previous === "string" && args.previous !== "" ? args.previous : null,
-    permitPrevious: args["permit-previous"] === "true",
-    permitReason: typeof args["permit-reason"] === "string" ? args["permit-reason"] : "",
-    fingerprint: String(args.fingerprint ?? ""),
-    runUrl: String(args.run ?? ""),
-    commit: process.env.GITHUB_SHA ?? null,
-  });
-  process.stdout.write(`${JSON.stringify(text)}\n`);
+/** Write one harness's intent for the release (see `checkPinIntent`). */
+function intentCommand(harnessId, args) {
+  const text = (key) => (typeof args[key] === "string" ? args[key] : "");
+  const intent = { schema: PIN_INTENT_SCHEMA, harness: harnessId, kind: text("kind"), run: text("run"), previous: text("previous") || null };
+  if (intent.kind === "pin") {
+    Object.assign(intent, {
+      version: text("version"),
+      digests: JSON.parse(text("digests") || "null"),
+      fingerprint: text("fingerprint"),
+      conformance: text("conformance"),
+      permitPrevious: text("permit-previous") === "true",
+      permitReason: text("permit-reason"),
+    });
+  } else if (intent.kind === "equivalence") {
+    const record = text("record");
+    Object.assign(intent, {
+      fingerprint: text("fingerprint"),
+      record,
+      sha256: createHash("sha256").update(readFileSync(join(inspectorRoot, "..", record))).digest("hex"),
+    });
+  } else {
+    intent.version = text("version");
+  }
+  checkPinIntent(intent);
+  const out = text("out");
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(intent, null, 2)}\n`);
+  process.stdout.write(`${intent.kind} intent for ${harnessId} written to ${out}\n`);
+}
+
+/**
+ * Apply every harness's intent to this checkout (the version branch), then
+ * re-record the reviewed fingerprints, and write the PR section. `--dir` is
+ * where `download-artifact` put the `local-harness-pin-*` artifacts, one
+ * directory each.
+ */
+async function applyPinsCommand(args) {
+  const dir = String(args.dir ?? "");
+  const summary = String(args.summary ?? "");
+  if (dir === "" || summary === "") throw new Error("apply-pins needs --dir and --summary");
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const root = join(dir, entry.name);
+    found.push({ root, intent: JSON.parse(readFileSync(join(root, "intent.json"), "utf8")) });
+  }
+  const intents = checkPinIntents(found.map(({ intent }) => intent), listPackHarnessIds());
+  const repoRoot = join(inspectorRoot, "..");
+  let changed = false;
+  for (const intent of intents) {
+    if (intent.kind === "pin") {
+      await execFileAsync(
+        process.execPath,
+        [
+          join(scriptDir, "write-pack-digests.mjs"),
+          "--harness", intent.harness,
+          "--version", intent.version,
+          "--digests", JSON.stringify(intent.digests),
+          "--conformance", intent.conformance,
+          "--evidence", intent.run,
+          ...(intent.permitPrevious ? ["--permit-previous"] : []),
+        ],
+        { cwd: inspectorRoot },
+      );
+      changed = true;
+    } else if (intent.kind === "equivalence") {
+      const { root } = found.find((candidate) => candidate.intent.harness === intent.harness);
+      const bytes = readFileSync(join(root, "files", intent.record));
+      if (createHash("sha256").update(bytes).digest("hex") !== intent.sha256) {
+        throw new Error(`${intent.record} is not the attested record (sha256 mismatch)`);
+      }
+      // Records are immutable per (harness, fingerprint): the same bytes may
+      // already be committed (a resumed release), other bytes may not.
+      const target = join(repoRoot, intent.record);
+      if (existsSync(target) && !readFileSync(target).equals(bytes)) {
+        throw new Error(`${intent.record} already exists with different bytes`);
+      }
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, bytes);
+      changed = true;
+    }
+  }
+  // Clean CI install (the caller ran `npm ci`), so `--write` records exactly
+  // what a fresh checkout computes — the fingerprint the packs were built from.
+  if (changed) {
+    await execFileAsync(process.execPath, [join(scriptDir, "check-local-harness-inputs.mjs"), "--write"], { cwd: inspectorRoot });
+  }
+  writeFileSync(summary, pinSummary(intents));
+  process.stdout.write(pinSummary(intents));
 }
 
 /**
@@ -650,6 +782,7 @@ async function reportCommand(harnessId) {
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const args = parseArgs(rest);
+  if (command === "apply-pins") return applyPinsCommand(args);
   const harnessId = String(args.harness ?? "");
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(harnessId)) throw new Error("--harness is required");
   const version = typeof args.version === "string" ? args.version : "";
@@ -669,8 +802,8 @@ async function main() {
       return evidenceCommand(harnessId, args);
     case "attested":
       return attestedCommand(harnessId, version);
-    case "pr-text":
-      return prTextCommand(harnessId, args);
+    case "intent":
+      return intentCommand(harnessId, args);
     case "report":
       return reportCommand(harnessId);
     default:

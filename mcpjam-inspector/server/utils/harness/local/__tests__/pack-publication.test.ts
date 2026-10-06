@@ -23,7 +23,10 @@ import {
   failureIssueTitle,
   missingEvidence,
   nextPatchVersion,
-  pinPullRequest,
+  checkPinIntent,
+  checkPinIntents,
+  PIN_INTENT_SCHEMA,
+  pinSummary,
   pipelineOutcome,
   readEquivalenceRecords,
   resumeCommand,
@@ -323,7 +326,7 @@ describe("the pipeline's paper trail", () => {
     const body = failureIssueBody({
       harnessId: "codex",
       stage: "pin",
-      meaning: "writing or opening the pin PR failed",
+      meaning: "handing the pin to the release failed",
       runUrl: "https://github.com/MCPJam/inspector/actions/runs/1",
       commit: "0123456789abcdef",
     });
@@ -331,21 +334,65 @@ describe("the pipeline's paper trail", () => {
     expect(body).toContain("0123456789ab");
     expect(body).toContain("https://github.com/MCPJam/inspector/actions/runs/1");
     expect(body).toContain(resumeCommand("codex"));
-    expect(resumeCommand("codex")).toBe("gh workflow run local-harness-pack-auto.yml --ref main -f harness=codex");
+    expect(resumeCommand("codex")).toBe("gh workflow run prepare-release.yml --ref main");
     expect(failureIssueTitle("codex")).not.toBe(failureIssueTitle("claude-code"));
   });
 
-  it("opens one PR per harness, and says whether the previous pack stays selectable", () => {
-    const common = { harnessId: "codex", version: "1.0.2", previous: "1.0.1", fingerprint: fp(2), runUrl: "https://x", commit: "c" };
-    const permitted = pinPullRequest({ ...common, kind: "pin", permitPrevious: true });
-    expect(permitted.branch).toBe("bot/local-harness-pack-codex");
-    expect(permitted.title).toBe("chore(local-harness): pin codex pack 1.0.2");
-    expect(permitted.body).toMatch(/1\.0\.1\*\* stays selectable/);
-    const refused = pinPullRequest({ ...common, kind: "pin", permitPrevious: false, permitReason: "it has no build provenance" });
-    expect(refused.body).toMatch(/NOT kept as a permitted previous pack: it has no build provenance/);
-    const equivalence = pinPullRequest({ ...common, kind: "equivalence", permitPrevious: false });
-    expect(equivalence.branch).toBe(permitted.branch);
-    expect(equivalence.body).toMatch(/changes no bytes any user downloads/);
+  it("hands the release one intent per harness, and says whether the previous pack stays selectable", () => {
+    const pin = {
+      schema: PIN_INTENT_SCHEMA,
+      harness: "codex",
+      kind: "pin" as const,
+      version: "1.0.2",
+      digests: digests(2),
+      fingerprint: fp(2),
+      conformance: "published-codex-1.0.2-abcdef012345",
+      previous: "1.0.1",
+      permitPrevious: true,
+      run: "https://github.com/MCPJam/inspector/actions/runs/1",
+    };
+    const upToDate = { schema: PIN_INTENT_SCHEMA, harness: "claude-code", kind: "up-to-date" as const, version: "1.0.1" };
+    const intents = checkPinIntents([pin, upToDate], ["claude-code", "codex"]);
+    // In recipe order, whatever order the artifacts arrived in.
+    expect(intents.map((intent) => intent.harness)).toEqual(["claude-code", "codex"]);
+    const summary = pinSummary(intents);
+    expect(summary).toMatch(/\*\*codex\*\*: pins new pack \*\*1\.0\.2\*\*/);
+    expect(summary).toMatch(/1\.0\.1 stays selectable as the permitted previous pack/);
+    expect(summary).toMatch(/\*\*claude-code\*\*: unchanged \(1\.0\.1\)/);
+    const refused = pinSummary([{ ...pin, permitPrevious: false, permitReason: "it has no build provenance" }]);
+    expect(refused).toMatch(/NOT kept as a permitted previous pack: it has no build provenance/);
+    const equivalence = {
+      schema: PIN_INTENT_SCHEMA,
+      harness: "codex",
+      kind: "equivalence" as const,
+      previous: "1.0.1",
+      record: "mcpjam-inspector/scripts/local-harness-pack-equivalence/codex-abc.json",
+      sha256: "a".repeat(64),
+    };
+    expect(pinSummary([checkPinIntent(equivalence)])).toMatch(/users download nothing/);
+  });
+
+  it("refuses a release that cannot say what every harness pins", () => {
+    const upToDate = (harness: string) => ({ schema: PIN_INTENT_SCHEMA, harness, kind: "up-to-date" });
+    // A harness whose pipeline did not finish handed nothing over.
+    expect(() => checkPinIntents([upToDate("codex")], ["claude-code", "codex"])).toThrow(/no pin intent for claude-code/);
+    expect(() => checkPinIntents([upToDate("codex"), upToDate("codex")], ["codex"])).toThrow(/two pin intents/);
+    expect(() => checkPinIntents([upToDate("codex"), upToDate("other")], ["codex"])).toThrow(/unknown harnesses: other/);
+    expect(() => checkPinIntent({ schema: PIN_INTENT_SCHEMA, harness: "codex", kind: "pin", version: "1.0.2", digests: {}, conformance: "x" })).toThrow(/needs digests/);
+    expect(() =>
+      checkPinIntent({ schema: PIN_INTENT_SCHEMA, harness: "codex", kind: "pin", version: "1.0.2", digests: digests(2), conformance: "x", run: "https://example/run" }),
+    ).toThrow(/run URL/);
+    expect(() =>
+      checkPinIntent({ schema: PIN_INTENT_SCHEMA, harness: "codex", kind: "pin", version: "1.0.2", digests: { "linux-x64": "sha256:nope" }, conformance: "x" }),
+    ).toThrow(/not sha256/);
+    // An equivalence record lands only in the records directory, by name.
+    for (const record of [
+      "mcpjam-inspector/scripts/local-harness-pack-equivalence/../../package.json",
+      "mcpjam-inspector/server/evil.json",
+      "mcpjam-inspector/scripts/local-harness-pack-equivalence/nested/x.json",
+    ]) {
+      expect(() => checkPinIntent({ schema: PIN_INTENT_SCHEMA, harness: "codex", kind: "equivalence", record, sha256: "a".repeat(64) })).toThrow(/is not a file in/);
+    }
   });
 });
 
@@ -359,13 +406,13 @@ describe("a re-run after a failure at each stage adopts the same version", () =>
     ["signing or upload (no release yet)", [release("1.0.1", fp(1))], "build"],
     ["between upload and publish (a complete draft)", [release("1.0.1", fp(1)), release("1.0.2", fingerprint, { draft: true })], "finish-draft"],
     ["conformance (published, not pinned)", [release("1.0.1", fp(1)), release("1.0.2", fingerprint)], "adopt"],
-    ["the pin PR (published, not pinned)", [release("1.0.1", fp(1)), release("1.0.2", fingerprint)], "adopt"],
+    ["the pin (published, not pinned)", [release("1.0.1", fp(1)), release("1.0.2", fingerprint)], "adopt"],
   ];
   it.each(rows)("stopped at %s", (_stage, releases, action) => {
     expect(decidePublication({ fingerprint, pinned, equivalences: [], releases })).toMatchObject({ action, version: "1.0.2" });
   });
 
-  it("once the pin PR merges, the re-run has nothing to do", () => {
+  it("once the version PR pinning it merges, the re-run has nothing to do", () => {
     const merged = { version: "1.0.2", digests: digests(2), fingerprint };
     expect(decidePublication({ fingerprint, pinned: merged, equivalences: [], releases: [release("1.0.2", fingerprint)] }).action).toBe("up-to-date");
   });
