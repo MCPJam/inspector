@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterAll, beforeAll, describe, it, expect, vi } from "vitest";
 import type { Hono } from "hono";
 import webRoutes from "../index.js";
 import { createWebTestApp } from "./helpers/test-app.js";
@@ -239,6 +239,17 @@ async function probeResponses(
 }
 
 describe("/api/web — credential-less requests", () => {
+  // Without both secrets a local build relays /api-keys to the hosted app
+  // ahead of bearer auth, so the sweep would read production's answers and
+  // never exercise this server's own refusal.
+  beforeAll(() => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("enumerates a plausible number of routes", () => {
     // Guards against the sweep below passing because it found nothing: an
     // empty inventory would assert nothing at all.
