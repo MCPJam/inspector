@@ -287,7 +287,7 @@ describe("harness-bake.lock.json", () => {
 });
 
 describe("the toolchain pins", () => {
-  it("are the toolchain the local packs and conformance run on", () => {
+  it("share node with the toolchain the local packs and conformance run on", () => {
     const toolchain = JSON.parse(
       readFileSync(
         join(PACKAGE_ROOT, "scripts/local-harness-toolchain.json"),
@@ -295,7 +295,14 @@ describe("the toolchain pins", () => {
       ),
     );
     expect(HARNESS_TEMPLATE_NODE_VERSION).toBe(toolchain.node);
-    expect(HARNESS_TEMPLATE_PNPM_VERSION).toBe(toolchain.pnpm);
+  });
+
+  it("pin a pnpm that installs the recipes within a 1 GiB box", () => {
+    // pnpm 10 is OOM-killed extracting the native binaries on a 1 GiB box;
+    // see HARNESS_TEMPLATE_PNPM_VERSION. Major 12 or later.
+    expect(
+      Number(HARNESS_TEMPLATE_PNPM_VERSION.split(".")[0]),
+    ).toBeGreaterThanOrEqual(12);
   });
 
   it("pin the providers' pnpm fallback too", () => {

@@ -209,6 +209,27 @@ describe("acquirePlaygroundHarnessBox", () => {
     expect(releaseMock).not.toHaveBeenCalled();
   });
 
+  it("stops beating when the turn's signal aborts, and leaves the box", async () => {
+    provisionMock.mockResolvedValue({
+      ok: true,
+      value: { sandboxRowId: "row", sandboxId: "sbx" },
+    });
+    const turnAbort = new AbortController();
+    const result = await acquirePlaygroundHarnessBox({
+      ...args,
+      signal: turnAbort.signal,
+    });
+    if (!result.ok) throw new Error("expected a box");
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    const beats = touchMock.mock.calls.length;
+    expect(beats).toBeGreaterThan(0);
+    turnAbort.abort();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(touchMock.mock.calls.length).toBe(beats);
+    expect(releaseMock).not.toHaveBeenCalled();
+    await result.box.release();
+  });
+
   it("returns the control plane's refusal untouched", async () => {
     provisionMock.mockResolvedValue({
       ok: false,

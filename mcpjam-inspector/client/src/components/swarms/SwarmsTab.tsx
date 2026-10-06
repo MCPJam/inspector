@@ -1418,6 +1418,7 @@ export function SwarmsTab({
                       runId={runDetail.runId}
                       runSnapshot={runDetail.runSnapshot}
                       journeyRefId={runDetail.journeyId}
+                      organizationId={organizationId}
                       hosts={hosts ?? []}
                       sessionsPerTarget={detailJourney.config.sessionsPerTarget}
                       initialTargetKey={runDetail.targetKey}

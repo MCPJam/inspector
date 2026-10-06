@@ -15,13 +15,19 @@
  * renews no model lease (Cursor, which brings its own key) touches nothing at
  * all. So while a box is held, this touches the row every quarter of the
  * scope's TTL (the backend's bar is "at most a third"), and stops the moment
- * the box is released or the control plane says it is gone.
+ * the box is released, the turn's signal aborts, or the control plane says it
+ * is gone.
  *
  * ── Who releases ───────────────────────────────────────────────────────────
  * An OWNED box (eval iteration, swarm attempt) belongs to this caller alone, so
  * `release()` also tears it down. A CONVERSATION box (scenario, playground)
  * outlives the turn — the next turn reattaches to it — so `release()` only
  * stops the heartbeat and leaves the box to its idle TTL.
+ *
+ * An abort is not a release. A caller can stop waiting on work that never
+ * unwinds (an eval iteration past its budget grace is abandoned, so its
+ * `finally` may never run); the abort stops the heartbeat so the box can go
+ * idle and reap, but `release()` stays the one teardown path.
  *
  * ── What it does not own ───────────────────────────────────────────────────
  * Provisioning. Each surface's control-plane route takes different ids and
@@ -156,6 +162,12 @@ export interface AcquireHarnessBoxOptions<Refusal> {
    * recording) passes its own. Never called for a conversation box.
    */
   release?: (sandboxRowId: string) => Promise<void>;
+  /**
+   * The turn's own abort signal (iteration budget, attempt, cancel). Aborting
+   * it stops the heartbeat and leaves the box to its idle TTL; it never tears
+   * the box down — that is still `release()`.
+   */
+  signal?: AbortSignal;
   /** Test seams. */
   touch?: typeof touchSandbox;
   heartbeatIntervalMs?: number;
@@ -191,6 +203,7 @@ export function holdHarnessBox(
   const stopHeartbeat = startHarnessBoxHeartbeat({
     surface: options.surface,
     binding,
+    ...(options.signal ? { signal: options.signal } : {}),
     ...(options.touch ? { touch: options.touch } : {}),
     ...(options.heartbeatIntervalMs !== undefined
       ? { intervalMs: options.heartbeatIntervalMs }
@@ -227,9 +240,9 @@ async function releaseByRowId(sandboxRowId: string): Promise<void> {
 }
 
 /**
- * Touch the box's row on a fixed beat until stopped or told the box is gone.
- * Returns the stop function. One touch in flight at a time, and the timer is
- * unref'd so a forgotten heartbeat can never hold the process open.
+ * Touch the box's row on a fixed beat until stopped, aborted, or told the box
+ * is gone. Returns the stop function. One touch in flight at a time, and the
+ * timer is unref'd so a forgotten heartbeat can never hold the process open.
  */
 export function startHarnessBoxHeartbeat(args: {
   surface: HarnessBoxSurface;
@@ -237,6 +250,7 @@ export function startHarnessBoxHeartbeat(args: {
   intervalMs?: number;
   touch?: typeof touchSandbox;
   maxHeartbeatMs?: number;
+  signal?: AbortSignal;
 }): () => void {
   const intervalMs =
     args.intervalMs ?? harnessBoxHeartbeatIntervalMs(args.surface);
@@ -288,6 +302,10 @@ export function startHarnessBoxHeartbeat(args: {
   const stop = () => {
     stopped = true;
     clearInterval(timer);
+    // The signal can be shared by many boxes (a swarm run's), so drop ours.
+    args.signal?.removeEventListener("abort", stop);
   };
+  if (args.signal?.aborted) stop();
+  else args.signal?.addEventListener("abort", stop, { once: true });
   return stop;
 }
