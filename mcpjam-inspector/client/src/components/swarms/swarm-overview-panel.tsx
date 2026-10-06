@@ -144,7 +144,9 @@ export function waveRunState(
   if (runs.some((run) => run.cleanupPending)) return "stopping";
   const statuses = new Set(runs.map((r) => r.status));
   if (statuses.has("running") || statuses.has("pending")) return "running";
-  if (runs.some((run) => run.cancelRequested)) return "stopped";
+  const uncanceledStatuses = new Set(
+    runs.filter((run) => !run.cancelRequested).map((run) => run.status),
+  );
   // `failed`/`stale` and `partial`/`rate_limited` are ONE bucket on purpose.
   // The split never survived contact with a viewer: a `stale` run is only one
   // the sweeper gave up on, and `partial`/`rate_limited` runs produced sessions
@@ -152,13 +154,14 @@ export function waveRunState(
   // output. The one thing the row can honestly say about all four is that the
   // wave did not finish cleanly.
   if (
-    statuses.has("failed") ||
-    statuses.has("stale") ||
-    statuses.has("partial") ||
-    statuses.has("rate_limited")
+    uncanceledStatuses.has("failed") ||
+    uncanceledStatuses.has("stale") ||
+    uncanceledStatuses.has("partial") ||
+    uncanceledStatuses.has("rate_limited")
   ) {
     return "issues";
   }
+  if (runs.some((run) => run.cancelRequested)) return "stopped";
   return "complete";
 }
 

@@ -328,7 +328,7 @@ export function SwarmRunDetail({
   const {
     stop: handleStopRun,
     busy: stopBusy,
-    stoppedHere,
+    stoppedRunIds,
   } = useStopSwarmRun(runningRunIds);
 
   if (overview === undefined) {
@@ -364,16 +364,23 @@ export function SwarmRunDetail({
 
   const title = swarmWaveTitle(wave);
   const live = liveProgress;
-  const dataRunState = waveRunState(wave.runs);
+  const dataRunState = waveRunState(
+    wave.runs.map((run) => ({
+      ...run,
+      cancelRequested: run.cancelRequested || stoppedRunIds.includes(run.runId),
+    })),
+  );
   // `stoppedHere` only overrides a TERMINAL read: between the cancel resolving
   // and the wave query catching up, the runs still say `running`, and claiming
   // "stopped" over a strip that is still counting sessions would be a lie the
   // progress bar contradicts on screen.
   const cleanupPending = wave.runs.some((run) => run.cleanupPending);
   const canceledHere =
-    stoppedHere || wave.runs.some((run) => run.cancelRequested);
+    stoppedRunIds.some((runId) =>
+      wave.runs.some((run) => run.runId === runId),
+    ) || wave.runs.some((run) => run.cancelRequested);
   const showStopped =
-    canceledHere && !cleanupPending && dataRunState !== "running";
+    canceledHere && !cleanupPending && dataRunState === "stopped";
   const sessionTotals = waveSessionTotals(wave.runs);
   /**
    * The finding this viewer followed in, resolved from the wave itself — the URL

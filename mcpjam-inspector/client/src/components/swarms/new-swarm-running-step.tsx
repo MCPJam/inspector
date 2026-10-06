@@ -801,6 +801,8 @@ export function NewSwarmRunningStep({
         if (
           prev &&
           prev.status === snapshot.status &&
+          prev.cancelRequested === snapshot.cancelRequested &&
+          prev.cleanupPending === snapshot.cleanupPending &&
           prev.summaryDone === snapshot.summaryDone &&
           prev.summaryTotal === snapshot.summaryTotal &&
           prev.summarySucceeded === snapshot.summarySucceeded &&
@@ -944,7 +946,7 @@ export function NewSwarmRunningStep({
   const {
     stop: stopRun,
     busy: stopBusy,
-    stoppedHere,
+    stoppedRunIds,
   } = useStopSwarmRun(runningRunIds);
   /**
    * Set on confirm, before the cancel resolves. Convex can deliver the
@@ -956,7 +958,14 @@ export function NewSwarmRunningStep({
     (run) => run?.cleanupPending,
   );
   const cancellationRequested =
-    stoppedHere || Object.values(snapshots).some((run) => run?.cancelRequested);
+    runs.some((run) => stoppedRunIds.includes(run.runId)) ||
+    Object.values(snapshots).some((run) => run?.cancelRequested);
+  const uncanceledSnapshots = Object.entries(snapshots).filter(
+    ([runId, run]) => !run.cancelRequested && !stoppedRunIds.includes(runId),
+  );
+  const uncanceledIssues = uncanceledSnapshots.some(([, run]) =>
+    ["failed", "partial", "rate_limited", "stale"].includes(run.status),
+  );
   const stopRequestedRef = useRef(false);
 
   // Read through a ref so the effect below depends on `allTerminal` alone:
@@ -1005,9 +1014,10 @@ export function NewSwarmRunningStep({
     // A wave this viewer stopped reads as failed attempts, but nothing broke.
     if (
       !allTerminal ||
-      cancellationRequested ||
-      succeeded > 0 ||
-      rateLimited + failed === 0
+      uncanceledSnapshots.some(([, run]) => run.summarySucceeded > 0) ||
+      !uncanceledSnapshots.some(
+        ([, run]) => run.summaryFailed + run.summaryRateLimited > 0,
+      )
     ) {
       return null;
     }
@@ -1020,7 +1030,7 @@ export function NewSwarmRunningStep({
         count: number;
       }
     >();
-    for (const snap of Object.values(snapshots)) {
+    for (const [, snap] of uncanceledSnapshots) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
           continue;
@@ -1048,14 +1058,7 @@ export function NewSwarmRunningStep({
       (cause) => cause.kind !== "rate_limited" && !cause.info.rerunnable,
     );
     return { ...(severe ?? causes[0]), causes };
-  }, [
-    allTerminal,
-    failed,
-    rateLimited,
-    snapshots,
-    cancellationRequested,
-    succeeded,
-  ]);
+  }, [allTerminal, failed, rateLimited, snapshots, stoppedRunIds, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
 
@@ -1087,7 +1090,7 @@ export function NewSwarmRunningStep({
   const providerRateLimit = useMemo(() => {
     let count = 0;
     const labels = new Set<string>();
-    for (const snap of Object.values(snapshots)) {
+    for (const [, snap] of uncanceledSnapshots) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited") continue;
         const info = humanizeSwarmAttemptError(
@@ -1138,7 +1141,7 @@ export function NewSwarmRunningStep({
     let message: string | null = null;
     let exhausted = 0;
     let held = 0;
-    for (const snap of Object.values(snapshots)) {
+    for (const [, snap] of uncanceledSnapshots) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed")
           continue;
@@ -1260,7 +1263,7 @@ export function NewSwarmRunningStep({
                       rateLimited,
                       done,
                       total,
-                          stopped: cancellationRequested,
+                          stopped: cancellationRequested && !uncanceledIssues,
                     })}
                   </h2>
                   <div className="flex shrink-0 items-center gap-2">

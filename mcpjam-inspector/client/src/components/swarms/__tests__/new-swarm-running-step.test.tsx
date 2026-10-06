@@ -135,7 +135,10 @@ const failedSessionFixture = {
  * back onto terminal — `RunLiveBridge` keys its effect on run identity, so a
  * mutation of `runFixture` alone would never reach the snapshot.
  */
-const runQueryState = { run: runFixture as JourneyRun | null };
+const runQueryState = {
+  run: runFixture as JourneyRun | null,
+  byRunId: undefined as Record<string, JourneyRun> | undefined,
+};
 
 /** `journeyRuns:cancelJourneyRun`, recorded so Stop run can be asserted. */
 const cancelJourneyRun = vi.fn(async (_args: unknown) => ({ canceled: true }));
@@ -144,10 +147,10 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useMutation: (name: string) =>
     name === "journeyRuns:cancelJourneyRun" ? cancelJourneyRun : vi.fn(),
-  useQuery: (name: string) => {
+  useQuery: (name: string, args?: { runId?: string }) => {
     switch (name) {
       case "journeyRuns:getJourneyRun":
-        return runQueryState.run;
+        return runQueryState.byRunId?.[args?.runId ?? ""] ?? runQueryState.run;
       case "hosts:listHosts":
         return hostsFixture;
       default:
@@ -186,6 +189,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     runFixture.status = "running";
     runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
     runQueryState.run = runFixture;
+    runQueryState.byRunId = undefined;
     runFixture.hostSummaries![0].targetId = "environment:env-1";
     runFixture.snapshot!.hosts[0].targetId = "environment:env-1";
     liveTraceState.trace = null;
@@ -742,6 +746,99 @@ describe("NewSwarmRunningStep — session stream pane", () => {
    * that looked equal and went to the same place. BB-161: the finish is
    * announced and then walks the viewer to Findings on its own.
    */
+  const cancellationProps = {
+    projectId: "proj-1",
+    runs: [
+      {
+        runId: "run-1",
+        journeyId: "j-1",
+        personaId: "p-1",
+        personaName: "Writer",
+        personaRole: "Writer",
+        label: "Refund",
+      },
+    ],
+    fallbackColumns: [{ key: "environment:env-1", label: "Prod-like" }],
+    environments: [],
+    onLeave: vi.fn(),
+    onOpenSession: vi.fn(),
+  };
+
+  it("updates the live snapshot when only cancellation flags change", async () => {
+    const view = render(<NewSwarmRunningStep {...cancellationProps} />);
+    await screen.findByTestId("new-swarm-running-stop");
+    runQueryState.run = { ...runFixture, cancelRequested: true };
+    view.rerender(<NewSwarmRunningStep {...cancellationProps} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-running-stop")).toBeDisabled(),
+    );
+    runQueryState.run = {
+      ...runFixture,
+      cancelRequested: true,
+      cleanupPending: true,
+    };
+    view.rerender(<NewSwarmRunningStep {...cancellationProps} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
+        "Stop requested",
+      ),
+    );
+    runQueryState.run = {
+      ...runFixture,
+      cancelRequested: true,
+      cleanupPending: false,
+    };
+    view.rerender(<NewSwarmRunningStep {...cancellationProps} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-running-title"),
+      ).not.toHaveTextContent("Stop requested"),
+    );
+  });
+
+  it("keeps an uncanceled failure visible alongside a canceled goal", async () => {
+    const failed = {
+      ...runFixture,
+      status: "failed" as const,
+      summary: { total: 2, succeeded: 0, failed: 2, rateLimited: 0 },
+      attempts: [
+        {
+          hostId: "host-1",
+          targetId: "environment:env-1",
+          sessionIdx: 0,
+          chatSessionId: null,
+          status: "failed" as const,
+          errorCode: "host_worker_failed",
+          errorMessage: "Backend dependency unavailable",
+        },
+      ],
+    };
+    runQueryState.byRunId = {
+      "run-1": failed,
+      "run-2": {
+        ...failed,
+        id: "run-2",
+        cancelRequested: true,
+        cleanupPending: false,
+      },
+    };
+    render(
+      <NewSwarmRunningStep
+        {...cancellationProps}
+        runs={[
+          ...cancellationProps.runs,
+          { ...cancellationProps.runs[0], runId: "run-2", journeyId: "j-2" },
+        ]}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
+        "Swarm failed",
+      ),
+    );
+    expect(screen.getByTestId("new-swarm-running-failure")).toBeInTheDocument();
+  });
+
   it.each([true, false])(
     "restores cancellation in the wizard (cleanupPending=%s)",
     async (cleanupPending) => {
