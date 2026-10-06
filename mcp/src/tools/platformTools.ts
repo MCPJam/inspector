@@ -964,6 +964,15 @@ export function platformWidgetUi(
 export function operationAnnotations(
   operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
+  // The title goes here as well as on the tool: Claude's directory reads a
+  // tool's display name from `annotations.title` only, and flags every tool
+  // without one even when its top-level `title` is set.
+  return { title: operation.title, ...behaviorAnnotations(operation) };
+}
+
+function behaviorAnnotations(
+  operation: PlatformOperation<unknown, unknown>
+): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
   }

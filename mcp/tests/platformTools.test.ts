@@ -411,6 +411,9 @@ describe("platform tool registration", () => {
     const registration = registrations[0]!;
     expect(registration.name).toBe("show_servers");
     expect(registration.config.annotations?.readOnlyHint).toBe(true);
+    expect(registration.config.annotations?.title).toBe(
+      registration.config.title
+    );
     if (PLATFORM_WIDGETS_ENABLED) {
       expect(registration.ui?.resourceUri).toBe(SHOW_SERVERS_RESOURCE_URI);
       expect(registration.ui?.html).toContain("<html");
@@ -779,8 +782,13 @@ describe("platform tool registration", () => {
     ).toEqual([...EXTERNAL_COMMUNICATION]);
 
     for (const registration of registrations) {
+      // Every tool mirrors its title into the annotations — Claude's directory
+      // reads `annotations.title` and ignores the top-level one.
+      const { title, ...hints } = registration.config.annotations ?? {};
+      expect(title).toBe(registration.config.title);
+      expect(String(title).trim()).not.toBe("");
       if (EXTERNAL_COMMUNICATION.has(registration.name)) {
-        expect(registration.config.annotations).toEqual({
+        expect(hints).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
@@ -791,13 +799,13 @@ describe("platform tool registration", () => {
         // is a no-op on the backend, so a client that retries a dropped
         // response lands on the state the first call produced — and NOT saying
         // so would leave a lost cancel holding a connection slot.
-        expect(registration.config.annotations).toEqual({
+        expect(hints).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: true,
         });
       } else if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
-        expect(registration.config.annotations).toEqual({
+        expect(hints).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: false,
@@ -807,7 +815,7 @@ describe("platform tool registration", () => {
         // announce IDEMPOTENCY is a separate claim: a soft delete answers
         // not-found on a second call and a link rotation mints a new link, so
         // an auto-retrying client would get a spurious error or a broken link.
-        expect(registration.config.annotations).toEqual({
+        expect(hints).toEqual({
           readOnlyHint: false,
           destructiveHint: true,
           idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
@@ -823,11 +831,11 @@ describe("platform tool registration", () => {
         // Arbitrary third-party tool execution: destructive/idempotent hints
         // are deliberately absent so clients assume destructive (spec
         // default).
-        expect(registration.config.annotations).toEqual({
+        expect(hints).toEqual({
           readOnlyHint: false,
         });
       } else {
-        expect(registration.config.annotations).toEqual({
+        expect(hints).toEqual({
           readOnlyHint: true,
         });
       }
