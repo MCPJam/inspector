@@ -67,6 +67,54 @@ describe("planScenarioSandbox", () => {
     expect(planScenarioSandbox(ephemeral)).toEqual({ action: "provision" });
   });
 
+  it("provisions for a cloud HARNESS turn that asks for no shell", () => {
+    // A harness needs a machine whether or not it advertises `bash`, and the
+    // conversation's box is the only one it may use.
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        bashRequested: false,
+        harnessRequested: true,
+      }),
+    ).toEqual({ action: "provision" });
+  });
+
+  it("an OLD backend (no marker) leaves a harness turn exactly as it was", () => {
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        mode: null,
+        bashRequested: false,
+        harnessRequested: true,
+      }),
+    ).toEqual({ action: "none" });
+  });
+
+  it("an unavailable image suppresses a harness turn too, so the caller can refuse it", () => {
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        mode: "unavailable",
+        bashRequested: false,
+        harnessRequested: true,
+      }),
+    ).toEqual({
+      action: "suppress",
+      suppressReason: "sandbox_mode_unavailable",
+    });
+  });
+
+  it("a harness turn on a server that is not a data plane is suppressed with the notice", () => {
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        bashRequested: false,
+        harnessRequested: true,
+        ephemeralCloudAvailable: false,
+      }),
+    ).toMatchObject({ action: "suppress", suppressReason: "not_a_data_plane" });
+  });
+
   it("suppresses WITH a tester notice when this server is not a data plane", () => {
     expect(
       planScenarioSandbox({ ...ephemeral, ephemeralCloudAvailable: false }),

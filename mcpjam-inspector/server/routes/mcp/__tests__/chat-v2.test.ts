@@ -225,9 +225,15 @@ vi.mock("../../../utils/guest-auth.js", () => ({
 // Scenario turns must NEVER skip host-owned config resolution — the route
 // resolves a guest bearer for the fetch when the request carries none.
 const fetchScenarioRuntimeConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("../../../utils/scenario-runtime-config.js", () => ({
+vi.mock("../../../utils/scenario-runtime-config.js", async () => ({
   fetchScenarioRuntimeConfig: (...args: unknown[]) =>
     fetchScenarioRuntimeConfigMock(...args),
+  // Pure; the real reader, so the route sees the marker exactly as served.
+  readComputerSandboxMode: (
+    await vi.importActual<
+      typeof import("../../../utils/scenario-runtime-config.js")
+    >("../../../utils/scenario-runtime-config.js")
+  ).readComputerSandboxMode,
 }));
 
 // Host-bound direct sessions (Playground `hostId`) resolve their host config
@@ -362,6 +368,46 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       expect(res.status).toBe(502);
+    });
+  });
+
+  describe("scenario harness on a disposable box", () => {
+    it("REFUSES it here, naming where it runs: this route cannot provision the box", async () => {
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          harness: "claude-code",
+          computer: { kind: "personal" },
+          computerSandbox: { mode: "ephemeral" },
+        },
+      });
+
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.reason).toBe("not_a_data_plane");
+      expect(body.error).toMatch(/MCPJam web app/);
+    });
+
+    it("leaves a marker-less harness scenario (an older backend) to the usual gates", async () => {
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: { harness: "claude-code", computer: { kind: "personal" } },
+      });
+
+      const res = await postAuthenticatedJson({
+        scenarioId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      const body = await res.json().catch(() => ({}));
+      expect(body?.reason).not.toBe("not_a_data_plane");
     });
   });
 

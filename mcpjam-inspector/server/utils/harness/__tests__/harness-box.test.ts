@@ -261,6 +261,22 @@ describe("acquireHarnessBox — the heartbeat", () => {
     await acquired.box.release();
   });
 
+  it("stops itself after its cap, so a holder that never releases cannot keep a box forever", async () => {
+    const touch = vi.fn(async () => "touched" as const);
+    const acquired = await acquireHarnessBox({
+      surface: "scenario",
+      provision: provisioned(),
+      touch,
+      maxHeartbeatMs: 60 * MINUTE,
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    await advance(60 * MINUTE);
+    const atCap = touch.mock.calls.length;
+    expect(atCap).toBeGreaterThan(0);
+    await advance(60 * MINUTE);
+    expect(touch).toHaveBeenCalledTimes(atCap);
+  });
+
   it("keeps beating through a failed touch", async () => {
     const touch = vi
       .fn<() => Promise<TouchSandboxOutcome>>()

@@ -233,30 +233,31 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
     });
   });
 
-  it("refuses a binding combined with an execution scope — before any credential is minted", async () => {
-    // The ephemeral box is launcher-owned and billed to its run's project; an
-    // execution scope is the host-funded GUEST path on a scenario's own
-    // computer. The backend rejects the combination outright; throwing here,
-    // at the same place the missing-harness-id guard throws, means no box is
-    // bound and no egress transform is ever installed.
-    await expect(
-      runHarnessTurn(
-        baseOptions({
-          harnessSandboxBinding: BINDING,
-          executionScope: {
-            kind: "swarm",
-            swarmId: "cb_1",
-            accessVersion: 1,
-            projectId: "project-1",
-            workspaceId: "ws_1",
-          },
-        }) as never,
-        "none"
-      )
-    ).rejects.toThrow(/execution scope/i);
+  it("runs a binding WITH an execution scope on the box, and keeps the scope off the lease", async () => {
+    // A scenario conversation's harness runs on its disposable box while the
+    // scope still resolves its session lane and skills. The two must never meet
+    // at the broker — the backend rejects a sandbox lease that carries a scope
+    // — and they cannot: the scope rides only the `computer` arm of the box.
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        executionScope: {
+          kind: "swarm",
+          swarmId: "cb_1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws_1",
+        },
+      }) as never,
+      "none"
+    );
 
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+    const brokerArgs = vi.mocked(startHarnessModelBroker).mock.calls[0]![0];
+    expect(brokerArgs.box).toEqual({
+      kind: "sandbox",
+      sandboxRowId: BINDING.sandboxRowId,
+    });
   });
 });
 

@@ -284,6 +284,14 @@ export interface ScenarioSandboxPlan {
 export function planScenarioSandbox(args: {
   mode: "ephemeral" | "unavailable" | null;
   bashRequested: boolean;
+  /**
+   * The turn runs a CLOUD harness (not one on the member's own machine). A
+   * harness needs a machine whether or not it asks for `bash`, so it is a
+   * reason to provision on its own. When this plan suppresses, the caller
+   * refuses the harness turn: there is no shell to quietly drop, and the only
+   * other machine is the member's personal computer.
+   */
+  harnessRequested?: boolean;
   ephemeralCloudAvailable: boolean;
   hasChatSessionId: boolean;
   /**
@@ -303,7 +311,11 @@ export function planScenarioSandbox(args: {
   if (args.mode === "unavailable") {
     return { action: "suppress", suppressReason: "sandbox_mode_unavailable" };
   }
-  if (args.mode !== "ephemeral" || !args.bashRequested) {
+  // Absent marker ⇒ an older backend: today's behaviour, for a harness too.
+  if (
+    args.mode !== "ephemeral" ||
+    (!args.bashRequested && args.harnessRequested !== true)
+  ) {
     return { action: "none" };
   }
   // UNKNOWN SECRET STATE SUPPRESSES THE BOX.

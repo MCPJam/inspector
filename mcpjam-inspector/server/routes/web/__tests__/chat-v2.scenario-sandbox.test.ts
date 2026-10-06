@@ -788,11 +788,10 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     );
   });
 
-  it("leaves a HARNESS scenario alone rather than producing a mixed-machine turn", async () => {
-    // `run-harness-turn.ts` resolves its own machine (the member's personal
-    // computer) and receives `prepare.builtInTools` verbatim. Provisioning here
-    // would put the model's bash on one filesystem and the harness's Shell on
-    // another. Harness-on-scenario is Phase 6; until then, hands off.
+  it("runs a member's HARNESS scenario on the conversation's box: harness and bash share it", async () => {
+    // One machine per conversation. The harness gets the box on its handler
+    // options (out of band, never off the wire), and bash execs on the same
+    // box — never the member's personal computer for either.
     fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: scenarioConfig({ mode: "ephemeral" }, { harness: "claude-code" }),
@@ -801,14 +800,92 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
 
     expect(response.status).toBe(200);
-    expect(provisionScenarioSandboxMock).not.toHaveBeenCalled();
-    expect(buildSandboxBashToolMock).not.toHaveBeenCalled();
-    // Today's behaviour, preserved end to end: personal bash AND the personal
-    // machine's image context.
-    expect(buildBashToolMock).toHaveBeenCalledTimes(1);
-    expect(maybeAppendEnvironmentContextMock).toHaveBeenCalledWith(
-      expect.objectContaining({ hasBashTool: true })
+    expect(provisionScenarioSandboxMock).toHaveBeenCalledTimes(1);
+    expect(buildBashToolMock).not.toHaveBeenCalled();
+    expect(buildSandboxBashToolMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxId: "sbx_conversation_1" })
     );
+    const options = handleMCPJamFreeChatModelMock.mock.calls.at(-1)?.[0];
+    expect(options?.harness).toBe("claude-code");
+    expect(options?.harnessSandboxBinding).toEqual({
+      sandboxRowId: "row_1",
+      sandboxId: "sbx_conversation_1",
+      runtimeKind: "terminal",
+      workdir: "/srv/app",
+    });
+  });
+
+  it("an OLD backend (no marker) leaves a harness scenario exactly as it was", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(undefined, { harness: "claude-code" }),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(200);
+    expect(provisionScenarioSandboxMock).not.toHaveBeenCalled();
+    expect(buildBashToolMock).toHaveBeenCalledTimes(1);
+    expect(
+      handleMCPJamFreeChatModelMock.mock.calls.at(-1)?.[0]
+        ?.harnessSandboxBinding
+    ).toBeUndefined();
+  });
+
+  it("REFUSES a harness turn whose image is unavailable, rather than using the personal computer", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "unavailable", reason: "no ready build" },
+        { harness: "claude-code", builtInToolIds: [] }
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).toMatch(/computer image can't boot/);
+    expect(provisionScenarioSandboxMock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a harness turn on a server that is not a data plane, booting nothing", async () => {
+    isComputersDataPlaneConfiguredMock.mockReturnValue(false);
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral" },
+        { harness: "claude-code", builtInToolIds: [] }
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(503);
+    expect(provisionScenarioSandboxMock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a harness turn whose box could not be provisioned — no degrade, no personal computer", async () => {
+    provisionScenarioSandboxMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      error: "Computers is at capacity",
+      code: "at_capacity",
+    });
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral" },
+        { harness: "claude-code", builtInToolIds: [] }
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(503);
+    expect(await response.text()).toMatch(/at capacity/);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
   it("obeys an `unavailable` marker even if the payload still carries a computer", async () => {

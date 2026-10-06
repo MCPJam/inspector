@@ -778,19 +778,13 @@ export async function runHarnessTurn(
   if (!harness) {
     throw new Error("runHarnessTurn: harness id is required");
   }
-  // An ephemeral box is launcher-owned and billed to its run's project; an
-  // execution scope is the host-funded GUEST path, which resolves a scenario's
-  // own personal computer and bills the host org. The two authorize and bill
-  // differently, so a turn asking for both is a wiring bug. The backend rejects
-  // the combination outright — surface it HERE, before the box is bound and a
-  // credential is minted, rather than as an opaque 400 mid-turn.
-  if (harnessSandboxBinding && executionScope) {
-    throw new Error(
-      "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
-        "an execution scope (the guest/host-funded path runs on the scenario's " +
-        "own computer)",
-    );
-  }
+  // An ephemeral binding and an execution scope MAY travel together: a
+  // scenario conversation's harness runs on its disposable box while the scope
+  // still resolves its session lane and its skills. They never meet at the
+  // broker, where the two authorize and bill differently and the backend
+  // rejects the pair: the scope rides only the `computer` arm of the broker's
+  // box (`HarnessBrokerBox`), so a sandbox lease cannot carry it.
+
   // Venue-aware, and decided ONCE: the fingerprint's `transport`, the
   // approval mode and the tool catalog all come from this adapter, so a local
   // Codex turn must see the app-server arm here exactly as its preflight did.
