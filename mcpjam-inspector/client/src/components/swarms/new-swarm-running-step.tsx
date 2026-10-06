@@ -361,7 +361,9 @@ function RunLiveBridge({
   );
   const swarmRunGroupId = run?.swarmRunGroupId;
   // The run tab of a settled wave mounts this bridge too; its stored credit
-  // refusals are history and must not reopen the dialog on every visit.
+  // refusals are history and must not reopen the dialog on every visit. A run
+  // that settles before the first snapshot is skipped as well; a refused
+  // launch still opens the dialog from launchJourneyRun.
   const observedLive = useRef(false);
   useEffect(() => {
     if (run?.status === "running") observedLive.current = true;
