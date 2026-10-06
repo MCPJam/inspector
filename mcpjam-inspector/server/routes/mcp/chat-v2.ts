@@ -1655,6 +1655,8 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // The box was acquired above and no stream will carry it to release.
+        await playgroundHarnessBox?.release();
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
@@ -2193,6 +2195,8 @@ chatV2.post("/", async (c) => {
       // outer catch which returns 500.
       const msg = error instanceof Error ? error.message : String(error);
       if (msg.includes("Invalid tool name(s) for Anthropic")) {
+        // The box was acquired above and no stream will carry it to release.
+        await playgroundHarnessBox?.release();
         return c.json({ error: msg }, 400);
       }
       // Any user-server attribution is marked inside `prepareChatV2`, on the
@@ -2369,6 +2373,8 @@ chatV2.post("/", async (c) => {
     // a sentinel model id instead of a hosted one — delegate to stream handler
     if (usesMcpjamFreePath && modelDefinition.id) {
       if (!process.env.CONVEX_HTTP_URL) {
+        // The box was acquired above and no stream will carry it to release.
+        await playgroundHarnessBox?.release();
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
           500,
@@ -2379,6 +2385,8 @@ chatV2.post("/", async (c) => {
       // otherwise fetch a production guest token for guest-allowed models.
       const authHeader = await resolveMcpJamAuthHeader();
       if (!authHeader) {
+        // The box was acquired above and no stream will carry it to release.
+        await playgroundHarnessBox?.release();
         return c.json(
           {
             error:
