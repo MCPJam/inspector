@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { computePackInputs } from "../../../../../scripts/check-local-harness-inputs.mjs";
 
 const workflowsDir = new URL("../../../../../../.github/workflows/", import.meta.url);
 const workflow = (name: string) => parse(readFileSync(new URL(`${name}.yml`, workflowsDir), "utf8"));
@@ -33,16 +35,63 @@ describe("packs are part of starting a release", () => {
     expect(steps[open].run).toMatch(/git add mcpjam-inspector\/scripts\/local-harness-pack-equivalence/);
   });
 
-  it("is the only thing that runs the pack pipeline: nothing publishes a pack on a push", () => {
+  it("runs the pack pipeline from a release and from the background prebuild only, one per harness at a time", () => {
     const callers = readdirSync(workflowsDir)
       .filter((name) => /\.ya?ml$/.test(name))
       .filter((name) =>
         Object.values(parse(readFileSync(new URL(name, workflowsDir), "utf8"))?.jobs ?? {}).some(
           (job: any) => job?.uses === "./.github/workflows/local-harness-pack-pipeline.yml",
         ),
-      );
-    expect(callers).toEqual(["prepare-release.yml"]);
+      )
+      .sort();
+    expect(callers).toEqual(["local-harness-pack-prebuild.yml", "prepare-release.yml"]);
     expect(Object.keys(workflow("prepare-release").on)).toEqual(["workflow_dispatch"]);
+    // One concurrency group per harness across both callers, never cancelled:
+    // the two never build the same pack at once.
+    const group = { group: "local-harness-pack-${{ matrix.harness }}", "cancel-in-progress": false };
+    expect(workflow("prepare-release").jobs.packs.concurrency).toEqual(group);
+    expect(workflow("local-harness-pack-prebuild").jobs.prebuild.concurrency).toEqual(group);
+  });
+
+  it("prebuilds in the background without ever reaching main or users", () => {
+    const prebuild = workflow("local-harness-pack-prebuild");
+    expect(prebuild.on.push.branches).toEqual(["main"]);
+    // It pins nothing: no pin artifacts collected, no PR, no push token.
+    const text = JSON.stringify(prebuild);
+    expect(text).not.toContain("local-harness-pin-");
+    expect(text).not.toContain("RELEASE_PUSH_TOKEN");
+    expect(text).not.toContain("apply-pins");
+    // It stands down while a release is being prepared, and while signing
+    // needs a person (a build waiting for approval would hold the harness's
+    // group, and the next release would queue behind it).
+    expect(prebuild.jobs.prebuild.if).toBe("needs.harnesses.outputs.release_in_progress == 'false'");
+    const guard = JSON.stringify(prebuild.jobs.harnesses);
+    expect(guard).toContain("prepare-release.yml");
+    expect(guard).toContain("required_reviewers");
+  });
+
+  it("prebuilds on a push that changes ANY declared pack input", async () => {
+    // A missed input still gets built — by the nightly run, or by the release
+    // itself — but later than it should. Codex's bootstrap lockfile was such a
+    // miss once.
+    const globToRegExp = (glob: string) =>
+      new RegExp(
+        `^${glob
+          .split("**")
+          .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"))
+          .join(".*")}$`,
+      );
+    const filters = (workflow("local-harness-pack-prebuild").on.push.paths as string[]).map(globToRegExp);
+    const { harnesses } = await computePackInputs();
+    const declared = new Set<string>(["package-lock.json"]); // pack-dependency-closure
+    for (const { inputs } of Object.values(harnesses)) {
+      for (const key of Object.keys(inputs)) {
+        // `recipe/*` are bytes emitted FROM declared sources, listed as well.
+        if (key === "pack-dependency-closure" || key.startsWith("recipe/")) continue;
+        declared.add(key);
+      }
+    }
+    expect([...declared].filter((path) => !filters.some((filter) => filter.test(path)))).toEqual([]);
   });
 
   it("never lets an approval of an older version PR cover new pins", () => {
