@@ -503,10 +503,12 @@ caller still work together in either direction.
 ## Invocations are idempotent, and can end in `unknown`
 
 Local calls can also end in `unknown` after cancellation or timeout. On Chromium
-151.0.7922.34, CDP can acknowledge `Canceled` while the page callback continues
-and performs side effects: the callback does not receive the draft's abort
-signal. MCPJam therefore reports that cancellation was requested and execution
-may continue, including when the browser never acknowledges the request. Verify
+153.0.8010.12, CDP acknowledges `Canceled` and aborts the signal the page
+callback now receives, but stopping is up to the page: a callback that does not
+watch that signal keeps running and performs its side effects. (151 did not pass
+the callback a signal at all.) MCPJam therefore reports that cancellation was
+requested and execution may continue, including when the browser never
+acknowledges the request. Verify
 page state before retrying. Calls cancelled while queued or before dispatch
 remain `cancelled`, because they never reached the page. A browser session ending
 with a pending call likewise leaves its effects unknown. This is consumer-side
@@ -668,7 +670,7 @@ The findings that shaped the code:
   key names and the CDP `Annotation` type reports them under the bare ones:
   `readOnlyHint` → `readOnly`, `untrustedContentHint` → `untrustedContent`,
   values included. `consequentialHint` is **not** copied at the pinned
-  151.0.7922.34 (current Chromium does copy it, so this is a version fact and
+  153.0.8010.12 (current Chromium does copy it, so this is a version fact and
   the spike fails when it changes), and `autosubmit` can only come from markup.
   A tool that declared the BARE names gets `false`, because those are not the
   keys Blink reads. None of this changes the rule: **a page's claim about itself
@@ -730,15 +732,22 @@ Details worth keeping:
   the bridge settles on it and DROPS the second rather than buffering it as
   somebody's early response.
 - **Once answered, the invocation id is spent**: `cancelInvocation` rejects it.
-- **A pending DECLARATIVE invocation cannot be cancelled at all.** A form
-  waiting on a person is not a "pending execution" to the domain, so
-  `cancelInvocation` rejects its id — where the same call on a pending
-  _imperative_ invocation is accepted and answers `Canceled`. Stopping one still
-  frees the caller, through the grace timer that settles a cancel the page never
-  answers; what it does not do is stop the page. So the form stays live, a
-  person submitting later answers an invocation already reported as unknown,
-  and `settle()` remembering the id is what makes that late answer get dropped
-  instead of buffered.
+- **A pending DECLARATIVE invocation can be cancelled, as of Chromium 153.** A
+  form waiting on a person now answers `cancelInvocation` with `Canceled`, the
+  same as a pending _imperative_ invocation. On 151 it was not a "pending
+  execution" to the domain: the cancel was rejected, the caller was freed only
+  by the grace timer that settles a cancel the page never answers, and the form
+  stayed live, so a person submitting later answered an invocation already
+  reported as unknown. `settle()` remembering the id, which drops that late
+  answer instead of buffering it, is kept for any build that still behaves that
+  way.
+- **A form invoked twice holds only the second invocation**, and a person's
+  submit answers that one; the first is never answered. On 153, cancelling the
+  replaced first invocation never answers and crashes the renderer (151
+  rejected the same call). MCPJam runs one invocation per page at a time and a
+  timed-out declarative invocation is now really cancelled before the next one
+  starts, so its own paths should not reach that state — but the bridge does
+  not guard against it.
 
 `target="_blank"` is the one shape that loses the response, and it is lost in
 the browser rather than on the way to us: nothing arrives on the opener's

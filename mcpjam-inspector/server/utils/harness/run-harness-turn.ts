@@ -1,7 +1,12 @@
-import { localDiskResumeState } from "./local/resume-state.js";
+import {
+  localDiskResumeState,
+  sessionResumeStateFrom,
+} from "./local/resume-state.js";
+import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalPackBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
+import { invalidateParkedLocalSession } from "./local/approval-park.js";
 import { getManagerConnections } from "../mcp-connections.js";
 import { toModelMessageToolOutput } from "../normalize-model-messages-for-convex.js";
 import {
@@ -27,12 +32,30 @@ import {
  * `fullStream` is read LOOSELY (by part `type`) and we hand-build `ai@6`
  * `UIMessageChunk`s. The `agent.stream(...)` input is cast at the call site.
  *
- * ── NOT runtime-verified here ─────────────────────────────────────────────
- * This compiles against the real APIs, but the live path (E2B connect, harness
- * bootstrap, exact fullStream part shapes, transcript reconstruction) needs a
- * live box + a model credential to exercise — same gate the Phase 0 spike ran.
- * Treat the stream-part mapping + message reconstruction as first-cut until a
- * live run confirms them.
+ * ── What is verified, and where ───────────────────────────────────────────
+ * VERIFIED IN CI on a real box (`.github/workflows/hosted-harness-docker.yml`,
+ * test `docker/__tests__/hosted-harness-docker.e2e.test.ts`): this function,
+ * end to end, for Claude Code and Codex (app-server), with the real
+ * `HarnessAgent`, adapters, bridges and vendor CLIs inside a container baked
+ * from the computer template's bake context (`docker/test-image.Dockerfile`),
+ * reached through the Docker sandbox provider, against the conformance mock
+ * upstreams (`local/conformance/mock-anthropic.mjs`, `mock-responses.mjs`).
+ * Pinned there:
+ *   - the fullStream → UI chunk mapping and the transcript / tool evidence it
+ *     reconstructs, as golden files (`docker/__tests__/goldens/`);
+ *   - native (Claude Code) and host-executed (Codex) MCP calls attributed to
+ *     their server;
+ *   - a baked start (no install at turn time), a stream failure after partial
+ *     output reported once, cancellation, stream termination with at most one
+ *     terminal part, one broker revoke, and no runtime process left in the box.
+ * NOT verified by that job — it mocks them at their module boundary: E2B
+ * itself (`Sandbox.connect`, the egress baseline, the broker lease's egress
+ * transform, brokered secrets, box reservation and teardown) and the control
+ * plane (continuity sidecar, runtime skills, MCP proxy-token mint and the
+ * public proxy route). Docker coverage says nothing about the E2B path, and
+ * no automated check exercises it; it is verified by hand on staging when a
+ * computer template is rolled out (mcpjam-backend
+ * `templates/computer/README.md`).
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
@@ -79,6 +102,7 @@ import {
   emitToolApprovalRequest,
   emitToolInput,
   emitToolOutput,
+  emitToolOutputDenied,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
@@ -116,18 +140,38 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
-import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
+import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import {
+  harnessBootstrapLogFields,
+  harnessBootstrapObservation,
+  logHarnessBootstrapOnFailure,
+} from "./harness-bake-observer.js";
 import {
   prepareLocalHarnessTurn,
   type PreparedLocalHarnessTurn,
 } from "./local/local-turn.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
-import { localPermissionModeFor } from "./local/compatibility.js";
+import { localPermissionModeFor, localSandboxPolicyFor } from "./local/compatibility.js";
+import { HOSTED_APPROVAL_SANDBOX_POLICY } from "./codex-appserver/hosted-sandbox-policy.js";
+import { sandboxPolicyFingerprint } from "./codex-appserver/shared/sandbox-policy.js";
 import {
   resolveWorkingDirectory,
   HOME_ROOT,
 } from "../computers/path-confine.js";
-import { resolveHarnessSandbox } from "./resolve-sandbox.js";
+import {
+  HarnessSandboxResolutionError,
+  resolveHarnessSandbox,
+} from "./resolve-sandbox.js";
+import {
+  HarnessInfraSetupError,
+  codexProviderEvidenceFromNotification,
+  harnessFailureEvidenceOf,
+  harnessFailureMessageOf,
+} from "./harness-provider-error.js";
+import type {
+  InfraFailureEvidence,
+  ModelEndpointOwnership,
+} from "../infra-failure-evidence.js";
 import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
@@ -209,7 +253,7 @@ import {
   harnessModelPurposeForSourceType,
   harnessReasoningEffortRefusalReason,
   harnessToolApprovalRefusalReason,
-  selectionReasoningEffort,
+  turnReasoningEffortOf,
 } from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
@@ -574,6 +618,14 @@ export function harnessRuntimeFingerprint(parts: {
     permissionProfile: string;
   };
   /**
+   * The command-sandbox policy an unattended local turn runs under
+   * (`sandboxPolicyFingerprint`). A resumed Codex thread keeps the sandbox it
+   * was started with, so a policy change must fork rather than continue under
+   * terms nobody chose. Appended only when set — after `localTarget`, which
+   * only local turns carry — so no existing session's hash moves.
+   */
+  commandSandbox?: string;
+  /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
    * is why rather than an oversight. Their credential is a materialized project
    * secret, so a rotation already forks through `secretsHash`; and the harness
@@ -613,6 +665,7 @@ export function harnessRuntimeFingerprint(parts: {
             `${parts.localTarget.permissionProfile}`,
         ]
       : []),
+    ...(parts.commandSandbox ? [`command-sandbox:${parts.commandSandbox}`] : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -673,6 +726,7 @@ export async function runHarnessTurn(
     failureReporter: failureReporterOption,
     onLiveTextDelta,
     requireToolApproval,
+    approvalMode,
     modelVisibleMcpToolResults,
     respectToolVisibility,
     tasks,
@@ -737,13 +791,14 @@ export async function runHarnessTurn(
         "own computer)",
     );
   }
+  // Venue-aware, and decided ONCE: the fingerprint's `transport`, the
+  // approval mode and the tool catalog all come from this adapter, so a local
+  // Codex turn must see the app-server arm here exactly as its preflight did.
   const harnessAdapter = getHarnessAdapter(harness);
   // The effort this turn asked for: the typed field, else the saved selection it
   // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
   // refusal below and `createHarness` further down cannot disagree.
-  const turnReasoningEffort =
-    options.reasoningEffort ??
-    selectionReasoningEffort(options.extraBodyFields?.modelSelection);
+  const turnReasoningEffort = turnReasoningEffortOf(options);
 
   // The engine mutates a single messageHistory ref through the turn (parity
   // with runChatEngineLoop); we seed it with the inbound prompt messages.
@@ -792,6 +847,38 @@ export async function runHarnessTurn(
   // continuation is committed with `awaitingApproval` and the next request
   // resumes it. Hoisted so the finally + onFinishEngine see it.
   let pausedForApproval = false;
+  // The approval ids this turn paused on, for a LOCAL runtime that has to stay
+  // alive across the decision (`liveApprovalRuntime`, `local/approval-park.ts`).
+  const pendingApprovalIds: string[] = [];
+  // Set once a local runtime has been parked on those approvals: the parked
+  // record now owns its teardown, so this turn must not run it.
+  let localParked = false;
+  // Set while a turn that parked is still finalizing its response; see
+  // `honourStopAfterPark`.
+  let releaseStopAfterPark: (() => void) | null = null;
+  // A Stop can reach the server after the turn has already paused and parked
+  // its runtime, while the response is still open (finalizing and saving the
+  // paused turn). Ignored, it left the parked process, and anything it had
+  // started (a long `sleep` in the E2E), running until the idle TTL. Until the
+  // response closes, a Stop ends the parked session the way a Stop ends a
+  // running one; afterwards the listener is gone, so a later socket close can
+  // never end a session that is legitimately waiting for a decision.
+  const honourStopAfterPark = (parkedSessionId: string) => {
+    if (!abortSignal) return;
+    const stop = () => {
+      void invalidateParkedLocalSession(parkedSessionId, "stopped");
+    };
+    if (abortSignal.aborted) {
+      stop();
+      return;
+    }
+    abortSignal.addEventListener("abort", stop, { once: true });
+    releaseStopAfterPark = () => {
+      abortSignal.removeEventListener("abort", stop);
+      releaseStopAfterPark = null;
+    };
+  };
+  let localUnpark: (() => void) | null = null;
   let pausedForScopeStepUp = false;
   // Internal liveness abort: the heartbeat fires this when the lease is
   // DEFINITIVELY lost (stolen/expired) or when transient heartbeat failures
@@ -963,6 +1050,22 @@ export async function runHarnessTurn(
    * itself rather than a successful one.
    */
   let modelInvoked = false;
+  /** The turn's cloud sandbox provider (bootstrap-observed), once built — so a
+   *  FAILED turn can still report whether its runtime install failed. */
+  let bakeObservedSandbox: unknown = null;
+  /**
+   * The last TERMINAL model-call failure an agent runtime reported as typed
+   * data mid-stream (Codex forwards `codexErrorInfo` as a `raw` notification).
+   * Consulted by the turn's catch when the thrown error itself carries no
+   * structured evidence — never derived from the error's text.
+   */
+  let rawProviderEvidence: InfraFailureEvidence | undefined;
+  /**
+   * Whose model endpoint the agent runtime called, once its auth is decided:
+   * MCPJam's model proxy (broker lease, local loopback gateway), or the
+   * customer's own account with a first-party provider (external account).
+   */
+  let modelEndpoint: ModelEndpointOwnership | undefined;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -1201,6 +1304,9 @@ export async function runHarnessTurn(
         adapter: harnessAdapter,
         requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        // Every caller with nobody to answer (evals, swarms, synthetic
+        // sessions, API turns) says so this way.
+        unattended: approvalMode === "auto-deny",
       });
       if (approvalRefusal) {
         throw new Error(`Can't run this turn: ${approvalRefusal}.`);
@@ -1289,8 +1395,26 @@ export async function runHarnessTurn(
       const pluginServerOrigins = effectiveCapabilities
         ? pluginOriginByServerId(effectiveCapabilities)
         : undefined;
-      const localEvidence = harnessExecutionTarget && evalIterationId ? await localHarnessEvidence(authHeader, evalIterationId, turnId) : undefined;
-      if (localEvidence) onHarnessEvidenceDecision?.({ ...localEvidence.decision, turnId });
+      // Member evidence is captured where a NATIVE runtime's MCP traffic
+      // crosses MCPJam's local plane. A host-executed runtime (Codex) has no
+      // such traffic — its relayed calls run below in this process, under the
+      // same tool policy — so there is nothing to capture, the run was frozen
+      // with capture off, and asking the backend would only cost a round trip
+      // (and fail outright on a deployment that predates the narration
+      // answer). Report the decision the run actually has: narration grading.
+      const localEvidence =
+        harnessExecutionTarget && evalIterationId && nativeMcpDelivery
+          ? await localHarnessEvidence(authHeader, evalIterationId, turnId)
+          : undefined;
+      if (localEvidence) {
+        onHarnessEvidenceDecision?.({ ...localEvidence.decision, turnId });
+      } else if (harnessExecutionTarget && evalIterationId && !nativeMcpDelivery) {
+        onHarnessEvidenceDecision?.({
+          captureEnabled: false,
+          gradingSource: "narration",
+          turnId,
+        });
+      }
       if (harnessExecutionTarget && nativeMcpDelivery && (selectedServers?.length ?? 0) > 0) {
         localMcpPlane = await startLocalHarnessMcpPlane({ manager: mcpClientManager, serverIds: selectedServers ?? [], turnId, toolPolicy: harnessToolPolicy, evidence: localEvidence?.evidence, failureReporter });
       }
@@ -1600,35 +1724,40 @@ export async function runHarnessTurn(
         deliveredSkills.map((s) => [s.skillId, s.name]),
       );
 
-      // WS3: gate side-effecting built-ins (Bash/Edit/Write) behind approval
-      // when the host requires it, via the adapter's declared approval mode
-      // (Claude Code: allow-edits — reads stay free, the closest faithful
-      // mapping to the emulated engine, which gates tool CALLS, never reads).
-      // The adapter's default otherwise. Computed BEFORE the fingerprint:
-      // flipping approval mode must fork the session (a resumed thread keeps
-      // the mode it was created with).
-      //
-      // A LOCAL turn takes its mode from the CONSENTED PROFILE, not from the
-      // adapter default. Claude Code's default is `allow-all`; the profiles a
-      // user can actually agree to map to `allow-reads` and `allow-edits`. So
-      // consenting to "read-only" and getting an agent built at `allow-all` was
-      // an authorization bypass of the exact promise the consent sheet makes —
-      // and because the fingerprint is computed from this value, two different
-      // profiles hashed the same and a profile change resumed the old session
-      // at the old breadth instead of forking.
-      //
-      // Resolved here, before the fingerprint, from the same manifest mapping
-      // `prepareLocalHarnessTurn` uses; the two are reconciled below once
-      // preparation has run.
+      // Local attended turns always keep the runtime's ask mode. Off answers
+      // native requests in MCPJam, so toggle changes preserve the fingerprint
+      // and any waiting approval. Unattended profiles and hosted modes retain
+      // their existing mapping.
+      const localScope = sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended";
       const localPermissionMode =
         harnessExecutionTarget != null
           ? localPermissionModeFor(
               harnessAdapter.id,
               harnessExecutionTarget.permissionProfile,
               harnessExecutionTarget.kind,
-              sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
+              localScope,
             )
           : null;
+      // D2: an unattended local Codex turn is `allow-all` (nobody is there to
+      // approve) INSIDE Codex's own command sandbox, with an explicit policy —
+      // never `danger-full-access` on a user's machine. Same manifest, same
+      // pre-flight position as the mode above; preparation then refuses any
+      // target that sandbox was not measured on.
+      const localSandboxPolicy =
+        harnessExecutionTarget != null
+          ? localSandboxPolicyFor(
+              harnessAdapter.id,
+              harnessExecutionTarget.permissionProfile,
+              harnessExecutionTarget.kind,
+              localScope,
+            )
+          : null;
+      if (localSandboxPolicy !== null && !harnessAdapter.acceptsSandboxPolicy) {
+        throw new Error(
+          `${harnessAdapter.displayName} cannot apply a command sandbox on this ` +
+            `transport, so it cannot run unattended on this machine.`,
+        );
+      }
       const permissionMode: HarnessV1PermissionMode =
         harnessExecutionTarget != null
           ? // A host asking for approval narrows further: `allow-reads` is the
@@ -1636,12 +1765,23 @@ export async function runHarnessTurn(
             // falls to the NARROWEST mode rather than the adapter's default —
             // the turn is refused moments later in preparation, and until then
             // it must not be the widest thing on the menu.
-            requireToolApproval || localPermissionMode === null
+            (sourceType !== "eval" && sourceType !== "swarm") || requireToolApproval || localPermissionMode === null
             ? "allow-reads"
             : localPermissionMode
           : requireToolApproval && harnessAdapter.supportsNativeToolApproval
             ? harnessAdapter.approvalPermissionMode
             : harnessAdapter.defaultPermissionMode;
+      // The command sandbox the runtime applies: the local unattended policy,
+      // or, for a hosted turn that pauses for approval, one as wide as the box
+      // (see `HOSTED_APPROVAL_SANDBOX_POLICY`) so an approved command can do
+      // what the same command does with approval off.
+      const commandSandboxPolicy =
+        localSandboxPolicy ??
+        (harnessExecutionTarget == null &&
+        harnessAdapter.acceptsSandboxPolicy &&
+        permissionMode !== "allow-all"
+          ? HOSTED_APPROVAL_SANDBOX_POLICY
+          : null);
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
@@ -1696,6 +1836,9 @@ export async function runHarnessTurn(
               },
             }
           : {}),
+        ...(commandSandboxPolicy !== null
+          ? { commandSandbox: sandboxPolicyFingerprint(commandSandboxPolicy) }
+          : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "scenario"
@@ -1732,6 +1875,10 @@ export async function runHarnessTurn(
               computerId: string;
               awaitingApproval?: boolean;
             } | null;
+            /** This chat had a committed session under a different runtime
+             *  fingerprint (model, servers, skills, permission mode,
+             *  transport…), so this turn starts fresh. */
+            runtimeChanged: boolean;
           }
         | undefined;
       if (
@@ -1804,6 +1951,9 @@ export async function runHarnessTurn(
             // fresh start (it skips writes on resume). Enforce here rather than
             // trusting the endpoint to null `state` on mismatch.
             state: claim.fingerprintChanged ? null : claim.state,
+            // `stateVersion` only moves on a commit, so > 0 means there was a
+            // session to lose, not just a lane a failed first turn created.
+            runtimeChanged: claim.fingerprintChanged && claim.stateVersion > 0,
           };
           // Bounded: every caller of this is on the terminal path, and a
           // stalled release would hold the turn open exactly like the broker
@@ -1874,7 +2024,7 @@ export async function runHarnessTurn(
         !(localEligibility?.resume && continuity?.state?.awaitingApproval)
       ) {
         throw new Error(
-          "The local session for this approval is no longer available. Start a new turn.",
+          "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
       const localSessionId = harnessExecutionTarget
@@ -1888,6 +2038,26 @@ export async function runHarnessTurn(
         // minted further down for the broker's revoke key. The local lease is
         // revoked by THIS id, and the two paths never both hold one.
         const localRunId = crypto.randomUUID();
+        // A decision for an approval a LIVE local runtime is parked on is
+        // delivered to that runtime, never replayed into a new one: bind it to
+        // the process generation recorded with the suspended turn.
+        let approvalContinuation:
+          | { generation: string; approvalIds: string[] }
+          | undefined;
+        if (harnessAdapter.liveApprovalRuntime && isApprovalResume) {
+          const generation = bridgeGenerationOf(continuity?.state?.resumeState);
+          if (!generation) {
+            throw new Error(
+              "The local session for this approval is no longer available. Start a new turn.",
+            );
+          }
+          approvalContinuation = {
+            generation,
+            approvalIds: approvalContinuations.map((continuation) =>
+              String(continuation.approvalId),
+            ),
+          };
+        }
         const preparation = await prepareLocalHarnessTurn({
           target: harnessExecutionTarget,
           scope: sourceType === "eval" || sourceType === "swarm" ? "unattended" : "attended",
@@ -1909,8 +2079,12 @@ export async function runHarnessTurn(
           projectId,
           bearer: authHeader,
           requireToolApproval,
+          ...(approvalContinuation ? { approvalContinuation } : {}),
           scopedEnv: sessionSecretEnv,
           onSecretEnvDelivered,
+          ...(turnReasoningEffort !== undefined
+            ? { reasoningEffort: turnReasoningEffort }
+            : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!preparation.ok) {
@@ -1924,6 +2098,7 @@ export async function runHarnessTurn(
         retainLocalState = Boolean(localEligibility?.resume && localPrepared.sessionStateExists);
         localTeardown = preparation.prepared.teardown;
         discardLocalState = preparation.prepared.discardState;
+        localUnpark = preparation.prepared.unpark;
         // The mode the agent was already built around, against the mode the
         // prepared plan actually launched under. They come from the same
         // manifest mapping and should be identical; if they ever are not, the
@@ -1959,6 +2134,18 @@ export async function runHarnessTurn(
           projectId,
           ...(executionScope ? { executionScope } : {}),
           signal: abortSignal,
+        }).catch((error: unknown) => {
+          // TYPED at the producer: the control plane could not hand us a live
+          // box (provision / wake / lookup). Our sandbox layer, never the
+          // model's.
+          if (error instanceof HarnessSandboxResolutionError) {
+            throw new HarnessInfraSetupError(error.message, {
+              source: "sandbox_setup",
+              code: "harness_sandbox_unavailable",
+              httpStatus: error.status,
+            });
+          }
+          throw error;
         });
         box = {
           kind: "computer",
@@ -2037,7 +2224,12 @@ export async function runHarnessTurn(
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!reservation.ok) {
-          throw new Error(reservation.error);
+          // Typed: the box claim is our sandbox layer's concurrency control.
+          throw new HarnessInfraSetupError(reservation.error, {
+            source: "sandbox_setup",
+            code: "harness_box_reservation_failed",
+            httpStatus: reservation.status,
+          });
         }
         // From here until the lease is minted, ANY exit must hand the box back —
         // otherwise the next turn waits out the reservation's TTL for nothing.
@@ -2113,11 +2305,13 @@ export async function runHarnessTurn(
       // On the LOCAL path the provider was already built by
       // `prepareLocalHarnessTurn`: it supervises a real process tree on this
       // machine, so there is no sandbox id to attach to and nothing to
-      // construct here. The cloud provider is built only when there is a box.
+      // construct here. The cloud provider is built only when there is a box,
+      // through the factory: E2B unless `HARNESS_SANDBOX_PROVIDER=docker`
+      // (dev/CI only, refused in production).
       const sandbox =
         localPrepared !== null
           ? localPrepared.sandbox
-          : createE2BHarnessSandboxProvider({
+          : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
               defaultWorkingDirectory,
               // The materialized secrets, as a session-wide env bag on every `run`
@@ -2146,6 +2340,7 @@ export async function runHarnessTurn(
                   }
                 : {}),
             });
+      if (localPrepared === null) bakeObservedSandbox = sandbox;
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own
@@ -2163,7 +2358,9 @@ export async function runHarnessTurn(
         // than by the child. What the child gets here is that gateway's URL and
         // a per-session capability that means nothing anywhere else.
         auth = localPrepared.auth;
+        modelEndpoint = "platform";
       } else if (externalAccountAuth) {
+        modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
         // skipped rather than made conditional inside it. `brokerRunId` stays
         // unset, which is what keeps teardown from issuing a revoke for a lease
@@ -2187,6 +2384,9 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           modelId,
           runId: brokerRunId,
+          ...(turnReasoningEffort !== undefined
+            ? { reasoningEffort: turnReasoningEffort }
+            : {}),
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
@@ -2194,7 +2394,14 @@ export async function runHarnessTurn(
           // Throws propagate to the turn's outer catch; onFinishEngine frees the
           // claimed lane (sessionEstablished still false) and revokes the broker
           // lease (brokerRunId set) if the backend installed before a lost response.
-          throw new Error(broker.error);
+          // Typed: lease installation is OUR platform layer, not the model.
+          // The backend's own code rides along when it sent one (a billing
+          // refusal, a box that is gone), so it is classified as what it is.
+          throw new HarnessInfraSetupError(broker.error, {
+            source: "platform_setup",
+            code: broker.code ?? "harness_broker_unavailable",
+            httpStatus: broker.status,
+          });
         }
         // The lease is recorded, which consumed this turn's claim on the box; the
         // lease's own per-box fence covers the rest of the turn. Releasing now
@@ -2202,6 +2409,7 @@ export async function runHarnessTurn(
         clearReservationHeartbeat();
         reservationHeld = false;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+        modelEndpoint = "platform";
       }
       tBroker = Date.now();
 
@@ -2210,10 +2418,16 @@ export async function runHarnessTurn(
       // uses the same one).
       // (permissionMode was computed above, before the runtime fingerprint.)
 
-      // The adapter maps the host modelId to the harness's native model and
-      // constructs it (for Claude Code: the gateway `creator/model` id becomes a
-      // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
-      // do zero inference). Returns the HarnessAgent boundary type directly.
+      // The adapter maps the host modelId to the harness's native model (for
+      // Claude Code: the gateway `creator/model` id becomes a CLI-native alias
+      // `sonnet|opus|haiku`; the raw gateway id makes the CLI do zero
+      // inference). That model rides on `HarnessAgent` below, not on
+      // `createHarness`: the AI SDK adapters removed their deprecated
+      // construction-time `model` setting (harness 1.0.108), so a model handed
+      // only to the adapter would silently run the runtime's default model.
+      const nativeModel = harnessAdapter.toNativeModel?.(modelId);
+
+      // `createHarness` returns the HarnessAgent boundary type directly.
       //
       // Narrowed on the delivery MECHANISM rather than called through the
       // union: a `session-config` adapter's `createHarness` REQUIRES `mcpJson`
@@ -2238,8 +2452,18 @@ export async function runHarnessTurn(
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
+              ...(commandSandboxPolicy !== null
+                ? { sandboxPolicy: commandSandboxPolicy }
+                : {}),
             });
-      if (localPrepared) harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
+      if (localPrepared) {
+        harnessRuntime = await withLocalPackBootstrap(harnessRuntime, localPrepared.plan.runtime.rootPath);
+        if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
+          harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
+            logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
+          }, new Set(approvalContinuations.map(continuation => continuation.approvalId)));
+        }
+      }
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
       // to the runtime; when the runtime calls one it pauses, the agent runs the
       // tool's `execute()` HERE on MCPJam's server, and submits the result back.
@@ -2260,18 +2484,22 @@ export async function runHarnessTurn(
       //
       // A workspace tool that pauses for approval (MJ-008) is handed over only
       // to a runtime that can pause on a host-executed tool. Anywhere else it
-      // is left out rather than offered without its pause.
+      // is left out rather than offered without its pause. Attended setting-floor
+      // tools are withheld too; automated runs retain their existing posture.
       const offeredBuiltInTools = Object.fromEntries(
         Object.entries((builtInTools ?? {}) as Record<string, unknown>).filter(
           ([name, definition]) => {
             if (
               harnessAdapter.supportsHostExecutedToolApproval ||
-              !requiresServerVerifiedApproval(definition)
+              (!requiresServerVerifiedApproval(definition) &&
+                (sourceType === "eval" || sourceType === "swarm" ||
+                  ((definition as { needsApproval?: unknown } | undefined)?.needsApproval !== true &&
+                    typeof (definition as { needsApproval?: unknown } | undefined)?.needsApproval !== "function")))
             ) {
               return true;
             }
             logger.warn(
-              "[harness] workspace tool withheld: this runtime cannot pause on a host-executed tool for approval",
+              "[harness] tool withheld: this runtime cannot pause on a host-executed tool for approval",
               { harness: harnessAdapter.id, toolName: name },
             );
             return false;
@@ -2318,6 +2546,7 @@ export async function runHarnessTurn(
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
+        ...(nativeModel ? { model: nativeModel } : {}),
         ...(localPrepared
           ? { sandboxConfig: { workDir: localPrepared.sandboxWorkDir } }
           : {}),
@@ -2618,7 +2847,7 @@ export async function runHarnessTurn(
         eligibility.resume && localPrepared?.sessionStateExists === false;
       if (localStateMissing && isApprovalResume) {
         throw new Error(
-          "The local session for this approval is no longer available. Start a new turn.",
+          "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
       const resumable = eligibility.resume && !localStateMissing
@@ -2630,7 +2859,9 @@ export async function runHarnessTurn(
         ? "resume-failed"
         : eligibility.reason === "sandbox-replaced"
           ? "sandbox-replaced"
-          : undefined;
+          : continuity?.runtimeChanged
+            ? "runtime-changed"
+            : undefined;
       if (eligibility.reason === "legacy-cold-resume") {
         logger.warn(
           "[harness] resuming a pre-detach sidecar (cold/disk resume; continuity not guaranteed)",
@@ -2642,6 +2873,12 @@ export async function runHarnessTurn(
       // continueFrom (NOT resumeFrom) and continued with continueStream below.
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
+      if (isApprovalResume && !resumeFromApproval) {
+        throw new Error("The session for this approval is no longer available; the pending action will not run. Start a new turn.");
+      }
+      for (const continuation of approvalContinuations) {
+        logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalId, approvalDecision: "user" });
+      }
       let session: Awaited<ReturnType<typeof agent.createSession>>;
       if (resumeFromApproval && resumable) {
         // No fresh fallback here: if the paused continuation is stale (computer
@@ -2656,7 +2893,9 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            resumeFrom: localPrepared ? localDiskResumeState(resumable.resumeState) : resumable.resumeState,
+            resumeFrom: localPrepared
+              ? localDiskResumeState(sessionResumeStateFrom(resumable.resumeState))
+              : sessionResumeStateFrom(resumable.resumeState),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {
@@ -2801,6 +3040,33 @@ export async function runHarnessTurn(
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,
             } as unknown as Parameters<typeof agent.stream>[0]);
+
+        // A DENIED call never produces a tool result, so without this its UI
+        // part stays `approval-responded` after the turn continues. The chat's
+        // `sendAutomaticallyWhen` (`lastAssistantMessageIsCompleteWithApproval
+        // Responses`) then re-sends the same decision, which finds no paused
+        // turn ("The local session for this approval is no longer available")
+        // or trips the duplicate-decision guard. `streamText` closes denied
+        // calls the same way for the emulated engine.
+        if (resumeFromApproval) {
+          // A continuation is the bare approval response; the call it answers
+          // is named by the earlier `tool-approval-request` part.
+          const toolCallIdByApprovalId = new Map<string, string>();
+          for (const message of messages) {
+            if (message.role !== "assistant" || typeof message.content === "string") continue;
+            for (const part of message.content) {
+              if (part.type === "tool-approval-request") {
+                toolCallIdByApprovalId.set(part.approvalId, part.toolCallId);
+              }
+            }
+          }
+          for (const continuation of approvalContinuations) {
+            const toolCallId = toolCallIdByApprovalId.get(continuation.approvalId);
+            if (continuation.approved === false && toolCallId) {
+              emitToolOutputDenied(writer, { toolCallId });
+            }
+          }
+        }
 
         // Read the harness fullStream LOOSELY and hand-build ai@6 UI chunks.
         // Reconstruct the transcript INCREMENTALLY so persisted history keeps
@@ -3406,17 +3672,36 @@ export async function runHarnessTurn(
               (part as { approvalId?: unknown }).approvalId ??
                 crypto.randomUUID(),
             );
+            // HarnessAgent's fullStream nests the call under `toolCall`
+            // (`{ approvalId, toolCall: { toolCallId, … } }`); a flat
+            // `toolCallId` is the adapter-level shape. Without the nested read
+            // the UI got an empty id and could not render the approval.
+            const approvalPart = part as {
+              toolCall?: { toolCallId?: unknown };
+              toolCallId?: unknown;
+            };
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
+              approvalPart.toolCall?.toolCallId ?? approvalPart.toolCallId ?? "",
             );
+            if (!toolCallId) {
+              throw new Error("Tool approval request is missing its tool call id.");
+            }
             closeReasoning();
             if (textId !== undefined) {
               emitTextEnd(writer, textId);
               textId = undefined;
             }
             emitToolApprovalRequest(writer, { approvalId, toolCallId });
+            pendingApprovalIds.push(approvalId);
             pausedForApproval = true;
             break;
+          } else if (type === "raw") {
+            // Passthrough of the runtime's own protocol message. Only a typed,
+            // terminal model-call failure is kept.
+            const evidence = codexProviderEvidenceFromNotification(
+              (part as { rawValue?: unknown }).rawValue,
+            );
+            if (evidence) rawProviderEvidence = evidence;
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
             if (typeof fr === "string" && fr)
@@ -3454,8 +3739,11 @@ export async function runHarnessTurn(
         // hasn't finished (it's suspended), so awaiting it would hang. Close
         // open blocks, emit a finish (tool-calls = "ended awaiting tool
         // resolution"), and let the finally suspend + commit the continuation.
-        // runSucceeded stays false so onFinishEngine skips transcript persist
-        // (the partial turn isn't a completed conversation).
+        // runSucceeded stays false (the turn is not complete), but
+        // onFinishEngine still saves the transcript so far, as the emulated
+        // engine saves a turn paused on approval: without it a new chat that
+        // paused did not exist in history (a reload found nothing) and the
+        // client reported the reply unsaved.
         if (pausedForApproval) {
           closeReasoning();
           flushSegment();
@@ -3464,9 +3752,10 @@ export async function runHarnessTurn(
             finishReason: "tool-calls" as FinishReason,
             messageMetadata: usage,
           });
-          // turn_finish WITHOUT driver.finishTurn — that would set succeeded
-          // and gate-open persistence for a mid-flight (suspended) turn.
+          // turn_finish WITHOUT driver.finishTurn — that would mark a
+          // suspended turn succeeded, and hand its commit to the ingest.
           activeDriver.usage = usage;
+          activeDriver.finishReason = "tool-calls" as FinishReason;
           activeDriver.emitErrorTurnFinish(writer);
           return;
         }
@@ -3566,7 +3855,17 @@ export async function runHarnessTurn(
         activeDriver.finishTurn(writer, { alreadyEmittedFinish: true });
         runSucceeded = true;
         const tStream = Date.now();
-        // Values inlined into the message — this logger drops the 2nd arg.
+        // Whether the box's runtime came from the baked template or was
+        // installed this turn (and if so why), plus the pinned versions —
+        // empty on the local path. Inlined for the console, and passed as
+        // context too: Axiom keeps the context, and the bake-miss monitor
+        // reads those fields (mcpjam-backend templates/computer/OPS.md). A
+        // failed turn reports the same fields as `[harness][bootstrap]`.
+        const bootstrapLog = harnessBootstrapLogFields(
+          await harnessBootstrapObservation(sandbox),
+          harnessAdapter.pinnedRuntimeVersion,
+        );
+        // Values inlined into the message — the console drops the 2nd arg.
         logger.info(
           `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
             tSandbox - tClaim
@@ -3574,7 +3873,8 @@ export async function runHarnessTurn(
             tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}`,
+          }ms resumed=${resumedSession}${bootstrapLog.text}`,
+          bootstrapLog.context,
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
@@ -3677,8 +3977,11 @@ export async function runHarnessTurn(
             // standalone-commit the continuation with awaitingApproval. The
             // commit releases the MCPJam lease (don't hold it across the human
             // decision — it would TTL-expire); the next request re-claims the
-            // lane and resumes via continueFrom. No transcript here — the turn
-            // is mid-flight (committed via the standalone endpoint, not ingest).
+            // lane and resumes via continueFrom. The continuation goes through
+            // the standalone endpoint, never the ingest: onFinishEngine saves
+            // this paused turn's transcript WITHOUT a sidecar commit, because
+            // this commit has already advanced the state version and released
+            // the lease, so an ingest carrying it would be refused.
             const continueState = await session.suspendTurn();
             const ok = await commitHarnessSessionState({
               owner: continuity.owner,
@@ -3698,6 +4001,30 @@ export async function runHarnessTurn(
             localStateCommitted = ok;
             retainLocalState ||= ok;
             if (!ok && !localPrepared) await releaseHarnessLease?.();
+            // A runtime whose pending approval lives in its process (Codex
+            // app-server) is PARKED rather than torn down: the decision has to
+            // reach this exact process. Model traffic is held and the lease
+            // revoked now; a Stop, the idle TTL or a process death ends it.
+            // Only once the continuation is committed — an uncommitted pause
+            // can never be continued, so there is nothing to keep alive for.
+            if (
+              ok &&
+              localPrepared &&
+              harnessAdapter.liveApprovalRuntime &&
+              pendingApprovalIds.length > 0
+            ) {
+              const generation = bridgeGenerationOf(continueState);
+              if (generation) {
+                localParked = localPrepared.park({
+                  generation,
+                  pendingApprovalIds,
+                });
+                if (localParked) {
+                  localTeardown = null;
+                  honourStopAfterPark(session.sessionId);
+                }
+              }
+            }
           } else if (runSucceeded && !aborted && continuity) {
             const resumeState = await session.detach();
             capturedHarnessCommit = {
@@ -3743,7 +4070,16 @@ export async function runHarnessTurn(
         aborted = true;
         return;
       }
-      const errorText = err instanceof Error ? err.message : String(err);
+      // A bridge's typed provider failure is a PLAIN OBJECT (the harness wire
+      // flattens Error instances), so `String(err)` would read
+      // "[object Object]". Its structured fields ride separately below.
+      const errorText = harnessFailureMessageOf(err);
+      const typedEvidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
+      // A runtime's provider failure says whose endpoint it came from.
+      const failureEvidence =
+        typedEvidence?.source === "harness_runtime" && modelEndpoint
+          ? { ...typedEvidence, endpoint: modelEndpoint }
+          : typedEvidence;
       // Reporter, not a bare logger.error: the old call captured to Sentry
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
@@ -3756,6 +4092,14 @@ export async function runHarnessTurn(
         transport: "http_stream",
         context: { promptIndex },
       });
+      // A turn-time install that failed (the pnpm 11 / deny-all egress class)
+      // never reaches the timing line, so the failure path reports the
+      // bootstrap too. Not awaited: the bounded manifest probe must not delay
+      // the error the client is waiting for.
+      void logHarnessBootstrapOnFailure(
+        bakeObservedSandbox,
+        harnessAdapter.pinnedRuntimeVersion,
+      );
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
       if (textId !== undefined) emitTextEnd(writer, textId);
@@ -3786,6 +4130,12 @@ export async function runHarnessTurn(
         // a provider that rejects the request outright still reads as the
         // model's failure rather than ours.
         phase: modelInvoked ? "stream" : "setup",
+        // STRUCTURED evidence, preserved from the producer that knew it: a
+        // typed setup step, a bridge's typed provider failure, or Codex's
+        // terminal `codexErrorInfo`. Absent when the producer had none — the
+        // failure then stays unclassified rather than being guessed from the
+        // sentence above.
+        ...(failureEvidence ? { infra: failureEvidence } : {}),
       });
     } finally {
       stopScopeStepUpBridge();
@@ -3830,6 +4180,9 @@ export async function runHarnessTurn(
     // encodes.
     await localMcpPlane?.close();
     localMcpPlane = undefined;
+    // A continuation that finished without pausing again (or failed) hands
+    // its runtime back to ordinary teardown; a parked one keeps it.
+    if (!localParked) localUnpark?.();
     if (localTeardown) {
       const teardown = localTeardown;
       localTeardown = null;
@@ -3863,7 +4216,14 @@ export async function runHarnessTurn(
       reservationHeld = false;
       await releaseBoxReservation();
     }
-    if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {
+    // A turn paused on approval is saved like a completed one (the emulated
+    // engine does the same), but without a sidecar commit: its continuation
+    // was committed through the standalone endpoint in the stream's finally.
+    if (
+      (runSucceeded || pausedForScopeStepUp || pausedForApproval) &&
+      !aborted &&
+      driver
+    ) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
       const trace: PersistedTurnTrace = driver.buildPersistedTrace();
@@ -3964,6 +4324,7 @@ export async function runHarnessTurn(
           await executeEngine({ writer });
         } finally {
           await onFinishEngine(context.writer);
+          releaseStopAfterPark?.();
         }
       },
     });
@@ -3979,6 +4340,7 @@ export async function runHarnessTurn(
   } finally {
     // onFinishEngine runs the broker teardown for this path too (see above).
     await onFinishEngine();
+    releaseStopAfterPark?.();
   }
   return {
     messageHistory,
@@ -3992,4 +4354,20 @@ function isAbortError(err: unknown): boolean {
     err instanceof Error &&
     (err.name === "AbortError" || err.name === "TimeoutError")
   );
+}
+
+/**
+ * The live process generation a suspended turn belongs to: the bridge token
+ * recorded in its `continue-turn` lifecycle state. A restarted bridge mints a
+ * new token, so a decision bound to the old one can never reach the new
+ * process.
+ */
+function bridgeGenerationOf(state: unknown): string | undefined {
+  if (!state || typeof state !== "object") return undefined;
+  const data = (state as { data?: unknown }).data;
+  if (!data || typeof data !== "object") return undefined;
+  const bridge = (data as { bridge?: unknown }).bridge;
+  if (!bridge || typeof bridge !== "object") return undefined;
+  const token = (bridge as { token?: unknown }).token;
+  return typeof token === "string" && token.length > 0 ? token : undefined;
 }

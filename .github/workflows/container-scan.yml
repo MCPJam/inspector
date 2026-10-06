@@ -76,7 +76,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # The build context includes the whole checkout; keep the token out
           # of .git/config so it cannot leak into a layer.

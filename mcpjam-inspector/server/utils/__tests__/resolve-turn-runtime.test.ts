@@ -150,6 +150,67 @@ describe("resolveTurnRuntime — runtime shape", () => {
     });
   });
 
+  it("MCPJam sends a per-step output ceiling in the hosted body", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ extraBodyFields: { foo: "bar" }, maxOutputTokens: 16_384 }),
+    );
+
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream",
+      extraBodyFields: { foo: "bar", maxOutputTokens: 16_384 },
+    });
+  });
+
+  it("a harness host is never given an output ceiling, whatever the caller asks", async () => {
+    // The harness model broker clamps `max_tokens` to a ceiling without
+    // touching the model's thinking budget, so one below the broker's own
+    // default can make every thinking turn fail. Today `runHarnessTurn` reads
+    // only `extraBodyFields.modelSelection`, which is what keeps the field
+    // harmless; the guarantee is held here, where the body is built, so it does
+    // not depend on what that reader forwards tomorrow.
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ harness: "claude-code", maxOutputTokens: 16_384 }),
+    );
+
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream",
+      harness: "claude-code",
+    });
+    const withFields = await resolveTurnRuntime(
+      baseArgs({
+        harness: "claude-code",
+        extraBodyFields: { foo: "bar" },
+        maxOutputTokens: 16_384,
+      }),
+    );
+    expect(
+      (withFields.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).toEqual({ foo: "bar" });
+  });
+
+  it("cloud BYOK never receives the output ceiling", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelDefinition: BYOK_MODEL, maxOutputTokens: 16_384 }),
+    );
+
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).not.toHaveProperty("maxOutputTokens");
+  });
+
   it("external account WITH a harness is refused here — this surface cannot deliver the credential", async () => {
     // The host's model id names no provider model, so there is no org provider
     // to resolve and no MCPJam credential to spend — and the resolver no longer
@@ -341,10 +402,55 @@ describe("resolveTurnRuntime: saved selection forwarding", () => {
       endpointPath: "/stream",
       extraBodyFields: { modelSelection: HOSTED_SELECTION },
     });
-    // Not an org selection: nothing to hand the org resolve.
-    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).not.toHaveProperty(
-      "modelSelection",
-    );
+    // The WHOLE selection reaches the resolver: it decides the source (the
+    // resolver forwards only an org one to `/stream/org/resolve`).
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: HOSTED_SELECTION,
+    });
+  });
+
+  it("a stored legacy selection decides the rail but is never sent on any body", async () => {
+    // The resolver (mocked here) puts a legacy selection on the own-key path;
+    // `selection-rail.test.ts` pins that it never answers `mcpjam` for one.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const legacy = { source: "legacy" as const, modelId: MCPJAM_MODEL.id };
+    const rt = await resolveTurnRuntime(baseArgs({ modelSelection: legacy }));
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: legacy,
+    });
+    expect(rt.modelSource).toBe("byok");
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream/org",
+      extraBodyFields: { providerKey: "anthropic", serverIds: ["server-a"] },
+    });
+  });
+
+  it("a local selection decides the rail but is never sent to the backend", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    const local = {
+      modelId: MCPJAM_MODEL.id,
+      source: "local" as const,
+      connectionRef: {
+        kind: "localProvider" as const,
+        providerKey: "anthropic",
+      },
+      fallback: none,
+    };
+    const rt = await resolveTurnRuntime(baseArgs({ modelSelection: local }));
+    expect(resolveSyntheticModelSourceMock.mock.calls[0][0]).toMatchObject({
+      modelSelection: local,
+    });
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).not.toHaveProperty("modelSelection");
   });
 
   it("an org selection rides the /stream/org body and the org resolve", async () => {
@@ -397,6 +503,79 @@ describe("resolveTurnRuntime: saved selection forwarding", () => {
       baseArgs({ modelSelection: ORG_SELECTION }),
     );
     expect(hosted.runtime).toEqual({ kind: "hosted", endpointPath: "/stream" });
+  });
+
+  it("hosted: a per-run effort the selection lacks rides top-level instead of being refused", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    const override = await resolveTurnRuntime(
+      baseArgs({
+        modelSelection: HOSTED_SELECTION,
+        settings: { reasoningEffort: "low" },
+      }),
+    );
+    expect(override.runtime).toMatchObject({
+      kind: "hosted",
+      endpointPath: "/stream",
+      extraBodyFields: {
+        modelSelection: HOSTED_SELECTION,
+        reasoningEffort: "low",
+      },
+    });
+    // No selection at all: still forwarded (a chat turn's own effort).
+    const bare = await resolveTurnRuntime(
+      baseArgs({ settings: { reasoningEffort: "high" } }),
+    );
+    expect(bare.runtime).toMatchObject({
+      extraBodyFields: { reasoningEffort: "high" },
+    });
+    // On the selection already: nothing extra.
+    const saved = {
+      ...HOSTED_SELECTION,
+      settings: { reasoningEffort: "high" },
+    };
+    const same = await resolveTurnRuntime(
+      baseArgs({
+        modelSelection: saved as never,
+        settings: { reasoningEffort: "high" },
+      }),
+    );
+    expect(
+      (same.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).not.toHaveProperty("reasoningEffort");
+  });
+
+  it("org cloud no longer refuses an effort: the selection carries it, a per-run one rides top-level", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+    // On the selection already: nothing extra on the body.
+    const saved = { ...ORG_SELECTION, settings: { reasoningEffort: "high" } };
+    const same = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: saved as never,
+        settings: { reasoningEffort: "high" },
+      }),
+    );
+    const sameBody = (
+      same.runtime as { extraBodyFields?: Record<string, unknown> }
+    ).extraBodyFields;
+    expect(sameBody).not.toHaveProperty("reasoningEffort");
+    expect(sameBody).toHaveProperty("modelSelection", saved);
+    // A per-run effort the selection lacks is forwarded, not refused.
+    const override = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: BYOK_MODEL,
+        modelSelection: ORG_SELECTION,
+        settings: { reasoningEffort: "low" },
+      }),
+    );
+    expect(
+      (override.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).toHaveProperty("reasoningEffort", "low");
   });
 
   it("no selection leaves every body as it was", async () => {

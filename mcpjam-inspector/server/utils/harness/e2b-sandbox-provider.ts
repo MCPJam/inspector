@@ -17,13 +17,20 @@
  *   id / defaultWorkingDirectory / ports    → native E2B
  *   stop / destroy                          → no-op (control plane owns teardown)
  */
-import { Sandbox, FileNotFoundError, CommandExitError } from "e2b";
+import {
+  Sandbox,
+  FileNotFoundError,
+  CommandExitError,
+  SandboxNotFoundError,
+} from "e2b";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { confineToHome } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
+import { harnessPnpmGuardCommand } from "./harness-bake.js";
+import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
   /**
@@ -230,6 +237,17 @@ export function createE2BHarnessSandboxProvider(
       apiKey: opts.apiKey,
       timeoutMs: opts.connectTimeoutMs,
       ...(connectSignal ? { signal: connectSignal } : {}),
+    }).catch((error: unknown) => {
+      // TYPED by the vendor SDK: the box is gone (killed on its timeout, or
+      // reaped). Our sandbox layer failed — never the model, never the server
+      // under test — so the eval infra classifier can exclude the trial.
+      if (error instanceof SandboxNotFoundError) {
+        throw new HarnessInfraSetupError(error.message, {
+          source: "sandbox_setup",
+          code: "sandbox_not_found",
+        });
+      }
+      throw error;
     });
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.
@@ -238,9 +256,11 @@ export function createE2BHarnessSandboxProvider(
     // The harness bootstrap shells `pnpm install` BEFORE any session hook runs.
     // pnpm is baked into the computer template (mcpjam-backend
     // templates/computer/e2b.Dockerfile); this idempotent guard covers boxes
-    // provisioned before that template rebuild lands, and no-ops once pnpm is
-    // present. We do not own the box, so a failure here propagates (the control
-    // plane still owns teardown).
+    // provisioned before that template rebuild lands — and custom environment
+    // images, which never had it — and no-ops once pnpm is present. The
+    // fallback install is PINNED to the template's version: an unpinned one is
+    // how pnpm 11 reached hosted turns. We do not own the box, so a failure
+    // here propagates (the control plane still owns teardown).
     //
     // Where it runs matters: on the harness path this is reached during PREWARM,
     // while the box still has ordinary egress. Reached after a lease has locked
@@ -248,7 +268,7 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
+      await sandbox.commands.run(harnessPnpmGuardCommand(), {
         timeoutMs: commandTimeoutMs,
         ...(connectSignal ? { signal: connectSignal } : {}),
       });

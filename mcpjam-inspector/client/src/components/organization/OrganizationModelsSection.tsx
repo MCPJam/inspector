@@ -43,6 +43,16 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@mcpjam/design-system/table";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
+import {
   useOrgModelConfig,
   useOrgModelUsageSummary,
   type OrgModelUsageAggregate,
@@ -625,8 +635,11 @@ export function UsageSummaryCard({
   const total = summary?.total;
   const hasKnownCost = (total?.knownCostRequests ?? 0) > 0;
   const hasUsage = (total?.requestCount ?? 0) > 0;
+  // An older backend reports no reasoning split at all; show the tile only
+  // when it does, so a missing field never reads as "0 reasoning tokens".
+  const hasReasoningTotal = typeof total?.reasoningTokens === "number";
   const topProviders = summary?.byProvider.slice(0, 4) ?? [];
-  const topModels = summary?.byModel.slice(0, 4) ?? [];
+  const modelRows = usageModelRows(summary);
 
   return (
     <Card className="border-0 bg-transparent shadow-none">
@@ -649,7 +662,11 @@ export function UsageSummaryCard({
           </div>
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div
+              className={`grid gap-3 sm:grid-cols-2 ${
+                hasReasoningTotal ? "lg:grid-cols-5" : "lg:grid-cols-4"
+              }`}
+            >
               <UsageStat
                 label="Requests"
                 value={formatCount(total?.requestCount)}
@@ -666,6 +683,12 @@ export function UsageSummaryCard({
                 label="Output"
                 value={formatCount(total?.outputTokens)}
               />
+              {hasReasoningTotal ? (
+                <UsageStat
+                  label="Reasoning"
+                  value={formatCount(total?.reasoningTokens)}
+                />
+              ) : null}
             </div>
 
             {hasKnownCost ? (
@@ -679,10 +702,8 @@ export function UsageSummaryCard({
               </div>
             ) : null}
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <UsageBreakdown title="By Provider" rows={topProviders} />
-              <UsageBreakdown title="By Model" rows={topModels} />
-            </div>
+            <UsageBreakdown title="By Provider" rows={topProviders} />
+            <UsageByModelTable rows={modelRows} />
           </>
         )}
       </CardContent>
@@ -695,6 +716,101 @@ function UsageStat({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border border-border/40 px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="text-base font-semibold">{value}</div>
+    </div>
+  );
+}
+
+interface UsageModelRow {
+  key: string;
+  /** Model id, plus ` · <Effort>` when the backend split usage by effort. */
+  label: string;
+  aggregate: OrgModelUsageAggregate;
+}
+
+/** `default` (the call sent no effort) reads "Default"; anything else uses the shared effort label. */
+function usageEffortLabel(effort: string): string {
+  return effort === "default"
+    ? "Default"
+    : reasoningEffortLabel(effort as ModelReasoningEffort);
+}
+
+/**
+ * One row per model × effective effort (`byModelEffort`); a backend that
+ * predates the effort split only has `byModel`, so those rows show the bare
+ * model id.
+ */
+function usageModelRows(
+  summary: OrgModelUsageSummary | undefined,
+): UsageModelRow[] {
+  if (!summary) return [];
+  if (summary.byModelEffort) {
+    return summary.byModelEffort.map((row) => ({
+      key: row.key,
+      label: `${row.modelId} · ${usageEffortLabel(row.reasoningEffort)}`,
+      aggregate: row,
+    }));
+  }
+  return summary.byModel.map((row) => ({
+    key: row.key,
+    label: row.key,
+    aggregate: row,
+  }));
+}
+
+function UsageByModelTable({ rows }: { rows: UsageModelRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium uppercase text-muted-foreground">
+        By Model
+      </div>
+      <div className="rounded-md border border-border/40">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Model</TableHead>
+              <TableHead className="text-right">Requests</TableHead>
+              <TableHead className="text-right">Tokens</TableHead>
+              <TableHead className="text-right">Reasoning</TableHead>
+              <TableHead className="text-right">Cost</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map(({ key, label, aggregate }) => (
+              <TableRow key={key}>
+                <TableCell className="max-w-[16rem] truncate" title={label}>
+                  {label}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatCount(aggregate.requestCount)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatCount(aggregate.totalTokens)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {typeof aggregate.reasoningTokens === "number"
+                    ? formatCount(aggregate.reasoningTokens)
+                    : "—"}
+                </TableCell>
+                <TableCell
+                  className="text-right tabular-nums"
+                  title={
+                    aggregate.unknownCostRequests > 0
+                      ? `${formatCount(aggregate.unknownCostRequests)} request(s) without a reported cost`
+                      : undefined
+                  }
+                >
+                  {aggregate.knownCostRequests > 0
+                    ? `${formatCost(aggregate.knownCostUsd)}${
+                        aggregate.unknownCostRequests > 0 ? "+" : ""
+                      }`
+                    : "—"}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }

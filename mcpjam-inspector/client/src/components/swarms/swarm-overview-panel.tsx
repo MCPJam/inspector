@@ -53,6 +53,7 @@ import {
 } from "@/shared/predicate-kinds";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { targetKeySuffix } from "@/lib/eval-target-key";
 
 /**
  * Journey-runs launched within this gap of each other (newest-first walk) are
@@ -365,7 +366,8 @@ export function waveTargets(
   const out: SwarmOverviewTarget[] = [];
   for (const run of runs) {
     for (const target of run.targets ?? []) {
-      const key = `${target.environmentName ?? ""}|${target.hostName}|${target.modelId}`;
+      // By TARGET, so Sonnet at Low and at High on one client are two.
+      const key = `${target.environmentName ?? ""}|${target.hostName}|${swarmTargetKey(target)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(target);
@@ -503,11 +505,29 @@ export function shortModelLabel(modelId: string): string {
   return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
 }
 
+/** A swarm target's identity: its `targetKey`, else (older backends) its model. */
+function swarmTargetKey(target: SwarmOverviewTarget): string {
+  return target.targetKey || target.modelId;
+}
+
 export function formatWaveModelLabel(
   targets: readonly SwarmOverviewTarget[]
 ): string {
   if (targets.length === 0) return "—";
-  const models = [...new Set(targets.map((t) => shortModelLabel(t.modelId)))];
+  // Only what differs: two efforts of one model read "Sonnet · Low" /
+  // "Sonnet · High"; default targets read exactly as before.
+  const keys = targets.map(swarmTargetKey);
+  const models = [
+    ...new Set(
+      targets.map(
+        (t) =>
+          `${shortModelLabel(t.modelId)}${targetKeySuffix(
+            swarmTargetKey(t),
+            keys
+          )}`
+      )
+    ),
+  ];
   if (models.length === 1) return models[0]!;
   if (models.length === 2) return `${models[0]} +1`;
   return `${models.length} models`;

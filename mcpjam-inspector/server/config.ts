@@ -286,7 +286,14 @@ export const CORS_ORIGINS =
 export const CORS_OPTIONS = {
   origin: CORS_ORIGINS,
   credentials: true,
-  exposeHeaders: ["x-request-id", "x-mcpjam-error-origin", "X-MCPJam-Session"],
+  // `x-mcpjam-failure-captured`: Ask MCPJam's browser reporter reads it to
+  // skip what the server already sent to Sentry; hidden, it double-reports.
+  exposeHeaders: [
+    "x-request-id",
+    "x-mcpjam-error-origin",
+    "X-MCPJam-Session",
+    "x-mcpjam-failure-captured",
+  ],
 };
 
 // Hosted web route timeouts (ms). Defined in `shared/` so the client can read

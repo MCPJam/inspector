@@ -11,6 +11,7 @@ import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
 import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import * as Sentry from "@sentry/electron/main";
+import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
@@ -1287,8 +1288,16 @@ app.on("web-contents-created", (_, contents) => {
   });
 });
 
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-prevent-unload", () =>
+    recordUpdateShutdown("window_close_blocked"),
+  );
+});
+app.on("will-quit", () => recordUpdateShutdown("will_quit"));
+
 // Handle app shutdown
 app.on("before-quit", (event) => {
+  recordUpdateShutdown("before_quit");
   // Safety net: if a new build has been downloaded but the user never clicked the
   // button, install it during quit so the next launch is on the new version.
   // quitAndInstall() re-fires before-quit; the helper guards with isQuittingForUpdate
@@ -1297,12 +1306,14 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     return;
   }
+  recordUpdateShutdown("local_cleanup_started");
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
   shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();
   }
+  recordUpdateShutdown("local_cleanup_finished");
   // The one asynchronous step in quitting. Electron will exit as soon as this
   // handler returns, so a fire-and-forget teardown loses the race with the
   // process: Chromium never releases the profile's singleton lock, and the
@@ -1311,10 +1322,12 @@ app.on("before-quit", (event) => {
   if (!quittingAfterBrowserTeardown && shutdownLocalBrowsers) {
     event.preventDefault();
     quittingAfterBrowserTeardown = true;
+    recordUpdateShutdown("browser_cleanup_started");
     browserTeardown = (browserTeardown ?? Promise.resolve())
       .catch(() => {})
       .then(() => shutdownLocalBrowsers?.())
-      .catch(() => {});
+      .then(() => recordUpdateShutdown("browser_cleanup_finished"))
+      .catch(() => recordUpdateShutdown("browser_cleanup_failed"));
     void browserTeardown.finally(() => app.quit());
   }
 });

@@ -314,7 +314,7 @@ export function checkEvalHarnessStaticAdmission(args: {
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
-    localExecution: args.localExecution === true && isLocalHarnessVenue(harness),
+    localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
     requireToolApproval: hostConfig.requireToolApproval === true,
     hasSelectedMcpServers,
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
@@ -334,6 +334,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     // Evals refuse an unverified harness × model pair ("not verified for
     // <harness> <version>") rather than run it.
     purpose: "eval",
+    unattended: true,
     // The host's saved effort is known here; refusing it now costs nothing.
     ...(hostSavedReasoningEffort(hostConfig) !== undefined
       ? { reasoningEffort: hostSavedReasoningEffort(hostConfig) }
@@ -422,7 +423,7 @@ export function checkEvalHarnessAdmission(args: {
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: harness,
-    localExecution: args.localExecution === true && isLocalHarnessVenue(harness),
+    localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
         requireToolApproval,
         hasSelectedMcpServers,
         model: {
@@ -435,6 +436,7 @@ export function checkEvalHarnessAdmission(args: {
         ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
         purpose: "eval",
+        unattended: true,
         ...(effort !== undefined ? { reasoningEffort: effort } : {}),
       });
       verdict = availability.ok
@@ -604,7 +606,7 @@ export function checkEvalExecutionAdmission(args: {
   // Checked BEFORE the built-in tool rule, and regardless of it: a harness on
   // this surface would run on the acting member's personal computer no matter
   // which tools the host grants.
-  if (singleCase && harness && !(args.localExecution === true && isLocalHarnessVenue(harness))) {
+  if (singleCase && harness && !(args.localExecution === true && isLocalHarnessVenue(harness, "unattended"))) {
     return { ok: false, reason: harnessNeedsSuiteRunReason(harness) };
   }
 

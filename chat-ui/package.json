@@ -49,24 +49,24 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@ai-sdk/react": "^3.0.0",
-    "ai": "^6.0.0",
+    "@ai-sdk/react": "^4.0.0",
+    "ai": "^7.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "dependencies": {
     "clsx": "^2.1.1",
-    "lucide-react": "^0.525.0",
-    "streamdown": "^2.6.0",
+    "lucide-react": "^1.49.0",
+    "streamdown": "^2.7.0",
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
-    "@ai-sdk/react": "^3.0.156",
+    "@ai-sdk/react": "^4.0.131",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "ai": "^6.0.154",
+    "ai": "7.0.128",
     "jsdom": "^27.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",

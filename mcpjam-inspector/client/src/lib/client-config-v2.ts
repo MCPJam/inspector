@@ -124,8 +124,8 @@ export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
  * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` run
- * the real CLI runtime (the `@ai-sdk/harness-claude-code` /
- * `@ai-sdk/harness-codex` / `@ai-sdk/harness-cursor` adapter) inside the
+ * the real CLI runtime (the `@ai-sdk/harness-claude-code` adapter, MCPJam's
+ * Codex app-server adapter, or the `@ai-sdk/harness-cursor` adapter) inside the
  * attached personal computer instead of MCPJam's emulated engine. Absent ⇒
  * emulated. The backend enforces `harness ⇒ computer`.
  *

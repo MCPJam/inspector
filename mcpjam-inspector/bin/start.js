@@ -445,9 +445,23 @@ async function setupOllamaInSingleTerminal(model) {
  */
 async function runHarnessSubcommand(args) {
   const action = args[1];
+  const usage = "usage: mcpjam-inspector harness <install|status> [--harness <id>]";
   if (action !== "install" && action !== "status") {
-    logError("usage: mcpjam-inspector harness <install|status>");
+    logError(usage);
     return 2;
+  }
+  // Which harness's pack. Omitted means Claude Code, as it always did.
+  let harnessId;
+  for (let i = 2; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--harness" && typeof args[i + 1] === "string") {
+      harnessId = args[++i];
+    } else if (arg.startsWith("--harness=")) {
+      harnessId = arg.slice("--harness=".length);
+    } else {
+      logError(usage);
+      return 2;
+    }
   }
 
   // A dedicated bundle: importing the server entry would start a server.
@@ -483,14 +497,26 @@ async function runHarnessSubcommand(args) {
     );
     return 1;
   }
+  const supported = Array.isArray(mod?.supportedHarnessIds)
+    ? mod.supportedHarnessIds
+    : ["claude-code"];
+  if (harnessId !== undefined && !supported.includes(harnessId)) {
+    logError(
+      `unknown harness ${JSON.stringify(harnessId)}; this Inspector can ` +
+        `install: ${supported.join(", ")}`,
+    );
+    return 2;
+  }
+  const harnessName =
+    mod?.harnessDisplayNames?.[harnessId ?? "claude-code"] ?? "Claude Code";
 
   if (action === "status") {
-    const current = await status();
+    const current = await status(harnessId);
     log(JSON.stringify(current, null, 2));
     return current.state === "ready" ? 0 : 1;
   }
 
-  logStep("1", "Installing the local Claude Code runtime pack");
+  logStep("1", `Installing the local ${harnessName} runtime pack`);
   let lastPercent = -1;
   const result = await install((progress) => {
     if (progress.state === "downloading" && progress.percent !== lastPercent) {
@@ -499,7 +525,7 @@ async function runHarnessSubcommand(args) {
     } else if (progress.state === "verifying") {
       process.stdout.write("\r  verifying…            ");
     }
-  });
+  }, harnessId);
   process.stdout.write("\r");
   if (result.state === "ready") {
     logSuccess(`Runtime pack ${result.packVersion} installed and verified`);
@@ -522,12 +548,12 @@ async function runHarnessSubcommand(args) {
       `${REASONS[result.reason] ?? REASONS.unknown}` +
         (result.message ? `: ${result.message}` : ""),
     );
-    logInfo("Run `mcpjam-inspector harness install` again to retry.");
+    logInfo(`Run \`mcpjam-inspector harness install${harnessId ? ` --harness ${harnessId}` : ""}\` again to retry.`);
     return 1;
   }
   if (result.state === "interrupted") {
     logError("Setup was interrupted before it finished.");
-    logInfo("Run `mcpjam-inspector harness install` again to continue.");
+    logInfo(`Run \`mcpjam-inspector harness install${harnessId ? ` --harness ${harnessId}` : ""}\` again to continue.`);
     return 1;
   }
   logError(

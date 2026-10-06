@@ -44,6 +44,9 @@ internals/
 
 # pnpm
 pnpm-lock.yaml
+# …except the codex app-server bootstrap's, which the framework installs with
+# `--frozen-lockfile` and the runtime pack fingerprints.
+!server/utils/harness/codex-appserver/bootstrap/pnpm-lock.yaml
 
 # debug
 npm-debug.log*

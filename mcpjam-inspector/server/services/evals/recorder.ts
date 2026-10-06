@@ -1,4 +1,5 @@
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
 import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
 import type { ConvexHttpClient } from "convex/browser";
@@ -18,14 +19,18 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
-import { runnerCapabilities } from "./runner-capabilities.js";
+import { rerunRefusalError } from "./rerun-refusal.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import { randomUUID } from "node:crypto";
-import { readStoredModelSelection } from "../../utils/model-resolution-local.js";
+import {
+  readStoredLegacySelection,
+  readStoredModelSelection,
+} from "../../utils/model-resolution-local.js";
 import {
   environmentLaunchConflictError,
   environmentLaunchRejectionError,
@@ -167,6 +172,8 @@ export type SuiteRunRecorder = {
     startedAt?: number;
     error?: string;
     errorDetails?: string;
+    /** OUR infrastructure failed this trial; only with `status: "failed"`. */
+    infraError?: EvalInfraError;
     resultSource?: "reported" | "derived";
     // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
     // nested `predicates: PredicateResult[]` rows. Persisted to
@@ -583,6 +590,8 @@ export const startSuiteRunWithRecorder = async ({
   serverIds,
   replayedFromRunId,
   useCurrentSuiteConfig,
+  rerunOfRunId,
+  rerunScope,
   environmentOverride,
   githubCheckServerOverride,
   toolSnapshot,
@@ -594,6 +603,7 @@ export const startSuiteRunWithRecorder = async ({
   runGroupId,
   environmentId,
   runtimeVenue,
+  localHarnessIds,
   expectedEnvironmentRevision,
   expectedEnvironmentHostConfigId,
   expectedEnvironmentServerIds,
@@ -617,6 +627,14 @@ export const startSuiteRunWithRecorder = async ({
   serverIds?: string[];
   replayedFromRunId?: string;
   useCurrentSuiteConfig?: boolean;
+  /**
+   * Rerun only the cases of `rerunOfRunId` that did not pass. Sent with
+   * `replayedFromRunId` set to the same run; the backend picks the cases and
+   * refuses `RERUN_NOTHING_TO_RERUN` when none qualify. Forwarded only when
+   * set, so ordinary launches send exactly the args they always sent.
+   */
+  rerunOfRunId?: string;
+  rerunScope?: "failed_cases";
   environmentOverride?: {
     servers: string[];
     serverBindings?: Array<{
@@ -676,6 +694,13 @@ export const startSuiteRunWithRecorder = async ({
    */
   environmentId?: string;
   runtimeVenue?: "local" | "hosted";
+  /**
+   * The harnesses this runner will execute locally for this launch, checked
+   * by the caller (`eligibleUnattendedLocalHarnesses`). Declared to the
+   * backend as `local-harness:<id>` alongside `runtimeVenue: 'local'`, so the
+   * venue it stamps is the venue this runner uses.
+   */
+  localHarnessIds?: readonly string[];
   /**
    * The environment revision `prepareEvalRun` resolved (and captured the
    * tool snapshot against). The mutation compares it to the environment's
@@ -773,6 +798,8 @@ export const startSuiteRunWithRecorder = async ({
       passCriteria,
       replayedFromRunId,
       useCurrentSuiteConfig,
+      ...(rerunOfRunId ? { rerunOfRunId } : {}),
+      ...(rerunScope ? { rerunScope } : {}),
       ...(environmentOverride ? { environmentOverride } : {}),
       ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
@@ -812,7 +839,10 @@ export const startSuiteRunWithRecorder = async ({
       // self-hosted ones this Inspector talks to.
       ...(launcher ? { launcher } : {}),
       ...(ciMetadata ? { ciMetadata } : {}),
-      runnerCapabilities: runnerCapabilities(),
+      runnerCapabilities: [
+        ...runnerCapabilities(),
+        ...(runtimeVenue === "local" ? localHarnessCapabilities(localHarnessIds) : []),
+      ],
     };
     response = await retrySuiteStartOnConflict(() =>
       convexClient.mutation(
@@ -864,6 +894,12 @@ export const startSuiteRunWithRecorder = async ({
     const rejection = environmentLaunchRejectionError(error);
     if (rejection) {
       throw rejection;
+    }
+    // A rerun refused before anything was created: nothing to rerun, a source
+    // still in flight, or a source from another suite.
+    const rerunRefusal = rerunScope ? rerunRefusalError(error) : null;
+    if (rerunRefusal) {
+      throw rerunRefusal;
     }
     throw error;
   }
@@ -1022,14 +1058,22 @@ export const startSuiteRunWithRecorder = async ({
       }
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => {
-          // Saved selection behind this entry; invalid or absent ⇒ legacy.
+          // Saved selection behind this entry; a STORED legacy one means
+          // "own key only"; invalid or absent ⇒ an unlabelled row (today's
+          // hosted-first read).
           const selection = readStoredModelSelection(model.selection);
+          const legacySelection = selection
+            ? undefined
+            : readStoredLegacySelection(model.selection);
           return {
             title: tc.title,
             query: tc.query,
-            model: model.model,
-            provider: model.provider,
+            // Read defensively: a store-once backend computes `model`, but the
+            // selection is the stored copy.
+            model: model.model ?? selection?.modelId ?? legacySelection?.modelId,
+            provider: model.provider ?? legacySelection?.provider,
             ...(selection ? { selection } : {}),
+            ...(legacySelection ? { legacySelection } : {}),
             runs: tc.runs || 1,
             expectedToolCalls: tc.expectedToolCalls || [],
             isNegativeTest: tc.isNegativeTest,

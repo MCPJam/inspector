@@ -40,6 +40,7 @@ import {
   toScoreProjection,
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
+import { toInfraErrorProjection } from "./eval-infra-error-projection.js";
 import {
   toFrictionSignalsProjection,
   toSuspectedConditionProjection,
@@ -60,6 +61,45 @@ import {
 } from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
+import {
+  selectionConfigKey,
+  type ModelSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
+import {
+  ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE,
+  computedModelId,
+  modelSelectionSchema,
+  requestedModelSelectionSchema,
+  selectionModelMismatch,
+  selectionOriginField,
+} from "./model-selection-schema.js";
+
+/**
+ * The selection, only if it is for `modelId` (verbatim, after a trim). Same
+ * rule as the SDK's `selectionIfMatches`, widened to a STORED legacy
+ * selection, which a store-once row may hold.
+ */
+function requestedSelectionIfMatches(
+  selection: RequestedModelSelection | undefined,
+  modelId: string | undefined,
+): RequestedModelSelection | undefined {
+  if (selection === undefined || modelId === undefined) return undefined;
+  return selection.modelId === modelId.trim() ? selection : undefined;
+}
+
+/** Two selections say the same thing (by value, not object identity). */
+function sameRequestedSelection(
+  a: RequestedModelSelection,
+  b: RequestedModelSelection,
+): boolean {
+  if (a.source === "legacy" || b.source === "legacy")
+    return a.source === b.source && a.modelId === b.modelId;
+  return (
+    selectionConfigKey(a as ModelSelection) ===
+    selectionConfigKey(b as ModelSelection)
+  );
+}
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import { upstreamRetryAfter } from "../../services/swarm-agent.js";
@@ -137,6 +177,7 @@ import type {
 } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
+import { rerunPreviewRefusal } from "../../services/evals/rerun-refusal.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -600,6 +641,11 @@ const publicInlineTestSchema = z
         system: z.string().optional(),
         temperature: z.number().optional(),
         toolChoice: z.any().optional(),
+        // Retired claim: nothing ever applied it (the runner reads only
+        // `temperature`), so accepting it stored a promise. Refused loudly.
+        reasoningEffort: z
+          .never({ error: ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE })
+          .optional(),
       })
       .passthrough()
       .optional(),
@@ -818,6 +864,9 @@ const createEvalSuiteSchema = z.strictObject({
               system: z.string().optional(),
               temperature: z.number().optional(),
               toolChoice: z.any().optional(),
+              reasoningEffort: z
+                .never({ error: ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE })
+                .optional(),
             })
             .passthrough()
             .optional(),
@@ -1909,6 +1958,16 @@ function toRunDto(run: RunDoc) {
     ...(typeof run.runGroupId === "string"
       ? { runGroupId: run.runGroupId }
       : {}),
+    // Rerun lineage. `rerunScope: "failed_cases"` means this run re-ran only
+    // the cases of `rerunOfRunId` that did not pass, so its pass rate is
+    // biased by that selection: it is never a suite's latest run, a trend
+    // point, or a baseline. OMITTED on every other run.
+    ...(typeof run.rerunOfRunId === "string"
+      ? { rerunOfRunId: run.rerunOfRunId }
+      : {}),
+    ...(run.rerunScope === "failed_cases"
+      ? { rerunScope: run.rerunScope as "failed_cases" }
+      : {}),
     ...(typeof run.effectiveModelId === "string"
       ? { effectiveModelId: run.effectiveModelId }
       : {}),
@@ -2133,6 +2192,10 @@ function toIterationDto(
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     ...(snapshot.isNegativeTest === true ? { isNegativeTest: true } : {}),
     error: iteration.error ?? null,
+    // OUR infrastructure failed this trial (a provider outage, a sandbox, an
+    // account limit). It measured nothing about the server, and every score
+    // excludes it. OMITTED on every trial without one.
+    ...toInfraErrorProjection(iteration.infraError),
     ...toScoreProjection(iteration.metadata, vocabulary),
     ...toStageProjection(iteration.metadata),
     // Observable patterns in this trial's tool calls — a report beside the
@@ -2409,8 +2472,20 @@ function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
     ...(testCase.scenario !== undefined ? { scenario: testCase.scenario } : {}),
     models: Array.isArray(testCase.models)
       ? testCase.models.map((m: any) => ({
-          model: String(m.model),
-          ...(m.provider ? { provider: String(m.provider) } : {}),
+          // COMPUTED: the selection's model when it has one (a store-once
+          // entry keeps the selection as its only copy), else the bare id.
+          model: String(computedModelId(m.selection, m.model) ?? m.model),
+          ...(m.provider
+            ? { provider: String(m.provider) }
+            : typeof m.selection?.provider === "string"
+              ? { provider: String(m.selection.provider) }
+              : {}),
+          // The saved selection the UI (or the API) stored for this model. A
+          // STORED legacy one (`source: "legacy"`) means "own key only".
+          ...(m.selection ? { selection: m.selection } : {}),
+          ...(m.selection && selectionOriginField(m.selectionOrigin)
+            ? { selectionOrigin: selectionOriginField(m.selectionOrigin) }
+            : {}),
         }))
       : [],
     ...(testCase.matchOptions
@@ -2532,9 +2607,22 @@ function toSuiteDetailDto(
     },
     executionConfig: execConfig
       ? {
-          model: execConfig.modelId,
+          // COMPUTED from the selection when there is one; an unlabelled
+          // config still reports its bare id.
+          model: computedModelId(execConfig.modelSelection, execConfig.modelId),
           systemPrompt: execConfig.systemPrompt,
           temperature: execConfig.temperature,
+          ...(execConfig.modelSelection
+            ? { modelSelection: execConfig.modelSelection }
+            : {}),
+          ...(execConfig.modelSelection &&
+          selectionOriginField(execConfig.modelSelectionOrigin)
+            ? {
+                modelSelectionOrigin: selectionOriginField(
+                  execConfig.modelSelectionOrigin,
+                ),
+              }
+            : {}),
         }
       : null,
     hosts: Array.isArray(suite.hostAttachments)
@@ -2591,7 +2679,23 @@ function toSuiteDetailDto(
       // what its own PATCH will grade with.
       judge: {
         enabled: goal?.enabled ?? GOAL_COMPLETION_DEFAULTS.enabled,
-        model: goal?.judgeModel ?? GOAL_COMPLETION_DEFAULTS.judgeModel,
+        // COMPUTED from the judge's saved selection when it has one.
+        model:
+          computedModelId(goal?.judgeSelection, goal?.judgeModel) ??
+          GOAL_COMPLETION_DEFAULTS.judgeModel,
+        // The judge's saved model choice (a STORED legacy one means "own key
+        // only"), and the marker a conversion leaves beside it.
+        ...(goal?.judgeSelection
+          ? { judgeSelection: goal.judgeSelection }
+          : {}),
+        ...(goal?.judgeSelection &&
+        selectionOriginField(goal?.judgeSelectionOrigin)
+          ? {
+              judgeSelectionOrigin: selectionOriginField(
+                goal.judgeSelectionOrigin,
+              ),
+            }
+          : {}),
         // `autoRun` is the flag that makes grading HAPPEN; `enabled` alone only
         // makes the judge available to a manual request.
         ...(goal?.autoRun !== undefined ? { autoRun: goal.autoRun } : {}),
@@ -2745,6 +2849,8 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     ...opt("respectToolVisibility"),
     ...opt("modelVisibleMcpToolResults"),
     ...opt("mcpToolResultImageRendering"),
+    ...opt("modelSelection"),
+    ...opt("modelSelectionOrigin"),
     ...opt("harness"),
     ...opt("computer"),
     ...opt("serverIds"),
@@ -2824,14 +2930,95 @@ function providerForModelId(modelId: string): string {
  * matches nothing. Same normalization as `withTrimmedModelId` on the host write
  * boundary and the backend's `normalizeModelId`; only ever a trim.
  */
-function toPersistedModelEntry(entry: { model: string; provider?: string }): {
+function toPersistedModelEntry(entry: {
+  model: string;
+  provider?: string;
+  selection?: RequestedModelSelection | null;
+}): {
   model: string;
   provider: string;
+  selection?: RequestedModelSelection;
 } {
+  const model = requireNonBlankModelId(entry.model);
+  // A saved selection is FOR one model. Refuse a mismatch here rather than
+  // persist a case whose chip and stored selection name different models.
+  const mismatch = selectionModelMismatch(model, entry.selection);
+  if (mismatch) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `models[].${mismatch}`,
+    );
+  }
   return {
-    model: requireNonBlankModelId(entry.model),
+    model,
     provider: deriveProvider(entry.model, entry.provider),
+    // `null` (PATCH: drop the saved selection) and absent both persist no
+    // selection here; PATCH keeps existing ones for absent, see
+    // `keepExistingModelSelections`.
+    ...(entry.selection ? { selection: entry.selection } : {}),
   };
+}
+
+/**
+ * A `models` PATCH REPLACES the array, and an entry without `selection` used to
+ * erase the one the UI saved for that model (an authored `{ model, provider }`
+ * has no way to say "leave the selection alone"). So an entry that OMITS
+ * `selection` keeps the existing selection for the same model, and only
+ * `selection: null` drops it. `selectionIfMatches` guards the carry-over: a
+ * selection is never attached to a model it was not saved for.
+ */
+function keepExistingModelSelections(
+  authored: Array<{ model: string; selection?: RequestedModelSelection | null }>,
+  persisted: Array<{
+    model: string;
+    provider: string;
+    selection?: RequestedModelSelection;
+  }>,
+  existing: unknown,
+): Array<{
+  model: string;
+  provider: string;
+  selection?: RequestedModelSelection;
+  selectionOrigin?: "backfill";
+}> {
+  const existingByModel = new Map<
+    string,
+    { selection: RequestedModelSelection; origin?: "backfill" }
+  >();
+  if (Array.isArray(existing)) {
+    for (const entry of existing) {
+      if (!entry || !entry.selection) continue;
+      // A store-once entry may carry only its selection: read its model from
+      // there when the bare id is absent.
+      const model = computedModelId(entry.selection, entry.model);
+      if (typeof model !== "string") continue;
+      const origin = selectionOriginField(entry.selectionOrigin);
+      existingByModel.set(model.trim(), {
+        selection: entry.selection as RequestedModelSelection,
+        ...(origin ? { origin } : {}),
+      });
+    }
+  }
+  return persisted.map((entry, index) => {
+    if (authored[index]?.selection !== undefined) return entry;
+    const existingEntry = existingByModel.get(entry.model);
+    const kept = requestedSelectionIfMatches(
+      existingEntry?.selection,
+      entry.model,
+    );
+    // The conversion marker rides with the selection it describes: kept
+    // together, never one without the other.
+    return kept
+      ? {
+          ...entry,
+          selection: kept,
+          ...(existingEntry?.origin
+            ? { selectionOrigin: existingEntry.origin }
+            : {}),
+        }
+      : entry;
+  });
 }
 
 /**
@@ -2974,6 +3161,12 @@ const publicCaseBodyShape = {
       z.object({
         model: z.string().min(1),
         provider: z.string().min(1).optional(),
+        /**
+         * The saved model choice behind `model` (source, connection,
+         * `settings.reasoningEffort`). On PATCH an entry that omits it KEEPS
+         * the case's existing selection for that model; `null` drops it.
+         */
+        selection: requestedModelSelectionSchema.nullable().optional(),
       }),
     )
     .optional(),
@@ -3448,6 +3641,24 @@ const updateSuiteShape = {
       model: z.string().min(1).optional(),
       systemPrompt: z.string().optional(),
       temperature: z.number().optional(),
+      /**
+       * The saved model choice (source, connection,
+       * `settings.reasoningEffort`). Must be FOR `model` when both are sent;
+       * sent alone it pins its own model. `null` clears it. A bare `model`
+       * change on a suite that has a selection for a DIFFERENT model drops
+       * that selection (it was never validated for the new model).
+       */
+      modelSelection: requestedModelSelectionSchema.nullable().optional(),
+    })
+    .superRefine((value, ctx) => {
+      const mismatch = selectionModelMismatch(value.model, value.modelSelection);
+      if (mismatch) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["modelSelection"],
+          message: mismatch,
+        });
+      }
     })
     .optional(),
   hosts: z
@@ -3580,6 +3791,12 @@ const requestRunJudgeSchema = z
     enable: z.boolean().optional(),
     /** Judge model for THIS run only. */
     model: judgeModelIdSchema.optional(),
+    /**
+     * The judge's full selection for THIS run only (source, connection,
+     * reasoning effort). Must name `model` when both are sent; sent alone it
+     * names the judge model. Judges run on MCPJam-hosted models only.
+     */
+    modelSelection: modelSelectionSchema.optional(),
     /** Pass threshold for THIS run only, 0–1. */
     threshold: z.number().min(0).max(1).optional(),
   })
@@ -3730,6 +3947,8 @@ function buildCaseMutationArgs(
     existingSteps?: unknown;
     /** The persisted case's match options, to merge a partial PATCH onto. */
     existingMatchOptions?: unknown;
+    /** The persisted case's `models`, so a PATCH keeps their selections. */
+    existingModels?: unknown;
     /** The persisted case's probeConfig, to merge a partial renderCheck PATCH onto. */
     existingProbeConfig?: any;
     /**
@@ -3812,7 +4031,10 @@ function buildCaseMutationArgs(
   }
 
   if (body.models !== undefined) {
-    args.models = body.models.map(toPersistedModelEntry);
+    const persisted = body.models.map(toPersistedModelEntry);
+    args.models = opts.forCreate
+      ? persisted
+      : keepExistingModelSelections(body.models, persisted, opts.existingModels);
   } else if (opts.forCreate) {
     args.models = isModelFreeStepsCase ? [] : (opts.defaultModels ?? []);
   }
@@ -5807,6 +6029,19 @@ evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   const override: Record<string, unknown> = {};
   if (parsed.enable !== undefined) override.enabled = parsed.enable;
   if (parsed.model !== undefined) override.judgeModel = parsed.model;
+  if (parsed.modelSelection !== undefined) {
+    if (
+      parsed.model !== undefined &&
+      parsed.model.trim() !== parsed.modelSelection.modelId
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `modelSelection.modelId (${parsed.modelSelection.modelId}) does not match model (${parsed.model}).`,
+      );
+    }
+    override.judgeSelection = parsed.modelSelection;
+  }
   if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
 
   try {
@@ -5898,6 +6133,212 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     .query("testSuites:getTestSuiteRun" as any, { runId })
     .catch(() => null);
   return v1Resource(c, toRunDto((updated ?? run)!));
+});
+
+// ── Rerun failed cases ──────────────────────────────────────────────────────
+//
+// Replay a finished run narrowed to the cases that did not pass there. The
+// BACKEND picks the cases (`startTestSuiteRun` with `rerunScope:
+// 'failed_cases'`): any case with a trial that is not completed+passed, with
+// cancelled and skipped trials not counting. The preview reports that same
+// selection before anything spends. The new run is stamped `rerunOfRunId` +
+// `rerunScope`, and because its pass rate is biased by that selection it never
+// becomes the suite's latest run, a trend point, or a baseline.
+
+const rerunEvalRunSchema = z
+  .object({
+    scope: z.literal("failed_cases"),
+    notes: z.string().optional(),
+    idempotencyKey: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+function toRerunPreviewDto(raw: RunDoc) {
+  const counts = (value: unknown): Record<string, number> =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(
+            (entry): entry is [string, number] => typeof entry[1] === "number",
+          ),
+        )
+      : {};
+  return {
+    runId: String(raw.runId),
+    suiteId: String(raw.suiteId),
+    scope: "failed_cases" as const,
+    sourceStatus: String(raw.sourceStatus),
+    sourceTerminal: raw.sourceTerminal === true,
+    totalCaseCount: Number(raw.totalCaseCount ?? 0),
+    selectedCaseCount: Number(raw.selectedCaseCount ?? 0),
+    selectedCaseIds: Array.isArray(raw.selectedCaseIds)
+      ? raw.selectedCaseIds.map(String)
+      : [],
+    reasons: counts(raw.reasons),
+    excluded: counts(raw.excluded),
+    rerunnable: raw.rerunnable === true,
+  };
+}
+
+async function readRerunPreview(
+  token: string,
+  runId: string,
+  projectId: string,
+) {
+  let preview: RunDoc | null;
+  try {
+    preview = await createConvexReadClient(token).query(
+      "testSuites:getRerunPreview" as any,
+      { runId },
+    );
+  } catch (error) {
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
+  }
+  requireProjectMatch(preview, projectId, "Eval run");
+  return toRerunPreviewDto(preview!);
+}
+
+// GET /v1/projects/:projectId/eval-runs/:runId/rerun-preview
+// What `POST …/rerun` with `scope: "failed_cases"` would execute. Read-only.
+evals.get("/projects/:projectId/eval-runs/:runId/rerun-preview", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = evalIdParam(c, "runId", "Eval run");
+  const token = await getConvexBearerForRequest(c);
+  return v1Resource(c, await readRerunPreview(token, runId, projectId));
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/rerun
+// Launch the rerun. 202 with the new run's id; 409 when the source is still in
+// flight or nothing in it qualifies (`details.reason` names which).
+evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = evalIdParam(c, "runId", "Eval run");
+  const headerIdempotencyKey = readIdempotencyKey(c);
+  const body = parseWithSchema(rerunEvalRunSchema, await readJsonObjectBody(c));
+  // Same precedence as the run launch: the header wins over a body value.
+  const idempotencyKey = headerIdempotencyKey ?? body.idempotencyKey;
+  const token = await getConvexBearerForRequest(c);
+  const readClient = createConvexReadClient(token);
+
+  // Refused at the door, before a server is connected or a slot is taken. The
+  // launch mutation makes the same decision again; this only spares the
+  // caller a connection cycle for an answer that is already known.
+  const preview = await readRerunPreview(token, runId, projectId);
+  const refusal = rerunPreviewRefusal(preview);
+  if (refusal) throw refusal;
+
+  let sourceRun: RunDoc | null;
+  try {
+    sourceRun = await readClient.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
+  }
+  requireProjectMatch(sourceRun, projectId, "Eval run");
+  const suiteId = String(sourceRun!.suiteId);
+
+  // The servers the SOURCE run executed against — the same derivation the
+  // description-experiment arms use for their snapshot replays.
+  const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
+    .configSnapshot;
+  const envRef = snapshot?.environmentRef as
+    { environmentId?: string } | undefined;
+  const namedHostId =
+    (typeof sourceRun!.namedHostId === "string"
+      ? (sourceRun!.namedHostId as string)
+      : undefined) ??
+    (typeof snapshot?.namedHostId === "string"
+      ? snapshot.namedHostId
+      : undefined);
+  const servers = await resolveLaunchServers({
+    convexAuthToken: token,
+    projectId,
+    suiteId,
+    suiteReadPhase: "authorized",
+    requestedEnvironmentId: envRef?.environmentId,
+    namedHostId,
+    requestedServerIds: [],
+    requestedServerNames: undefined,
+  });
+  const runHostConfig = await loadSuiteHostConfig(
+    readClient,
+    suiteId,
+    namedHostId ?? servers.environmentLaunch?.hostId,
+  );
+
+  const slotKey = orgConcurrencyKey(c);
+  if (!tryAcquireRunSlot(slotKey)) {
+    return v1Error(
+      c,
+      "RATE_LIMITED",
+      `Too many concurrent eval runs (max ${MAX_CONCURRENT_RUNS}). Wait for an active run to finish.`,
+      {
+        reason: "CONCURRENT_RUN_LIMIT",
+        maxConcurrentRuns: MAX_CONCURRENT_RUNS,
+      },
+    );
+  }
+  let released = false;
+  const releaseSlotOnce = () => {
+    if (!released) {
+      released = true;
+      releaseRunSlot(slotKey);
+    }
+  };
+
+  try {
+    const launched = await launchEvalRun({
+      callerContext: callerContextFromHono(c),
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      projectId,
+      convexAuthToken: token,
+      vocabulary: vocabularyOf(c),
+      hostConfig: runHostConfig,
+      launchContext: readLaunchContext(c),
+      body: {
+        suiteId,
+        tests: [] as PublicInlineTest[],
+        replayedFromRunId: runId,
+        useCurrentSuiteConfig: false,
+        rerunOfRunId: runId,
+        rerunScope: body.scope,
+        ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      },
+      suiteRerun: true,
+      environmentId: servers.environmentId,
+      environmentLaunch: servers.environmentLaunch,
+      serverIds: servers.serverIds,
+      serverNames: servers.serverNames,
+      onSettled: releaseSlotOnce,
+    });
+
+    return v1Resource(
+      c,
+      {
+        runId: launched.runId,
+        suiteId: launched.suiteId,
+        status: launched.status,
+        ...(launched.deduped ? { deduped: true } : {}),
+        rerunOfRunId: runId,
+        rerunScope: body.scope,
+        servers: launched.servers,
+        environment: launched.environment,
+      },
+      202,
+    );
+  } catch (error) {
+    releaseSlotOnce();
+    // The rerun refusals are already route errors (`startSuiteRunWithRecorder`
+    // translates them); an import refusal is the caller's to fix as well.
+    throw translateImportIneligibleError(error) ?? error;
+  }
 });
 
 // ── Gate waivers ────────────────────────────────────────────────────────────
@@ -8541,20 +8982,19 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.enabled = s.judge.enabled;
       if (s.judge.model !== undefined) {
         goalCompletion.judgeModel = s.judge.model;
-        // A judge picked in the app is stored with a `judgeSelection` naming
-        // the same model, and the backend refuses a pair that disagrees. This
-        // body cannot carry a selection, so a stored one survives only while it
-        // still names the model: the backend's `selectionIfMatches` rule.
-        // Dropping it also drops the judge's saved reasoning effort
-        // (`judgeSelection.settings.reasoningEffort`). That is deliberate:
-        // effort is resolved per model, so it does not carry to a new one, and
-        // the new model starts with no saved effort. The caller still gets a
-        // 200, which is why the changeset says so.
-        const selection = goalCompletion.judgeSelection as
-          | { modelId?: unknown }
-          | undefined;
-        if (selection && selection.modelId !== s.judge.model) {
+        // The stored judge selection belongs to ONE model. A bare model change
+        // used to carry it along — a selection (and its effort and payer) for
+        // a model the judge no longer runs. Kept only while it still matches;
+        // dropped otherwise, with its conversion marker, so the platform
+        // converts the new bare id. The saved effort goes with it: effort is
+        // resolved per model, so the new model starts with none.
+        const keptJudgeSelection = requestedSelectionIfMatches(
+          goalCompletion.judgeSelection as RequestedModelSelection | undefined,
+          s.judge.model ?? undefined,
+        );
+        if (!keptJudgeSelection) {
           delete goalCompletion.judgeSelection;
+          delete goalCompletion.judgeSelectionOrigin;
         }
       }
       if (s.judge.autoRun !== undefined)
@@ -8733,8 +9173,44 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       );
     }
     const input = hostConfigDtoToInput(current);
+    // A store-once config may carry only its selection; the read computes
+    // `modelId` from it, and so does this.
+    if (typeof input.modelId !== "string" || !input.modelId) {
+      const fromSelection = computedModelId(input.modelSelection, undefined);
+      if (fromSelection) input.modelId = fromSelection;
+    }
     if (body.executionConfig.model !== undefined)
       input.modelId = body.executionConfig.model;
+    // The stored selection belongs to ONE model. Carrying it across a bare
+    // model change made the backend reject the write (bare id and selection
+    // disagree) — a 500 for a valid request on any suite that has a
+    // selection. Keep it only while it still matches (a PATCH re-sending the
+    // same `model` keeps it, and its marker); an explicit selection (or
+    // `null`) below overrides.
+    const storedSelection = input.modelSelection as
+      | RequestedModelSelection
+      | undefined;
+    input.modelSelection = requestedSelectionIfMatches(
+      storedSelection,
+      input.modelId as string | undefined,
+    );
+    if (body.executionConfig.modelSelection !== undefined) {
+      input.modelSelection = body.executionConfig.modelSelection ?? undefined;
+      if (body.executionConfig.modelSelection && body.executionConfig.model === undefined) {
+        input.modelId = body.executionConfig.modelSelection.modelId;
+      }
+    }
+    // The conversion marker describes the STORED selection: it survives only
+    // while that exact selection is what is written back (a PATCH re-sending
+    // it by value keeps it).
+    if (
+      input.modelSelection === undefined ||
+      storedSelection === undefined ||
+      !sameRequestedSelection(input.modelSelection, storedSelection)
+    ) {
+      delete input.modelSelectionOrigin;
+    }
+    if (input.modelSelection === undefined) delete input.modelSelection;
     if (body.executionConfig.systemPrompt !== undefined)
       input.systemPrompt = body.executionConfig.systemPrompt;
     if (body.executionConfig.temperature !== undefined)
@@ -9321,6 +9797,7 @@ evals.patch(
         typeof existing.caseType === "string" ? existing.caseType : undefined,
       existingSteps: existing.steps,
       existingMatchOptions: existing.matchOptions,
+      existingModels: existing.models,
       existingProbeConfig: existing.probeConfig,
       vocabulary: vocabularyOf(c),
     });

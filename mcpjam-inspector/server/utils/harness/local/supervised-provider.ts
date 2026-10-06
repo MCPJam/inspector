@@ -619,8 +619,18 @@ export function createSupervisedLocalHarnessProvider(
     // passes through unchanged and is judged by `confinePath` as before.
     const confine = (path: string) =>
       confinePath(fromAdapterPath(path, platform), { roots });
+    // The same check against the session's OWN state only. Runtime state —
+    // Codex's rollouts, CODEX_HOME, the relay credential — must never land in
+    // the granted workspace even though the agent may write there.
+    const confineToSessionState = (path: string) =>
+      confinePath(fromAdapterPath(path, platform), { roots: [roots[0]!] });
 
-    const gitBashPath = await resolveGitBashPath(platform);
+    // Git Bash is how Claude Code runs shell commands on Windows. Codex runs
+    // its own shell, so it is neither looked up nor handed to it.
+    const gitBashPath =
+      opts.harnessId === "claude-code"
+        ? await resolveGitBashPath(platform)
+        : undefined;
     const env = {
       ...buildLocalHarnessEnv({
         syntheticHome,
@@ -658,6 +668,7 @@ export function createSupervisedLocalHarnessProvider(
       // otherwise check: they are consumed by the child, not by a filesystem
       // call we make.
       confine,
+      confineToSessionState,
     };
 
     /**

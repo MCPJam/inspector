@@ -82,7 +82,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/environment-composer/resolve-stacks.ts", 1],
   ["components/evals/ai-triage-card.tsx", 4],
   ["components/evals/ai-triage-helpers.ts", 2],
-  ["components/evals/auto-fix-status-sentence.ts", 1],
   ["components/evals/browser-artifacts-view.tsx", 2],
   ["components/evals/browser-step-replay.tsx", 5],
   ["components/evals/case-upsert-toast.ts", 1],

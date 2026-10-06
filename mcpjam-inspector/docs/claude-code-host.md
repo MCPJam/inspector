@@ -74,33 +74,42 @@ shutoff, never a bypass.
   into `llmUsageRecord` against your org — the same accounting as chat — and
   spend caps and empty-wallet rejections apply before the stream starts.
 
-## Codex transports
+## Codex runtime
 
-Codex runs over one of two transports, selected by
-`MCPJAM_CODEX_APPSERVER_TRANSPORT` (off by default). It is one host either way —
-same harness id, same model rules, same host-executed MCP delivery — but NOT
-one resumable session lane (see the fingerprint note below), and the difference
-is what the runtime can be asked to do.
+Codex runs on MCPJam's own `codex app-server` adapter
+(`server/utils/harness/codex-appserver/`) in every venue: hosted and local
+Playground, evals and swarms. It replaced the published `@ai-sdk/harness-codex`
+adapter, which drove `codex exec`, hardcoded `approvalPolicy: "never"` and so
+could never pause for approval.
 
-| | `codex exec` (default) | `codex app-server` |
-|---|---|---|
-| Adapter | `@ai-sdk/harness-codex` | `server/utils/harness/codex-appserver/` (ours) |
-| Tool approval | Impossible. The bridge hardcodes `approvalPolicy: "never"` and `doStart` rejects any permission mode but `allow-all`, so no `tool-approval-request` is ever emitted and an approval host is refused pre-flight. | Supported on native and host-executed surfaces. `allow-reads` maps to Codex's `untrusted` policy; a declined command reports `declined` and does not run. |
-| Attributable actions | `shell`, `web_search`. | `exec_command`, `apply_patch`, `web_search`, each with the real command and Codex's own read/list/search classification. |
-| Usage | Totals. | Per turn, with cache-read, cache-write and reasoning components. |
-| Interrupt / manual compaction | Neither. | `turn/interrupt` yes; manual compaction no (the shared bridge protocol has no command for it, so `doCompact` throws rather than silently doing nothing). |
+- **Tool approval:** supported on native and host-executed surfaces.
+  `allow-reads` maps to Codex's `untrusted` policy, which asks about every
+  command (reads included) and every file change; a declined command reports
+  `declined` and does not run. Evals and swarms refuse an approval host up
+  front, because nobody can answer.
+- **Command sandbox:** hosted with approval off, Codex runs `never` +
+  `danger-full-access` (the disposable box is the boundary). Hosted with
+  approval on, approved commands run in Codex's sandbox opened to the whole box
+  and the network (`HOSTED_APPROVAL_SANDBOX_POLICY`), so approving grants what
+  off grants. Local runs never get network access or full access.
+- **Attributable actions:** `exec_command`, `apply_patch`, `web_search`, each
+  with the real command and Codex's own read/list/search classification.
+- **Usage:** per turn, with cache-read, cache-write and reasoning components.
+- **Interrupt / manual compaction:** `turn/interrupt` yes; manual compaction no
+  (the shared bridge protocol has no command for it, so `doCompact` throws
+  rather than silently doing nothing).
 
-Flipping the flag forks the session lane — the runtime fingerprint folds the
-transport in — because a conversation started on one transport has no thread the
-other can resume. Flipping back lands on the original lane.
+A conversation saved under the retired exec transport forks to a new session
+lane (the runtime fingerprint folds the transport in) and shows a "Started a
+new session" notice, because an exec conversation has no app-server thread to
+resume.
 
-MCP delivery stays host-executed on both. The app-server protocol has no
-approval request for an individual MCP `tools/call`, so native delivery would
-leave a Strict-mode host unable to gate one; that is the blocker for native
-delivery, not the transport.
+MCP delivery is host-executed: every MCP call is relayed back to MCPJam and
+runs under its tool policy and approval gate, which keeps MCPJam the single
+authority over MCP calls.
 
 Protocol facts here were measured against the pinned binary rather than assumed
-— see `.spike-codex-appserver/RESULTS.md`, which is rerunnable.
+— see `server/utils/harness/codex-appserver/PROBES.md`.
 
 ## Failure modes you may see
 

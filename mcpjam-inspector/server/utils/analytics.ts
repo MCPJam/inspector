@@ -190,11 +190,28 @@ export async function evaluateBrowserRollout(
   }
 }
 
+/**
+ * The server-side rollout flag for each local harness. Codex rolls out on its
+ * own flag (D3), whose cohort must be a subset of `codex-host-enabled` — the
+ * backend refuses a Codex host config outside that cohort, so a user enabled
+ * here but not there could pick Codex and then fail to create the host.
+ */
+export const LOCAL_HARNESS_ROLLOUT_FLAG = {
+  "claude-code": "local-harness-enabled",
+  codex: "local-codex-enabled",
+} as const;
+export type LocalHarnessRolloutFlag =
+  (typeof LOCAL_HARNESS_ROLLOUT_FLAG)[keyof typeof LOCAL_HARNESS_ROLLOUT_FLAG];
+
 /** Same server-owned rollout decision for setup, launches and client visibility. */
-export async function evaluateLocalHarnessRollout(distinctId: string, email?: string): Promise<boolean> {
+export async function evaluateLocalHarnessRollout(
+  distinctId: string,
+  email?: string,
+  flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
+): Promise<boolean> {
   if (!distinctId || !email) return false;
   try {
-    return (await getClient(true)?.isFeatureEnabled("local-harness-enabled", distinctId, {
+    return (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
       sendFeatureFlagEvents: false,
       personProperties: { email, deployment: "self_hosted" },
     })) === true;

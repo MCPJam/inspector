@@ -10,6 +10,7 @@
  * `convex/journeyExecution/*` + `convex/{personas,journeys,journeyRuns}` by
  * hand (two-repo layout).
  */
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type {
   SwarmSessionVerdict,
   JourneyRunVerdictSummary,
@@ -177,6 +178,10 @@ export interface JourneySnapshotTarget {
    * key on this — never on `targetId`. */
   environmentRef?: { environmentId: string; name: string; revision: number };
   serverAttachmentId?: string;
+  /** The model this target ran, frozen at launch. */
+  modelId?: string;
+  /** The selection behind `modelId` (carries its effort); absent ⇒ legacy. */
+  resolvedSelection?: RequestedModelSelection | null;
 }
 
 /**
@@ -288,6 +293,11 @@ export interface JourneyRun {
   };
   /** Judge rollup for this run's sessions (absent until first grading). */
   goalScoreSummary?: GoalScoreRollup;
+  /**
+   * Durable wave id shared by every run of one co-launched swarm (see
+   * {@link LaunchJourneyRunArgs.swarmRunGroupId}). Absent on legacy runs.
+   */
+  swarmRunGroupId?: string;
   createdAt: number;
 }
 
@@ -405,6 +415,11 @@ export interface SwarmOverviewFinding {
 export interface SwarmOverviewTarget {
   hostName: string;
   modelId: string;
+  /**
+   * `comparisonKey` of the target's selection (the bare `modelId` when
+   * default). Absent on older backends — read `targetKey ?? modelId`.
+   */
+  targetKey?: string | null;
   /** Present when the target resolved from a project environment. */
   environmentName?: string;
 }
@@ -1033,6 +1048,12 @@ export async function launchJourneyRun(
     // Raise the wall HERE, while the body still carries the route's `code` —
     // same reasoning as `postGenerate`. Launching a goal run spends model
     // budget like every other action that already shows this dialog.
+    // No run id and no wave id: a refused launch is the user's own action, and
+    // the callers that see `limitDialogRaised` stay silent because the dialog
+    // IS their answer. Keyed by the wave (which a retry reuses), a second press
+    // of Launch would be deduped and answer nothing. There is no stack of
+    // dialogs to prevent: the create flow stops at the first refusal, and Run
+    // again carries on, where a notice while the dialog is open only re-asserts it.
     const limitDialogRaised = notifyMCPJamLimitError({
       ...(code ? { code } : {}),
       details: body,

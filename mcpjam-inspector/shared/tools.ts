@@ -3,8 +3,11 @@ import {
   dynamicTool,
   zodSchema,
   type Tool as VercelTool,
-  type ToolCallOptions,
+  type ToolExecutionOptions,
 } from "ai";
+
+/** AI SDK 7 tool-execution options; these tools declare no context schema. */
+type ToolCallOptions = ToolExecutionOptions<Record<string, unknown>>;
 
 type MastraToolExecuteArgs = {
   context?: unknown;

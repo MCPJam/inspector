@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
@@ -21,6 +23,16 @@ vi.mock("../claude-code-bootstrap.js", async (original) => {
   return { ...actual, createClaudeCodeHarness: vi.fn(actual.createClaudeCodeHarness) };
 });
 import { createClaudeCodeHarness } from "../claude-code-bootstrap.js";
+import {
+  claudeCodeBridgeHasTypedErrors,
+  createHostedClaudeCodeHarness,
+} from "../claude-code-typed-errors.js";
+vi.mock("../codex-appserver/index.js", async (original) => {
+  const actual = await original<typeof import("../codex-appserver/index.js")>();
+  return { ...actual, createCodexAppServer: vi.fn(actual.createCodexAppServer) };
+});
+import { createCodexAppServer } from "../codex-appserver/index.js";
+import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandbox-policy.js";
 
 describe("harness registry", () => {
   it("returns the claude-code adapter", () => {
@@ -31,17 +43,18 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex: MCP servers arrive as HOST-EXECUTED tools (the CLI never makes an
-    // MCP tool model-callable in the mode the SDK drives), no native plugin
-    // install, can't pause for tool approval — and skills ARE delivered
-    // (INS-8), under its own root.
+    // Codex: MCP servers arrive as HOST-EXECUTED tools (MCPJam's gate is the
+    // single authority), no native plugin install, pauses for tool approval on
+    // the app-server adapter — and skills ARE delivered (INS-8), under its own
+    // root.
+    expect(a.transport).toBe("app-server");
     expect(a.mcpDelivery).toBe("host-executed");
     expect(a.supportsSkills).toBe(true);
     expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
-    expect(a.supportsNativeToolApproval).toBe(false);
+    expect(a.supportsNativeToolApproval).toBe(true);
     expect(a.requiresComputer).toBe(true);
-    expect(a.fileChangeToolName).toBe("fileChange");
+    expect(a.fileChangeToolName).toBeUndefined();
   });
 
   it("every adapter that advertises a capability carries its strategy", () => {
@@ -257,7 +270,6 @@ describe("harness registry", () => {
     // omitted the override the wire id would not be the model asked for.
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "claude-fable-5",
         auth: {
           AI_GATEWAY_API_KEY: "test",
           AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
@@ -288,6 +300,108 @@ describe("harness registry", () => {
     // …and still nothing for a non-Anthropic or malformed id.
     expect(overridesFor("gpt-5")).toBeUndefined();
     expect(overridesFor("claude-$(id)")).toBeUndefined();
+  });
+
+  it("the HOSTED bridge carries TYPED terminal errors for provider failures", async () => {
+    // A provider 429/5xx the CLI saw must reach the host as structured fields,
+    // not a sentence. The pinned bridge must take the patch — a version bump
+    // that moves an anchor leaves the bridge untyped at runtime (safe) but
+    // fails HERE, loudly.
+    const harness = createHostedClaudeCodeHarness({
+      auth: {
+        AI_GATEWAY_API_KEY: "test",
+        AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+      },
+    });
+    const bootstrap = await harness.getBootstrap?.();
+    const content =
+      bootstrap?.files.find((file) => file.path.endsWith("/bridge.mjs"))
+        ?.content ?? "";
+    expect(claudeCodeBridgeHasTypedErrors(content)).toBe(true);
+    // The SHARED bootstrap — a local runtime pack input — is untouched.
+    const sharedBootstrap = await createClaudeCodeHarness().getBootstrap?.();
+    const sharedBridge =
+      sharedBootstrap?.files.find((file) => file.path.endsWith("/bridge.mjs"))
+        ?.content ?? "";
+    expect(claudeCodeBridgeHasTypedErrors(sharedBridge)).toBe(false);
+    expect(content).toContain(
+      "error: mcpjamTypedTerminalError(normalized, streamEventState)",
+    );
+    // Observation runs for api_retry AND for every other message.
+    expect(
+      content.split("mcpjamObserveModelCall(state, msg);").length - 1,
+    ).toBe(2);
+    // Still a valid ES module after every patch group.
+    const checkDir = mkdtempSync(join(tmpdir(), "cc-bridge-"));
+    const checkFile = join(checkDir, "bridge.mjs");
+    writeFileSync(checkFile, content);
+    expect(() =>
+      execFileSync(process.execPath, ["--check", checkFile], { stdio: "pipe" }),
+    ).not.toThrow();
+
+    const start = content.indexOf("var MCPJAM_CC_TYPED_ERROR_CATEGORIES");
+    const end = content.indexOf(
+      "\n}\n",
+      content.indexOf("function mcpjamTypedTerminalError("),
+    );
+    const helpers = new Function(
+      `${content.slice(start, end + 3)}; return { mcpjamObserveModelCall, mcpjamTypedTerminalError };`,
+    )() as {
+      mcpjamObserveModelCall: (state: object, msg: object) => void;
+      mcpjamTypedTerminalError: (message: string, state: object) => unknown;
+    };
+
+    // A retried 529 that never recovered → typed, with the upstream status.
+    const state: Record<string, unknown> = {};
+    helpers.mcpjamObserveModelCall(state, {
+      type: "system",
+      subtype: "api_retry",
+      error_status: 529,
+      error: "server_error",
+    });
+    expect(
+      helpers.mcpjamTypedTerminalError("API Error: overloaded", state),
+    ).toEqual({
+      name: "HarnessProviderError",
+      message: "API Error: overloaded",
+      source: "model",
+      code: "claude_code_server_error",
+      httpStatus: 529,
+    });
+
+    // A retry that RECOVERED (a later successful assistant message) must not
+    // label a later, unrelated failure.
+    helpers.mcpjamObserveModelCall(state, { type: "assistant", message: {} });
+    expect(helpers.mcpjamTypedTerminalError("max turns", state)).toBe(
+      "max turns",
+    );
+
+    // The SDK's typed assistant category alone is enough.
+    helpers.mcpjamObserveModelCall(state, {
+      type: "assistant",
+      error: "rate_limit",
+    });
+    expect(
+      helpers.mcpjamTypedTerminalError("rate limited", state),
+    ).toMatchObject({ code: "claude_code_rate_limit" });
+
+    // A sub-agent's messages never drive the parent turn's evidence.
+    const fresh: Record<string, unknown> = {};
+    helpers.mcpjamObserveModelCall(fresh, {
+      type: "assistant",
+      error: "rate_limit",
+      parent_tool_use_id: "toolu_1",
+    });
+    expect(helpers.mcpjamTypedTerminalError("x", fresh)).toBe("x");
+
+    // An unknown category without a status stays untyped (no prose guessing).
+    helpers.mcpjamObserveModelCall(fresh, {
+      type: "assistant",
+      error: "invalid_request",
+    });
+    expect(helpers.mcpjamTypedTerminalError("bad request", fresh)).toBe(
+      "bad request",
+    );
   });
 
   it("claude-code maps an unverified Anthropic id to itself, never to the CLI default", () => {
@@ -324,10 +438,7 @@ describe("harness registry", () => {
         "@anthropic-ai/claude-code"
       ],
     ).toBe(HARNESS_PINNED_VERSIONS["claude-code"]);
-    expect(
-      bridgePkg("@ai-sdk/harness-codex").dependencies["@openai/codex-sdk"],
-    ).toBe(HARNESS_PINNED_VERSIONS.codex);
-    // The app-server transport pins the same CLI.
+    // Codex's app-server bootstrap pins its CLI itself.
     expect(PINNED_CODEX_VERSION).toBe(HARNESS_PINNED_VERSIONS.codex);
   });
 
@@ -493,7 +604,6 @@ const toUserMessage = (options) => ({
   it("patches the installed Claude Code bridge bootstrap", async () => {
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "haiku",
         // Stable's environment auth arm (the canary `gateway` object is gone).
         auth: {
           AI_GATEWAY_API_KEY: "test",
@@ -528,7 +638,6 @@ const toUserMessage = (options) => ({
 
   it("enforces strict MCP config on previously patched bridges and remains idempotent", async () => {
     const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
-      model: "haiku",
       auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
     }) as any);
     const bootstrap = (await original.getBootstrap?.())!;
@@ -564,7 +673,6 @@ const toUserMessage = (options) => ({
   it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
-        model: "haiku",
         auth: {
           AI_GATEWAY_API_KEY: "test",
           AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
@@ -939,6 +1047,34 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
       getHarnessAdapter("claude-code").runtimeVersionCommand,
     ).toBeUndefined();
     expect(getHarnessAdapter("codex").runtimeVersionCommand).toBeUndefined();
+  });
+});
+
+describe("the Codex adapter and its command sandbox policy (D2)", () => {
+  const auth = buildBrokerDummyAuth("codex", "https://broker.example/openai/v1");
+
+  it("is the app-server transport, and the only adapter that applies a sandbox policy", () => {
+    const local = getHarnessAdapter("codex");
+    expect(local.transport).toBe("app-server");
+    expect(local.acceptsSandboxPolicy).toBe(true);
+    expect(getHarnessAdapter("claude-code").acceptsSandboxPolicy).toBeFalsy();
+  });
+
+  it("hands the policy to the runtime when, and only when, the turn sets one", () => {
+    const local = getHarnessAdapter("codex");
+    vi.mocked(createCodexAppServer).mockClear();
+    local.createHarness({
+      modelId: "openai/gpt-5.5",
+      auth,
+      sandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
+    } as never);
+    expect(createCodexAppServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY }),
+    );
+    local.createHarness({ modelId: "openai/gpt-5.5", auth } as never);
+    expect(
+      vi.mocked(createCodexAppServer).mock.lastCall?.[0],
+    ).not.toHaveProperty("sandboxPolicy");
   });
 });
 

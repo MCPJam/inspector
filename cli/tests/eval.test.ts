@@ -279,6 +279,8 @@ interface EvalFixtureOptions {
    * validator.
    */
   environmentSecretGrants?: boolean;
+  /** Publish `modelSelections: true`; absent is a deployment that predates it. */
+  environmentModelSelections?: boolean;
   suiteDetail?: {
     settings?: Record<string, unknown>;
     revisionNumber?: number;
@@ -554,6 +556,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           modelMatrix: true,
           ephemeralEnvironmentLaunch: true,
           ...(options.environmentSecretGrants ? { secretGrants: true } : {}),
+          ...(options.environmentModelSelections
+            ? { modelSelections: true }
+            : {}),
         })
       );
       return;
@@ -585,8 +590,13 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       composeBodies.push(body);
       const modelId =
         typeof body.modelId === "string" ? body.modelId : undefined;
+      // Content-addressed like the backend: a selection's effort is part of
+      // the row, so two efforts of one model are two environments.
+      const effort = body.modelSelection?.settings?.reasoningEffort;
       const id = modelId
-        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}`
+        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}${
+            typeof effort === "string" ? `-${effort}` : ""
+          }`
         : "env-adhoc";
       res.end(
         JSON.stringify({
@@ -7212,6 +7222,40 @@ test("eval cases run --compose-secret refuses a deployment that cannot grant", a
   }
 });
 
+test("eval cases run --compose-model-selection with an empty value is refused before launch", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "cases",
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--case",
+          "echo works",
+          "--compose-host",
+          "Claude Code",
+          "--compose-server-group",
+          "group-pinned",
+          "--compose-model-selection",
+          ""
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval run --compose-secret spends no EXTRA round trip to check", async () => {
   // The cost objection, answered by measurement. A composed launch ALREADY
   // reads `/environments/capabilities` — `probeComposeCapabilities` needs
@@ -7333,6 +7377,138 @@ test("eval run --compose-model variadic launches one group without attaching", a
     };
     assert.equal(payload.runGroupId, "grp-1");
     assert.equal(payload.startedCount, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+const EFFORT_SELECTION = {
+  modelId: "openai/gpt-5",
+  source: "hosted",
+  settings: { reasoningEffort: "high" },
+  fallback: { provider: "none", model: "none" },
+};
+
+test("eval run --compose-model-selection mints a cell carrying the selection", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-server-group",
+            "group-pinned",
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION)
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
+      modelId: "openai/gpt-5",
+      modelSelection: EFFORT_SELECTION,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model-selection repeated for one model mints one cell per effort", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  const low = {
+    ...EFFORT_SELECTION,
+    settings: { reasoningEffort: "low" },
+  };
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-server-group",
+            "group-pinned",
+            "--compose-model-selection",
+            JSON.stringify(low),
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION),
+            // The same selection again is the same cell, not a third one.
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION)
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0, run.stderr);
+    assert.deepEqual(
+      fixture.composeBodies.map(
+        (body) => (body as { modelSelection?: unknown }).modelSelection
+      ),
+      [low, EFFORT_SELECTION]
+    );
+    assert.deepEqual(
+      (fixture.groupBodies.at(-1) as { targets?: unknown } | undefined)
+        ?.targets,
+      [
+      { environmentId: "env-adhoc-openai-gpt-5-low" },
+      { environmentId: "env-adhoc-openai-gpt-5-high" },
+      ]
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model-selection is refused on a deployment that predates selections", async () => {
+  // Without the preflight the selection reaches a backend validator that names
+  // nothing, and the user is told INTERNAL_ERROR for a version skew.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-host",
+          "Claude Code",
+          "--compose-server-group",
+          "group-pinned",
+          "--compose-model-selection",
+          JSON.stringify(EFFORT_SELECTION)
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support saved model selections/);
+    assert.equal(fixture.composeBodies.length, 0);
   } finally {
     await fixture.close();
   }

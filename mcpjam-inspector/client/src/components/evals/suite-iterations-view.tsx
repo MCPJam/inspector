@@ -55,6 +55,7 @@ import {
   generationEnvironmentId,
   getLatestRunMetricSource,
   getRunMetricSource,
+  isSubsetRerunRun,
   runEnvironmentRef,
 } from "./helpers";
 import { SuiteHeader } from "./suite-header";
@@ -172,6 +173,7 @@ import {
   type EvalExportCaseInput,
   type EvalExportDraftInput,
 } from "@/lib/evals/eval-export";
+import { sameRunTarget } from "@/lib/eval-target-key";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
@@ -1021,9 +1023,11 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
+          // A subset rerun is never a baseline: it measured only what failed.
+          !isSubsetRerunRun(run) &&
           (!suiteDetailOverview ||
             (run.namedHostId === selectedRunDetails.namedHostId &&
-              run.effectiveModelId === selectedRunDetails.effectiveModelId &&
+              sameRunTarget(run, selectedRunDetails) &&
               (!selectedRunDetails.runGroupId ||
                 run.runGroupId !== selectedRunDetails.runGroupId))) &&
           compareRunsBySequence(run, selectedRunDetails) < 0,
@@ -1177,8 +1181,9 @@ export function SuiteIterationsView({
 
   const latestCompletedRun = useMemo(
     () =>
-      sortRunsNewestFirst(runs).find((run) => run.status === "completed") ??
-      null,
+      sortRunsNewestFirst(runs).find(
+        (run) => run.status === "completed" && !isSubsetRerunRun(run),
+      ) ?? null,
     [runs],
   );
   const groundedness = useGroundedness(latestCompletedRun);

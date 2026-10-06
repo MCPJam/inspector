@@ -138,6 +138,7 @@ import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness
 import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
+import { ranTurnSelection } from "../../utils/session-model-selection";
 
 export interface SimulationManagerFactory {
   /**
@@ -320,6 +321,13 @@ export interface SyntheticHostRuntime {
    * the swarm runner pins its own, the scenario runner keeps the default.
    */
   maxSteps?: number;
+  /**
+   * Output-token ceiling for each assistant step, sent as the hosted body's
+   * `maxOutputTokens`. Absent ⇒ the backend sizes it to the model, and holds
+   * credits against that. The swarm runner pins its own
+   * (`HOSTED_STEP_MAX_OUTPUT_TOKENS`); the scenario runner keeps the default.
+   */
+  maxOutputTokens?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -524,6 +532,7 @@ export async function runSyntheticHostSession(
     systemPrompt,
     temperature,
     maxSteps,
+    maxOutputTokens,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
@@ -543,6 +552,13 @@ export async function runSyntheticHostSession(
     modelSelection,
     reasoningEffort,
   } = runtime;
+  // What the session records for each turn: the selection it ran, effort
+  // included. (A swarm session's backend pins it from the run snapshot.)
+  const sessionModelSelection = ranTurnSelection({
+    selection: modelSelection,
+    model: modelDefinition,
+    reasoningEffort,
+  });
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
   // does not go through `resolveHostTools`, so without an explicit ephemeral
@@ -668,6 +684,9 @@ export async function runSyntheticHostSession(
         scenarioId,
         accessVersion,
         serverIds: selectedServerIds,
+        // The same selection the turns route by, so this attribution row
+        // cannot name a different source than a real turn would have.
+        ...(modelSelection ? { modelSelection } : {}),
       });
       emptySessionModelSource = resolution.source;
     } catch {
@@ -679,6 +698,7 @@ export async function runSyntheticHostSession(
     const emptySessionPersist = await persistChatSessionToConvex({
       chatSessionId,
       modelId: String(modelDefinition.id),
+      modelSelection: sessionModelSelection,
       modelSource: emptySessionModelSource,
       authHeader,
       projectId,
@@ -1154,6 +1174,7 @@ export async function runSyntheticHostSession(
             systemPrompt: prepared.enhancedSystemPrompt,
             temperature: prepared.resolvedTemperature,
             ...(maxSteps !== undefined ? { maxSteps } : {}),
+            ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
             tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
@@ -1381,6 +1402,7 @@ export async function runSyntheticHostSession(
       const turnPersist = await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
+        modelSelection: sessionModelSelection,
         modelSource: sessionModelSource ?? "mcpjam",
         authHeader,
         projectId,
@@ -1912,6 +1934,14 @@ export async function drainAssistantTurn(
      * `resolveTurnRuntime` on the rail it resolves.
      */
     reasoningEffort?: ModelReasoningEffort;
+    /**
+     * Per-step output-token ceiling for the hosted body (see
+     * `SyntheticHostRuntime.maxOutputTokens`). The backend reserves credits
+     * against it, so a realistic ceiling is a realistic hold. Sent on the
+     * MCPJam-hosted rail only (see `resolveTurnRuntime`), and never to a
+     * harness host's model broker (see the harness options below).
+     */
+    maxOutputTokens?: number;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
   },
@@ -1941,6 +1971,7 @@ export async function drainAssistantTurn(
     hooks,
     modelSelection,
     reasoningEffort,
+    maxOutputTokens,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -1966,6 +1997,8 @@ export async function drainAssistantTurn(
   // body as an extra field. The backend spend writer ignores unknown fields
   // until the swarm wiring lands (`feedback_bridge_preserves_unknown_fields`),
   // so this is forward-compatible and inert for the scenario path.
+  // `maxOutputTokens` is NOT merged here: it rides the MCPJam-hosted rail only,
+  // so `resolveTurnRuntime` adds it once the rail is known.
   const mergedExtraBodyFields =
     journeyRunId !== undefined
       ? { ...(extraBodyFields ?? {}), journeyRunId }
@@ -2002,6 +2035,7 @@ export async function drainAssistantTurn(
       : {}),
     ...(attribution ? { attribution } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     // What the engine is handed below, so the rail applies the effort and
     // the local execution record states the settings actually sent.
     ...(args.temperature !== undefined || reasoningEffort !== undefined
@@ -2158,6 +2192,11 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // No ceiling for a harness host: its model broker clamps `max_tokens` to it
+    // without touching the model's thinking budget, so one below the broker's
+    // own default (64,000) can make Anthropic refuse every thinking turn. The
+    // ceiling rides the hosted `/stream` body only, and `resolveTurnRuntime`
+    // withholds it from a harness host even when `maxOutputTokens` is set.
     ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The turn's Project Environment — the grant boundary the harness path
     // checks a BROKERED external-account credential against. Inert for the

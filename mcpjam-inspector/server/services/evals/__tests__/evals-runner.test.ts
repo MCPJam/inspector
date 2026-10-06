@@ -205,6 +205,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-5-mini",
         messages: [{ role: "assistant", content: "Done" }],
       }),
+      responseMessages: Promise.resolve([
+        { role: "assistant", content: "Done" },
+      ]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -467,6 +470,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     return updateCall?.[1] as {
       metadata?: Record<string, string | number | boolean>;
       tokensUsed?: number;
+      usage?: Record<string, number>;
     };
   }
 
@@ -593,6 +597,21 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           },
         ],
       }),
+      responseMessages: Promise.resolve([
+        {
+          role: "assistant",
+          content: expectedToolCall
+            ? [
+                {
+                  type: "tool-call",
+                  toolName,
+                  toolCallId: "policy-call",
+                  input: {},
+                },
+              ]
+            : "Done",
+        },
+      ]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -1485,6 +1504,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-5-mini",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 4,
@@ -1498,6 +1520,42 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const updatePayload = await runQuickTestCase();
 
     expect(updatePayload.tokensUsed).toBe(10);
+  });
+
+  it("carries reasoning and cached-input tokens onto the iteration usage", async () => {
+    streamTextMock.mockImplementationOnce(() => ({
+      consumeStream: async () => {},
+      response: Promise.resolve({
+        modelId: "gpt-5-mini",
+        messages: [{ role: "assistant", content: "Done" }],
+      }),
+      responseMessages: Promise.resolve([
+        { role: "assistant", content: "Done" },
+      ]),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 40,
+        inputTokenDetails: {
+          noCacheTokens: 30,
+          cacheReadTokens: 10,
+          cacheWriteTokens: undefined,
+        },
+        outputTokens: 60,
+        outputTokenDetails: { textTokens: 35, reasoningTokens: 25 },
+        totalTokens: 100,
+      }),
+      finishReason: Promise.resolve("stop"),
+    }));
+
+    const updatePayload = await runQuickTestCase();
+
+    expect(updatePayload.usage).toEqual({
+      inputTokens: 40,
+      outputTokens: 60,
+      totalTokens: 100,
+      reasoningTokens: 25,
+      cachedInputTokens: 10,
+    });
   });
 
   it("resolves persisted hosted server names to the live manager ids", async () => {
@@ -1800,6 +1858,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         response: Promise.resolve({
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
       };
     });
 
@@ -3719,6 +3780,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: matchedCallMessages,
         }),
+        responseMessages: Promise.resolve(matchedCallMessages),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
@@ -3763,6 +3825,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: matchedCallMessages,
         }),
+        responseMessages: Promise.resolve(matchedCallMessages),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
@@ -3879,6 +3942,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-4-turbo",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 0,
@@ -3913,6 +3977,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-4-turbo",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 0,
@@ -4037,6 +4102,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             { role: "assistant", content: "Partial assistant content" },
           ],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Partial assistant content" },
+        ]),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
@@ -4113,6 +4181,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Step 1 content" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Step 1 content" },
+        ]),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 3,
@@ -4172,6 +4243,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-4-turbo",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 7,
@@ -4450,6 +4522,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         response: Promise.resolve({
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
       }));
 
       await streamTestCase({
@@ -4515,6 +4590,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         })(),
         steps: Promise.resolve([]),
         response: Promise.resolve({ messages: [] }),
+        responseMessages: Promise.resolve([]),
       }));
 
       // However the call settles — a cooperative return or the abort reason
@@ -4593,6 +4669,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
           outputTokens: 1,
@@ -4663,6 +4742,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
           outputTokens: 1,
@@ -4844,6 +4926,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 0,
           outputTokens: 0,
@@ -4879,6 +4962,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 0,
           outputTokens: 0,
@@ -4928,6 +5012,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
           outputTokens: 1,
@@ -5077,6 +5164,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 0,
           outputTokens: 0,
@@ -5131,6 +5219,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               { role: "assistant", content: "Recovered from tool failure." },
             ],
           }),
+          responseMessages: Promise.resolve([
+            { role: "assistant", content: "Recovered from tool failure." },
+          ]),
           totalUsage: Promise.resolve({
             inputTokens: 1,
             outputTokens: 1,
@@ -5217,6 +5308,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         // Model billed tokens despite zero completed steps.
         totalUsage: Promise.resolve({
           inputTokens: 9,
@@ -5288,6 +5380,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             modelId: "gpt-4-turbo",
             messages: [{ role: "assistant", content: "Done" }],
           }),
+          responseMessages: Promise.resolve([
+            { role: "assistant", content: "Done" },
+          ]),
           totalUsage: Promise.resolve({
             inputTokens: 2,
             outputTokens: 3,

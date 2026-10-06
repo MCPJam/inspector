@@ -1021,7 +1021,7 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("maps direct MCP image tool history to media content before streaming", async () => {
+    it("maps direct MCP image tool history to AI SDK 7 file content before streaming", async () => {
       const { streamText } = await import("ai");
       manager.getToolsForAiSdk.mockResolvedValue({
         qa_return_image_tool_result: {
@@ -1090,8 +1090,8 @@ describe("POST /api/mcp/chat-v2", () => {
                     type: "content",
                     value: [
                       {
-                        type: "media",
-                        data: "aGVsbG8=",
+                        type: "file",
+                        data: { type: "data", data: "aGVsbG8=" },
                         mediaType: "image/png",
                       },
                     ],
@@ -3475,6 +3475,174 @@ describe("POST /api/mcp/chat-v2", () => {
       } finally {
         global.fetch = originalFetch;
       }
+    });
+  });
+
+  describe("the saved selection decides the rail (execution reader)", () => {
+    const HOSTED_ID = "openai/gpt-5-mini";
+    const none = { provider: "none", model: "none" } as const;
+    let fetchMock: ReturnType<typeof vi.fn>;
+    const originalFetch = global.fetch;
+
+    beforeEach(async () => {
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      // The hosted list says the id is MCPJam-hosted: only the selection can
+      // move it off credits.
+      vi.mocked(isHostedCatalogModel).mockImplementation(
+        (id: string) => id === HOSTED_ID,
+      );
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+      fetchMock = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (
+          url === "https://test-convex.example.com/stream" ||
+          url === "https://test-convex.example.com/stream/org"
+        ) {
+          return createSseResponse(completedStreamEvents());
+        }
+        if (url === "https://test-convex.example.com/ingest-chat") {
+          return new Response(null, { status: 200 });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+    });
+
+    afterEach(() => {
+      delete process.env.CONVEX_HTTP_URL;
+      global.fetch = originalFetch;
+    });
+
+    const streamedTo = () =>
+      fetchMock.mock.calls
+        .map(([input]) => String(input).replace("https://test-convex.example.com", ""))
+        .filter((path) => path.startsWith("/stream"));
+
+    const hostWith = (modelSelection?: unknown) =>
+      fetchHostRuntimeConfigMock.mockResolvedValueOnce({
+        ok: true,
+        config: {
+          hostId: "host-1",
+          modelId: HOSTED_ID,
+          ...(modelSelection !== undefined ? { modelSelection } : {}),
+        },
+      });
+
+    const turn = (extra: Record<string, unknown> = {}) =>
+      postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: HOSTED_ID, provider: "openai" },
+        projectId: "project-1",
+        hostId: "host-1",
+        ...extra,
+      });
+
+    it("no selection: today's hosted-list path (MCPJam /stream)", async () => {
+      hostWith();
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream"]);
+    });
+
+    it("a hosted selection: MCPJam /stream", async () => {
+      hostWith({ modelId: HOSTED_ID, source: "hosted", fallback: none });
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream"]);
+    });
+
+    it("a STORED legacy selection never reaches the hosted rail, however hosted the id is", async () => {
+      hostWith({ source: "legacy", modelId: HOSTED_ID });
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+      const body = JSON.parse(
+        String(
+          (fetchMock.mock.calls.find(([input]) =>
+            String(input).endsWith("/stream/org"),
+          )![1] as RequestInit).body,
+        ),
+      );
+      expect(body).toMatchObject({ providerKey: "openai", model: HOSTED_ID });
+      expect(body).not.toHaveProperty("modelSelection");
+    });
+
+    it("an org selection runs on the org connection even when the request carries a key", async () => {
+      hostWith({
+        modelId: HOSTED_ID,
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_1" },
+        fallback: none,
+      });
+      const res = await turn({ apiKey: "sk-request-key" });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+    });
+
+    it("a local selection runs on the request's own key, never MCPJam or the org", async () => {
+      hostWith({
+        modelId: HOSTED_ID,
+        source: "local",
+        connectionRef: { kind: "localProvider", providerKey: "openai" },
+        fallback: none,
+      });
+      delete process.env.CONVEX_HTTP_URL;
+      const res = await turn({ apiKey: "sk-request-key" });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual([]);
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+      expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: HOSTED_ID, hosted: false }),
+        "sk-request-key",
+        expect.anything(),
+        undefined,
+      );
+    });
+
+    it("a selection for a DIFFERENT model than the turn's is ignored (today's path for this model)", async () => {
+      hostWith({ source: "legacy", modelId: "openai/some-other-model" });
+      const res = await turn();
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream"]);
+    });
+
+    it("a turn's own stored legacy selection (no host) also stays off credits", async () => {
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: HOSTED_ID, provider: "openai" },
+        projectId: "project-1",
+        modelSelection: { source: "legacy", modelId: HOSTED_ID },
+      });
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(streamedTo()).toEqual(["/stream/org"]);
+    });
+
+    it("an org selection with no project to resolve it in is refused, never run elsewhere", async () => {
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: HOSTED_ID, provider: "openai" },
+        apiKey: "sk-request-key",
+        modelSelection: {
+          modelId: HOSTED_ID,
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "orgprov_1" },
+          fallback: none,
+        },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "credential_missing",
+      );
+      expect(streamedTo()).toEqual([]);
     });
   });
 });
