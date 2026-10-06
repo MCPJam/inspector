@@ -1010,6 +1010,16 @@ describe("shouldSkipExecution", () => {
     );
   });
 
+  it("skips a replay in flight when its server failed the preflight", () => {
+    // Resuming would run every iteration against a server that cannot list
+    // its tools, fail the run, and race whichever worker is still driving it.
+    for (const status of ["running", "pending"]) {
+      expect(
+        shouldSkipExecution({ deduped: true, status, serverUnreachable: true })
+      ).toBe(true);
+    }
+  });
+
   it("executes a fresh start, whatever its status says", () => {
     expect(shouldSkipExecution({ deduped: false, status: "running" })).toBe(
       false
