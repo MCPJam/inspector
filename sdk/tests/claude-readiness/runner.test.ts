@@ -59,7 +59,7 @@ function input(overrides: Partial<ClaudeReadinessInput> = {}): ClaudeReadinessIn
       {
         name: "list_orders",
         title: "List orders",
-        annotations: { readOnlyHint: true },
+        annotations: { title: "List orders", readOnlyHint: true },
         inputSchema: { type: "object", properties: {} },
         // `as Tool`, not `as never`: the bottom type is assignable to
         // everything, so `as never` would stop the compiler checking this

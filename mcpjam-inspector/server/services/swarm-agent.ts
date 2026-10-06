@@ -233,7 +233,11 @@ export interface CreateJourneyRunResult {
 }
 
 export type SwarmAttemptStatus =
-  "pending" | "running" | "succeeded" | "failed" | "rate_limited";
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "rate_limited";
 
 export interface SwarmPersonaNextTurnResponse {
   message: string;
@@ -575,10 +579,11 @@ export async function reportAttempt(
     errorCode?: string;
     errorMessage?: string;
   },
-): Promise<{ ok: true; applied: boolean }> {
+): Promise<{ ok: true; applied: boolean; canceled?: boolean }> {
   const data = await postJson<{
     ok?: boolean;
     applied?: boolean;
+    canceled?: boolean;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/attempt`,
@@ -607,7 +612,11 @@ export async function reportAttempt(
   // an explicit `applied` boolean on a 200. Treat only an explicit `false` as a
   // no-op replay; anything else (incl. a defensively-absent field) is "applied"
   // so a missing field can never wrongly suppress a fresh claim's execution.
-  return { ok: true, applied: data.applied !== false };
+  return {
+    ok: true,
+    applied: data.applied !== false,
+    ...(data.canceled === true ? { canceled: true } : {}),
+  };
 }
 
 /**
@@ -786,7 +795,12 @@ export async function failSwarmChecks(
 }
 
 type JourneyHeartbeatStatus =
-  "running" | "completed" | "partial" | "failed" | "rate_limited" | "missing";
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "rate_limited"
+  | "missing";
 
 export async function heartbeatJourneyRun(
   convexHttpUrl: string,
@@ -797,6 +811,7 @@ export async function heartbeatJourneyRun(
     ok?: boolean;
     error?: string;
     status?: JourneyHeartbeatStatus;
+    cancelRequested?: boolean;
   }>(
     `${convexHttpUrl}/journey-execution/runs/heartbeat`,
     bearer,
@@ -825,7 +840,7 @@ export async function heartbeatJourneyRun(
   ) {
     throw new Error("Invalid run status in backend heartbeat response");
   }
-  return data.status;
+  return data.cancelRequested === true ? "failed" : data.status;
 }
 
 /**

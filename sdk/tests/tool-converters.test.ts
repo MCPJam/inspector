@@ -114,7 +114,13 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
       })
     ).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -143,7 +149,13 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
       })
     ).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
   });
 
@@ -174,7 +186,13 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
       })
     ).resolves.toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
     expect(readResource).toHaveBeenCalledWith({
       uri: "mcp://images/one",
@@ -220,7 +238,13 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
       })
     ).resolves.toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: "aGVsbG8=" },
+        },
+      ],
     });
     expect(readResource).toHaveBeenCalledWith({
       uri: "mcp://images/one",

@@ -42,9 +42,11 @@ Regenerate after changing `package.json` (pnpm version from
 cd server/utils/harness/codex-appserver/bootstrap && npx pnpm@10.18.1 install --lockfile-only
 ```
 
-Any change under `codex-appserver/**` changes the bridge bytes and therefore the
-Codex runtime pack; it needs a Codex pack bump and data PR before release,
-because local sessions byte-compare the bridge against the pack.
+A change under `codex-appserver/**` changes the bridge bytes, which locally are
+the Inspector layer's (`local/inspector-layer.ts`), shipped with the Inspector:
+it needs no Codex pack. Only a change to this directory's `package.json` or
+lockfile — the vendor graph the pack installs — makes a new Codex pack. (The
+hosted bake lock, `harness-bake.lock.json`, still moves with the bridge.)
 
 ## No `.npmrc` needed
 

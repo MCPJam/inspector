@@ -24,3 +24,4 @@ export declare function archiveListArgs(
   tar: { bin: string; gnu: boolean },
   archivePath: string,
 ): string[];
+export declare const CYCLONEDX_NPM: string;
