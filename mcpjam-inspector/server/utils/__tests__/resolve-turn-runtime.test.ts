@@ -150,6 +150,67 @@ describe("resolveTurnRuntime — runtime shape", () => {
     });
   });
 
+  it("MCPJam sends a per-step output ceiling in the hosted body", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ extraBodyFields: { foo: "bar" }, maxOutputTokens: 16_384 }),
+    );
+
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream",
+      extraBodyFields: { foo: "bar", maxOutputTokens: 16_384 },
+    });
+  });
+
+  it("a harness host is never given an output ceiling, whatever the caller asks", async () => {
+    // The harness model broker clamps `max_tokens` to a ceiling without
+    // touching the model's thinking budget, so one below the broker's own
+    // default can make every thinking turn fail. Today `runHarnessTurn` reads
+    // only `extraBodyFields.modelSelection`, which is what keeps the field
+    // harmless; the guarantee is held here, where the body is built, so it does
+    // not depend on what that reader forwards tomorrow.
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ harness: "claude-code", maxOutputTokens: 16_384 }),
+    );
+
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream",
+      harness: "claude-code",
+    });
+    const withFields = await resolveTurnRuntime(
+      baseArgs({
+        harness: "claude-code",
+        extraBodyFields: { foo: "bar" },
+        maxOutputTokens: 16_384,
+      }),
+    );
+    expect(
+      (withFields.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).toEqual({ foo: "bar" });
+  });
+
+  it("cloud BYOK never receives the output ceiling", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelDefinition: BYOK_MODEL, maxOutputTokens: 16_384 }),
+    );
+
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).not.toHaveProperty("maxOutputTokens");
+  });
+
   it("external account WITH a harness is refused here — this surface cannot deliver the credential", async () => {
     // The host's model id names no provider model, so there is no org provider
     // to resolve and no MCPJam credential to spend — and the resolver no longer
