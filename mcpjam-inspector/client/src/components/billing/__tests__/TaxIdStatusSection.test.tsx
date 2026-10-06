@@ -51,9 +51,7 @@ describe("TaxIdStatusSection", () => {
     );
     expect(screen.queryByText("Private Stripe error")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
-    expect(
-      await screen.findByText("No tax IDs have been added."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("No tax IDs added.")).toBeInTheDocument();
   });
 
   it("refreshes pending verification and stops once verified", async () => {

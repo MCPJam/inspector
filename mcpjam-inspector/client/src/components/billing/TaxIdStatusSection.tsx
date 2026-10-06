@@ -14,7 +14,7 @@ const statusCopy: Record<TaxIdStatus, { label: string; detail: string }> = {
   pending: {
     label: "Verification pending",
     detail:
-      "Stripe is checking this tax ID. You can continue using your subscription.",
+      "Stripe is checking this tax ID. You can keep using your subscription.",
   },
   verified: {
     label: "Verified",
@@ -24,12 +24,11 @@ const statusCopy: Record<TaxIdStatus, { label: string; detail: string }> = {
   unverified: {
     label: "Not verified",
     detail:
-      "Stripe could not verify this tax ID. Check it in billing details and correct it if needed.",
+      "Stripe could not verify this tax ID. Check for errors in Manage billing.",
   },
   unavailable: {
     label: "Verification unavailable",
-    detail:
-      "Automatic verification is unavailable for this tax ID. Manual verification may be needed.",
+    detail: "Stripe cannot automatically verify this tax ID.",
   },
 };
 
@@ -62,7 +61,8 @@ export function TaxIdStatusSection({
         if (!cancelled)
           setResult({
             organizationId,
-            error: "Could not load tax ID verification. Try again.",
+            error:
+              "Could not load tax ID status. Select Refresh status to try again.",
           });
       })
       .finally(() => {
@@ -100,12 +100,12 @@ export function TaxIdStatusSection({
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Add or update tax IDs through Manage billing. Verification happens after
-        checkout and does not block your purchase.
+        Add or update tax IDs in Manage billing. You can check out while Stripe
+        verifies your tax ID.
       </p>
       <div aria-live="polite">
         {loading || !current ? (
-          <p className="text-sm">Checking tax IDs…</p>
+          <p className="text-sm">Loading tax ID status…</p>
         ) : current.error ? (
           <p role="alert" className="text-sm">
             {current.error}
@@ -127,9 +127,7 @@ export function TaxIdStatusSection({
             })}
           </ul>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            No tax IDs have been added.
-          </p>
+          <p className="text-sm text-muted-foreground">No tax IDs added.</p>
         )}
       </div>
     </section>
