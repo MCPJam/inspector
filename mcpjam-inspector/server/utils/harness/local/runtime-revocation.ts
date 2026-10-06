@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { logger } from "../../logger.js";
 import { verifyPackManifestSignature, type PackSigningKey, PACK_SIGNING_KEYS } from "./pack-signing-key.js";
 import { runtimeInstallRoot } from "./runtime-root.js";
+import { installerFetch } from "./runtime-fetch.js";
 
 export const REVOCATION_SCHEMA = "mcpjam.local-harness-revocations/1";
 
@@ -195,7 +196,7 @@ export async function refreshRevocations(options: {
     lastRefreshAt = Date.now();
     const cached = await readCachedRevocations(root, keys);
     const url = options.url ?? revocationsUrl();
-    const fetcher = options.fetchImpl ?? fetch;
+    const fetcher = options.fetchImpl ?? (installerFetch as typeof fetch);
     try {
       const [listResponse, signatureResponse] = await Promise.all([fetcher(url), fetcher(`${url}.sig`)]);
       if (!listResponse.ok || !signatureResponse.ok) {

@@ -284,7 +284,9 @@ the bridge is the Inspector layer. An Inspector version bump alone does not
 require a new runtime version.
 
 To install a pack from the command line, `mcpjam-inspector harness install`
-(or `status`) takes `--harness <id>`; without it, it means Claude Code.
+(or `status`, `doctor`, `repair`) takes `--harness <id>`; without it, it means
+Claude Code (and, for `doctor`, every harness). See "Where runtimes live,
+proxies, and offline machines" below.
 
 ### Claude Code pack
 
@@ -368,6 +370,52 @@ installs a runtime; the composer's Install button and background updates are
 refused with a message naming the policy. A file that exists but cannot be read
 or parsed is treated as `manual`. `MCPJAM_MANAGED_CONFIG` points at another
 path.
+
+### Where runtimes live, proxies, and offline machines (for IT)
+
+**Runtime root.** Per user, outside every workspace: `~/.mcpjam/harness-local/runtime`
+for the npm Inspector, and the app's own data directory for the desktop app.
+`MCPJAM_RUNTIME_ROOT` moves it. Packs are `<root>/<target>/<version>` (Claude
+Code) and `<root>/<harness>/<target>/<version>` (others); the Inspector layer is
+`<root>/inspector-layer/<digest>/`. Nothing under it is meant to be edited: a
+changed byte is refused before the next launch.
+
+**Proxy.** The installer honours `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`
+(either case), tunnelling through the proxy with CONNECT. For a proxy that
+inspects TLS, give Node its root certificate with
+`NODE_EXTRA_CA_CERTS=/path/to/corp-root.pem`, set in the environment the
+Inspector STARTS in (Node reads it once, at startup).
+
+**Offline / MDM pre-provisioning.** Download a release's three files for the
+machine's target — `<stem>.tar.gz`, `<stem>.manifest.json` and
+`<stem>.manifest.json.sig` — keep them in one directory, and run:
+
+```sh
+mcpjam-inspector harness install --harness codex --from /path/<stem>.tar.gz
+```
+
+No network is used, and every check a download gets still runs: the manifest
+signature against the key the Inspector carries, the archive hash, the tree
+digest against the pack this Inspector pins, and the startup probe. An unsigned
+archive is refused. This works under `updates: manual`.
+
+**Diagnosing a machine.**
+
+```sh
+mcpjam-inspector harness doctor [--harness <id>] [--verify] [--json]
+mcpjam-inspector harness doctor --export report.json   # redacted, safe to attach
+mcpjam-inspector harness repair [--harness <id>] [--from <archive>]
+```
+
+`doctor` shows which pack runs and why (desired, previous, nothing), each
+pack's install, health and revocation state, the last install attempt and the
+stage it stopped at, free disk, the proxy and CA in use, the update policy, and
+the command to run next. `--verify` re-reads every byte of the installed pack.
+`--export` writes the report with the home directory replaced by `~`, proxy
+credentials removed and anything token-shaped masked. `repair` clears abandoned
+staging, re-verifies the installed pack, reinstalls it if it no longer matches
+(through the same checks, or from `--from`), and re-probes a pack marked
+unhealthy. Exit status is 0 only when nothing needs doing.
 
 Runtime health is reported as server events (`local_runtime_install_failed`
 with its stage, `local_runtime_candidate_probe_failed`,

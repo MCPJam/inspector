@@ -82,6 +82,8 @@ native.**
 | `runtime-update-policy.ts` | The administrator's `updates: auto \| manual` policy, from a managed config file                                          |
 | `runtime-gc.ts`          | Liveness records and GC: removes only what no live Inspector may select and no session holds                                 |
 | `runtime-metrics.ts`     | Content-free lifecycle events (install, probe, activation, rollback, time to first usable turn)                              |
+| `runtime-fetch.ts`       | The installer's network: `HTTPS_PROXY`/`NO_PROXY` through undici's `EnvHttpProxyAgent`; `NODE_EXTRA_CA_CERTS` for TLS proxies |
+| `runtime-doctor.ts`      | `harness doctor` (and its redacted `--export`) and the repair suggestions; `repairRuntime` is in `runtime-install.ts`       |
 | `runtime-lifecycle.ts`   | Who is installing and who is USING a runtime, across processes. Owner-recorded state on top of the lock above                |
 | `release-gate.ts`        | What this build may OFFER: manifest ∩ committed digests ∩ conformance evidence. Not a runtime health check                   |
 | `acting-user.ts`         | The one accepted credential class and the canonical id a grant binds to, shared by the consent route and the turn route      |
@@ -548,6 +550,15 @@ afterwards reports `ready` from its own marker forever. `corrupt` means exactly
 that case and leads to a repair; `failed` means a candidate that never landed
 and leads to Retry; `revoked` means MCPJam withdrew the only pack this build
 could run.
+
+**Supportability.** `harness doctor` reports the selection and why, each
+pack's install/health/revocation state, the last attempt's stage, disk, proxy
+and CA, and the update policy, with the repair to run; `--export` redacts it.
+`harness repair` clears abandoned staging, re-verifies byte for byte,
+reinstalls a pack that no longer matches, and re-probes an unhealthy one.
+`harness install --from <archive>` pre-provisions with no network and the same
+checks (an unsigned archive is refused). Installer requests honour
+`HTTPS_PROXY`/`NO_PROXY` (`runtime-fetch.ts`).
 
 **Metrics** (server events, `runtime-metrics.ts`): `local_runtime_install_started`,
 `_install_succeeded`, `_install_failed{stage}`, `_candidate_probe_failed`,

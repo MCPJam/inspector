@@ -19,14 +19,21 @@
 import {
   installRuntimePack,
   readRuntimeInstallStatus,
+  repairRuntime,
   type RuntimeInstallStatus,
 } from "./utils/harness/local/runtime-install.js";
+import {
+  buildDoctorReport,
+  redactDoctorReport,
+  renderDoctorReport,
+  type DoctorReport,
+} from "./utils/harness/local/runtime-doctor.js";
 import {
   SUPPORTED_LOCAL_HARNESS_IDS,
   type SupportedLocalHarnessId,
 } from "./utils/harness/local/targets.js";
 
-export type { RuntimeInstallStatus };
+export type { DoctorReport, RuntimeInstallStatus };
 
 /** The harness ids this build can install a runtime pack for. */
 export const supportedHarnessIds: readonly string[] = SUPPORTED_LOCAL_HARNESS_IDS;
@@ -54,11 +61,45 @@ export async function harnessStatus(harnessId?: string): Promise<RuntimeInstallS
 export async function harnessInstall(
   onProgress?: (status: RuntimeInstallStatus) => void,
   harnessId?: string,
+  options: { fromArchive?: string } = {},
 ): Promise<RuntimeInstallStatus> {
   return installRuntimePack({
     harnessId: harnessIdOf(harnessId),
-    // The one installer an administrator's `updates: manual` policy leaves on.
-    trigger: "cli",
+    // The installers an administrator's `updates: manual` policy leaves on:
+    // this command, and pre-provisioning from a local archive.
+    trigger: options.fromArchive !== undefined ? "provision" : "cli",
+    ...(options.fromArchive !== undefined ? { fromArchive: options.fromArchive } : {}),
     ...(onProgress ? { onProgress } : {}),
   });
+}
+
+/** `harness repair`: re-verify, reinstall if corrupt, clear staging, re-probe. */
+export async function harnessRepair(
+  onProgress?: (status: RuntimeInstallStatus) => void,
+  harnessId?: string,
+  options: { fromArchive?: string } = {},
+): Promise<{ status: RuntimeInstallStatus; actions: string[] }> {
+  return repairRuntime({
+    harnessId: harnessIdOf(harnessId),
+    ...(options.fromArchive !== undefined ? { fromArchive: options.fromArchive } : {}),
+    ...(onProgress ? { onProgress } : {}),
+  });
+}
+
+/**
+ * `harness doctor`: the report, as text for a terminal or JSON for a script,
+ * and — with `exported: true` — redacted for attaching to a ticket.
+ */
+export async function harnessDoctor(options: {
+  harnessId?: string;
+  verify?: boolean;
+  exported?: boolean;
+} = {}): Promise<{ report: DoctorReport; text: string; healthy: boolean }> {
+  const report = await buildDoctorReport({
+    ...(options.harnessId !== undefined ? { harnessIds: [harnessIdOf(options.harnessId)] } : {}),
+    ...(options.verify ? { verify: true } : {}),
+  });
+  const shown = options.exported ? redactDoctorReport(report) : report;
+  const healthy = report.harnesses.every((h) => h.repairs.length === 0);
+  return { report: shown, text: renderDoctorReport(shown), healthy };
 }
