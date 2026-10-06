@@ -4434,8 +4434,6 @@ export default function App() {
     firstRunOAuthReturnServerRef.current = null;
     setPendingFirstRunConnection(null);
     firstRunAnalyticsContextRef.current = null;
-    setFirstRunConnectionState({ status: "idle" });
-    setFirstRunOverlayDismissed(true);
     setIsOpeningFirstRunPlayground(true);
     setFirstRunPlaygroundPrompt(PLAYGROUND_FIRST_RUN_PROMPT);
     markFirstRunServerChoiceCompleted();

@@ -216,7 +216,6 @@ export function FirstRunOnboardingOverlay({
     useState<FirstRunServerDraft["authentication"]>("auto");
   const wasOpenRef = useRef(false);
   const lastTrackedScreenRef = useRef<FirstRunOnboardingScreen | null>(null);
-  const [isTokenEntryOpen, setIsTokenEntryOpen] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   const [bearerTokenError, setBearerTokenError] = useState<string | null>(null);
   const bearerTokenInputRef = useRef<HTMLInputElement>(null);

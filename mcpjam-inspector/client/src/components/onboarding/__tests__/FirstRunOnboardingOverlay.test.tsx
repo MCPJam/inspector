@@ -150,7 +150,7 @@ describe("FirstRunOnboardingOverlay", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("tracks entry once and each logical screen transition once", () => {
+  it("tracks entry once and each logical screen transition once", async () => {
     const { rerenderWithConnectionState } = renderOverlay();
 
     expect(analyticsState.entered).toHaveBeenCalledOnce();
@@ -186,7 +186,9 @@ describe("FirstRunOnboardingOverlay", () => {
       serverKind: "personal",
       toolCount: 2,
     });
-    expect(analyticsState.screenViewed).toHaveBeenLastCalledWith("connected");
+    await waitFor(() =>
+      expect(analyticsState.screenViewed).toHaveBeenLastCalledWith("connected"),
+    );
     expect(analyticsState.entered).toHaveBeenCalledOnce();
     expect(
       JSON.stringify(analyticsState.screenViewed.mock.calls),
