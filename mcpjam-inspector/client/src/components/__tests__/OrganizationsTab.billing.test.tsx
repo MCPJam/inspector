@@ -311,9 +311,13 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: (...args: unknown[]) => mockUseAuth(...args),
 }));
 
+const mockListTaxIds = vi.fn().mockResolvedValue([]);
+
 vi.mock("convex/react", () => ({
+  useAction: () => mockListTaxIds,
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: () => undefined,
+  useQueries: () => ({}),
 }));
 
 vi.mock("@/hooks/useOrgSharePolicy", () => ({

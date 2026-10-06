@@ -72,6 +72,33 @@ describe("TaxIdStatusSection", () => {
     expect(listTaxIds).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the current status visible during a slow poll", async () => {
+    vi.useFakeTimers();
+    let finishRefresh!: (value: unknown) => void;
+    listTaxIds.mockResolvedValueOnce([taxId("pending")]).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = resolve;
+        }),
+    );
+    render(<TaxIdStatusSection organizationId="org-1" />);
+    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(screen.getByText("Verification pending")).toBeInTheDocument();
+    expect(screen.getByText("Refreshing status…")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(listTaxIds).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishRefresh([taxId("verified")]);
+    });
+    expect(screen.getByText("Verified")).toBeInTheDocument();
+    expect(screen.queryByText("Refreshing status…")).not.toBeInTheDocument();
+  });
+
   it("does not show a late response for another organization", async () => {
     let resolveOld!: (value: unknown) => void;
     listTaxIds

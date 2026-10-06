@@ -52,7 +52,9 @@ export function TaxIdStatusSection({
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setResult(null);
+    setResult((previous) =>
+      previous?.organizationId === organizationId ? previous : null,
+    );
     listTaxIds({ organizationId })
       .then((taxIds: BillingTaxId[]) => {
         if (!cancelled) setResult({ organizationId, taxIds });
@@ -75,13 +77,13 @@ export function TaxIdStatusSection({
 
   const pending = current?.taxIds?.some((taxId) => taxId.status === "pending");
   useEffect(() => {
-    if (!pending) return;
+    if (!pending || loading) return;
     const timeout = window.setTimeout(
       () => setRefresh((value) => value + 1),
       15_000,
     );
     return () => window.clearTimeout(timeout);
-  }, [pending, refresh]);
+  }, [pending, loading, refresh]);
 
   return (
     <section
@@ -104,7 +106,10 @@ export function TaxIdStatusSection({
         verifies your tax ID.
       </p>
       <div aria-live="polite">
-        {loading || !current ? (
+        {loading && current && (
+          <p className="text-sm text-muted-foreground">Refreshing status…</p>
+        )}
+        {!current ? (
           <p className="text-sm">Loading tax ID status…</p>
         ) : current.error ? (
           <p role="alert" className="text-sm">
