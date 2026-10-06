@@ -63,4 +63,26 @@ describe("authoringRequest", () => {
       authoringRequest({ operation: "status", jobId: "job-1" }),
     ).rejects.toMatchObject({ message: "Case authoring failed.", status: 500 });
   });
+
+  it("names the service, not the parser, when a gateway answers with HTML", async () => {
+    authFetchMock.mockResolvedValueOnce(
+      new Response("<html>bad gateway</html>", { status: 502 }),
+    );
+    await expect(
+      authoringRequest({ operation: "status", jobId: "job-1" }),
+    ).rejects.toMatchObject({
+      message: "The case authoring service is unavailable. Please try again.",
+      status: 502,
+    });
+  });
+
+  it("refuses an unreadable body on a 2xx instead of returning null", async () => {
+    authFetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+    await expect(
+      authoringRequest({ operation: "status", jobId: "job-1" }),
+    ).rejects.toMatchObject({
+      message: "The case authoring service is unavailable. Please try again.",
+      status: 200,
+    });
+  });
 });

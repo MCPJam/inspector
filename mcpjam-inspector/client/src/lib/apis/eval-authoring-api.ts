@@ -50,7 +50,14 @@ export async function authoringRequest(
       signal,
     },
   );
-  const data = await response.json();
+  // A gateway 502/504 answers with an HTML page; its parser error would
+  // otherwise become the message the user reads.
+  const data = await response.json().catch(() => null);
+  if (data === null)
+    throw new AuthoringRequestError(
+      "The case authoring service is unavailable. Please try again.",
+      response.status,
+    );
   if (!response.ok) {
     // Convex passes `{ error }` through; the inspector's own route answers
     // `{ code, message }` (a server it could not reach, no read-only tools).
