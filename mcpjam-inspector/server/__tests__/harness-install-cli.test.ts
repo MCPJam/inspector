@@ -13,7 +13,7 @@ describe("the harness install entry point", () => {
     await harnessStatus();
     await harnessInstall();
     expect(readRuntimeInstallStatus).toHaveBeenLastCalledWith({ harnessId: "claude-code" });
-    expect(installRuntimePack).toHaveBeenLastCalledWith({ harnessId: "claude-code" });
+    expect(installRuntimePack).toHaveBeenLastCalledWith({ harnessId: "claude-code", trigger: "cli" });
   });
 
   it("targets the named harness's own pack", async () => {
@@ -21,7 +21,7 @@ describe("the harness install entry point", () => {
     await harnessStatus("codex");
     await harnessInstall(progress, "codex");
     expect(readRuntimeInstallStatus).toHaveBeenLastCalledWith({ harnessId: "codex" });
-    expect(installRuntimePack).toHaveBeenLastCalledWith({ harnessId: "codex", onProgress: progress });
+    expect(installRuntimePack).toHaveBeenLastCalledWith({ harnessId: "codex", trigger: "cli", onProgress: progress });
     expect(supportedHarnessIds).toEqual(["claude-code", "codex"]);
   });
 

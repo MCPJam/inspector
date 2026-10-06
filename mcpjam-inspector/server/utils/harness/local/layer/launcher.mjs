@@ -37,9 +37,17 @@
  * the pack's pinned Node 24, so its absence is a pack this layer does not
  * support: refused, never worked around.
  *
- * Argv: `launcher.mjs [--mcpjam-vendor-root <abs>] <bridge args…>`. The
- * launcher's own flag is consumed and removed before the bridge reads
+ * Argv: `launcher.mjs [--mcpjam-vendor-root <abs>] [--mcpjam-probe] <bridge args…>`.
+ * The launcher's own flags are consumed and removed before the bridge reads
  * `process.argv`, so the bridge sees exactly the arguments its adapter emitted.
+ *
+ * ── 3. The startup probe ─────────────────────────────────────────────────
+ * `--mcpjam-probe` is how an install proves a CANDIDATE pack can start this
+ * layer before anything selects it (`runtime-probe.ts`): the pack's Node runs
+ * this launcher, both guards above are installed, the vendor import the bridge
+ * depends on is resolved exactly as the bridge's would be (through the hook,
+ * from the layer, into the pack), and it prints one JSON line and exits —
+ * without importing the bridge, so no port is opened and no model is called.
  */
 import net from "node:net";
 import * as nodeModule from "node:module";
@@ -58,6 +66,8 @@ if (process.argv[2] === "--mcpjam-vendor-root") {
   vendorRoot = resolvePath(value);
   process.argv.splice(2, 2);
 }
+const probe = process.argv[2] === "--mcpjam-probe";
+if (probe) process.argv.splice(2, 1);
 
 // ── Resolution: the layer, the vendor root, and builtins — nothing else ────
 const layerDir = fileURLToPath(new URL(".", import.meta.url));
@@ -171,5 +181,25 @@ net.Server.prototype.listen = function listenOnLoopback(...args) {
   }
   return originalListen.apply(this, args);
 };
+
+if (probe) {
+  const { existsSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const layer = JSON.parse(readFileSync(new URL("./layer.json", import.meta.url), "utf8"));
+  const result = { mcpjamProbe: "ok", harnessId: layer.harnessId, node: process.version };
+  if (layer.harnessId === "claude-code") {
+    // The bridge's one external import, resolved and loaded exactly as the
+    // bridge will: a pack whose SDK the hook cannot reach fails here.
+    const sdk = await import("@anthropic-ai/claude-agent-sdk");
+    if (typeof sdk.query !== "function") throw new Error("the pack's agent SDK exports no query()");
+  } else if (layer.harnessId === "codex") {
+    // Codex's bridge spawns the pack's codex.js; it must be where it looks.
+    if (vendorRoot === null || !existsSync(join(vendorRoot, "node_modules", "@openai", "codex", "bin", "codex.js"))) {
+      throw new Error("the pack has no node_modules/@openai/codex/bin/codex.js");
+    }
+  }
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.exit(0);
+}
 
 await import("./bridge.mjs");

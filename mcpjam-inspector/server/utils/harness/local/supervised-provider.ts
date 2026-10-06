@@ -118,6 +118,14 @@ export interface SupervisedLocalHarnessProviderOptions {
   bridgeReadinessTimeoutMs?: number;
   /** Called once the bridge is up AND its binding has been verified. */
   onBridgeStarted?: (args: { pid: number; port: number }) => Promise<void>;
+  /**
+   * Called when the bridge could not be started for a reason attributable to
+   * the RUNTIME — the spawn itself failed, or the bridge never came up on
+   * loopback. Not for a changed runtime (that is a consent question), a port
+   * somebody else holds, or an abort. Feeds the pack's health record, which
+   * is what rolls a broken update back to the permitted previous pack.
+   */
+  onBridgeFailed?: (args: { phase: "spawn" | "readiness"; message: string }) => void;
   /** Maximum bytes one file API operation may read or write. */
   maxFileBytes?: number;
   /** Test seam. Production is always the host platform. */
@@ -1038,6 +1046,8 @@ export function createSupervisedLocalHarnessProvider(
           if (isBridge) bridgeClaimed = false;
         };
         let handle: Awaited<ReturnType<typeof opts.supervisor.spawnSupervised>>;
+        const aborted = () => (signal ?? abortSignal)?.aborted === true;
+        let spawning = false;
         try {
           await assertRuntimeUnchanged();
           // Before the bridge exists, not after: once it is running, an
@@ -1047,6 +1057,7 @@ export function createSupervisedLocalHarnessProvider(
           if (isBridge) {
             await assertBridgePortUnclaimed({ port: opts.bridgePort });
           }
+          spawning = true;
           handle = await opts.supervisor.spawnSupervised({
             sessionId,
             executable: translated.executable,
@@ -1069,9 +1080,13 @@ export function createSupervisedLocalHarnessProvider(
           });
         } catch (error) {
           releaseBridgeClaim();
+          if (isBridge && spawning && !aborted()) {
+            opts.onBridgeFailed?.({ phase: "spawn", message: error instanceof Error ? error.message : String(error) });
+          }
           throw error;
         }
         if (isBridge) {
+          let bridgeReady = false;
           try {
             // MANDATORY, not an optional callback: the loopback guarantee is
             // only a guarantee if a bridge that binds the wrong interface
@@ -1093,6 +1108,7 @@ export function createSupervisedLocalHarnessProvider(
               isBridgeAlive: async () =>
                 opts.supervisor.liveProcessCount(sessionId) > 0,
             });
+            bridgeReady = true;
             if (opts.onBridgeStarted) {
               await opts.onBridgeStarted({
                 pid: handle.pid,
@@ -1116,6 +1132,12 @@ export function createSupervisedLocalHarnessProvider(
                 exitBeforeStop,
               ).catch(() => "no diagnosis could be read");
               error.message = `${error.message} (bridge: ${said})`;
+            }
+            if (!bridgeReady && !aborted()) {
+              opts.onBridgeFailed?.({
+                phase: "readiness",
+                message: error instanceof Error ? error.message : String(error),
+              });
             }
             throw error;
           }

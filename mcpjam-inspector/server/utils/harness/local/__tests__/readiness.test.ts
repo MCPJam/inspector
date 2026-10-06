@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), actor: vi.fn(), authorization: vi.fn(), grant: vi.fn(), rollout: vi.fn(),
   status: vi.fn(), install: vi.fn(), register: vi.fn(),
+  background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"),
 }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class { setAuth() {} query = mocks.query; } }));
 vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
 vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: mocks.actor }));
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: mocks.authorization, authorizeLocalHarness: vi.fn() }));
 vi.mock("../../../analytics.js", () => ({ evaluateLocalHarnessRollout: mocks.rollout, LOCAL_HARNESS_ROLLOUT_FLAG: { "claude-code": "local-harness-enabled", codex: "local-codex-enabled" } }));
-vi.mock("../runtime-install.js", () => ({ readRuntimeInstallStatus: mocks.status, installRuntimePack: mocks.install, startRuntimeInstall: vi.fn(), manifestWithExpectedBundleDigest: (value: unknown) => value }));
+vi.mock("../runtime-install.js", () => ({ readRuntimeInstallStatus: mocks.status, installRuntimePack: mocks.install, startRuntimeInstall: vi.fn(), startBackgroundRuntimeUpdate: mocks.background, MANUAL_UPDATES_MESSAGE: "managed by your administrator", manifestWithExpectedBundleDigest: (value: unknown) => value }));
+vi.mock("../runtime-update-policy.js", () => ({ readLocalRuntimeUpdatePolicy: async () => ({ policy: mocks.policy(), source: null }) }));
 vi.mock("../runtime-identity.js", () => ({ resolveManagedBundle: async () => ({ ok: true, runtime: { runtimeId: "verified-runtime", adapterVersion: "1", digest: "sha256:verified" } }) }));
 vi.mock("../availability.js", () => ({ localHarnessManifestsForDevelopment: (value: unknown) => value }));
 vi.mock("../grants.js", () => ({
@@ -105,4 +107,43 @@ it("refuses attended Off before installation, registration or grant creation", a
 it("keeps unattended Off independent of attended acknowledgement", async () => {
   const result = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "unattended", requireToolApproval: false });
   expect(result.target.permissionProfile).toBe("unrestricted");
+});
+
+describe("a turn never waits on a download it does not need", () => {
+  it("runs on the permitted previous pack while the desired one installs in the background", async () => {
+    mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime/1.0.0", packVersion: "1.0.0", digest: "sha256:old", role: "permitted", update: { state: "absent", packVersion: "1.0.1" } });
+    const ready = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(ready.runtime.packVersion).toBe("1.0.0");
+    expect(mocks.background).toHaveBeenCalledWith("claude-code");
+    expect(mocks.install).not.toHaveBeenCalled();
+  });
+
+  it("starts nothing when the desired pack is the one selected", async () => {
+    mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "1", role: "desired" });
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.background).not.toHaveBeenCalled();
+  });
+
+  it("waits only on a first-time install", async () => {
+    mocks.status.mockResolvedValue({ state: "absent", packVersion: "1" });
+    mocks.install.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "1", digest: "sha256:new" });
+    const ready = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.install).toHaveBeenCalledWith({ harnessId: "claude-code", trigger: "readiness" });
+    expect(ready.runtime.packVersion).toBe("1");
+  });
+
+  it("installs nothing under an administrator's manual update policy", async () => {
+    mocks.status.mockResolvedValue({ state: "absent", packVersion: "1" });
+    mocks.policy.mockReturnValue("manual");
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/administrator/);
+    expect(mocks.install).not.toHaveBeenCalled();
+    mocks.policy.mockReturnValue("auto");
+  });
+
+  it("fails closed with MCPJam's message when the only installable pack was withdrawn", async () => {
+    mocks.status.mockResolvedValue({ state: "revoked", packVersion: "1", message: "MCPJam withdrew the claude-code runtime 1" });
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/withdrew/);
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(mocks.grant).not.toHaveBeenCalled();
+  });
 });

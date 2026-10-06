@@ -57,6 +57,8 @@ export async function harnessInstall(
 ): Promise<RuntimeInstallStatus> {
   return installRuntimePack({
     harnessId: harnessIdOf(harnessId),
+    // The one installer an administrator's `updates: manual` policy leaves on.
+    trigger: "cli",
     ...(onProgress ? { onProgress } : {}),
   });
 }

@@ -32,7 +32,7 @@ import {
   type LocalPlatform,
   type SupportedLocalHarnessId,
 } from "./targets.js";
-import { ensureInspectorLayer, verifyInspectorLayer } from "./inspector-layer.js";
+import { ensureInspectorLayer, inspectorLayerDigest, verifyInspectorLayer } from "./inspector-layer.js";
 import { setWindowsJobLauncherVerified } from "./process-identity.js";
 import { rehashPolicyFor } from "./runtime-rehash-policy.js";
 import {
@@ -396,6 +396,36 @@ function runtimeIdOf(parts: readonly string[]): string {
     .update(parts.join("\u0000"))
     .digest("hex")
     .slice(0, 32)}`;
+}
+
+/**
+ * The `runtimeId` a managed pack WOULD resolve to, without digesting it.
+ *
+ * Exactly the tuple `resolveManagedBundle` folds once it has verified the
+ * tree, with the layer digest this build compiled in. Selection uses it to
+ * keep a turn on the pack its grant names while that pack is still
+ * selectable; nothing is launched on this answer — availability still
+ * resolves and verifies the tree and compares the real id.
+ */
+export function predictManagedRuntimeId(
+  manifest: LocalHarnessCompatibility,
+  platform: LocalPlatform,
+  treeDigest: string,
+): string | null {
+  const policy = manifest.runtime;
+  if (policy.source !== "managed-bundle") return null;
+  const layerDigest =
+    policy.launcherSource === "inspector-layer" ? inspectorLayerDigest(manifest.harnessId) : "pack-launcher";
+  if (layerDigest === null) return null;
+  return runtimeIdOf([
+    "managed-bundle",
+    manifest.harnessId,
+    manifest.adapterVersion,
+    platform,
+    treeDigest,
+    layerDigest,
+    LOCAL_HARNESS_POLICY_VERSION,
+  ]);
 }
 
 /**

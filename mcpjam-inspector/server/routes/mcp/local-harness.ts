@@ -272,6 +272,7 @@ localHarness.get("/availability", async (c) => {
         manifest,
         harnessId,
         localPackTarget(),
+        runtimeStatus.digest,
       ),
       runtimeRoot: runtimeStatus.runtimeRoot,
       platform,
@@ -435,6 +436,18 @@ localHarness.post("/runtime/install", async (c) => {
     logger.warn("[local-harness] runtime install refused", {
       reason: started.reason,
     });
+    // An administrator's `updates: manual` policy, or a pack MCPJam withdrew:
+    // neither is the request's fault, and neither is fixed by retrying it.
+    if (started.refusal === "policy" || started.refusal === "revoked") {
+      return c.json(
+        {
+          error: started.reason,
+          status: started.status,
+          reason: started.refusal === "policy" ? "updates-managed" : "revoked",
+        },
+        started.refusal === "policy" ? 403 : 409,
+      );
+    }
     return c.json(
       {
         error: started.reason,
@@ -620,6 +633,7 @@ localHarness.post("/consent/grant", async (c) => {
       LOCAL_HARNESS_MANIFEST[harnessId],
       harnessId,
       localPackTarget(),
+      runtimeStatus.digest,
     ),
     runtimeRoot: runtimeStatus.runtimeRoot,
     platform,

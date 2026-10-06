@@ -87,7 +87,7 @@ const exists = (path: string) =>
   );
 
 /** Make a read-only tree removable again, then remove it. Best effort. */
-async function removeReadOnlyTree(path: string): Promise<void> {
+export async function removeReadOnlyTree(path: string): Promise<void> {
   await chmod(path, 0o700).catch(() => {});
   for (const name of await readdir(path).catch(() => [] as string[])) {
     await chmod(join(path, name), 0o600).catch(() => {});

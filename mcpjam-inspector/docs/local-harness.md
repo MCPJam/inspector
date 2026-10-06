@@ -314,6 +314,66 @@ Codex from the pack (`--vendor-dir`) and its own MCP entrypoint from the layer
 graph — the bootstrap `package.json` and lockfile that pin `@openai/codex`, and
 the recorded checksums — is a Codex pack input.
 
+## Updates on a user's machine
+
+A routine update keeps a working installation, and a failed one recovers
+without an engineer.
+
+- **Which pack runs.** Each Inspector build selects from what is installed: its
+  desired pack if verified, healthy and not revoked, otherwise its one
+  permitted previous pack under the same conditions. There is no shared
+  "current" pointer, so two Inspector versions on one machine each run their
+  own choice.
+- **When packs download.** In the background, under the update policy: at boot
+  on a machine where somebody already authorized the harness, and from the
+  Playground's readiness check. While a new pack downloads, verifies and passes
+  its startup probe, sessions keep running on the previous pack. Only a
+  first-time install waits, with progress.
+- **The startup probe.** Before a downloaded pack is activated, this build's
+  Inspector layer is started on it with the pack's own Node (no port, no model
+  call), and the vendor binary answers `--version`. A pack that fails is never
+  activated; the failure is reported with its stage
+  (`disk-space`, `download`, `verify`, `probe`, `activate`).
+- **Rollback.** Three runtime-attributable launch failures in 30 minutes with no
+  success between them mark the pack unhealthy, and new sessions run on the
+  previous pack. No turn is replayed.
+- **Revocation.** `mcpjam-inspector/local-harness-revocations/revocations.json`
+  lists pack digests no Inspector may select, signed with the pack key. To
+  revoke a pack, dispatch `local-harness-revocations.yml` with its harness,
+  digest and reason, and merge the PR it opens. Inspectors fetch the list with
+  update checks and cache it; a revoked desired pack is never downloaded, a
+  revoked pack is never a fallback, and an Inspector whose only installed pack
+  is revoked refuses to launch with the stated reason.
+- **Cleanup.** Every running Inspector records which packs it may select; old
+  versions no running Inspector names and no session holds are removed after
+  each update and at boot.
+
+### Update policy (for IT)
+
+An administrator can stop background downloads with a managed configuration
+file that a user session does not write:
+
+| Platform | File                                               |
+| -------- | -------------------------------------------------- |
+| macOS    | `/Library/Application Support/MCPJam/managed.json` |
+| Linux    | `/etc/mcpjam/managed.json`                         |
+| Windows  | `%ProgramData%\MCPJam\managed.json`               |
+
+```json
+{ "localHarness": { "updates": "manual" } }
+```
+
+Under `manual`, only `mcpjam-inspector harness install` (and pre-provisioning)
+installs a runtime; the composer's Install button and background updates are
+refused with a message naming the policy. A file that exists but cannot be read
+or parsed is treated as `manual`. `MCPJAM_MANAGED_CONFIG` points at another
+path.
+
+Runtime health is reported as server events (`local_runtime_install_failed`
+with its stage, `local_runtime_candidate_probe_failed`,
+`local_runtime_rolled_back_to_previous`, …); the install failure rate is
+watched on the #mcpjam-alerts PostHog insight.
+
 ## Validation and activation
 
 The conformance workflow builds and runs the native runtime on macOS arm64/x64,

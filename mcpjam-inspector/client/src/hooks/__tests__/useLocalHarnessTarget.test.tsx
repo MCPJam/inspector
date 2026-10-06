@@ -505,6 +505,50 @@ describe("phases", () => {
     await waitFor(() => expect(result.current.phase).toBe("needs-consent"));
     expect(result.current.resolveSendTarget()).toBeNull();
   });
+
+  it("is ready on the permitted previous pack while an update installs in the background", async () => {
+    // The server SELECTS the previous pack while the desired one downloads;
+    // a grant on the pack that actually runs is current, not stale — a
+    // comparison against the desired pack alone would ask for consent again
+    // in the middle of every routine update.
+    const previous = `sha256:${"c".repeat(64)}`;
+    localStorage.setItem(
+      localHarnessConsentStorageKey(PROJECT),
+      JSON.stringify(
+        storedConsent({ runtime: { runtimeId: "rt_0", adapterVersion: "1.0.0", digest: previous, packVersion: "3.3.0" } }),
+      ),
+    );
+    fetchAvailabilityMock.mockResolvedValue({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: {
+          state: "ready",
+          packVersion: "3.3.0",
+          runtimeRoot: "/r",
+          digest: previous,
+          role: "permitted",
+          update: { state: "downloading", packVersion: "3.4.0", percent: 40 },
+        },
+      },
+    });
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+  });
+
+  it("fails closed with MCPJam's message when the runtime was withdrawn", async () => {
+    localStorage.setItem(localHarnessConsentStorageKey(PROJECT), JSON.stringify(storedConsent()));
+    fetchAvailabilityMock.mockResolvedValue({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: { state: "revoked", packVersion: "3.4.0", message: "MCPJam withdrew the claude-code runtime 3.4.0" },
+      },
+    });
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).toBe("failed"));
+    expect(result.current.reason).toMatch(/withdrew/);
+  });
 });
 
 describe("polling", () => {

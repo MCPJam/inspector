@@ -74,7 +74,14 @@ native.**
 | `layer/launcher.mjs`     | The layer's launcher: loopback listeners, and module resolution limited to the layer, builtins and the verified pack           |
 | `grants.ts`              | Workspace grants (opaque ids → canonical paths) and the local harness consent capability                                     |
 | `local-state-lock.ts`    | Reusable cross-process lock for security-sensitive local state mutations                                                     |
-| `runtime-install.ts`     | Downloads, verifies (signature → archive hash → tree digest), extracts, activates. Only from an explicit gesture              |
+| `runtime-install.ts`     | Selects the runtime a build runs, and the candidate flow: disk space → download → verify → probe → activate                  |
+| `runtime-selection.ts`   | The pure selection rule: desired, else permitted previous; never revoked; healthy first; the grant's own pack while usable   |
+| `runtime-probe.ts`       | The candidate's startup probe: the layer started on the staged pack, and the vendor binary's version handshake               |
+| `runtime-health.ts`      | Per-pack health beside it: the probe, launch outcomes, and the failure threshold that rolls an update back                   |
+| `runtime-revocation.ts`  | The signed revocation list: fetched with update checks, cached for offline use, never replayed backwards                     |
+| `runtime-update-policy.ts` | The administrator's `updates: auto \| manual` policy, from a managed config file                                          |
+| `runtime-gc.ts`          | Liveness records and GC: removes only what no live Inspector may select and no session holds                                 |
+| `runtime-metrics.ts`     | Content-free lifecycle events (install, probe, activation, rollback, time to first usable turn)                              |
 | `runtime-lifecycle.ts`   | Who is installing and who is USING a runtime, across processes. Owner-recorded state on top of the lock above                |
 | `release-gate.ts`        | What this build may OFFER: manifest ∩ committed digests ∩ conformance evidence. Not a runtime health check                   |
 | `acting-user.ts`         | The one accepted credential class and the canonical id a grant binds to, shared by the consent route and the turn route      |
@@ -397,10 +404,15 @@ enforced in code, not by convention.
    --evidence`), attested as `runtime-contract.json`. A pack becomes desired
    only through its harness's pin PR, which `local-harness-pack-pipeline.yml`
    opens after this layer passed conformance on it; the pack being replaced
-   stays permitted only if it passed too and its provenance verifies.
+   stays permitted only if it passed too and its provenance verifies. On the
+   machine, selection is per build with no shared pointer (`runtime-selection.ts`),
+   a revoked digest is never selected — not even as a fallback — and the
+   availability gate refuses any digest that is not this build's desired or
+   permitted pack (`isSelectablePack`).
 5. **No automatic replay.** Falling back to a previous runtime changes which
-   runtime NEW sessions select. It never replays a turn that may already have
-   changed files.
+   runtime NEW sessions select (`noteRuntimeLaunch` marks a pack unhealthy;
+   `chooseRuntime` skips it). It never replays a turn that may already have
+   changed files: nothing in the launch path retries a turn.
 
 The layer lives at `<runtimeRoot>/inspector-layer/<digest>/`: content-addressed
 (two Inspector versions with different bridges get two directories), read-only,
@@ -442,12 +454,56 @@ Windows is included in the native target matrix and requires its verified
 Job Object launcher and recorded conformance. The flag
 enables the feature; it does not certify it.
 
-## Installing, and who else is holding the door
+## Installing, updating, and who else is holding the door
 
-`runtime-install.ts` downloads on an explicit gesture and nowhere else. The
-argument it was written around was against fetching UNASKED — at boot, on a
-poll, on a remount, on the way into a turn — and that argument is unchanged. A
-user clicking **Install & allow** is not that.
+**When a pack is downloaded.** Updates are routine and happen in the
+background, under the administrator's update policy (`runtime-update-policy.ts`,
+a managed config file; default `auto`):
+
+- at server boot (`startLocalHarnessRuntimeMaintenance`), only on a machine
+  where somebody durably authorized that harness — a machine where nobody chose
+  to run one downloads nothing for it;
+- from the Playground's readiness check, when the runtime a session would run is
+  not this build's desired pack (`startBackgroundRuntimeUpdate`, never awaited);
+- on the **Install & allow** gesture and `mcpjam-inspector harness install`.
+
+Under `updates: manual` only `harness install` and pre-provisioning install;
+the gesture and every background trigger are refused with a message naming the
+policy. A turn never waits on a download it does not need: only a first-time
+install (nothing selectable on disk) waits, with progress.
+
+**Which pack runs** is a per-build SELECTION (`runtime-selection.ts`), never a
+shared pointer: the desired pack if installed, healthy and not revoked, else the
+one permitted previous pack under the same conditions, else — degraded — an
+unhealthy one when it is all there is. A revoked digest is never selected
+(`runtime-revocation.ts`: a list signed with the pack key, fetched with update
+checks and cached for offline use). A turn whose grant names a pack that is
+still selectable keeps running on it (`preferRuntimeId`), and the client renews
+the grant onto the new selection under the same durable authorization.
+
+**The candidate flow** (`performInstall`), each stage named so a failure says
+where it stopped (`install_failed{stage}`):
+
+1. `disk-space` — the signed manifest first, then free space against its size;
+2. `download` — the archive, streamed and hashed;
+3. `verify` — signature → archive sha → extracted tree digest;
+4. `probe` — this build's Inspector layer started on the staged pack by the
+   pack's own Node in `--mcpjam-probe` mode (the bridge's vendor import resolved
+   through the launcher's hook), and the vendor binary's `--version` handshake
+   (`runtime-probe.ts`). No port, no model call;
+5. `activate` — one rename, with the probe recorded in the pack's health record
+   (`runtime-health.ts`). Only now is it selectable.
+
+A candidate that fails any stage is never activated, so never selected; sessions
+keep using the permitted previous pack. Background triggers back off after a
+failure (hours after a bad candidate, minutes after a network or disk failure);
+an explicit retry does not.
+
+**Rollback.** Every bridge start is recorded against the pack it ran on
+(`onBridgeStarted` / `onBridgeFailed` → `noteRuntimeLaunch`). Repeated
+runtime-attributable launch failures with no success between them mark the pack
+unhealthy and selection falls back to the permitted previous pack for NEW
+sessions. The failed turn is never replayed (invariant 5).
 
 `startRuntimeInstall` reserves in-process synchronously and awaits only the
 short cross-process reservation and the on-disk lookup, never the download, so
@@ -456,37 +512,47 @@ its HTTP adapter can acknowledge in milliseconds (202) and let the client poll.
 both go through the same coordination, so `mcpjam-inspector harness install`
 JOINS a window's install rather than starting a competing extraction.
 
-Three processes reach one runtime root — two Inspector windows and the install
-CLI — and `runtime-lifecycle.ts` is what makes that safe:
+Several processes reach one runtime root — Inspector windows (possibly two
+different Inspector versions), the install CLI — and `runtime-lifecycle.ts` is
+what makes that safe:
 
 - an install ATTEMPT is claimed per `(root, harness, target, pack identity)`,
-  so two builds expecting different packs are two operations rather than one
-  wrong one;
+  with one operation record per identity, so two builds expecting different
+  packs are two operations that cannot overwrite each other;
 - a runtime USE is reserved before verification and held through process-tree
-  teardown, and activation refuses to replace a directory that has one;
+  teardown — reserved INSIDE the install root's lifecycle lock, the same lock
+  activation and GC check reservations and rename under, so a reservation can
+  never land between their check and their rename;
 - ownership is re-checked immediately BEFORE the rename, not only before the
   download — a download takes minutes;
 - only ESRCH proves an owner gone. Anything else is busy, never permission.
-  The staging sweep asks the owner record; a `.mcpjam-tmp-` prefix cannot tell
-  a live extraction from a dead one's leftovers.
 
 Activation moves the previous version aside instead of deleting it, so a crash
 between the two renames leaves something to put back — `recoverInterruptedActivation`
 does that on the next status read, rather than re-downloading 500 MB.
 
-**No version deletion.** `sweepOtherVersions` used to run after every
-activation and deleted the tree a running session in another process had
-already verified and was executing from. Verified versions now sit side by side
-and cost disk; reclaiming them safely needs an ownership answer spanning more
-than one install, which is not in this pass.
+**Cleanup** (`runtime-gc.ts`), after every activation and at boot (after the
+janitor reclaimed orphaned sessions): every running Inspector writes a LIVENESS
+record naming the pack digests it may select and the layers it runs; GC removes,
+for its own target only, version directories no live record names and no
+session holds (claimed by a rename inside the lifecycle lock), orphaned
+`.mcpjam-previous` directories, provably ownerless staging, and Inspector layers
+nobody names. Two Inspector versions on one root therefore never delete each
+other's packs.
 
 `readRuntimeInstallStatus` is cheap and marker-based, for polling.
 `readVerifiedRuntimeStatus` is the one that proves a tree — through
 `resolveManagedBundle` and its per-process verification cache — because the
 marker records what was true at install time, so a pack whose bytes changed
 afterwards reports `ready` from its own marker forever. `corrupt` means exactly
-that case and leads to a repair; `failed` means a download that never landed
-and leads to Retry.
+that case and leads to a repair; `failed` means a candidate that never landed
+and leads to Retry; `revoked` means MCPJam withdrew the only pack this build
+could run.
+
+**Metrics** (server events, `runtime-metrics.ts`): `local_runtime_install_started`,
+`_install_succeeded`, `_install_failed{stage}`, `_candidate_probe_failed`,
+`_update_activated`, `_launch_failed_after_update`, `_rolled_back_to_previous`,
+`_time_to_first_usable_turn`. Content-free: enums, versions, durations.
 
 ## What is not here yet
 
@@ -506,7 +572,6 @@ Deliberately out of scope for this change, and none of it is faked:
 - cancelling a download in flight (cancelling AUTHORIZATION already works: the
   transfer may finish into the cache, but it can no longer mint consent or run
   a turn for the cancelled flow);
-- reclaiming old verified runtime versions;
 - **I8's** rollout gating and the full cross-platform conformance run.
 
 ## Attended Tool Approval

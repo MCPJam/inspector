@@ -8,7 +8,10 @@ import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../../config.js";
 import { resolveLocalHarnessActor, type LocalHarnessActor } from "./acting-user.js";
 import { authorizeLocalHarness, readLocalHarnessAuthorization } from "./authorization.js";
 import { getLocalMachineId, grantLocalHarnessConsent, registerWorkspaceGrant, resolveWorkspaceGrant } from "./grants.js";
-import { readRuntimeInstallStatus, installRuntimePack, startRuntimeInstall, manifestWithExpectedBundleDigest } from "./runtime-install.js";
+import { readRuntimeInstallStatus, installRuntimePack, startRuntimeInstall, startBackgroundRuntimeUpdate, manifestWithExpectedBundleDigest, MANUAL_UPDATES_MESSAGE } from "./runtime-install.js";
+import { readLocalRuntimeUpdatePolicy } from "./runtime-update-policy.js";
+import { noteRuntimeMetricsActor } from "./runtime-metrics.js";
+import { logger } from "../../logger.js";
 import { resolveManagedBundle } from "./runtime-identity.js";
 import { LOCAL_HARNESS_MANIFEST } from "./compatibility.js";
 import { localHarnessManifestsForDevelopment } from "./availability.js";
@@ -91,19 +94,35 @@ export async function ensureLocalHarnessTarget(args: {
   if (args.scope === "attended" && args.requireToolApproval === false && !authorization.autoApproveAcknowledgedAt) {
     throw new LocalAutoApproveConsentRequiredError();
   }
+  noteRuntimeMetricsActor(actor.subject);
+  // The runtime this build SELECTS: its desired pack, or — while a newer
+  // desired pack downloads and probes, or after a rollback — the permitted
+  // previous one. A turn never waits on a download it does not need.
   let status = await readRuntimeInstallStatus({ harnessId });
-  if (status.state !== "ready") {
+  if (status.state === "ready") {
+    if (status.role === "permitted") {
+      // Not awaited: the session goes ahead on the previous pack, and the
+      // install (policy, revocation and backoff permitting) runs beside it.
+      void startBackgroundRuntimeUpdate(harnessId).catch((error) =>
+        logger.debug("[local-harness] background runtime update did not start", { message: String(error) }),
+      );
+    }
+  } else if (status.state !== "revoked") {
+    // Nothing selectable is installed: a first-time install, the one case
+    // that waits (with progress, through the 202 the route answers).
+    if ((await readLocalRuntimeUpdatePolicy()).policy === "manual") throw new Error(MANUAL_UPDATES_MESSAGE);
     if (args.waitForInstall === false) {
-      const started = await startRuntimeInstall({ harnessId });
+      const started = await startRuntimeInstall({ harnessId, trigger: "readiness" });
       if (started.kind !== "ready" && started.kind !== "refused") throw new LocalRuntimePreparingError(`Installing ${name}`);
-      status = started.status;
-    } else status = await installRuntimePack({ harnessId });
+      status = started.kind === "ready" ? await readRuntimeInstallStatus({ harnessId }) : started.status;
+    } else status = await installRuntimePack({ harnessId, trigger: "readiness" });
   }
+  if (status.state === "revoked") throw new Error(status.message);
   if (status.state !== "ready") throw new Error(`${name} installation is ${status.state}. Retry setup when the runtime is available.`);
   const platform = currentLocalPlatform(process.platform);
   if (!platform) throw new Error(`This platform is not supported by local ${name}`);
   const runtime = await resolveManagedBundle({
-    manifest: manifestWithExpectedBundleDigest(localHarnessManifestsForDevelopment(LOCAL_HARNESS_MANIFEST)[harnessId]!, harnessId, localPackTarget()),
+    manifest: manifestWithExpectedBundleDigest(localHarnessManifestsForDevelopment(LOCAL_HARNESS_MANIFEST)[harnessId]!, harnessId, localPackTarget(), status.digest),
     runtimeRoot: status.runtimeRoot, platform,
   });
   if (!runtime.ok) throw new Error(runtime.message);

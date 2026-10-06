@@ -20,6 +20,7 @@ import {
 import {
   clearRuntimeVerificationCache,
   computeTreeDigest,
+  predictManagedRuntimeId,
   resolveManagedBundle,
   resolveSystemInstall,
   revalidateRuntime,
@@ -365,6 +366,26 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
     expect(result.runtime.nodePath).toBe(join(root, "bin/node"));
     expect(result.runtime.digest).toBe(digest);
     expect(await revalidateRuntime(result.runtime)).toEqual({ ok: true });
+  });
+
+  it("predicts exactly the runtime id resolution produces — for both launcher kinds", async () => {
+    // Selection keeps a turn on the pack its grant names by PREDICTING that
+    // pack's runtime id; a prediction that drifted from resolution would
+    // quietly stop matching every grant.
+    const root = await codexPack("predict-codex");
+    await writeFile(join(root, "launcher.mjs"), 'await import("./bridge.mjs");');
+    const digest = await computeTreeDigest(root);
+    for (const manifest of [
+      layered("predict-codex", digest),
+      { ...layered("predict-codex", digest), runtime: { ...layered("predict-codex", digest).runtime, launcherSource: "pack" } as LocalHarnessCompatibility["runtime"] },
+    ]) {
+      const resolved = await resolveManagedBundle({ manifest, runtimeRoot, platform: "linux", arch: "x64", layerRuntimeRoot: layerRoot });
+      if (!resolved.ok) throw new Error(resolved.message);
+      expect(predictManagedRuntimeId(manifest, "linux", digest)).toBe(resolved.runtime.runtimeId);
+    }
+    expect(predictManagedRuntimeId(layered("predict-codex", digest), "linux", `sha256:${"0".repeat(64)}`)).not.toBe(
+      predictManagedRuntimeId(layered("predict-codex", digest), "linux", digest),
+    );
   });
 
   it("names the layer in the launch identity", async () => {
