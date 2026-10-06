@@ -1,11 +1,12 @@
 # Use specific Node.js version to match local/CI runtimes and dependency engines.
 # 24.21 runs ahead of CI's 24.14 deliberately: its bundled npm carries the
 # node-tar fix for CVE-2026-59873, and the Container Scan workflow's gate
-# verifies the Debian layer on every change. Build-time apt/npm upgrades are NOT
-# the way to fix base-image CVEs here — Railway caches that layer while CI
-# rebuilds cold, so the scanned image silently drifts from the deployed one.
-# When the weekly Container Scan fails on a fixable CRITICAL from the base,
-# bump this pin.
+# verifies the Debian layer on every change. UNPINNED build-time apt/npm
+# upgrades are not the way to fix base-image CVEs here — Railway caches that
+# layer while CI rebuilds cold, so the scanned image silently drifts from the
+# deployed one. A pinned version (the perl-base step below) is deterministic
+# either way. When the weekly Container Scan fails on a fixable CRITICAL from
+# the base, bump this pin.
 ARG NODE_VERSION=24.21.0
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
@@ -13,6 +14,15 @@ ARG NODE_VERSION=24.21.0
 # monitors + browser-render evals) needs a launchable Chromium in this image.
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 WORKDIR /usr/src/app
+
+# The newest node:24 bookworm-slim build ships perl-base 5.36.0-7+deb12u3,
+# which carries CRITICAL CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376.
+# bookworm-security has the fix. Pinned, as the header above explains; the
+# install fails loudly once a later security update replaces this version in
+# the archive. Delete this step once the NODE_VERSION image ships deb12u4.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+    && rm -rf /var/lib/apt/lists/*
 
 ################################################################################
 # Install workspace dependencies with a single root lockfile.
