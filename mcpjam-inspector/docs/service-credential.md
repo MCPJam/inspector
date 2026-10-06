@@ -58,7 +58,7 @@ features are hosted-only on this server, and `useServerSupportsFeature(id)`
 
 | Feature | Without the credential |
 | --- | --- |
-| Org model providers (BYOK) | **Bearer.** Calls the backend's `/v1/org-model-config/resolve` twin with the user's bearer; the org's credential export policy applies. |
+| Org model providers (BYOK) | **Bearer.** Calls the backend's `/v1/org-model-config/resolve` twin with the user's own sign-in (or an active guest session). The org's model policy applies; only local-runtime providers (e.g. Ollama) come back with a key, under the credential export policy. Cloud provider keys stay server-side, as on `/stream/org/resolve`. |
 | Eval case authoring | **Bearer.** The header is omitted; the backend authors on the user's sign-in and treats the tool snapshot as untrusted. |
 | MCP Tasks recovery index | **Bearer.** `/v1/hosted-tasks/*` twins; the owner is derived from the bearer exactly as on the internal routes. |
 | API key management | **Relay** to the hosted app (the API-key relay). |
