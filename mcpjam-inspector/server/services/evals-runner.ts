@@ -6398,6 +6398,7 @@ const runHostedIterationWithBrowser = async (
     sandboxId: string;
     sandboxRowId: string;
     runtimeKind: "terminal" | "desktop-browser";
+    workdir?: string;
   }) => {
     // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
     // provisioned, never the project computer: an unattended run drives a
@@ -6687,6 +6688,11 @@ const runHostedIterationWithBrowser = async (
             sandboxId: evalBox.binding.sandboxId,
             sandboxRowId: evalBox.binding.sandboxRowId,
             runtimeKind: evalBox.binding.runtimeKind,
+            // `bash` roots at the box's workdir exactly as the harness does;
+            // dropping it ran the two in different directories.
+            ...(evalBox.binding.workdir
+              ? { workdir: evalBox.binding.workdir }
+              : {}),
           }
         : undefined;
     // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
