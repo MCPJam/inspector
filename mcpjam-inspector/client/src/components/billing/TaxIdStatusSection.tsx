@@ -61,11 +61,15 @@ export function TaxIdStatusSection({
       })
       .catch(() => {
         if (!cancelled)
-          setResult({
+          setResult((previous) => ({
             organizationId,
+            taxIds:
+              previous?.organizationId === organizationId
+                ? previous.taxIds
+                : undefined,
             error:
               "Could not load tax ID status. Select Refresh status to try again.",
-          });
+          }));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -109,12 +113,13 @@ export function TaxIdStatusSection({
         {loading && current && (
           <p className="text-sm text-muted-foreground">Refreshing status…</p>
         )}
-        {!current ? (
-          <p className="text-sm">Loading tax ID status…</p>
-        ) : current.error ? (
+        {current?.error && (
           <p role="alert" className="text-sm">
             {current.error}
           </p>
+        )}
+        {!current ? (
+          <p className="text-sm">Loading tax ID status…</p>
         ) : current.taxIds?.length ? (
           <ul className="space-y-3">
             {current.taxIds.map((taxId) => {
@@ -131,9 +136,9 @@ export function TaxIdStatusSection({
               );
             })}
           </ul>
-        ) : (
+        ) : !current.error ? (
           <p className="text-sm text-muted-foreground">No tax IDs added.</p>
-        )}
+        ) : null}
       </div>
     </section>
   );

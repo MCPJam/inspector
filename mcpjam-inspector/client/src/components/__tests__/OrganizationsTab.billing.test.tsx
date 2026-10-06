@@ -449,6 +449,28 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
+  it.each([
+    { plan: "free" as const, hasCustomer: false, visible: false },
+    { plan: "free" as const, hasCustomer: true, visible: false },
+    { plan: "team" as const, hasCustomer: false, visible: false },
+    { plan: "team" as const, hasCustomer: true, visible: true },
+  ])(
+    "shows tax status only with portal access: %j",
+    async ({ plan, hasCustomer, visible }) => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({ plan, hasCustomer }),
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      await act(async () => {});
+      expect(
+        Boolean(screen.queryByRole("region", { name: "Tax ID verification" })),
+      ).toBe(visible);
+      expect(mockListTaxIds).toHaveBeenCalledTimes(visible ? 1 : 0);
+    },
+  );
+
   it.each(["plans", "billing"] as const)(
     "does not promote local installation on %s in hosted mode",
     (section) => {

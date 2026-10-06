@@ -72,6 +72,31 @@ describe("TaxIdStatusSection", () => {
     expect(listTaxIds).toHaveBeenCalledTimes(2);
   });
 
+  it("retains pending status and retries after a failed poll", async () => {
+    vi.useFakeTimers();
+    listTaxIds
+      .mockResolvedValueOnce([taxId("pending")])
+      .mockRejectedValueOnce(new Error("Private Stripe error"))
+      .mockResolvedValue([taxId("verified")]);
+    render(<TaxIdStatusSection organizationId="org-1" />);
+    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(screen.getByText("Verification pending")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load");
+    expect(screen.queryByText("Private Stripe error")).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(screen.getByText("Verified")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(listTaxIds).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps the current status visible during a slow poll", async () => {
     vi.useFakeTimers();
     let finishRefresh!: (value: unknown) => void;
