@@ -1,3 +1,4 @@
+import { sameChatAuthSession } from "@/lib/chat-auth-session";
 import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
@@ -1742,17 +1743,6 @@ function shouldForkChatSession(
   );
 }
 
-function areAuthHeadersEqual(
-  a: Record<string, string> | undefined,
-  b: Record<string, string> | undefined,
-): boolean {
-  if (a === b) return true;
-  if (!a || !b) return !a && !b;
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  return aKeys.every((key) => a[key] === b[key]);
-}
 
 type HostedSessionScope = {
   projectId?: string | null;
@@ -5265,7 +5255,7 @@ export function useChatSession(
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =
           hasResolvedBefore &&
-          !areAuthHeadersEqual(previousAuthHeaders, resolvedAuthHeaders);
+          !sameChatAuthSession(previousAuthHeaders, resolvedAuthHeaders);
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
