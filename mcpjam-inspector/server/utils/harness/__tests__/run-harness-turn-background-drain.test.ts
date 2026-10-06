@@ -297,12 +297,147 @@ describe("runHarnessTurn background drain", () => {
 
     expect(result.aborted).toBe(false);
     expect(result.turnTrace).toBeDefined();
+    expect(result.backgroundDrainEnded).toBe(true);
     expect(assistantTexts(result.messageHistory)).toEqual([
       "I started the plan.",
     ]);
     // Detached and committed like any finished turn, not torn down.
     expect(harnessState.session.detach).toHaveBeenCalledTimes(1);
     expect(harnessState.session.destroy).not.toHaveBeenCalled();
+  });
+
+  it("a Stop the stream THROWS while the bridge waits keeps the answer too", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "text-delta", delta: "I started the plan." },
+      task("running"),
+      notice("draining"),
+      () => {
+        stop.abort();
+        throw Object.assign(new Error("socket closed"), { name: "AbortError" });
+      },
+    ];
+    harnessState.finalText = new Error("aborted");
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as any,
+      "none",
+    );
+
+    expect(result.aborted).toBe(false);
+    expect(result.backgroundDrainEnded).toBe(true);
+    expect(assistantTexts(result.messageHistory)).toEqual([
+      "I started the plan.",
+    ]);
+    expect(harnessState.session.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it("a drain ended by a Stop keeps the usage of the steps that ran", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "text-delta", delta: "I started the plan." },
+      {
+        type: "finish-step",
+        usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14 },
+      },
+      task("running"),
+      notice("draining"),
+      task("completed"),
+      notice("follow-up"),
+      { type: "text-delta", delta: "Here is the plan." },
+      {
+        type: "finish-step",
+        usage: { inputTokens: 20, outputTokens: 6, totalTokens: 26 },
+      },
+      notice("draining"),
+      () => stop.abort(),
+      { type: "abort" },
+    ];
+    harnessState.finalText = new Error("aborted");
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as any,
+      "none",
+    );
+
+    expect(result.backgroundDrainEnded).toBe(true);
+    expect(result.turnTrace?.usage).toEqual(
+      expect.objectContaining({
+        inputTokens: 30,
+        outputTokens: 10,
+        totalTokens: 40,
+      }),
+    );
+  });
+
+  it("a Stop while a background agent's follow-up streams is an abort", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "text-delta", delta: "I started the plan." },
+      task("running"),
+      notice("draining"),
+      task("completed"),
+      notice("follow-up"),
+      { type: "text-delta", delta: "Here is" },
+      () => stop.abort(),
+      { type: "abort" },
+    ];
+    harnessState.finalText = new Error("aborted");
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as any,
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(result.backgroundDrainEnded).toBeUndefined();
+    expect(harnessState.session.detach).not.toHaveBeenCalled();
+  });
+
+  it("a Stop with a tool call in flight is an abort", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "text-delta", delta: "I started the plan." },
+      notice("draining"),
+      {
+        type: "tool-call",
+        toolCallId: "call_1",
+        toolName: "Bash",
+        input: { command: "ls" },
+      },
+      () => stop.abort(),
+      { type: "abort" },
+    ];
+    harnessState.finalText = new Error("aborted");
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as any,
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(result.backgroundDrainEnded).toBeUndefined();
+  });
+
+  it("a waiting phase re-announced after a follow-up ends on a Stop again", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "text-delta", delta: "I started the plan." },
+      notice("follow-up"),
+      { type: "text-delta", delta: "Here is the plan." },
+      notice("draining"),
+      () => stop.abort(),
+      { type: "abort" },
+    ];
+    harnessState.finalText = new Error("aborted");
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as any,
+      "none",
+    );
+
+    expect(result.aborted).toBe(false);
+    expect(result.backgroundDrainEnded).toBe(true);
   });
 
   it("a Stop before the drain is still an abort", async () => {
@@ -321,6 +456,7 @@ describe("runHarnessTurn background drain", () => {
 
     expect(result.aborted).toBe(true);
     expect(result.turnTrace).toBeUndefined();
+    expect(result.backgroundDrainEnded).toBeUndefined();
     expect(harnessState.session.detach).not.toHaveBeenCalled();
     expect(harnessState.session.destroy).toHaveBeenCalled();
   });

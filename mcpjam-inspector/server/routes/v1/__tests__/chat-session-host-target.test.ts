@@ -1379,6 +1379,7 @@ describe("the turn deadline after a harness turn delivered", () => {
     usage: { inputTokens: 1, outputTokens: 2 },
     finishReason: "stop",
     aborted: false,
+    backgroundDrainEnded: true,
   };
 
   it("answers a finished harness turn instead of a TIMEOUT", async () => {
@@ -1392,12 +1393,28 @@ describe("the turn deadline after a harness turn delivered", () => {
     expect((await response.json()).engine).toBe("harness:claude-code");
   });
 
-  it("a harness turn that was cut short (no trace) is still a TIMEOUT", async () => {
+  it("a harness turn that was cut short is still a TIMEOUT", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "claude-code", modelId: MODEL }),
     );
-    const { turnTrace: _dropped, ...cutShort } = delivered;
+    const {
+      turnTrace: _dropped,
+      backgroundDrainEnded: _ended,
+      ...cutShort
+    } = delivered;
     const response = await turnThatHitsItsDeadline(cutShort)(
+      firstTurn({ environmentId: ENVIRONMENT }),
+    );
+    const failed = await response.json();
+    expect(failed.code, JSON.stringify(failed)).toBe("TIMEOUT");
+  });
+
+  it("a harness turn with a trace but no drain report (paused) is still a TIMEOUT", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    const { backgroundDrainEnded: _ended, ...paused } = delivered;
+    const response = await turnThatHitsItsDeadline(paused)(
       firstTurn({ environmentId: ENVIRONMENT }),
     );
     const failed = await response.json();

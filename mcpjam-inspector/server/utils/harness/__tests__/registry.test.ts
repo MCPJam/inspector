@@ -494,6 +494,16 @@ function createEmitStreamEvent({
     }
   };
 }
+function createPermissionOptions(input) {
+  return {
+    canUseTool: async (toolName, toolInput, options) => {
+      const approvalId = options.toolUseID;
+      input.approvalRequestedToolUseIds.add(approvalId);
+      const decision = await input.turn.requestToolApproval(approvalId);
+      return decision;
+    }
+  };
+}
 async function drive() {
   const permissionOptions = createPermissionOptions({
     start,
@@ -669,7 +679,9 @@ function addUsage(total, usage) {
       "if (!mcpjamAnswer.keepReading && !queryInput.hasActiveUserMessages()) {",
     );
     expect(bridge?.content).toContain("!mcpjamDrainStep.keepReading");
-    expect(bridge?.content).toContain("if (mcpjamDrainStep.ignoreResult) continue;");
+    expect(bridge?.content).toContain(
+      "if (mcpjamDrainStep.ignoreResult) continue;",
+    );
     expect(bridge?.content).toContain(
       "messageId: initialMessageId ?? randomUUID3()",
     );
@@ -679,7 +691,25 @@ function addUsage(total, usage) {
       'if (type === "user" && Array.isArray(msg.message?.content)) {',
     );
     expect(bridge?.content).toContain("streamedAssistantText = false;");
-    expect(bridge?.content).toContain("permissionOptions.canUseTool = async");
+    // Approvals go through the vendor's own gate: a background agent's
+    // request is denied there, and a main-thread wait is tracked.
+    expect(bridge?.content).not.toContain("permissionOptions.canUseTool = async");
+    expect(bridge?.content).toContain(
+      "const mcpjamDenial = await input.mcpjamDenyBackgroundApproval?.(toolName, options);",
+    );
+    expect(bridge?.content).toContain(
+      "mcpjamRequestToolApproval: (approvalId) => mcpjamDrainController.trackApproval(turn.requestToolApproval(approvalId)),",
+    );
+    // A terminal error is downgraded only once the drain is engaged.
+    expect(bridge?.content).toContain(
+      "if (mcpjamDrainState.drainStartedAt !== void 0) {",
+    );
+    // The abort listener never reads an uninitialized controller.
+    const content = bridge?.content ?? "";
+    expect(content.indexOf("let mcpjamDrainController;")).toBeGreaterThan(-1);
+    expect(content.indexOf("let mcpjamDrainController;")).toBeLessThan(
+      content.indexOf("const onHostAbort = () => {"),
+    );
   });
 
   it("throws loudly if the adapter stops setting parent_tool_use_id itself", async () => {

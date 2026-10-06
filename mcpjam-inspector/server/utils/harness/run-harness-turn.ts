@@ -907,6 +907,10 @@ export async function runHarnessTurn(
   // `onSandboxSession` and `runtimeVersionCommand` in the registry.
   let installedRuntimeVersion: string | undefined;
   let capturedTurnTrace: PersistedTurnTrace | undefined;
+  // A Stop or the caller's deadline ended a Claude Code background drain: the
+  // answer was delivered, so the turn is committed as finished (see
+  // `backgroundDrainActive` below). Reported on the result for the `/v1` route.
+  let drainEndedByAbort = false;
   // §3 atomic commit: built in executeEngine's finally (after session.detach()),
   // consumed by onFinishEngine's onConversationComplete so the resume state
   // rides /ingest-chat with the transcript. `releaseHarnessLease` lets either
@@ -1210,13 +1214,23 @@ export async function runHarnessTurn(
     //    so the next text is a new part (UI block AND transcript entry) rather
     //    than a continuation of the answer before it. Only ever set by those
     //    parts, so an ordinary turn's text is untouched.
-    //  - `backgroundDrainActive`: the bridge said it is waiting ("draining").
-    //    The answer is already delivered, so a Stop or the caller's deadline
-    //    from here ENDS the drain and keeps the turn (`drainEndedByAbort`)
-    //    instead of failing it. Losing the lease is still an abort.
+    //  - `backgroundDrainActive`: the bridge said it is WAITING ("draining"),
+    //    and "follow-up" once a background agent's report starts streaming.
+    //    The bridge re-announces the phase when an approval resumes the turn
+    //    in a new request. While waiting with no tool call in flight, the
+    //    answer is already delivered, so a Stop or the caller's deadline ENDS
+    //    the drain and keeps the turn (`drainEndedByAbort`) instead of failing
+    //    it. During a follow-up a Stop is an ordinary abort, as is losing the
+    //    lease.
+    //  - `drainStepUsage`: usage summed from `finish-step` parts. A drain
+    //    ended by a Stop leaves before the bridge's `finish`, the only part
+    //    that carries the turn total.
     let splitNextText = false;
     let backgroundDrainActive = false;
-    let drainEndedByAbort = false;
+    const drainOpenToolCalls = new Set<string>();
+    let drainStepUsage:
+      | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+      | undefined;
     let drainKeepalive: ReturnType<typeof setInterval> | undefined;
     const writeBackgroundTaskChunk = (data: HarnessBackgroundTaskInfo) => {
       writer.write({
@@ -1230,7 +1244,23 @@ export async function runHarnessTurn(
       drainKeepalive = undefined;
     };
     const drainCanEndOnAbort = () =>
-      backgroundDrainActive && !livenessAbort.signal.aborted;
+      backgroundDrainActive &&
+      drainOpenToolCalls.size === 0 &&
+      !livenessAbort.signal.aborted;
+    // A Stop can also surface as the harness stream THROWING (the bridge
+    // socket closes mid-iteration) rather than as a part or a clean end.
+    // During a waiting drain that ends the wait, like the other two.
+    async function* drainAwareParts<T>(parts: AsyncIterable<T>) {
+      try {
+        yield* parts;
+      } catch (err) {
+        if (effectiveAbortSignal.aborted && drainCanEndOnAbort()) {
+          drainEndedByAbort = true;
+          return;
+        }
+        throw err;
+      }
+    }
     // Open reasoning block id (separate UI part from text). The harness emits
     // reasoning-* as a distinct block; we close it before any text/tool/finish.
     let reasoningId: string | undefined;
@@ -3273,9 +3303,11 @@ export async function runHarnessTurn(
         driver = activeDriver;
         activeDriver.emitTurnStart(writer);
         stepStartedAt = traceBaseMs;
-        harnessStream: for await (const part of res.fullStream as AsyncIterable<
-          Record<string, unknown> & { type?: string }
-        >) {
+        harnessStream: for await (const part of drainAwareParts(
+          res.fullStream as AsyncIterable<
+            Record<string, unknown> & { type?: string }
+          >,
+        )) {
           if (effectiveAbortSignal.aborted) {
             if (drainCanEndOnAbort()) {
               drainEndedByAbort = true;
@@ -3408,6 +3440,7 @@ export async function runHarnessTurn(
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
             toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
             toolStartMs.set(toolCallId, Date.now());
+            drainOpenToolCalls.add(toolCallId);
             // providerExecuted:true — the harness runs ALL tools in-sandbox
             // (Claude Code executes them itself). Without it the client treats
             // these as client-side tools to fulfill and `sendAutomaticallyWhen`
@@ -3456,6 +3489,7 @@ export async function runHarnessTurn(
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
+            drainOpenToolCalls.delete(toolCallId);
             // HOST-EXECUTED delivery: prefer the raw result captured at
             // `execute()` time over the runtime's echo, which is the model-facing
             // projection we handed it. `has` rather than a truthiness check —
@@ -3753,11 +3787,12 @@ export async function runHarnessTurn(
                 }
                 splitNextText = true;
               } else if (drainInfo.kind === "notice") {
-                logger.info(
-                  `[harness][background-drain] ${drainInfo.reason}`,
-                  { harness: harnessAdapter.id },
-                );
-                if (drainInfo.reason === "draining") {
+                logger.info(`[harness][background-drain] ${drainInfo.reason}`, {
+                  harness: harnessAdapter.id,
+                });
+                if (drainInfo.reason === "follow-up") {
+                  backgroundDrainActive = false;
+                } else if (drainInfo.reason === "draining") {
                   backgroundDrainActive = true;
                   if (!drainKeepalive) {
                     drainKeepalive = setInterval(
@@ -3774,6 +3809,23 @@ export async function runHarnessTurn(
             // Only a typed, terminal model-call failure is kept.
             const evidence = codexProviderEvidenceFromNotification(rawValue);
             if (evidence) rawProviderEvidence = evidence;
+          } else if (type === "finish-step") {
+            const u = (part as { usage?: unknown }).usage;
+            if (u && typeof u === "object") {
+              const ur = u as Record<string, unknown>;
+              const next = { ...drainStepUsage };
+              for (const key of [
+                "inputTokens",
+                "outputTokens",
+                "totalTokens",
+              ] as const) {
+                const value = ur[key];
+                if (typeof value === "number") {
+                  next[key] = (next[key] ?? 0) + value;
+                }
+              }
+              drainStepUsage = next;
+            }
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
             if (typeof fr === "string" && fr)
@@ -3819,6 +3871,7 @@ export async function runHarnessTurn(
             "[harness][background-drain] ended by a stop or deadline; keeping the delivered answer",
             { harness: harnessAdapter.id },
           );
+          usage ??= drainStepUsage;
         }
 
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
@@ -4445,6 +4498,9 @@ export async function runHarnessTurn(
     messageHistory,
     aborted,
     ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
+    ...(capturedTurnTrace && drainEndedByAbort
+      ? { backgroundDrainEnded: true }
+      : {}),
   };
 }
 

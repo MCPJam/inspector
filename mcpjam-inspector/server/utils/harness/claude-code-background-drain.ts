@@ -20,11 +20,14 @@
  * does not exit while background agents are pending. This patch gives the
  * bridge the same shape inside one turn:
  *
- *   1. STALE RESULTS. This turn's prompt carries a known uuid. A `result`
- *      counts as this turn's answer only once a main-thread assistant message
- *      has appeared after the CLI STARTED that prompt (`command_lifecycle`
- *      `started` for its uuid). An earlier empty success, the CLI's report of
- *      a task the previous turn killed, is forwarded as nothing.
+ *   1. STALE RESULTS. This turn's prompt carries a known uuid, and the CLI
+ *      stamps it on the prompt's result (`user_message_uuid`). Before the
+ *      first answer, a result stamped with another uuid, or arriving while
+ *      the prompt is still `queued`, is forwarded as nothing: the CLI's report
+ *      of a task the previous turn killed. Without a stamp, an empty success
+ *      before any main-thread message of this prompt is skipped too. If
+ *      nothing of the prompt follows a skipped result within the idle grace,
+ *      the turn ends as the vendor bridge would have ended it.
  *   2. WHAT TO WAIT FOR. The pending set is the latest
  *      `system/background_tasks_changed` list (REPLACE semantics, per the SDK)
  *      filtered to `local_agent` and `local_workflow`. Shells, Monitor and
@@ -40,26 +43,30 @@
  *      follow-up has not started, a 15 s timer (reset by main-thread messages)
  *      closes input and lets the CLI exit.
  *   5. APPROVALS. A request that needs approval from a BACKGROUND agent
- *      (`canUseTool` `options.agentID` names one) is denied: a turn is only
- *      ever paused for approval by the main thread. Foreground subagents carry
- *      an `agentID` too, so membership decides, not presence. A NESTED agent
- *      reports `is_backgrounded: false` even inside a background agent, so
- *      its spawning tool call is traced up through `parent_tool_use_id`: under
- *      a background task it is background, otherwise foreground at any depth.
+ *      (`canUseTool` `options.agentID` names one) is denied, at the vendor's
+ *      own decision point: a turn is only ever paused for approval by the
+ *      main thread. Foreground subagents carry an `agentID` too, so
+ *      membership decides, not presence. A NESTED agent reports
+ *      `is_backgrounded: false` even inside a background agent, so its
+ *      spawning tool call is traced up through `parent_tool_use_id`: under a
+ *      background task it is background, otherwise foreground at any depth.
  *      An agent no task_started names (a workflow's) is background only while
  *      an agent or workflow is pending: a background shell alone never makes
- *      a foreground subagent's request a denial.
- *      Main-thread approvals pause the cap.
- *   6. CAP. `min(drainStart + 10 min, turnStart + 25 min)`: the model broker
- *      lease is 30 min from turn start with no renewal. At the cap the
+ *      a foreground subagent's request a denial. A main-thread approval
+ *      suspends the server request and revokes its model lease, so the
+ *      background work still pending is stopped (and reported), and the cap
+ *      is paused until the approval is answered.
+ *   6. CAP. `min(drainStart + 10 min, leaseStart + 25 min)`: the model broker
+ *      lease is 30 min from the request's start with no renewal, and an
+ *      approval's continuation is a new request with a new lease. At the cap the
  *      pending agents are stopped (`stopTask`), input closes, and 15 s later
  *      the CLI is aborted. Every early exit closes open blocks and the open
  *      step before the bridge's normal `finish`.
  *   7. SEVERAL RESULTS IN ONE TURN. Cost is the LATEST `total_cost_usd` (it
  *      is cumulative per process); `observedTerminalError` and Group B's
  *      `streamedAssistantText` reset after each result; a background task's
- *      failure is a notice; after the first successful answer a terminal error
- *      is a notice plus a normal finish; user-message content is guarded with
+ *      failure is a notice; once the drain is engaged a terminal error is a
+ *      notice plus a normal finish; user-message content is guarded with
  *      `Array.isArray`.
  *   8. NOTICES go out as `raw` parts (`{ mcpjam: "background-task" … }` and
  *      `{ mcpjam: "drain-notice", reason }`), never as bridge warnings, which
@@ -109,6 +116,7 @@ function mcpjamCreateBackgroundDrainState(input) {
   return {
     promptUuid: input.promptUuid,
     turnStartedAt: input.turnStartedAt,
+    leaseStartedAt: input.turnStartedAt,
     promptLifecycle: void 0,
     answerStarted: false,
     answered: false,
@@ -149,6 +157,14 @@ function mcpjamDrainUnderBackground(state, toolUseId) {
   }
   return false;
 }
+function mcpjamDrainIsBackgroundTask(state, taskId) {
+  if (state.backgroundIds.has(taskId) || state.nestedBackgroundIds.has(taskId)) return true;
+  if (state.tasks.has(taskId)) return false;
+  for (const meta of state.pending.values()) {
+    if (meta.taskType === "local_workflow") return true;
+  }
+  return false;
+}
 function mcpjamDrainAcknowledge(state) {
   for (const taskId of state.unanswered) state.answeredTasks.add(taskId);
   state.unanswered.clear();
@@ -177,7 +193,10 @@ function mcpjamBackgroundDrainReducer(state, event) {
       state.backgroundIds.add(task.task_id);
       state.foregroundAgentIds.delete(task.task_id);
       live.set(task.task_id, meta);
-      if (MCPJAM_DRAIN_WAIT_TASK_TYPES.has(meta.taskType)) pending.set(task.task_id, meta);
+      if (MCPJAM_DRAIN_WAIT_TASK_TYPES.has(meta.taskType)) {
+        pending.set(task.task_id, meta);
+        state.answeredTasks.delete(task.task_id);
+      }
     }
     for (const taskId of state.pending.keys()) {
       if (!pending.has(taskId)) mcpjamDrainSettled(state, taskId);
@@ -194,6 +213,7 @@ function mcpjamBackgroundDrainReducer(state, event) {
     if (event.is_backgrounded === true) {
       state.backgroundIds.add(event.task_id);
       state.foregroundAgentIds.delete(event.task_id);
+      state.answeredTasks.delete(event.task_id);
     } else if (meta.taskType === "local_agent" && !state.backgroundIds.has(event.task_id)) {
       if (meta.toolUseId !== void 0 && mcpjamDrainUnderBackground(state, meta.toolUseId)) {
         state.nestedBackgroundIds.add(event.task_id);
@@ -231,14 +251,25 @@ function mcpjamBackgroundDrainReducer(state, event) {
     }
   } else if (type === "result") {
     mainThread = true;
-    if (!state.answerStarted && event.subtype === "success" && !event.is_error && !(typeof event.result === "string" && event.result.trim())) {
-      ignoreResult = true;
+    if (!state.answered) {
+      if (typeof event.user_message_uuid === "string") {
+        ignoreResult = event.user_message_uuid !== state.promptUuid;
+      } else if (state.promptLifecycle === "queued") {
+        ignoreResult = true;
+      } else if (!state.answerStarted && event.subtype === "success" && !event.is_error && !(typeof event.result === "string" && event.result.trim())) {
+        ignoreResult = true;
+      }
     }
   } else if (type === "mcpjam-answer") {
     state.answerStarted = true;
     state.answered = true;
     state.succeeded = true;
     state.followUpInProgress = false;
+  } else if (type === "mcpjam-stale-timeout") {
+    if (!state.answered) {
+      state.answerStarted = true;
+      state.answered = true;
+    }
   } else if (type === "mcpjam-idle") {
     if (state.pending.size === 0 && !state.followUpInProgress) mcpjamDrainAcknowledge(state);
   } else if (type === "mcpjam-cap") {
@@ -259,9 +290,9 @@ function mcpjamBackgroundDrainReducer(state, event) {
     wantsIdle: state.answered && keepReading && !state.capping && state.pending.size === 0 && !state.followUpInProgress && state.unanswered.size > 0
   };
 }
-function mcpjamDrainDeadline(state) {
+function mcpjamDrainDeadline(state, pausedMs = 0) {
   if (state.drainStartedAt === void 0) return void 0;
-  return Math.min(state.drainStartedAt + MCPJAM_DRAIN_MAX_MS, state.turnStartedAt + MCPJAM_DRAIN_TURN_MAX_MS);
+  return Math.min(state.drainStartedAt + MCPJAM_DRAIN_MAX_MS + pausedMs, state.leaseStartedAt + MCPJAM_DRAIN_TURN_MAX_MS);
 }
 function mcpjamCreateBackgroundDrainController(deps) {
   const state = deps.state;
@@ -269,12 +300,14 @@ function mcpjamCreateBackgroundDrainController(deps) {
   let idleTimer;
   let capTimer;
   let graceTimer;
+  let staleTimer;
+  let phase;
+  const classifyWaiters = /* @__PURE__ */ new Map();
   let approvals = 0;
   let pausedSince;
   let pausedMs = 0;
   let stopped = false;
   let touched = false;
-  let drainNoticeSent = false;
   const raw = (rawValue) => {
     touched = true;
     deps.emit({ type: "raw", rawValue });
@@ -305,9 +338,14 @@ function mcpjamCreateBackgroundDrainController(deps) {
     if (capTimer !== void 0) clearTimeout(capTimer);
     capTimer = void 0;
   };
+  const clearStale = () => {
+    if (staleTimer !== void 0) clearTimeout(staleTimer);
+    staleTimer = void 0;
+  };
   const clear = () => {
     clearIdle();
     clearCap();
+    clearStale();
     if (graceTimer !== void 0) clearTimeout(graceTimer);
     graceTimer = void 0;
   };
@@ -362,14 +400,42 @@ function mcpjamCreateBackgroundDrainController(deps) {
     graceTimer.unref?.();
   };
   const armCap = () => {
-    const deadline = mcpjamDrainDeadline(state);
+    const deadline = mcpjamDrainDeadline(state, pausedMs);
     if (deadline === void 0 || stopped || state.capping) return;
     clearCap();
-    capTimer = setTimeout(onCap, Math.max(0, deadline + pausedMs - now()));
+    capTimer = setTimeout(onCap, Math.max(0, mcpjamDrainDeadline(state, pausedMs) - now()));
     capTimer.unref?.();
+  };
+  // The server keeps the delivered answer on a Stop only while the bridge is
+  // WAITING (nothing streaming, no tool in flight). Announced on every change
+  // and again when an approval resumes the turn in a new server request.
+  const announcePhase = (force) => {
+    if (stopped || state.drainStartedAt === void 0) return;
+    const next = state.followUpInProgress ? "follow-up" : "draining";
+    if (next === phase && !force) return;
+    phase = next;
+    notice(next);
+  };
+  const isClassified = (agentID) => state.backgroundIds.has(agentID) || state.nestedBackgroundIds.has(agentID) || state.foregroundAgentIds.has(agentID);
+  const flushClassifyWaiters = () => {
+    for (const [agentID, waiters] of classifyWaiters) {
+      if (!isClassified(agentID)) continue;
+      classifyWaiters.delete(agentID);
+      for (const wake of waiters) wake();
+    }
+  };
+  const onStaleTimeout = () => {
+    staleTimer = void 0;
+    if (stopped) return;
+    const step = mcpjamBackgroundDrainReducer(state, { type: "mcpjam-stale-timeout" });
+    if (!step.keepReading && !deps.hasActiveUserMessages()) {
+      notice("no answer after a skipped result");
+      deps.closeInput();
+    }
   };
   const sync = (step) => {
     if (stopped) return;
+    if (step.keepReading) announcePhase(false);
     if (step.wantsIdle) {
       if (idleTimer === void 0 || step.mainThread) {
         clearIdle();
@@ -392,8 +458,21 @@ function mcpjamCreateBackgroundDrainController(deps) {
     get draining() {
       return state.drainStartedAt !== void 0 && !stopped;
     },
+    get waiting() {
+      return state.drainStartedAt !== void 0 && !stopped && !state.followUpInProgress;
+    },
     observe(msg) {
       const step = mcpjamBackgroundDrainReducer(state, msg);
+      flushClassifyWaiters();
+      // A skipped result must not leave the turn open forever: if nothing of
+      // this prompt follows it, end the turn as the vendor bridge would have.
+      if (step.ignoreResult) {
+        clearStale();
+        staleTimer = setTimeout(onStaleTimeout, MCPJAM_DRAIN_IDLE_MS);
+        staleTimer.unref?.();
+      } else if (staleTimer !== void 0 && (msg?.type === "command_lifecycle" || (step.mainThread && msg?.type !== "result"))) {
+        clearStale();
+      }
       if (!stopped && msg?.type === "system" && msg.subtype === "background_tasks_changed") {
         // The level usually precedes task_started; announce a task once both
         // have been seen, so the status carries its tool call and agent type.
@@ -404,7 +483,7 @@ function mcpjamCreateBackgroundDrainController(deps) {
         const taskId = msg.task_id;
         if (msg.subtype === "task_started" && (msg.is_backgrounded === true || state.backgroundIds.has(taskId))) {
           progress(taskId, "running");
-        } else if (msg.subtype === "task_updated" && state.backgroundIds.has(taskId)) {
+        } else if (msg.subtype === "task_updated" && mcpjamDrainIsBackgroundTask(state, taskId)) {
           if (msg.patch?.is_backgrounded === true) progress(taskId, "running");
           if (msg.patch?.status === "failed") {
             notice("background task failed: " + (typeof msg.patch.error === "string" && msg.patch.error ? msg.patch.error : taskId));
@@ -417,19 +496,26 @@ function mcpjamCreateBackgroundDrainController(deps) {
       return step;
     },
     answer() {
+      clearStale();
       const step = mcpjamBackgroundDrainReducer(state, { type: "mcpjam-answer", at: now() });
-      if (step.keepReading && !drainNoticeSent && !stopped) {
-        drainNoticeSent = true;
-        notice("draining");
-      }
       sync(step);
       return step;
     },
     async isBackgroundAgentRequest(agentID) {
       if (typeof agentID !== "string" || agentID.length === 0) return false;
-      const deadline = now() + MCPJAM_DRAIN_CLASSIFY_WAIT_MS;
-      while (!state.backgroundIds.has(agentID) && !state.nestedBackgroundIds.has(agentID) && !state.foregroundAgentIds.has(agentID) && now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+      if (!isClassified(agentID)) {
+        // A request can outrun its task_started in the stream; wait for
+        // observe() to classify it, bounded.
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, MCPJAM_DRAIN_CLASSIFY_WAIT_MS);
+          timer.unref?.();
+          const waiters = classifyWaiters.get(agentID) ?? [];
+          waiters.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+          classifyWaiters.set(agentID, waiters);
+        });
       }
       if (state.backgroundIds.has(agentID) || state.nestedBackgroundIds.has(agentID)) return true;
       if (state.foregroundAgentIds.has(agentID)) {
@@ -438,13 +524,37 @@ function mcpjamCreateBackgroundDrainController(deps) {
       }
       return state.pending.size > 0;
     },
-    deniedBackgroundApproval(toolName) {
+    // Called at the vendor's own "this needs approval" point, so the gate is
+    // exactly the vendor's. Undefined means: ask the user as usual.
+    async denyBackgroundApproval(toolName, options) {
+      if (!await this.isBackgroundAgentRequest(options?.agentID)) return void 0;
       if (!stopped) notice("denied a background agent's approval request for " + toolName);
+      return {
+        behavior: "deny",
+        message: MCPJAM_BACKGROUND_APPROVAL_DENIAL,
+        ...typeof options?.toolUseID === "string" ? { toolUseID: options.toolUseID } : {}
+      };
+    },
+    // Wraps the vendor's wait for a main-thread approval. The server suspends
+    // the turn and revokes its model lease while it waits, so background work
+    // still pending cannot finish: it is stopped, and reported, rather than
+    // left to fail on a missing lease. The continuation is a new request with
+    // a new lease, so the turn bound restarts when the approval is answered.
+    trackApproval(decision) {
+      this.approvalStarted();
+      return Promise.resolve(decision).finally(() => this.approvalEnded());
     },
     approvalStarted() {
       if (approvals++ === 0) {
         pausedSince = now();
         clearCap();
+        const taskIds = [...state.pending.keys()];
+        if (taskIds.length > 0 && !stopped) {
+          notice("stopped background work: the turn is paused for approval");
+          for (const taskId of taskIds) {
+            void Promise.resolve().then(() => deps.stopTask(taskId)).catch(() => {});
+          }
+        }
       }
     },
     approvalEnded() {
@@ -454,6 +564,8 @@ function mcpjamCreateBackgroundDrainController(deps) {
           pausedMs += Math.max(0, now() - Math.max(pausedSince, state.drainStartedAt));
         }
         pausedSince = void 0;
+        state.leaseStartedAt = now();
+        announcePhase(true);
         armCap();
       }
     },
@@ -483,14 +595,17 @@ const REPLACEMENTS: readonly Replacement[] = [
     `${DRAIN_HELPERS}function addUsage(total, usage) {
   if (total == null) return usage;`,
   ],
-  // A Stop during the drain ends it at once: open blocks and the step close,
-  // the CLI is aborted and the bridge still emits its normal `finish`. Before
-  // the drain, Stop keeps the bridge's graceful interrupt.
+  // A Stop while the drain only WAITS ends it at once: open blocks and the
+  // step close, the CLI is aborted and the bridge still emits its normal
+  // `finish`. Before the drain, or while a follow-up is running, Stop keeps
+  // the bridge's graceful interrupt. The controller is declared ahead of the
+  // listener, so an abort during setup finds it unset, never uninitialized.
   [
     `  const onHostAbort = () => {
     if (gracefulAbort) {`,
-    `  const onHostAbort = () => {
-    if (mcpjamDrainController?.draining) {
+    `  let mcpjamDrainController;
+  const onHostAbort = () => {
+    if (mcpjamDrainController?.waiting) {
       mcpjamDrainController.stop("stopped");
       return;
     }
@@ -529,7 +644,7 @@ const REPLACEMENTS: readonly Replacement[] = [
   // The controller (timers, notices, approvals). `q` is read lazily.
   [
     `  const skillsOption = toClaudeSkillsOption(start.skills);`,
-    `  const mcpjamDrainController = mcpjamCreateBackgroundDrainController({
+    `  mcpjamDrainController = mcpjamCreateBackgroundDrainController({
     state: mcpjamDrainState,
     emit,
     stopTask: (taskId) => q.stopTask(taskId),
@@ -540,41 +655,38 @@ const REPLACEMENTS: readonly Replacement[] = [
   });
   const skillsOption = toClaudeSkillsOption(start.skills);`,
   ],
-  // Approvals: deny a background agent's; a main-thread one pauses the cap.
+  // Approvals, at the vendor's own decision point so its gate stays the only
+  // gate: a background agent's request is denied before the approval events
+  // are emitted, and the wait for a main-thread decision is tracked.
   [
-    `  const questionPreToolUseHook = createQuestionPreToolUseHook({`,
-    `  const mcpjamCanUseTool = permissionOptions.canUseTool;
-  const mcpjamPermissionMode = start.permissionMode ?? "allow-all";
-  permissionOptions.canUseTool = async (toolName, toolInput, options) => {
-    const needsApproval = !toolName.startsWith("mcp__harness-tools__") && (inactiveNativeTools.includes(toolName) || nativeToolRequiresApproval({
-      nativeName: toolName,
-      permissionMode: mcpjamPermissionMode
-    }));
-    if (!needsApproval) return mcpjamCanUseTool(toolName, toolInput, options);
-    if (await mcpjamDrainController.isBackgroundAgentRequest(options?.agentID)) {
-      mcpjamDrainController.deniedBackgroundApproval(toolName);
-      return {
-        behavior: "deny",
-        message: MCPJAM_BACKGROUND_APPROVAL_DENIAL,
-        ...typeof options?.toolUseID === "string" ? { toolUseID: options.toolUseID } : {}
-      };
-    }
-    mcpjamDrainController.approvalStarted();
-    try {
-      return await mcpjamCanUseTool(toolName, toolInput, options);
-    } finally {
-      mcpjamDrainController.approvalEnded();
-    }
-  };
-  const questionPreToolUseHook = createQuestionPreToolUseHook({`,
+    `      const approvalId = options.toolUseID;
+      input.approvalRequestedToolUseIds.add(approvalId);`,
+    `      const mcpjamDenial = await input.mcpjamDenyBackgroundApproval?.(toolName, options);
+      if (mcpjamDenial) return mcpjamDenial;
+      const approvalId = options.toolUseID;
+      input.approvalRequestedToolUseIds.add(approvalId);`,
   ],
-  // After the first successful answer, a terminal error is a notice plus a
-  // normal finish: the answer the user already has stays theirs.
+  [
+    `      const decision = await input.turn.requestToolApproval(approvalId);`,
+    `      const decision = await (input.mcpjamRequestToolApproval ? input.mcpjamRequestToolApproval(approvalId) : input.turn.requestToolApproval(approvalId));`,
+  ],
+  [
+    `  const permissionOptions = createPermissionOptions({
+    start,`,
+    `  const permissionOptions = createPermissionOptions({
+    start,
+    mcpjamDenyBackgroundApproval: (toolName, options) => mcpjamDrainController.denyBackgroundApproval(toolName, options),
+    mcpjamRequestToolApproval: (approvalId) => mcpjamDrainController.trackApproval(turn.requestToolApproval(approvalId)),`,
+  ],
+  // Once the drain is engaged, a terminal error is a notice plus a normal
+  // finish: the answer the user already has stays theirs. Gated on the drain,
+  // not on the first answer, so a turn kept open only by steering messages
+  // still reports its errors.
   [
     `    if (!normalized || emittedTerminalError || emittedTerminalFinish) return;
     streamEventState.observedTerminalError = normalized;`,
     `    if (!normalized || emittedTerminalError || emittedTerminalFinish) return;
-    if (mcpjamDrainState.succeeded) {
+    if (mcpjamDrainState.drainStartedAt !== void 0) {
       mcpjamDrainController.stop("error after the answer: " + normalized);
       return;
     }
@@ -638,7 +750,7 @@ const REPLACEMENTS: readonly Replacement[] = [
     `    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
       emitTerminalError(msg.patch.error);`,
     `    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
-      if (state.mcpjamDrain?.backgroundIds.has(msg.task_id)) return;
+      if (state.mcpjamDrain && mcpjamDrainIsBackgroundTask(state.mcpjamDrain, msg.task_id)) return;
       emitTerminalError(msg.patch.error);`,
   ],
   [

@@ -1930,12 +1930,16 @@ async function handleTurn(c: Context): Promise<Response> {
     await runtime.finalizeUsage(result);
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
     // waiting on background agents ends that wait at the deadline and keeps
-    // the answer it already has (`claude-code-background-drain.ts`). A harness
-    // turn that was really cut short has no trace (`runHarnessTurn` builds one
-    // only for a turn that finished), so only a finished harness turn counts.
+    // the answer it already has (`claude-code-background-drain.ts`). Only the
+    // harness's own report counts; a trace alone also exists for a turn that
+    // paused for approval or a scope step-up.
     const timedOut =
       abortController.signal.aborted &&
-      !(engine.kind === "harness" && result.turnTrace && !lastEngineError);
+      !(
+        engine.kind === "harness" &&
+        result.backgroundDrainEnded &&
+        !lastEngineError
+      );
     if (browserAttached) {
       result.messages = redactBrowserEvidenceTree(
         result.messages,

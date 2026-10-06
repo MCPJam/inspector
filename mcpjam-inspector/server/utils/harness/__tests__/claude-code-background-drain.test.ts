@@ -30,10 +30,15 @@ type Controller = {
   readonly stopped: boolean;
   readonly touched: boolean;
   readonly draining: boolean;
+  readonly waiting: boolean;
   observe(msg: unknown): Step;
   answer(): Step;
   isBackgroundAgentRequest(agentID: unknown): Promise<boolean>;
-  deniedBackgroundApproval(toolName: string): void;
+  denyBackgroundApproval(
+    toolName: string,
+    options: { agentID?: string; toolUseID?: string },
+  ): Promise<Record<string, unknown> | undefined>;
+  trackApproval<T>(decision: Promise<T>): Promise<T>;
   approvalStarted(): void;
   approvalEnded(): void;
   stop(reason?: string): void;
@@ -43,6 +48,7 @@ type Helpers = {
   createState(input: { promptUuid: string; turnStartedAt: number }): DrainState;
   reduce(state: DrainState, event: unknown): Step;
   createController(deps: Record<string, unknown>): Controller;
+  isBackgroundTask(state: DrainState, taskId: string): boolean;
   denial: string;
 };
 
@@ -75,6 +81,7 @@ beforeEach(async () => {
         createState: mcpjamCreateBackgroundDrainState,
         reduce: mcpjamBackgroundDrainReducer,
         createController: mcpjamCreateBackgroundDrainController,
+        isBackgroundTask: mcpjamDrainIsBackgroundTask,
         denial: MCPJAM_BACKGROUND_APPROVAL_DENIAL,
       };`,
     )() as Helpers;
@@ -304,6 +311,60 @@ describe("background drain reducer", () => {
     expect(steps.map((step) => step.ignoreResult)).toEqual([false, false]);
   });
 
+  it("a result stamped with another prompt's uuid is stale, empty or not", () => {
+    const { steps } = run([
+      { ...result("the agent finished: PLAN"), user_message_uuid: "older" },
+      { ...result(""), user_message_uuid: "older", is_error: true },
+      assistant("TURN2 ANSWER"),
+      { ...result("TURN2 ANSWER"), user_message_uuid: PROMPT },
+    ]);
+    expect(steps.map((step) => step.ignoreResult)).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it("this prompt's own result counts, even empty", () => {
+    const { steps } = run([{ ...result(""), user_message_uuid: PROMPT }]);
+    expect(steps[0]!.ignoreResult).toBe(false);
+  });
+
+  it("an unstamped result while this prompt is still queued is stale, empty or not", () => {
+    const { steps } = run([
+      lifecycle("queued"),
+      init(),
+      assistant("the agent finished: PLAN"),
+      result("the agent finished: PLAN"),
+      lifecycle("started"),
+      assistant("TURN2 ANSWER"),
+      result("TURN2 ANSWER"),
+    ]);
+    expect(steps[3]!.ignoreResult).toBe(true);
+    expect(steps[6]!.ignoreResult).toBe(false);
+  });
+
+  it("an agent resumed under the same task id is waited for again", () => {
+    const { steps, last } = run([
+      tasksChanged(["a1", "local_agent"]),
+      result(),
+      "answer",
+      tasksChanged(),
+      init(),
+      // a1's follow-up resumes it; the CLI registers it in the background
+      // again under the same id.
+      tasksChanged(["a1", "local_agent"]),
+      result(),
+      "answer",
+      tasksChanged(),
+    ]);
+    expect(steps[7]!.keepReading).toBe(true);
+    // Settled again: its second report is still owed.
+    expect(last.keepReading).toBe(true);
+    expect(last.wantsIdle).toBe(true);
+  });
+
   it("a prompt the CLI completes without a model call still ends the turn", () => {
     const { last } = run([
       lifecycle("queued"),
@@ -503,17 +564,95 @@ describe("background drain controller", () => {
     expect(deps.stopTask).toHaveBeenCalledTimes(1);
   });
 
-  it("a main-thread approval pauses the cap", async () => {
+  it("a main-thread approval stops the pending agents and pauses the cap", async () => {
     startDrain("a1");
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     controller.approvalStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    // The request suspends and its model lease is revoked: the agent could
+    // not finish anyway.
+    expect(calls).toEqual(["stopTask:a1"]);
+    expect(raws().at(-1)).toEqual({
+      mcpjam: "drain-notice",
+      reason: "stopped background work: the turn is paused for approval",
+    });
     await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(deps.stopTask).not.toHaveBeenCalled();
-    controller.approvalEnded();
-    await vi.advanceTimersByTimeAsync(5 * 60_000 - 2);
-    expect(deps.stopTask).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(2);
     expect(deps.stopTask).toHaveBeenCalledTimes(1);
+    controller.approvalEnded();
+    // The continuation is a new request: the phase is announced again.
+    expect(raws().at(-1)).toEqual({
+      mcpjam: "drain-notice",
+      reason: "draining",
+    });
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 2);
+    expect(deps.stopTask).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(deps.stopTask).toHaveBeenCalledTimes(2);
+  });
+
+  it("an approval before the drain restarts the turn bound with its new lease", async () => {
+    controller.approvalStarted();
+    expect(deps.stopTask).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(40 * 60_000);
+    controller.approvalEnded();
+    startDrain("a1");
+    await vi.advanceTimersByTimeAsync(10 * 60_000 - 1);
+    expect(deps.stopTask).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deps.stopTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("trackApproval holds the cap until the decision settles, and passes it through", async () => {
+    startDrain("a1");
+    let decide!: (value: string) => void;
+    const decision = controller.trackApproval(
+      new Promise<string>((resolve) => (decide = resolve)),
+    );
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(raws().some((raw) => raw.reason === "cap")).toBe(false);
+    decide("approved");
+    await expect(decision).resolves.toBe("approved");
+    expect(raws().at(-1)).toEqual({
+      mcpjam: "drain-notice",
+      reason: "draining",
+    });
+  });
+
+  it("announces when a follow-up streams and when it waits again", () => {
+    startDrain("a1", "a2");
+    expect(controller.waiting).toBe(true);
+    controller.observe(tasksChanged(["a2", "local_agent"]));
+    controller.observe(init());
+    expect(controller.waiting).toBe(false);
+    controller.observe(assistant("a1 is done"));
+    controller.observe(result("a1 is done"));
+    controller.answer();
+    expect(controller.waiting).toBe(true);
+    expect(
+      raws()
+        .filter((raw) => raw.mcpjam === "drain-notice")
+        .map((raw) => raw.reason),
+    ).toEqual(["draining", "follow-up", "draining"]);
+  });
+
+  it("a skipped result with nothing of the prompt after it ends the turn after the grace", async () => {
+    controller.observe({ ...result(""), user_message_uuid: "older" });
+    await vi.advanceTimersByTimeAsync(15_000 - 1);
+    expect(deps.closeInput).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deps.closeInput).toHaveBeenCalledTimes(1);
+    expect(controller.state.answered).toBe(true);
+    expect(raws().at(-1)).toEqual({
+      mcpjam: "drain-notice",
+      reason: "no answer after a skipped result",
+    });
+  });
+
+  it("a skipped result followed by the prompt's own lifecycle does not end the turn", async () => {
+    controller.observe({ ...result(""), user_message_uuid: "older" });
+    controller.observe(lifecycle("started"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(deps.closeInput).not.toHaveBeenCalled();
   });
 
   it("stop(): notice, step and blocks closed, input closed, CLI aborted, in that order", () => {
@@ -528,6 +667,30 @@ describe("background drain controller", () => {
     expect(controller.draining).toBe(false);
     controller.stop("again");
     expect(calls).toHaveLength(3);
+  });
+
+  it("a nested background agent's failure is a notice too", () => {
+    startDrain("a1");
+    controller.observe({
+      type: "assistant",
+      parent_tool_use_id: "toolu_a1",
+      message: { content: [{ type: "tool_use", id: "toolu_n1" }] },
+    });
+    controller.observe({
+      ...taskStarted("n1", "local_agent", false),
+      tool_use_id: "toolu_n1",
+      spawn_depth: 2,
+    });
+    controller.observe({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "n1",
+      patch: { status: "failed", error: "nested boom" },
+    });
+    expect(raws().at(-1)).toEqual({
+      mcpjam: "drain-notice",
+      reason: "background task failed: nested boom",
+    });
   });
 
   it("a background task's failure is a notice", () => {
@@ -669,6 +832,50 @@ describe("background drain controller", () => {
     it("denials carry a message the model can act on", () => {
       expect(helpers.denial).toMatch(/run this in the foreground/);
     });
+
+    it("denyBackgroundApproval denies a background agent's request at the vendor's gate", async () => {
+      startDrain("a1");
+      await expect(
+        controller.denyBackgroundApproval("Bash", {
+          agentID: "a1",
+          toolUseID: "toolu_x",
+        }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: helpers.denial,
+        toolUseID: "toolu_x",
+      });
+      expect(raws().at(-1)).toEqual({
+        mcpjam: "drain-notice",
+        reason: "denied a background agent's approval request for Bash",
+      });
+    });
+
+    it("denyBackgroundApproval leaves the main thread's request to the user", async () => {
+      startDrain("a1");
+      await expect(
+        controller.denyBackgroundApproval("Bash", { toolUseID: "toolu_y" }),
+      ).resolves.toBeUndefined();
+    });
+  });
+});
+
+describe("which tasks count as background", () => {
+  it("background, nested background, and a workflow's unnamed agents", () => {
+    const state = helpers.createState({ promptUuid: PROMPT, turnStartedAt: 0 });
+    helpers.reduce(state, taskStarted("f1", "local_agent", false));
+    expect(helpers.isBackgroundTask(state, "f1")).toBe(false);
+    expect(helpers.isBackgroundTask(state, "unknown")).toBe(false);
+    helpers.reduce(state, tasksChanged(["a1", "local_agent"]));
+    expect(helpers.isBackgroundTask(state, "a1")).toBe(true);
+    state.nestedBackgroundIds.add("n1");
+    expect(helpers.isBackgroundTask(state, "n1")).toBe(true);
+    // A background shell alone never makes an unknown task background...
+    expect(helpers.isBackgroundTask(state, "unknown")).toBe(false);
+    // ...a pending workflow does: its agents are named by no task_started.
+    helpers.reduce(state, tasksChanged(["w1", "local_workflow"]));
+    expect(helpers.isBackgroundTask(state, "unknown")).toBe(true);
+    expect(helpers.isBackgroundTask(state, "f1")).toBe(false);
   });
 });
 
