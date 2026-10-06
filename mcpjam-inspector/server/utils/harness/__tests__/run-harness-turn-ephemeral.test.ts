@@ -483,3 +483,86 @@ describe("runHarnessTurn — an approval answered after the scenario box was rec
     expect(onEngineError).not.toHaveBeenCalled();
   });
 });
+
+describe("runHarnessTurn — a participant's broker refusal is participant-safe", () => {
+  const SCOPE = {
+    kind: "swarm",
+    swarmId: "cb_1",
+    accessVersion: 1,
+    projectId: "project-1",
+    workspaceId: "ws_1",
+  };
+
+  async function refusalMessage(
+    refusal: { status: number; error: string; code?: string },
+    overrides: Record<string, unknown>,
+  ): Promise<string> {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false,
+      ...refusal,
+    });
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        executionScope: SCOPE,
+        onEngineError,
+        ...overrides,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    return onEngineError.mock.calls[0]![0].message;
+  }
+
+  it.each([
+    [
+      {
+        status: 429,
+        error: "Spending limit reached; add credits or retry later.",
+      },
+      "This study has reached its limit for now. Try again later.",
+    ],
+    [
+      {
+        status: 429,
+        code: "spend_budget_reached",
+        error:
+          "This organization's spend budget is reached. An owner or admin can raise it in Organization → Budget.",
+      },
+      "This study has reached its limit for now. Try again later.",
+    ],
+    [
+      {
+        status: 429,
+        error: "This share link has reached its concurrent harness run limit.",
+      },
+      "This study has reached its limit for now. Try again later.",
+    ],
+    [
+      {
+        status: 403,
+        code: "free_tier_model_restricted",
+        error:
+          "This model is not included in the free daily allowance. Add credits or use your own API key (BYOK) to use it.",
+      },
+      "This study isn't set up correctly yet. Let the study owner know.",
+    ],
+  ])("maps %j for a participant", async (refusal, expected) => {
+    expect(await refusalMessage(refusal, { scenarioParticipant: true })).toBe(
+      expected,
+    );
+  });
+
+  it("a member keeps the detailed copy", async () => {
+    expect(
+      await refusalMessage(
+        {
+          status: 429,
+          error: "Spending limit reached; add credits or retry later.",
+        },
+        {},
+      ),
+    ).toBe("Spending limit reached; add credits or retry later.");
+  });
+});

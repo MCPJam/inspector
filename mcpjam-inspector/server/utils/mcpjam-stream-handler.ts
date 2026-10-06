@@ -1077,6 +1077,13 @@ export interface MCPJamHandlerOptions {
    * access + per-swarm host-funded caps. Absent ⇒ legacy member path.
    */
   executionScope?: ExecutionScope;
+  /**
+   * The actor is a NON-MEMBER participant of the scenario this `swarm` scope
+   * names (the runtime config's advisory `accessKind`). Copy only: a refusal
+   * they see never names the study's credits, budget, organization or
+   * environment (`participantSafeStudyError`). Members keep the detail.
+   */
+  scenarioParticipant?: boolean;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
