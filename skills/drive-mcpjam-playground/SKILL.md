@@ -13,7 +13,7 @@ Send a scoped request with `send_chat_message`; inspect `get_chat_session_trace`
 
 Attach a browser only on turns that need it. Initially send `browser: {policy: {mode: "allowlist", originAllowlist: ["https://example.com"]}}` with the origins relevant to the authorized task. Later send `browser: {}` to reuse that grant. `toolMode: "read_only"` additionally restricts browser tools to observation. Host policy remains a ceiling, and the browser grant and starting profile cannot be changed after opening.
 
-Use `drive_chat_session_browser` for open, navigate, act, invoke, note, or close without a model call; use `observe_chat_session_browser` for observe, trace, and artifact. The equivalent CLI group is `mcpjam cloud sessions browser`.
+To open, navigate, act, invoke, note, close, observe, trace, or fetch an artifact without a model call, use the CLI group `mcpjam cloud sessions browser`. The remote MCP tools do not include those commands while the hosted browser is in beta, so over MCP the browser moves only through `send_chat_message` turns. A `403` whose `details.code` is `FEATURE_UNAVAILABLE` means this organization does not have the hosted browser: tell the user instead of retrying.
 
 ## Handoff and retries
 

@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as recipe from "../../../../../scripts/local-harness-pack-recipes/codex.mjs";
-import { CODEX_LOCAL_ADAPTER_IDENTITY } from "../../codex-appserver/local-identity.js";
+import {
+  CODEX_LOCAL_ADAPTER_IDENTITY,
+  PINNED_CODEX_VERSION,
+} from "../../codex-appserver/local-identity.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 
 /**
@@ -20,26 +23,43 @@ beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "codex-recipe-")); 
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 describe("the Codex pack recipe", () => {
-  it("records the identity the compatibility manifest pins", () => {
+  it("records the vendor identity, not the bridge", () => {
     expect(recipe.harnessId).toBe("codex");
-    expect(recipe.adapterVersion()).toBe(CODEX_LOCAL_ADAPTER_IDENTITY);
+    // The pack is `@openai/codex` and nothing of ours; the bridge identity
+    // belongs to the Inspector's manifest, which pins the layer.
+    expect(recipe.adapterVersion()).toBe(`@openai/codex@${PINNED_CODEX_VERSION}`);
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterVersion).toBe(CODEX_LOCAL_ADAPTER_IDENTITY);
+    expect(LOCAL_HARNESS_MANIFEST.codex.runtime).toMatchObject({ launcherSource: "inspector-layer" });
   });
 
-  it("fingerprints every source the bridge bundle is built from", () => {
-    const sources = recipe.recipeSources;
-    for (const expected of [
-      "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/index.ts",
-      "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/host-tools-mcp.ts",
-      "mcpjam-inspector/server/utils/harness/codex-appserver/bridge/mcp-isolation.ts",
-      "mcpjam-inspector/server/utils/harness/codex-appserver/shared/sandbox-policy.ts",
-      "mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/pnpm-lock.yaml",
-      "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs",
+  it("fingerprints the vendor graph only — no bridge source can move a Codex pack", () => {
+    expect([...recipe.recipeSources].sort()).toEqual([
       "mcpjam-inspector/scripts/local-harness-pack-recipes/codex-vendor-checksums.json",
-    ]) expect(sources).toContain(expected);
-    expect(sources.some((path: string) => path.includes("__tests__"))).toBe(false);
-    // The bridge kit and the bundler: a bump to either changes `bridge.mjs`.
-    expect(recipe.dependencyRoots).toEqual(["@ai-sdk/harness", "esbuild"]);
+      "mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/package.json",
+      "mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/pnpm-lock.yaml",
+    ]);
+    // The bridge kit and the bundler produce the Inspector layer now.
+    expect(recipe.dependencyRoots).toEqual([]);
+  });
+
+  it("stages the install manifests, then leaves only the vendor graph behind", async () => {
+    const staged = await recipe.stageRecipe(root, async () => {
+      // What a frozen install of the bootstrap lockfile leaves: the wrapper,
+      // the platform package, and `ws` for the sandbox's bridge.
+      for (const dir of ["@openai/codex", "@openai/codex-linux-x64", "ws"]) {
+        await mkdir(join(root, "node_modules", dir), { recursive: true });
+      }
+    });
+    expect(staged).toEqual({});
+    expect((await readdir(root)).sort()).toEqual(["node_modules"]);
+    expect((await readdir(join(root, "node_modules"))).sort()).toEqual(["@openai"]);
+  });
+
+  it("refuses anything in node_modules but the @openai scope", async () => {
+    for (const name of ["@openai/codex", "@openai/codex-linux-x64", "ws"]) {
+      await mkdir(join(root, "node_modules", name), { recursive: true });
+    }
+    expect(() => recipe.prunePack(root, "linux-x64")).toThrow(/unexpected packages in the Codex pack's node_modules: ws/);
   });
 
   it("bundles the same bridge bytes from any working directory", () => {
@@ -114,14 +134,13 @@ describe("the Codex pack recipe", () => {
   });
 
   it("reports the vendor packages actually in the pack", async () => {
-    for (const [dir, version] of [["@openai/codex", "0.149.1"], ["@openai/codex-linux-x64", "0.149.1-linux-x64"], ["ws", "8.21.0"]]) {
+    for (const [dir, version] of [["@openai/codex", "0.149.1"], ["@openai/codex-linux-x64", "0.149.1-linux-x64"]]) {
       await mkdir(join(root, "node_modules", dir), { recursive: true });
       await writeFile(join(root, "node_modules", dir, "package.json"), JSON.stringify({ version }));
     }
     expect(recipe.vendorPackages(root)).toEqual({
       "@openai/codex": "0.149.1",
       "@openai/codex-linux-x64": "0.149.1-linux-x64",
-      ws: "8.21.0",
     });
   });
 });

@@ -47,7 +47,7 @@ import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
-import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
+import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS, LOCAL_HARNESS_ENABLED } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
 
@@ -86,7 +86,7 @@ import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.
 import { startRevokedSessionCache } from "./services/revoked-session-cache.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
-import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
+import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
 import { fetchGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
@@ -161,12 +161,15 @@ export async function createHonoApp() {
   startRevokedSessionCache();
 
   startLocalBrowserRenderingSetupInBackground();
-  // Reports whether a local-harness runtime pack is present. Deliberately
-  // only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
-  // kill switch and a consent grant is installed when the user asks, never
-  // at startup and never during a session start.
-  reportLocalHarnessRuntimeStatusInBackground();
-  if (!HOSTED_MODE) void startLocalHarnessJanitor();
+  // Local runtime maintenance, after the janitor has reclaimed orphaned
+  // sessions: this Inspector's liveness record, GC of packs no live
+  // Inspector may select, and — only on a machine where somebody durably
+  // authorized the harness, under the `auto` update policy — a background
+  // prefetch of the desired pack. Never during a session start.
+  if (!HOSTED_MODE) {
+    const janitor = startLocalHarnessJanitor();
+    if (LOCAL_HARNESS_ENABLED) void startLocalHarnessRuntimeMaintenance({ afterJanitor: janitor });
+  }
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the

@@ -311,6 +311,27 @@ describe("POST .../goal-runs/:runId/cancel", () => {
     });
   });
 
+  it("returns asynchronous stop acceptance with the current status", async () => {
+    queryMock.mockResolvedValueOnce(runRow());
+    mutationMock.mockResolvedValue({
+      runId: RUN,
+      status: "running",
+      canceled: true,
+      alreadyCanceled: false,
+      finalized: 0,
+      cleanupPending: true,
+    });
+    const res = await cancel();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id: RUN,
+      status: "running",
+      canceled: true,
+      finalized: 0,
+      cleanupPending: true,
+    });
+  });
+
   it("is idempotent — a re-cancel is success, not a conflict", async () => {
     // A canceled run is no longer `running`, so a naive implementation would
     // 409 every retry of a dropped response.
@@ -764,4 +785,29 @@ describe("the deprecated /journeys alias", () => {
       message: "Goal not found",
     });
   });
+});
+
+describe("run cancellation reads", () => {
+  it.each(["goal", "journey"])(
+    "exposes the durable Stop request on the %s route",
+    async (surface) => {
+      queryMock.mockResolvedValue(
+        runRow({
+          status: "running",
+          cancelRequested: true,
+          cleanupPending: true,
+        }),
+      );
+      const res = await makeApp().request(
+        `/api/v1/projects/${PROJECT}/${surface}-runs/${RUN}`,
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        status: "running",
+        canceled: false,
+        cancelRequested: true,
+        cleanupPending: true,
+      });
+    },
+  );
 });
