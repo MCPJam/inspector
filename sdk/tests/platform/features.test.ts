@@ -118,13 +118,54 @@ describe("isOperationAvailable", () => {
   });
 
   it("makes a multi-feature operation available when any feature is", () => {
-    expect(isOperationAvailable("set_share_mode", {})).toBe(false);
-    expect(isOperationAvailable("set_share_mode", { sandboxes: true })).toBe(
+    expect(isOperationAvailable("rotate_share_link", {})).toBe(false);
+    expect(isOperationAvailable("rotate_share_link", { sandboxes: true })).toBe(
       true
     );
     expect(
-      isOperationAvailable("set_share_mode", { "unified-share-evals": true })
+      isOperationAvailable("rotate_share_link", {
+        "unified-share-evals": true,
+      })
     ).toBe(true);
+  });
+
+  it("never hides a way to stop what outlives a feature being turned off", () => {
+    // Each of these stops or takes down something still running, spending or
+    // public after an organization loses the feature, or reads what to stop.
+    // The backend leaves them open for exactly that case.
+    for (const name of [
+      "set_eval_suite_schedule",
+      "list_trace_destinations",
+      "get_trace_destination",
+      "pause_trace_destination",
+      "delete_trace_destination",
+      "list_goal_runs",
+      "get_goal_run",
+      "cancel_goal_run",
+      "cancel_journey_run",
+      "list_studies",
+      "get_study",
+      "unpublish_study",
+      "unpublish_scenario",
+      "remove_study_member",
+      "rotate_study_link",
+      "set_study_guest_execution",
+      "get_share_settings",
+      "set_share_mode",
+    ]) {
+      expect(isOperationAvailable(name, {}), name).toBe(true);
+    }
+    // Their counterparts that start or widen something are still gated.
+    for (const name of [
+      "create_trace_destination",
+      "resume_trace_destination",
+      "launch_goal_run",
+      "publish_study",
+      "upsert_study_member",
+      "rotate_share_link",
+    ]) {
+      expect(isOperationAvailable(name, {}), name).toBe(false);
+    }
   });
 
   it("treats an operation it does not know as unavailable", () => {

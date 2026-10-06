@@ -11,13 +11,22 @@
  * Every operation is listed, the deprecated aliases too, so a new operation
  * cannot ship without someone deciding which feature it belongs to
  * (`tests/platform/features.test.ts` fails until it is listed).
+ *
+ * One rule overrides the obvious tag: an operation that stops or takes down
+ * something which can outlive the feature being turned off (a schedule, trace
+ * egress, a running goal run, a public study or share) is never hidden, nor
+ * are the reads needed to find it. The backend leaves those open on purpose,
+ * and hiding them would leave an organization that lost the feature no
+ * advertised way to stop what it started.
  */
 
 /**
  * Feature keys. The backend's gated feature keys (`GatedFeatureKey` in
  * mcpjam-backend `convex/lib/featureGates.ts`), copied by hand, plus the
  * features the platform reports without a server-side gate of that name:
- * `github-checks`, `plugins` and `scheduled-evals`.
+ * `github-checks`, `plugins` and `scheduled-evals`. No operation is hidden by
+ * `scheduled-evals`: its one write, `set_eval_suite_schedule`, must stay
+ * available so a schedule can always be turned off.
  */
 export const PLATFORM_FEATURE_KEYS = [
   "multi-account-connections",
@@ -141,13 +150,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   archive_project_environment: "environments",
   restore_project_environment: "environments",
   // Trace destinations.
-  list_trace_destinations: "trace-destinations",
-  get_trace_destination: "trace-destinations",
   create_trace_destination: "trace-destinations",
   update_trace_destination: "trace-destinations",
-  delete_trace_destination: "trace-destinations",
   test_trace_destination: "trace-destinations",
-  pause_trace_destination: "trace-destinations",
   resume_trace_destination: "trace-destinations",
   backfill_trace_destination: "trace-destinations",
   list_trace_destination_backfills: "trace-destinations",
@@ -163,8 +168,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   propose_eval_description_rewrite: "description-experiments",
   start_eval_description_experiment: "description-experiments",
   get_eval_description_experiment: "description-experiments",
-  // Scheduled eval runs.
-  set_eval_suite_schedule: "scheduled-evals",
   // Swarms, goals, personas and studies.
   list_personas: "sandboxes",
   get_persona: "sandboxes",
@@ -178,11 +181,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   update_goal: "sandboxes",
   archive_goal: "sandboxes",
   generate_goals: "sandboxes",
-  list_goal_runs: "sandboxes",
-  get_goal_run: "sandboxes",
   list_goal_run_sessions: "sandboxes",
   launch_goal_run: "sandboxes",
-  cancel_goal_run: "sandboxes",
   get_goal_run_scorecard: "sandboxes",
   list_swarms: "sandboxes",
   get_swarm: "sandboxes",
@@ -196,10 +196,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_swarm_run_insights: "sandboxes",
   request_swarm_run_insights: "sandboxes",
   cancel_swarm_run_insights: "sandboxes",
-  list_studies: "sandboxes",
-  get_study: "sandboxes",
   publish_study: "sandboxes",
-  unpublish_study: "sandboxes",
   update_study: "sandboxes",
   list_study_sessions: "sandboxes",
   get_study_session: "sandboxes",
@@ -212,17 +209,35 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   cancel_study_insights: "sandboxes",
   dismiss_study_finding: "sandboxes",
   undismiss_study_finding: "sandboxes",
-  set_study_guest_execution: "sandboxes",
-  rotate_study_link: "sandboxes",
   upsert_study_member: "sandboxes",
-  remove_study_member: "sandboxes",
   rebind_study: "sandboxes",
-  // Shares for several resource types. Available when any of them is: the
-  // backend checks the resource type on each write (study shares follow
+  // Minting a new share link, for several resource types: available when any
+  // of them is. The backend checks the resource type (study shares follow
   // `sandboxes`, eval and conformance runs their own share beta).
-  get_share_settings: SHARE_FAMILY,
-  set_share_mode: SHARE_FAMILY,
   rotate_share_link: SHARE_FAMILY,
+  // Kept available whatever the feature reports. Each stops or takes down
+  // something that can outlive the feature being turned off for an
+  // organization (a recurring schedule, trace egress, an in-flight goal run,
+  // a public study or share link), and the backend leaves it open on purpose
+  // for exactly that case. Hiding it would strand that organization with no
+  // advertised way to stop it. The reads needed to find what to stop stay
+  // with it. Enabling, widening and resuming are still refused server-side.
+  set_eval_suite_schedule: null,
+  list_trace_destinations: null,
+  get_trace_destination: null,
+  pause_trace_destination: null,
+  delete_trace_destination: null,
+  list_goal_runs: null,
+  get_goal_run: null,
+  cancel_goal_run: null,
+  list_studies: null,
+  get_study: null,
+  unpublish_study: null,
+  remove_study_member: null,
+  rotate_study_link: null,
+  set_study_guest_execution: null,
+  get_share_settings: null,
+  set_share_mode: null,
   // Released: no feature.
   get_me: null,
   list_models: null,
@@ -322,42 +337,43 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   // Deprecated aliases, absent from `ALL_OPERATIONS`: the same feature as
   // the operation that replaced them.
   archive_journey: "sandboxes",
-  cancel_journey_run: "sandboxes",
   cancel_user_testing_insights: "sandboxes",
   cancel_wave_insights: "sandboxes",
   create_journey: "sandboxes",
   dismiss_user_testing_finding: "sandboxes",
   generate_journeys: "sandboxes",
   get_journey: "sandboxes",
-  get_journey_run: "sandboxes",
   get_journey_run_scorecard: "sandboxes",
-  get_scenario: "sandboxes",
   get_user_testing_insights: "sandboxes",
   get_user_testing_metrics: "sandboxes",
-  get_user_testing_scenario: "sandboxes",
   get_user_testing_session: "sandboxes",
   get_user_testing_signals: "sandboxes",
   get_user_testing_usage: "sandboxes",
   get_wave_insights: "sandboxes",
   launch_journey_run: "sandboxes",
   list_journey_run_sessions: "sandboxes",
-  list_journey_runs: "sandboxes",
   list_journeys: "sandboxes",
-  list_scenarios: "sandboxes",
   list_user_testing_findings: "sandboxes",
   list_user_testing_sessions: "sandboxes",
   publish_scenario: "sandboxes",
   rebind_user_testing_scenario: "sandboxes",
-  remove_user_testing_member: "sandboxes",
   request_user_testing_insights: "sandboxes",
   request_wave_insights: "sandboxes",
-  rotate_user_testing_link: "sandboxes",
-  set_user_testing_guest_execution: "sandboxes",
   undismiss_user_testing_finding: "sandboxes",
-  unpublish_scenario: "sandboxes",
   update_journey: "sandboxes",
   update_user_testing_scenario: "sandboxes",
   upsert_user_testing_member: "sandboxes",
+  // The deprecated aliases of the operations kept available above.
+  cancel_journey_run: null,
+  get_journey_run: null,
+  list_journey_runs: null,
+  get_scenario: null,
+  get_user_testing_scenario: null,
+  list_scenarios: null,
+  remove_user_testing_member: null,
+  rotate_user_testing_link: null,
+  set_user_testing_guest_execution: null,
+  unpublish_scenario: null,
   create_host: null,
   delete_host: null,
   duplicate_host: null,
