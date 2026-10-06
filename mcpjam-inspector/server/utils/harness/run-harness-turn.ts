@@ -212,7 +212,11 @@ import {
   type HarnessOwnerRef,
   type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
-import type { HarnessResetReason } from "@/shared/harness-session";
+import {
+  harnessBackgroundTaskInfoFromRaw,
+  type HarnessBackgroundTaskInfo,
+  type HarnessResetReason,
+} from "@/shared/harness-session";
 import {
   buildHarnessProxyMcpJson,
   harnessServerKeyToName,
@@ -695,6 +699,8 @@ export function harnessRuntimeFingerprint(parts: {
  * `sessionSimulation/swarm-sandbox.ts` — one idiom for bounded cleanup.
  */
 const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
+/** How often a turn waiting on background agents writes a keepalive chunk. */
+const HARNESS_DRAIN_KEEPALIVE_MS = 20_000;
 
 /** Sealed-policy envelope lifetime when the caller doesn't set one. Long enough
  *  for a real harness turn, short enough to bound a leaked seal (§3's
@@ -1197,6 +1203,34 @@ export async function runHarnessTurn(
     let emittedAnyText = false;
     let emittedAnyVisiblePart = false;
     const seenHarnessPartTypes = new Set<string>();
+    // BACKGROUND DRAIN (Claude Code, `claude-code-background-drain.ts`): the
+    // bridge holds the turn open after its first answer until the background
+    // agents report back, and narrates that as `raw` parts.
+    //  - `splitNextText`: a background task's status landed between two texts,
+    //    so the next text is a new part (UI block AND transcript entry) rather
+    //    than a continuation of the answer before it. Only ever set by those
+    //    parts, so an ordinary turn's text is untouched.
+    //  - `backgroundDrainActive`: the bridge said it is waiting ("draining").
+    //    The answer is already delivered, so a Stop or the caller's deadline
+    //    from here ENDS the drain and keeps the turn (`drainEndedByAbort`)
+    //    instead of failing it. Losing the lease is still an abort.
+    let splitNextText = false;
+    let backgroundDrainActive = false;
+    let drainEndedByAbort = false;
+    let drainKeepalive: ReturnType<typeof setInterval> | undefined;
+    const writeBackgroundTaskChunk = (data: HarnessBackgroundTaskInfo) => {
+      writer.write({
+        type: "data-harness-background-task",
+        data,
+        transient: true,
+      } as unknown as UIMessageChunk);
+    };
+    const stopDrainKeepalive = () => {
+      if (drainKeepalive) clearInterval(drainKeepalive);
+      drainKeepalive = undefined;
+    };
+    const drainCanEndOnAbort = () =>
+      backgroundDrainActive && !livenessAbort.signal.aborted;
     // Open reasoning block id (separate UI part from text). The harness emits
     // reasoning-* as a distinct block; we close it before any text/tool/finish.
     let reasoningId: string | undefined;
@@ -3243,7 +3277,11 @@ export async function runHarnessTurn(
           Record<string, unknown> & { type?: string }
         >) {
           if (effectiveAbortSignal.aborted) {
-            aborted = true;
+            if (drainCanEndOnAbort()) {
+              drainEndedByAbort = true;
+            } else {
+              aborted = true;
+            }
             break;
           }
           if (scopeStepUpCreation && suspendedHarnessToolCallId) {
@@ -3295,13 +3333,15 @@ export async function runHarnessTurn(
               emitTextStart(writer, textId);
             }
             // Append to the open trailing text part, or start a new one, so
-            // text keeps its order relative to tool-calls.
+            // text keeps its order relative to tool-calls. A background
+            // agent's follow-up is its own part (see `splitNextText`).
             const lastPart = assistantParts[assistantParts.length - 1];
-            if (lastPart && lastPart.type === "text") {
+            if (lastPart && lastPart.type === "text" && !splitNextText) {
               lastPart.text += delta;
             } else {
               assistantParts.push({ type: "text", text: delta });
             }
+            splitNextText = false;
             emitTextDelta(writer, textId, delta);
             emittedAnyText = true;
             // See the whitespace-only note on projectAssistantText above.
@@ -3698,11 +3738,41 @@ export async function runHarnessTurn(
             pausedForApproval = true;
             break;
           } else if (type === "raw") {
-            // Passthrough of the runtime's own protocol message. Only a typed,
-            // terminal model-call failure is kept.
-            const evidence = codexProviderEvidenceFromNotification(
-              (part as { rawValue?: unknown }).rawValue,
-            );
+            const rawValue = (part as { rawValue?: unknown }).rawValue;
+            // The Claude Code bridge's background drain: progress becomes a
+            // transient chunk; notices are logged too, because the bridge's
+            // own warnings only ever reach its stderr.
+            const drainInfo = harnessBackgroundTaskInfoFromRaw(rawValue);
+            if (drainInfo) {
+              writeBackgroundTaskChunk(drainInfo);
+              if (drainInfo.kind === "task") {
+                closeReasoning();
+                if (textId !== undefined) {
+                  emitTextEnd(writer, textId);
+                  textId = undefined;
+                }
+                splitNextText = true;
+              } else if (drainInfo.kind === "notice") {
+                logger.info(
+                  `[harness][background-drain] ${drainInfo.reason}`,
+                  { harness: harnessAdapter.id },
+                );
+                if (drainInfo.reason === "draining") {
+                  backgroundDrainActive = true;
+                  if (!drainKeepalive) {
+                    drainKeepalive = setInterval(
+                      () => writeBackgroundTaskChunk({ kind: "keepalive" }),
+                      HARNESS_DRAIN_KEEPALIVE_MS,
+                    );
+                    drainKeepalive.unref?.();
+                  }
+                }
+              }
+              continue;
+            }
+            // Otherwise a passthrough of the runtime's own protocol message.
+            // Only a typed, terminal model-call failure is kept.
+            const evidence = codexProviderEvidenceFromNotification(rawValue);
             if (evidence) rawProviderEvidence = evidence;
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
@@ -3731,6 +3801,25 @@ export async function runHarnessTurn(
         // paths leave a balanced UI stream.
         closeReasoning();
         if (textId !== undefined) emitTextEnd(writer, textId);
+        textId = undefined;
+        stopDrainKeepalive();
+        // The stream can also end on its own when a Stop lands (the agent
+        // settles the turn as aborted). During a drain that is the end of the
+        // wait, not of the turn: the answer is already here.
+        if (
+          !aborted &&
+          !drainEndedByAbort &&
+          effectiveAbortSignal.aborted &&
+          drainCanEndOnAbort()
+        ) {
+          drainEndedByAbort = true;
+        }
+        if (drainEndedByAbort) {
+          logger.info(
+            "[harness][background-drain] ended by a stop or deadline; keeping the delivered answer",
+            { harness: harnessAdapter.id },
+          );
+        }
 
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
         // full harness run finishes). The finally below destroys the harness
@@ -3778,7 +3867,14 @@ export async function runHarnessTurn(
         // answer + usage. `res.text` settles the complete answer even when the
         // bridge delivered it as a final result rather than streamed
         // `text-delta` parts. Drain it before building the persisted transcript.
-        const finalText = await res.text;
+        // Not after a drain ended by a stop: the agent settled the turn as
+        // aborted, so `res.text` rejects. What streamed is the answer.
+        let finalText: string | undefined;
+        if (drainEndedByAbort) {
+          Promise.resolve(res.text).catch(() => {});
+        } else {
+          finalText = await res.text;
+        }
         closeReasoning();
 
         // ENTITLEMENT WALL (external-account harnesses only). Cursor answers a
@@ -3907,6 +4003,7 @@ export async function runHarnessTurn(
         }
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
+        stopDrainKeepalive();
         try {
           // Turn-end adoption: sync filesystem-installed skills up into Convex
           // while the session is still LIVE (before detach/destroy below). Only on

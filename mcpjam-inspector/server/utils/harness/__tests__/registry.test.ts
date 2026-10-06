@@ -318,6 +318,9 @@ describe("harness registry", () => {
       bootstrap?.files.find((file) => file.path.endsWith("/bridge.mjs"))
         ?.content ?? "";
     expect(claudeCodeBridgeHasTypedErrors(content)).toBe(true);
+    // ...AND the background drain: Group D leaves every typed-errors anchor
+    // in place, so the hosted bridge carries both.
+    expect(content).toContain("function mcpjamBackgroundDrainReducer(");
     // The SHARED bootstrap — a local runtime pack input — is untouched.
     const sharedBootstrap = await createClaudeCodeHarness().getBootstrap?.();
     const sharedBridge =
@@ -516,7 +519,92 @@ const toUserMessage = (options) => ({
   },
   parent_tool_use_id: null,
   uuid: options.messageId
-});`,
+});
+function emitUserToolResults(msg) {
+    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
+      emitTerminalError(msg.patch.error);
+      return;
+    }
+    if (type === "user" && msg.message?.content) {
+      return;
+    }
+}
+async function runTurn(start, turn) {
+  const onHostAbort = () => {
+    if (gracefulAbort) {
+      gracefulAbort();
+    } else {
+      abortCtl.abort();
+    }
+  };
+  const streamEventState = createClaudeStreamEventState();
+  const queryInput = createQueryInput({
+    initialUserMessage: start.prompt,
+    userMessages: turn.experimental_userMessages,
+    abortSignal: abortCtl.signal
+  });
+  const skillsOption = toClaudeSkillsOption(start.skills);
+  const questionPreToolUseHook = createQuestionPreToolUseHook({
+    turn
+  });
+  const emitTerminalError = (message) => {
+    const normalized = message?.trim();
+    if (!normalized || emittedTerminalError || emittedTerminalFinish) return;
+    streamEventState.observedTerminalError = normalized;
+  };
+  try {
+    for await (const msg of q) {
+      emitStreamEvent(msg);
+      if (type === "result") {
+        if (msg.subtype === "success") {
+          if (typeof msg.total_cost_usd === "number") {
+            totalCostUsd = (totalCostUsd ?? 0) + msg.total_cost_usd;
+          }
+          queryInput.observeResult();
+          if (!queryInput.hasActiveUserMessages()) {
+            queryInput.close();
+            break;
+          }
+        }
+        continue;
+      }
+      if (queryInput.hasObservedResult && !queryInput.hasActiveUserMessages()) {
+        queryInput.close();
+        break;
+      }
+    }
+  } catch (err) {
+    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
+      turn.emitError({ error: err, message: "claude-code turn failed" });
+    }
+    return;
+  } finally {
+    gracefulAbort = void 0;
+  }
+  if (emittedTerminalError) return;
+  emittedTerminalFinish = true;
+}
+function createQueryInput({
+  initialUserMessage,
+  userMessages,
+  abortSignal
+}) {
+  return {
+    next() {
+      return {
+              value: toUserMessage({
+                  text: initialUserMessage,
+                  messageId: randomUUID3()
+                }),
+              done: false
+      };
+    }
+  };
+}
+function addUsage(total, usage) {
+  if (total == null) return usage;
+  return { ...total, ...usage };
+}`,
           },
         ],
         commands: [],
@@ -573,6 +661,25 @@ const toUserMessage = (options) => ({
     // instead of rewriting bridge source. The patched bridge must NOT carry
     // the old `??=` write — reintroducing it would shadow the configured env.
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+    // Group D, the background drain: one decision replaces both `break`s,
+    // the prompt carries the uuid stale results are judged against, cost is
+    // the latest cumulative figure, and Group B's dedup resets per result.
+    expect(bridge?.content).toContain("function mcpjamBackgroundDrainReducer(");
+    expect(bridge?.content).toContain(
+      "if (!mcpjamAnswer.keepReading && !queryInput.hasActiveUserMessages()) {",
+    );
+    expect(bridge?.content).toContain("!mcpjamDrainStep.keepReading");
+    expect(bridge?.content).toContain("if (mcpjamDrainStep.ignoreResult) continue;");
+    expect(bridge?.content).toContain(
+      "messageId: initialMessageId ?? randomUUID3()",
+    );
+    expect(bridge?.content).toContain("totalCostUsd = msg.total_cost_usd;");
+    expect(bridge?.content).not.toContain("(totalCostUsd ?? 0) +");
+    expect(bridge?.content).toContain(
+      'if (type === "user" && Array.isArray(msg.message?.content)) {',
+    );
+    expect(bridge?.content).toContain("streamedAssistantText = false;");
+    expect(bridge?.content).toContain("permissionOptions.canUseTool = async");
   });
 
   it("throws loudly if the adapter stops setting parent_tool_use_id itself", async () => {
@@ -589,7 +696,7 @@ const toUserMessage = (options) => ({
             path: "/tmp/harness/claude-code/bridge.mjs",
             // Already-patched markers so the group patches are skipped and
             // only the verification runs — isolating the assertion under test.
-            content: `emitAssistantTextFallback; gatewayModelOverrideSettingsFor;`,
+            content: `emitAssistantTextFallback; gatewayModelOverrideSettingsFor; mcpjamBackgroundDrainReducer;`,
           },
         ],
         commands: [],
@@ -634,6 +741,33 @@ const toUserMessage = (options) => ({
     // now, not a bridge-source rewrite (the installed bridge has no reference
     // at all, so a reappearing one means the patch regressed to the old form).
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+    // Group D took on the INSTALLED bridge, every anchor exactly once.
+    expect(bridge?.content.match(/function mcpjamBackgroundDrainReducer\(/g)).toHaveLength(1);
+    expect(bridge?.content.match(/mcpjamDrainController\.observe\(msg\)/g)).toHaveLength(1);
+    expect(bridge?.content.match(/mcpjamDrainController\.answer\(\)/g)).toHaveLength(1);
+  });
+
+  it("refuses to half-patch a turn loop whose shape moved", async () => {
+    const original = patchClaudeCodeHarnessBootstrap(createClaudeCode({
+      auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
+    }) as any);
+    const vendor = (await createClaudeCode({
+      auth: { AI_GATEWAY_API_KEY: "test", AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1" },
+    }).getBootstrap!())!;
+    const moved = patchClaudeCodeHarnessBootstrap({
+      ...original,
+      getBootstrap: async () => ({
+        ...vendor,
+        files: vendor.files.map((file) => ({
+          ...file,
+          content: file.content.replace(
+            "      emitStreamEvent(msg);\n      if (type === \"result\") {",
+            "      emitStreamEvent(msg);\n\n      if (type === \"result\") {",
+          ),
+        })),
+      }),
+    });
+    await expect(moved.getBootstrap?.()).rejects.toThrow("turn loop shape changed");
   });
 
   it("enforces strict MCP config on previously patched bridges and remains idempotent", async () => {
@@ -656,6 +790,8 @@ const toUserMessage = (options) => ({
       const result = await patched.getBootstrap?.();
       const bridge = result?.files.find((file) => file.path.endsWith("/bridge.mjs"));
       expect(bridge?.content.match(/strictMcpConfig: true/g)).toHaveLength(1);
+      // Group D is idempotent on its marker: a re-patched recipe keeps ONE drain.
+      expect(bridge?.content.match(/function mcpjamBackgroundDrainReducer\(/g)).toHaveLength(1);
     }
     const malformed = patchClaudeCodeHarnessBootstrap({
       ...original,

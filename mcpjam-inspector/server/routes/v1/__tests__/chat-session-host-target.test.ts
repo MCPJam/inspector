@@ -1345,3 +1345,70 @@ describe("hostRoutingSelectionForModel — what decides a v1 session turn's rail
     expect(hostRoutingSelectionForModel(undefined, { id: "openai/gpt-5" })).toBeUndefined();
   });
 });
+
+describe("the turn deadline after a harness turn delivered", () => {
+  // A Claude Code turn waiting on background agents ends that wait at the
+  // deadline and keeps the answer it already streamed
+  // (`claude-code-background-drain.ts`). The route must not then call the
+  // delivered turn a TIMEOUT.
+  function turnThatHitsItsDeadline(result: Record<string, unknown>) {
+    const request = new AbortController();
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      request.abort();
+      return result;
+    });
+    const app = new Hono();
+    app.onError(v1OnError);
+    app.route("/api/v1", chatSessions);
+    return (body: Record<string, unknown>) =>
+      app.request("/api/v1/chat-sessions/messages", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        signal: request.signal,
+      });
+  }
+  const delivered = {
+    messages: [],
+    assistantMessages: [
+      { role: "assistant", content: [{ type: "text", text: "the plan" }] },
+    ],
+    toolCalls: [],
+    toolResults: [],
+    turnTrace: { turnId: "turn_1", spans: [] },
+    usage: { inputTokens: 1, outputTokens: 2 },
+    finishReason: "stop",
+    aborted: false,
+  };
+
+  it("answers a finished harness turn instead of a TIMEOUT", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    const response = await turnThatHitsItsDeadline(delivered)(
+      firstTurn({ environmentId: ENVIRONMENT }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).engine).toBe("harness:claude-code");
+  });
+
+  it("a harness turn that was cut short (no trace) is still a TIMEOUT", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    const { turnTrace: _dropped, ...cutShort } = delivered;
+    const response = await turnThatHitsItsDeadline(cutShort)(
+      firstTurn({ environmentId: ENVIRONMENT }),
+    );
+    const failed = await response.json();
+    expect(failed.code, JSON.stringify(failed)).toBe("TIMEOUT");
+  });
+
+  it("an emulated turn past its deadline is still a TIMEOUT", async () => {
+    const response = await turnThatHitsItsDeadline(delivered)(
+      firstTurn({ serverIds: ["srv_1"] }),
+    );
+    const failed = await response.json();
+    expect(failed.code, JSON.stringify(failed)).toBe("TIMEOUT");
+  });
+});
