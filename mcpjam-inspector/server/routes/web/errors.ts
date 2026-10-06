@@ -21,6 +21,11 @@ import {
   onlyFallbackAnswered,
   upstreamTransportStatus,
 } from "../../utils/hosted-connect-failure.js";
+import { isServiceCredentialUnavailableError } from "../../services/service-credential.js";
+import {
+  DEFAULT_HOSTED_API_URL,
+  resolveHostedApiOrigin,
+} from "../../services/api-keys-relay.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -353,6 +358,52 @@ export function webErrorFromRoute(
         : {}),
     }
   );
+}
+
+/**
+ * `details.reason` on the shared hosted-only answer. Stable: the client keys
+ * its "available in the hosted app" copy on it.
+ */
+export const FEATURE_REQUIRES_HOSTED = "FEATURE_REQUIRES_HOSTED";
+
+/**
+ * Status of the hosted-only answer. 422, the status the public v1 contract
+ * already gives `FEATURE_NOT_SUPPORTED`, so the web and v1 surfaces agree and
+ * a self-hosted build's missing credential never counts against the 5xx
+ * budget or pages anyone.
+ */
+export const FEATURE_REQUIRES_HOSTED_STATUS = 422;
+
+function hostedAppUrl(): string {
+  try {
+    return resolveHostedApiOrigin();
+  } catch {
+    return DEFAULT_HOSTED_API_URL;
+  }
+}
+
+/**
+ * THE hosted-only answer: this Inspector cannot do `feature` because it holds
+ * no MCPJam service credential (every self-hosted build), and the hosted app
+ * can. `feature` is human copy, shown verbatim.
+ *
+ * Reuses `FEATURE_NOT_SUPPORTED` rather than minting a code (the v1 code
+ * table is a contract shared with the backend); the specific reason rides in
+ * `details`, the convention `SESSION_REVOKED` already follows.
+ */
+export function hostedOnlyRouteError(feature: string): WebRouteError {
+  const hostedUrl = hostedAppUrl();
+  return new WebRouteError(
+    FEATURE_REQUIRES_HOSTED_STATUS,
+    ErrorCode.FEATURE_NOT_SUPPORTED,
+    `${feature} is only available in the hosted MCPJam app (${hostedUrl}).`,
+    { reason: FEATURE_REQUIRES_HOSTED, feature, hostedUrl },
+  );
+}
+
+/** Respond with {@link hostedOnlyRouteError} from a Hono handler. */
+export function hostedOnlyResponse(c: any, feature: string) {
+  return webErrorFromRoute(c, hostedOnlyRouteError(feature));
 }
 
 export function parseErrorMessage(error: unknown): string {
@@ -715,6 +766,11 @@ function isTargetDependencyFailure(routeError: WebRouteError): boolean {
  * branches below produce, instead of being duplicated down five return paths.
  */
 function classifyRuntimeError(error: unknown): WebRouteError {
+  // A self-hosted build without the service credential asked for a
+  // credential-backed feature. Not a fault anywhere: answer hosted-only.
+  if (isServiceCredentialUnavailableError(error)) {
+    return hostedOnlyRouteError(error.feature);
+  }
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);

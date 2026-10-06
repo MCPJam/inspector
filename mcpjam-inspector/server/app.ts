@@ -6,6 +6,7 @@ import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
@@ -177,6 +178,8 @@ export async function createHonoApp() {
   // `isComputersDataPlaneConfigured()`, which is only truthful once the
   // credential bootstrap has resolved — no requests before that.
   await initComputersStartup();
+  // Mirror of the call in server/index.ts: capability report + hosted check.
+  reportServiceCredentialAtBoot(HOSTED_MODE);
 
   const app = new Hono();
   // Computer terminal WebSocket support (Project Computers). Mirror of
