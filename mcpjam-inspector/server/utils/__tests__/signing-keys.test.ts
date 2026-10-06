@@ -202,4 +202,40 @@ describe("history provenance across a key rotation", () => {
       verifyAssistantText(switched, "from before the switch", signature),
     ).toBe(true);
   });
+
+  it("history signed before the switch survives a later token rotation only if PREVIOUS keeps the old token", () => {
+    const ROTATED = "rotated-service-token-abcdef0123";
+    const legacy = historyVerificationFor("proj_1", "chat_1", true, {
+      INSPECTOR_SERVICE_TOKEN: SERVICE,
+    })!.ctx!;
+    const signature = signAssistantText(legacy, "from before the switch");
+
+    // Migration: the dedicated secret is set, the token is unchanged.
+    const migrated = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: SERVICE,
+    })!.ctx!;
+    expect(
+      verifyAssistantText(migrated, "from before the switch", signature),
+    ).toBe(true);
+
+    // Rotating the token alone takes the old legacy key out of the ring.
+    const rotatedBare = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: ROTATED,
+    })!.ctx!;
+    expect(
+      verifyAssistantText(rotatedBare, "from before the switch", signature),
+    ).toBe(false);
+
+    // Keeping the old token in PREVIOUS, as the runbook requires, keeps it.
+    const rotatedKept = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      HISTORY_PROVENANCE_SECRET_PREVIOUS: SERVICE,
+      INSPECTOR_SERVICE_TOKEN: ROTATED,
+    })!.ctx!;
+    expect(
+      verifyAssistantText(rotatedKept, "from before the switch", signature),
+    ).toBe(true);
+  });
 });

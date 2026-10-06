@@ -23,8 +23,10 @@
  *
  * Every secret is turned into a key the same way the legacy one always was —
  * `HMAC-SHA256(secret, label)` — so setting `<NAME>_PREVIOUS` to the old
- * service-token value reproduces the legacy key exactly. That is the way to
- * keep pre-switch history verifiable after the legacy fallback is removed.
+ * service-token value reproduces the legacy key exactly. Nothing is re-signed
+ * when a secret is set, and the legacy key follows the CURRENT token, so that
+ * is the way to keep pre-switch history verifiable across a token rotation or
+ * the removal of the legacy fallback, whichever comes first.
  *
  * Values shorter than `MIN_SERVICE_TOKEN_LENGTH` are ignored: a key derived
  * from a guessable secret is worse than none.

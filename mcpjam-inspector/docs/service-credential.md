@@ -58,7 +58,7 @@ features are hosted-only on this server, and `useServerSupportsFeature(id)`
 
 | Feature | Without the credential |
 | --- | --- |
-| Org model providers (BYOK) | **Bearer.** Calls the backend's `/v1/org-model-config/resolve` twin with the user's own sign-in (or an active guest session). The org's model policy applies; only local-runtime providers (e.g. Ollama) come back with a key, under the credential export policy. Cloud provider keys stay server-side, as on `/stream/org/resolve`. |
+| Org model providers (BYOK) | **Bearer.** Calls the backend's `/v1/org-model-config/resolve` twin with the user's own sign-in (or an active guest session). The org's model policy applies; only local-runtime providers (e.g. Ollama) come back with a key, under the credential export policy. Cloud provider keys stay server-side, as on `/stream/org/resolve`. Needs the backend's twin route deployed (MCPJam/mcpjam-backend#1805); until then the call fails with a 404 (`Org model config resolution failed (404)`). |
 | Eval case authoring | **Bearer.** The header is omitted; the backend authors on the user's sign-in and treats the tool snapshot as untrusted. |
 | MCP Tasks recovery index | **Bearer.** `/v1/hosted-tasks/*` twins; the owner is derived from the bearer exactly as on the internal routes. |
 | API key management | **Relay** to the hosted app (the API-key relay). |
@@ -103,10 +103,19 @@ Each must be identical across replicas and at least 16 characters. While a
 secret is unset, the service-credential-derived key still signs; once it is
 set, that legacy key is still accepted for verification (one release).
 
-Every secret becomes a key the same way: `HMAC-SHA256(secret, label)`. So
-setting `*_PREVIOUS` to the old `INSPECTOR_SERVICE_TOKEN` value reproduces the
-legacy key exactly — do that before the legacy fallback is removed to keep
-history signed before the switch verifiable.
+Setting a secret re-signs nothing. History signed before the switch still
+verifies only under the legacy key, and that key is derived from the
+**current** `INSPECTOR_SERVICE_TOKEN`. Every secret becomes a key the same way,
+`HMAC-SHA256(secret, label)`, so setting `HISTORY_PROVENANCE_SECRET_PREVIOUS`
+to the old token value reproduces the legacy key exactly. Do that before
+whichever comes first: rotating the token (below), or the release that removes
+the legacy fallback. Without it, pre-switch history stops verifying and its
+assistant content is left out of the model's context.
+
+A self-hosted server without the service credential can still set
+`TOOL_APPROVAL_SIGNING_SECRET`; approval claims are then kept in that process
+(the backend claim ledger needs the credential), so replicas sharing the
+secret do not see each other's claims.
 
 ### Rotating a signing secret
 
@@ -117,8 +126,14 @@ history signed before the switch verifiable.
 
 ### Rotating `INSPECTOR_SERVICE_TOKEN`
 
-With both signing secrets set, rotating the service credential no longer
-touches approvals or history. The backend (`convex/lib/serviceToken.ts`) still
-accepts exactly one value, so the token itself must change on the Convex
-deployment and every Inspector replica together; a backend accept-list is
-tracked separately.
+1. Set both signing secrets first, if they are not set yet.
+2. In the same deploy as the rotation, set `HISTORY_PROVENANCE_SECRET_PREVIOUS`
+   to the **old** token value. This keeps history signed before step 1
+   verifiable. `_PREVIOUS` holds one value, so finish any signing-secret
+   rotation before rotating the token. (Approvals live minutes; an approval
+   pending across the rotation simply has to be approved again.)
+
+After that, history and approvals no longer depend on the token. The backend
+(`convex/lib/serviceToken.ts`) still accepts exactly one value, so the token
+itself must change on the Convex deployment and every Inspector replica
+together; a backend accept-list is tracked separately.

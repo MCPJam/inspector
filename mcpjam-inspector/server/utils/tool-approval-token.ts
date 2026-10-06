@@ -517,8 +517,8 @@ export type ToolApprovalClaim = "claimed" | "already_claimed" | "unconfirmed";
  *
  * The claim is made in this process first, and a claim this process already
  * holds answers `already_claimed` without asking anyone. Where approvals are
- * signed with the service-token key, any process holding that token verifies
- * the same approval, so the claim is then also recorded with the backend
+ * signed with a shared key and this process holds the service credential, any
+ * replica verifies the same approval, so the claim is then also recorded with the backend
  * (`POST /internal/v1/tool-approvals/claim`), whose answer decides. When that
  * cannot be confirmed — no backend configured, an error, a timeout — nothing
  * runs, and this process lets go of its own claim so that a retry asks the
@@ -544,8 +544,17 @@ export async function claimToolApproval(
   // this process's ledger is the whole ledger.
   if (!resolveToolApprovalKeyRing(env)) return "claimed";
 
-  const convexHttpUrl = env.CONVEX_HTTP_URL?.trim();
   const serviceToken = getServiceCredential(env);
+  // A self-hosted server signing with TOOL_APPROVAL_SIGNING_SECRET but holding
+  // no service credential can never reach the backend ledger. It runs as one
+  // process, so its own ledger is the whole ledger here too. (Replicas sharing
+  // that secret without the credential each keep their own.) A hosted
+  // deployment without the credential is misconfigured and stays fail-closed.
+  if (!serviceToken && env.VITE_MCPJAM_HOSTED_MODE !== "true") {
+    return "claimed";
+  }
+
+  const convexHttpUrl = env.CONVEX_HTTP_URL?.trim();
   const claimKey = toolApprovalClaimKey(approvalId);
   const recorded =
     convexHttpUrl && serviceToken && claimKey
