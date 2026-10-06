@@ -64,7 +64,7 @@ import {
 } from "../../config";
 import {
   fetchScenarioRuntimeConfig,
-  readComputerSandboxMode,
+  readComputerSandboxHarness,
 } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
@@ -1457,16 +1457,16 @@ chatV2.post("/", async (c) => {
     }
 
     // A scenario whose backend runs its harness on the conversation's
-    // DISPOSABLE box (the `computerSandbox` marker) cannot run here: this route
+    // DISPOSABLE box (`computerSandbox.harness`) cannot run here: this route
     // has no box to provision, and the only other machine is the member's
     // personal computer, which that harness must never run on. Refused before
-    // anything starts, naming where it does run. A marker-less config (an older
-    // backend) keeps today's behaviour.
+    // anything starts, naming where it does run. Without that field (an older
+    // backend, or a shell-only marker) the harness keeps today's behaviour.
     if (
       isScenarioSession &&
       resolvedExecution.harness &&
       !harnessExecutionTarget &&
-      readComputerSandboxMode(hostRuntimeConfig) !== null
+      readComputerSandboxHarness(hostRuntimeConfig)
     ) {
       return c.json(
         {
