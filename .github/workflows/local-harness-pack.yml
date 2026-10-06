@@ -322,8 +322,15 @@ jobs:
 
       # The installer is server code, and resolving a runtime writes the
       # Inspector layer from a generated module. Nothing of it reaches the pack.
+      # The layer embeds the Codex bridge bundle, so that is generated first —
+      # the order the Dockerfile and `npm run pretest` use. Without it every
+      # leg failed with ERR_MODULE_NOT_FOUND on the first automatic run.
       - name: Generate the Inspector layer module
-        run: node mcpjam-inspector/scripts/bundle-local-harness-layer.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs
+          node mcpjam-inspector/scripts/bundle-local-harness-layer.mjs
 
       # Proves the pack the installer would download actually verifies, before
       # it is published. A pack that fails here never reaches a release.

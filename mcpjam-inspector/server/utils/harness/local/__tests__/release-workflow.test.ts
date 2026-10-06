@@ -92,6 +92,20 @@ describe("pack release boundaries", () => {
     );
   });
 
+  it("generates the Codex bridge bundle before the Inspector layer that embeds it", () => {
+    // The pack workflow runs only on main, so a PR never exercises it: the
+    // first automatic run failed every leg because the layer bundler ran
+    // without the Codex bundle it imports.
+    const runs = workflow("local-harness-pack")
+      .jobs.build.steps.map((step: any) => String(step.run ?? ""))
+      .join("\n");
+    const codex = runs.indexOf("bundle-codex-appserver-bridge.mjs");
+    const layer = runs.indexOf("bundle-local-harness-layer.mjs");
+    expect(layer).toBeGreaterThan(-1);
+    expect(codex).toBeGreaterThan(-1);
+    expect(codex).toBeLessThan(layer);
+  });
+
   it("keeps every pack artifact to its own harness and version", () => {
     // Artifact names are run-wide, and the auto workflow builds every harness
     // in one run: an unscoped name collides (409) and an unscoped pattern
