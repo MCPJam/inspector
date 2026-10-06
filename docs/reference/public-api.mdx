@@ -452,7 +452,7 @@ and dismissed, and hiding one never claims it stopped happening.
 
   Three refusals, three different meanings: a short `429` is the per-minute
   brake (wait seconds), a `429` naming `insightsPerDay` is the daily ledger
-  (its `Retry-After`, when present, counts to UTC midnight), and a `403` means
+  (its `Retry-After`, when present, counts to UTC midnight), and a `403 FORBIDDEN` with `details.code: "FEATURE_UNAVAILABLE"` means
   the feature is not available to your organization — waiting will never help.
 </Warning>
 
