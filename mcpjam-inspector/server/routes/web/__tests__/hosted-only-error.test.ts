@@ -41,6 +41,20 @@ describe("hosted-only route error", () => {
     expect(error.message).not.toMatch(/hosted MCPJam app/);
   });
 
+  it("names what a hosted deployment is actually missing", () => {
+    expect(hostedOnlyRouteError("The agent endpoint", true).message).toMatch(
+      /missing its service credential/,
+    );
+    const error = hostedOnlyRouteError(
+      "The agent endpoint",
+      true,
+      "CONVEX_HTTP_URL",
+    );
+    expect(error.status).toBe(500);
+    expect(error.message).toMatch(/missing CONVEX_HTTP_URL/);
+    expect(error.message).not.toMatch(/service credential/);
+  });
+
   it("names a configured hosted origin, and falls back when it is invalid", () => {
     vi.stubEnv("MCPJAM_HOSTED_API_URL", "https://staging.mcpjam.com");
     expect(hostedOnlyRouteError("X").details?.hostedUrl).toBe(

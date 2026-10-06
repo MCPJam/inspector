@@ -58,9 +58,9 @@ features are hosted-only on this server, and `useServerSupportsFeature(id)`
 
 | Feature | Without the credential |
 | --- | --- |
-| Org model providers (BYOK) | **Bearer.** Calls the backend's `/v1/org-model-config/resolve` twin with the user's own sign-in (or an active guest session). The org's model policy applies; only local-runtime providers (e.g. Ollama) come back with a key, under the credential export policy. Cloud provider keys stay server-side, as on `/stream/org/resolve`. Needs the backend's twin route deployed (MCPJam/mcpjam-backend#1805); until then the call fails with a 404 (`Org model config resolution failed (404)`). |
+| Org model providers (BYOK) | **Bearer.** Calls the backend's `/v1/org-model-config/resolve` twin with the user's own sign-in (or an active guest session). The org's model policy applies; only local-runtime providers (e.g. Ollama) come back with a key, under the credential export policy. Cloud provider keys stay server-side, as on `/stream/org/resolve`. Needs the backend's twin route deployed (MCPJam/mcpjam-backend#1805); against an older backend the routing 404 is answered as hosted-only. |
 | Eval case authoring | **Bearer.** The header is omitted; the backend authors on the user's sign-in and treats the tool snapshot as untrusted. |
-| MCP Tasks recovery index | **Bearer.** `/v1/hosted-tasks/*` twins; the owner is derived from the bearer exactly as on the internal routes. |
+| MCP Tasks recovery index | **Bearer.** `/v1/hosted-tasks/*` twins; the owner is derived from the bearer exactly as on the internal routes. Against an older backend without the twins, treated as disabled. |
 | API key management | **Relay** to the hosted app (the API-key relay). |
 | `sk_…` keys sent to this server | **Hosted-only.** Validating a key needs `WORKOS_API_KEY` and the credential. |
 | Browser profile save / download | **Hosted-only.** (`GET /api/web/browser-profiles/availability` lets the client hide Save.) |
@@ -101,7 +101,11 @@ They now have their own roots (`server/utils/signing-keys.ts`):
 
 Each must be identical across replicas and at least 16 characters. While a
 secret is unset, the service-credential-derived key still signs; once it is
-set, that legacy key is still accepted for verification (one release).
+set, that legacy key is still accepted for verification, and the boot log
+warns that it is. Set `MCPJAM_ACCEPT_LEGACY_SIGNING_KEY=false` to stop
+accepting it: until then anyone holding `INSPECTOR_SERVICE_TOKEN` can still
+produce a valid approval or history signature. Do it only after the
+`*_PREVIOUS` step below, or history signed before the switch stops verifying.
 
 Setting a secret re-signs nothing. History signed before the switch still
 verifies only under the legacy key, and that key is derived from the

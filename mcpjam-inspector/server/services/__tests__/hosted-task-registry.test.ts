@@ -349,4 +349,18 @@ describe("self-hosted (no service credential)", () => {
     expect(String(url)).toBe("https://backend.test/v1/hosted-tasks/upsert");
     expect(init.headers).not.toHaveProperty("x-inspector-service-token");
   });
+
+  it("treats a routing 404 on the twin (older backend) as disabled, not a throw", async () => {
+    fetchMock.mockImplementation(
+      async () => new Response("No matching routes found", { status: 404 }),
+    );
+
+    // `null`, as for the disabled envelope: nothing verified, nothing thrown.
+    await expect(listRegistryTasks(scope)).resolves.toBeNull();
+    await expect(recordHostedTask(event, options)).resolves.toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[hosted-task-registry] bearer-only route not deployed on this backend",
+      expect.objectContaining({ path: "/v1/hosted-tasks/list" }),
+    );
+  });
 });

@@ -5,7 +5,11 @@ import {
   getXaaConnectClientMetadata,
   type XaaTokenEndpointAuthMethod,
 } from "@mcpjam/sdk";
-import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
+import {
+  ErrorCode,
+  hostedOnlyRouteError,
+  WebRouteError,
+} from "../routes/web/errors.js";
 import { executeOAuthProxy, validateUrl } from "../utils/oauth-proxy.js";
 import { postToConvexAuthorized } from "../utils/server-secrets.js";
 import { logger } from "../utils/logger.js";
@@ -281,10 +285,12 @@ export async function ensureXaaDcrRegistration(
   }
 ): Promise<XaaDcrRegistration> {
   if (!process.env.CONVEX_HTTP_URL) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.FEATURE_NOT_SUPPORTED,
-      "XAA DCR persistence is not configured on this Inspector instance"
+    // Same hosted-only answer as a missing credential (the client keys its
+    // copy on `details.reason`), but a hosted 500 names the variable at fault.
+    throw hostedOnlyRouteError(
+      "XAA client registration",
+      undefined,
+      "CONVEX_HTTP_URL"
     );
   }
   requireServiceCredential("XAA client registration");

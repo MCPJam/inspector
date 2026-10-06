@@ -179,6 +179,13 @@ export interface ServiceCredentialCapability {
   fallback: ServiceCredentialFallback;
   /** Other env this capability needs beyond the credential (names only). */
   alsoRequires?: readonly string[];
+  /**
+   * A signing capability: available when its key ring can be built, i.e. this
+   * dedicated secret OR the credential is at least MIN_SERVICE_TOKEN_LENGTH
+   * (the rule `utils/signing-keys.ts` applies), not merely when the
+   * credential is non-blank.
+   */
+  signingSecretEnv?: string;
 }
 
 /**
@@ -216,11 +223,13 @@ export const SERVICE_CREDENTIAL_CAPABILITIES: readonly ServiceCredentialCapabili
       id: "tool-approvals",
       label: "Tool approvals",
       fallback: "hosted-only",
+      signingSecretEnv: "TOOL_APPROVAL_SIGNING_SECRET",
     },
     {
       id: "history-provenance",
       label: "Chat history provenance",
       fallback: "hosted-only",
+      signingSecretEnv: "HISTORY_PROVENANCE_SECRET",
     },
     {
       id: "browser-profiles",
@@ -292,11 +301,21 @@ function envPresent(env: Env, name: string): boolean {
   return Boolean(env[name]?.trim());
 }
 
+function longEnoughToSign(value: string | null | undefined): boolean {
+  return (value?.trim().length ?? 0) >= MIN_SERVICE_TOKEN_LENGTH;
+}
+
 /** Is `capability` fully available in this process? */
 export function isCapabilityFullyAvailable(
   capability: ServiceCredentialCapability,
   env: Env = process.env,
 ): boolean {
+  if (capability.signingSecretEnv) {
+    return (
+      longEnoughToSign(env[capability.signingSecretEnv]) ||
+      longEnoughToSign(getServiceCredential(env))
+    );
+  }
   return (
     hasServiceCredential(env) &&
     (capability.alsoRequires ?? []).every((name) => envPresent(env, name))

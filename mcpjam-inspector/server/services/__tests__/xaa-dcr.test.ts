@@ -196,6 +196,15 @@ describe("ensureXaaDcrRegistration", () => {
     expect(proxyMock).not.toHaveBeenCalled();
   });
 
+  it("answers the hosted-only shape, with its reason, when CONVEX_HTTP_URL is missing", async () => {
+    delete process.env.CONVEX_HTTP_URL;
+    await expect(ensureXaaDcrRegistration(base)).rejects.toMatchObject({
+      status: 422,
+      details: { reason: "FEATURE_REQUIRES_HOSTED" },
+    });
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
   it("reuses a matching unexpired registration without a remote POST", async () => {
     const fingerprint = buildXaaConnectDcrFingerprint(base);
     installReusableBackend(

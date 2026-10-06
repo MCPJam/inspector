@@ -12,6 +12,10 @@ import {
   enforceHostedServiceCredential,
   formatServiceCredentialReport,
 } from "./service-credential.js";
+import {
+  ACCEPT_LEGACY_SIGNING_KEY_ENV,
+  signingSecretsStillAcceptingLegacy,
+} from "../utils/signing-keys.js";
 
 /**
  * Log the capability report and run the hosted-mode credential check. Throws
@@ -29,4 +33,13 @@ export function reportServiceCredentialAtBoot(hosted: boolean): void {
     hosted,
     onProblem: (message) => logger.error(`[service-credential] ${message}`),
   });
+  const legacyAccepted = signingSecretsStillAcceptingLegacy();
+  if (legacyAccepted.length) {
+    logger.warn(
+      `[service-credential] ${legacyAccepted.join(", ")} set, but signatures ` +
+        "under the INSPECTOR_SERVICE_TOKEN-derived key are still accepted. " +
+        `Set ${ACCEPT_LEGACY_SIGNING_KEY_ENV}=false once pre-switch history ` +
+        "is covered by *_PREVIOUS (see docs/service-credential.md).",
+    );
+  }
 }

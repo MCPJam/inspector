@@ -161,6 +161,16 @@ async function registryRequest<T>(
       if (await isEntityNotFound(response, "Not found")) {
         return { kind: "disabled" };
       }
+      // A routing miss on the bearer-only twin is an older backend that
+      // predates it. Self-hosted builds ship ahead of the backend, so that is
+      // "not available yet", the same as disabled, not a fault worth a throw.
+      if (target !== path) {
+        logger.warn(
+          "[hosted-task-registry] bearer-only route not deployed on this backend",
+          { path: target },
+        );
+        return { kind: "disabled" };
+      }
       throw new Error(
         `Hosted task registry route not found at ${convexUrl}${path} — is the backend route deployed?`
       );

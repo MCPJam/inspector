@@ -396,6 +396,8 @@ function hostedAppUrl(): string {
 export function hostedOnlyRouteError(
   feature: string,
   hosted: boolean = HOSTED_MODE,
+  /** What the hosted server lacks, for the hosted 500 (the operator's clue). */
+  missing: string = "its service credential",
 ): WebRouteError {
   // On the hosted app itself a missing credential is a deployment fault, not
   // a limitation of the build: telling a user to "use the hosted app" while
@@ -406,7 +408,7 @@ export function hostedOnlyRouteError(
     return new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      `${feature} is unavailable: this hosted server is missing its service credential.`,
+      `${feature} is unavailable: this hosted server is missing ${missing}.`,
     );
   }
   const hostedUrl = hostedAppUrl();

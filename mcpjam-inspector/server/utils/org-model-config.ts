@@ -230,19 +230,31 @@ export async function resolveOrgModelConfig(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      let message = `Org model config resolution failed (${response.status})`;
+      let parsed: { error?: unknown } | null = null;
       try {
-        const parsed = JSON.parse(body);
-        message = backendFailureText({
-          source: "org-model-config",
-          status: response.status,
-          detail: parsed?.error,
-          fallback: message,
-        });
+        const value = JSON.parse(body);
+        if (value && typeof value === "object") parsed = value;
       } catch {
-        // ignore parse failure
+        // not JSON
       }
-      throw new Error(message);
+      // A 404 the handler did not write (no JSON body) is a routing miss: a
+      // backend that predates the bearer-only twin. Without the credential
+      // there is then no route at all, so answer exactly as a build with
+      // neither would — the hosted-only answer, not a route-not-found error.
+      if (!inspectorServiceToken && response.status === 404 && !parsed) {
+        throw new ServiceCredentialUnavailableError(ORG_MODEL_CONFIG_FEATURE);
+      }
+      const fallback = `Org model config resolution failed (${response.status})`;
+      throw new Error(
+        parsed
+          ? backendFailureText({
+              source: "org-model-config",
+              status: response.status,
+              detail: parsed.error,
+              fallback,
+            })
+          : fallback,
+      );
     }
 
     const data = (await response.json()) as {

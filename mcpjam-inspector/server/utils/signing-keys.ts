@@ -18,8 +18,11 @@
  *                      new one, and drop PREVIOUS once nothing signed under it
  *                      is still in use;
  *   service credential the LEGACY root, verify-only once `<NAME>` is set (and
- *                      still the signer while it is not). Kept for one release
- *                      so signatures made before the switch keep verifying.
+ *                      still the signer while it is not). Accepted alongside
+ *                      `<NAME>` so signatures made before the switch keep
+ *                      verifying — until `MCPJAM_ACCEPT_LEGACY_SIGNING_KEY=
+ *                      false`, which drops it, so the infrastructure token can
+ *                      no longer forge an approval or a history signature.
  *
  * Every secret is turned into a key the same way the legacy one always was —
  * `HMAC-SHA256(secret, label)` — so setting `<NAME>_PREVIOUS` to the old
@@ -48,6 +51,22 @@ export interface SigningKeyRing {
 
 export const TOOL_APPROVAL_SIGNING_SECRET_ENV = "TOOL_APPROVAL_SIGNING_SECRET";
 export const HISTORY_PROVENANCE_SECRET_ENV = "HISTORY_PROVENANCE_SECRET";
+export const SIGNING_SECRET_ENVS = [
+  TOOL_APPROVAL_SIGNING_SECRET_ENV,
+  HISTORY_PROVENANCE_SECRET_ENV,
+] as const;
+
+/**
+ * Set to `false` to stop accepting the legacy service-token-derived key once a
+ * dedicated secret is set. Default on for the migration release: turning it
+ * off without first setting `<NAME>_PREVIOUS` to the old token value makes
+ * history signed before the switch unverifiable.
+ */
+export const ACCEPT_LEGACY_SIGNING_KEY_ENV = "MCPJAM_ACCEPT_LEGACY_SIGNING_KEY";
+
+function acceptsLegacyKey(env: Env): boolean {
+  return env[ACCEPT_LEGACY_SIGNING_KEY_ENV]?.trim().toLowerCase() !== "false";
+}
 
 /** `HMAC-SHA256(secret, label)`, or null for a missing or too-short secret. */
 export function deriveLabeledKey(
@@ -82,9 +101,27 @@ export function resolveSigningKeyRing(args: {
   const legacy = deriveLabeledKey(getServiceCredential(env), args.label);
   const signing = current ?? legacy;
   if (!signing) return null;
+  // While no dedicated secret is set the legacy key IS the signer; the switch
+  // only removes it as an extra accepted key next to a dedicated secret.
+  const acceptedLegacy = current && !acceptsLegacyKey(env) ? null : legacy;
   const accepted: Buffer[] = [];
-  for (const key of [signing, previous, legacy]) {
+  for (const key of [signing, previous, acceptedLegacy]) {
     if (key && !accepted.some((seen) => sameKey(seen, key))) accepted.push(key);
   }
   return { signing, accepted };
+}
+
+/**
+ * The dedicated secrets that are set while the legacy service-token key is
+ * still accepted next to them — what the boot log warns about until
+ * `MCPJAM_ACCEPT_LEGACY_SIGNING_KEY=false`. Names only.
+ */
+export function signingSecretsStillAcceptingLegacy(
+  env: Env = process.env,
+): string[] {
+  if (!acceptsLegacyKey(env)) return [];
+  if (!deriveLabeledKey(getServiceCredential(env), "probe")) return [];
+  return SIGNING_SECRET_ENVS.filter(
+    (name) => deriveLabeledKey(env[name], "probe") !== null,
+  );
 }

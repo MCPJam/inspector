@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deriveLabeledKey, resolveSigningKeyRing } from "../signing-keys.js";
+import {
+  deriveLabeledKey,
+  resolveSigningKeyRing,
+  signingSecretsStillAcceptingLegacy,
+} from "../signing-keys.js";
 import {
   mintToolApprovalId,
   resolveToolApprovalKeyRing,
@@ -89,6 +93,82 @@ const binding = {
   projectId: "proj_1",
   chatSessionId: "chat_1",
 };
+
+describe("retiring the legacy service-token key", () => {
+  const legacyKey = () => deriveLabeledKey(SERVICE, LABEL)!;
+
+  it("still accepts the legacy key next to a dedicated secret by default", () => {
+    const ring = resolveSigningKeyRing({
+      secretEnv: "TEST_SECRET",
+      label: LABEL,
+      env: { TEST_SECRET: NEW_SECRET, INSPECTOR_SERVICE_TOKEN: SERVICE },
+    })!;
+    expect(ring.accepted.some((key) => key.equals(legacyKey()))).toBe(true);
+  });
+
+  it("drops it under MCPJAM_ACCEPT_LEGACY_SIGNING_KEY=false, so the token cannot forge a signature", () => {
+    const ring = resolveSigningKeyRing({
+      secretEnv: "TEST_SECRET",
+      label: LABEL,
+      env: {
+        TEST_SECRET: NEW_SECRET,
+        INSPECTOR_SERVICE_TOKEN: SERVICE,
+        MCPJAM_ACCEPT_LEGACY_SIGNING_KEY: "false",
+      },
+    })!;
+    expect(ring.accepted.some((key) => key.equals(legacyKey()))).toBe(false);
+    expect(ring.signing.equals(deriveLabeledKey(NEW_SECRET, LABEL)!)).toBe(
+      true,
+    );
+  });
+
+  it("keeps PREVIOUS (e.g. the old token value) accepted when the legacy key is dropped", () => {
+    const ring = resolveSigningKeyRing({
+      secretEnv: "TEST_SECRET",
+      label: LABEL,
+      env: {
+        TEST_SECRET: NEW_SECRET,
+        TEST_SECRET_PREVIOUS: SERVICE,
+        INSPECTOR_SERVICE_TOKEN: "rotated-service-token-abcdef0123",
+        MCPJAM_ACCEPT_LEGACY_SIGNING_KEY: "false",
+      },
+    })!;
+    expect(ring.accepted.some((key) => key.equals(legacyKey()))).toBe(true);
+  });
+
+  it("cannot drop the legacy key while it is still the only signer", () => {
+    const ring = resolveSigningKeyRing({
+      secretEnv: "TEST_SECRET",
+      label: LABEL,
+      env: {
+        INSPECTOR_SERVICE_TOKEN: SERVICE,
+        MCPJAM_ACCEPT_LEGACY_SIGNING_KEY: "false",
+      },
+    })!;
+    expect(ring.signing.equals(legacyKey())).toBe(true);
+  });
+
+  it("names the secrets still accepting the legacy key, for the boot warning", () => {
+    expect(
+      signingSecretsStillAcceptingLegacy({
+        HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+        INSPECTOR_SERVICE_TOKEN: SERVICE,
+      }),
+    ).toEqual(["HISTORY_PROVENANCE_SECRET"]);
+    expect(
+      signingSecretsStillAcceptingLegacy({
+        HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+        INSPECTOR_SERVICE_TOKEN: SERVICE,
+        MCPJAM_ACCEPT_LEGACY_SIGNING_KEY: "false",
+      }),
+    ).toEqual([]);
+    expect(
+      signingSecretsStillAcceptingLegacy({
+        HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      }),
+    ).toEqual([]);
+  });
+});
 
 describe("tool approvals across a key rotation", () => {
   it("an approval signed under the legacy token verifies after the dedicated secret is set", () => {

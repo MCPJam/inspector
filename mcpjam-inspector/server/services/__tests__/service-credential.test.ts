@@ -151,6 +151,25 @@ describe("capability report", () => {
     expect(report.off).toContain("workos-api-keys");
   });
 
+  it("does not report signing as ON for a credential too short to derive a key from", () => {
+    const report = describeServiceCredentialCapabilities({
+      INSPECTOR_SERVICE_TOKEN: "short-token",
+    });
+    expect(report.credential).toBe("present");
+    expect(report.on).not.toContain("tool-approvals");
+    expect(report.on).not.toContain("history-provenance");
+    expect(report.off).toEqual(
+      expect.arrayContaining(["tool-approvals", "history-provenance"]),
+    );
+  });
+
+  it("reports signing ON from a dedicated secret even without the credential", () => {
+    const report = describeServiceCredentialCapabilities({
+      HISTORY_PROVENANCE_SECRET: "dedicated-history-secret-0123456789",
+    });
+    expect(report.on).toEqual(["history-provenance"]);
+  });
+
   it("formats names only — never the value", () => {
     const line = formatServiceCredentialReport(
       describeServiceCredentialCapabilities({ INSPECTOR_SERVICE_TOKEN: TOKEN }),

@@ -130,6 +130,36 @@ describe("resolveOrgModelConfig", () => {
     expect(headers.has("x-inspector-service-token")).toBe(false);
   });
 
+  it("answers hosted-only when the backend predates the bearer-only twin (routing 404)", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("No matching routes found", { status: 404 }),
+    );
+
+    await expect(
+      resolveOrgModelConfig(
+        { projectId: "project_org_config_old_backend" },
+        { bearerToken: "user-self-hosted" },
+      ),
+    ).rejects.toMatchObject({ name: "ServiceCredentialUnavailableError" });
+  });
+
+  it("keeps the handler's own 404 on the twin an ordinary failure", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ ok: false, error: "Project not found" }, { status: 404 }),
+    );
+
+    await expect(
+      resolveOrgModelConfig(
+        { projectId: "project_org_config_twin_404" },
+        { bearerToken: "user-self-hosted" },
+      ),
+    ).rejects.not.toMatchObject({ name: "ServiceCredentialUnavailableError" });
+  });
+
   it("refuses as hosted-only with neither a credential nor a bearer", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example/";
     process.env.INSPECTOR_SERVICE_TOKEN = "";

@@ -130,15 +130,16 @@ type ValidateApiKeyResult = {
 };
 
 /**
- * Whether this is a self-hosted server, which cannot validate an `sk_…` key at
- * all: that takes MCPJam's WorkOS admin key AND the service credential (the
- * user lookup and the delegated-token mint behind every key call), and neither
- * ships outside the hosted app. Keyed on the credential: a server that holds
- * it but lacks the admin key is a misconfigured hosted deployment, and keeps
- * its ordinary failure.
+ * Whether this server is configured to validate `sk_…` keys at all. That
+ * takes MCPJam's WorkOS admin key AND the service credential (the user lookup
+ * and the delegated-token mint behind every key call), and neither ships
+ * outside the hosted app. Only a server with NEITHER is the self-hosted case
+ * that gets the hosted-only answer; one holding either keeps its ordinary
+ * failure, so a WorkOS outage still reads as a failed validation (401), not
+ * as "use the hosted app".
  */
 function canValidateWorkosApiKeysHere(): boolean {
-  return hasServiceCredential();
+  return hasServiceCredential() || Boolean(process.env.WORKOS_API_KEY?.trim());
 }
 
 export async function bearerAuthMiddleware(

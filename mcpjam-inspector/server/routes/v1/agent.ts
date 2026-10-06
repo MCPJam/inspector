@@ -1212,11 +1212,18 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
   // Graceful degradation on OSS/self-hosted installs: the hosted engine and
   // the delegated-token mint both require the backend wiring.
-  if (!process.env.CONVEX_HTTP_URL || !hasServiceCredential()) {
-    // The shared hosted-only answer (thrown, so the v1 envelope maps it the
-    // same way as every other credential-backed feature: 422 with
-    // `details.reason` on a self-hosted build, 500 on a misconfigured
-    // hosted one).
+  // The shared hosted-only answer (thrown, so the v1 envelope maps it the
+  // same way as every other credential-backed feature: 422 with
+  // `details.reason` on a self-hosted build, 500 on a misconfigured hosted
+  // one, naming what is actually missing).
+  if (!process.env.CONVEX_HTTP_URL) {
+    throw hostedOnlyRouteError(
+      "The agent endpoint",
+      undefined,
+      "CONVEX_HTTP_URL",
+    );
+  }
+  if (!hasServiceCredential()) {
     throw hostedOnlyRouteError("The agent endpoint");
   }
 
