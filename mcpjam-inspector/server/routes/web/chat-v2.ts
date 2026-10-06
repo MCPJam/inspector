@@ -180,6 +180,7 @@ import {
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
 } from "../../utils/harness/playground-box.js";
@@ -2052,6 +2053,25 @@ chatV2.post("/", async (c) => {
           `This turn runs the ${resolvedExecution.harness} harness on a disposable computer, which belongs to one conversation, and this turn named none.`,
           { reason: "NO_CHAT_SESSION_ID" },
         );
+      }
+      // The credential check the harness turn would fail, run BEFORE the box
+      // is booted: a refused Cursor turn must not pay for a box first. Same
+      // function and inputs as `runHarnessTurn`'s own check.
+      if (playgroundBoxReason === "credential") {
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: resolvedExecution.harness,
+          secretEnv,
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          ...(environmentSpec
+            ? { environmentId: environmentSpec.environmentRef.environmentId }
+            : {}),
+        });
+        if (credentialRefusal) {
+          throw new WebRouteError(409, ErrorCode.CONFLICT, credentialRefusal, {
+            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+          });
+        }
       }
       const acquired = await acquirePlaygroundHarnessBox({
         bearer: bearerToken,

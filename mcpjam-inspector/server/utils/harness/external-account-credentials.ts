@@ -513,6 +513,95 @@ export function planExternalAccountCredentials(args: {
 }
 
 /**
+ * The whole credential decision for an external-account harness turn: ask about
+ * brokered delivery for the names materialized delivery did not satisfy, then
+ * plan. Undefined for a harness that needs no external credential. THROWS the
+ * refusal copy when a required credential is unsatisfiable.
+ *
+ * One function so that the two places that must agree do: `runHarnessTurn`,
+ * which runs it before it provisions anything, and the Playground routes,
+ * which run it before they boot the conversation's disposable box — a turn
+ * whose credential is refused must not have paid for a box first.
+ *
+ * Brokered availability depends on the box kind (only an ephemeral sandbox row
+ * carries brokered transforms; a persistent computer never does) and on the
+ * ENVIRONMENT, because the backend composes a box's transform from that
+ * environment's `secretSelection` — a correctly bound row it does not select is
+ * never delivered. A project that materializes its key pays no round trip.
+ */
+export async function resolveExternalAccountCredentialPlan(args: {
+  harness: {
+    modelAccess: string;
+    displayName: string;
+    externalAccountCredentialEnv?: readonly string[];
+    externalAccountBrokerBinding?: Readonly<
+      Record<string, HarnessExternalAccountBrokerBinding>
+    >;
+  };
+  secretEnv: Readonly<Record<string, string>> | undefined;
+  bearer?: string;
+  projectId?: string;
+  environmentId?: string;
+  environmentUnresolvedReason?: string;
+  boxKind: "sandbox" | "computer";
+  /** The box's own row, when the turn is bound to one: it answers for itself. */
+  sandboxRowId?: string;
+}): Promise<ExternalAccountCredentialPlan | undefined> {
+  const required =
+    args.harness.modelAccess === "external-account"
+      ? args.harness.externalAccountCredentialEnv
+      : undefined;
+  if (!required) return undefined;
+  const brokerBinding = args.harness.externalAccountBrokerBinding;
+  const unresolved = required.filter(
+    (name) => !args.secretEnv?.[name] && brokerBinding?.[name],
+  );
+  const brokered =
+    unresolved.length > 0 && brokerBinding
+      ? await fetchBrokeredCredentialNames({
+          ...(args.bearer ? { bearer: args.bearer } : {}),
+          ...(args.projectId ? { projectId: args.projectId } : {}),
+          ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+          // Copy only — an environment this process cannot name is one whose
+          // selection it cannot check, so the answer is the same either way.
+          ...(!args.environmentId && args.environmentUnresolvedReason
+            ? { environmentUnresolvedReason: args.environmentUnresolvedReason }
+            : {}),
+          boxKind: args.boxKind,
+          ...(args.sandboxRowId ? { sandboxRowId: args.sandboxRowId } : {}),
+          required: Object.fromEntries(
+            unresolved.map((name) => [name, brokerBinding[name]!]),
+          ),
+        })
+      : {
+          available: new Set<string>(),
+          misboundHosts: {},
+          unselected: new Set<string>(),
+          environmentMissing: false,
+        };
+  return planExternalAccountCredentials({
+    harnessDisplayName: args.harness.displayName,
+    required,
+    secretEnv: args.secretEnv,
+    brokerBinding,
+    brokeredAvailable: brokered ? brokered.available : null,
+    ...(brokered
+      ? {
+          misboundHosts: brokered.misboundHosts,
+          unselected: brokered.unselected,
+          environmentMissing: brokered.environmentMissing,
+          ...(brokered.environmentUnresolvedReason
+            ? {
+                environmentUnresolvedReason:
+                  brokered.environmentUnresolvedReason,
+              }
+            : {}),
+        }
+      : {}),
+  });
+}
+
+/**
  * Preflight-shaped refusal copy: names the variable, BOTH deliveries, and where
  * to set it, so the reader can act on it without opening a runbook.
  *

@@ -20,37 +20,63 @@ function workdirKey(projectId: string | null, hostId: string | null): string {
 }
 
 interface HarnessWorkdirState {
+  /** The latest PERSONAL-computer workdir per (project, host). */
   byKey: Record<string, string>;
   /**
-   * Which machine the latest turn for a (project, host) ran on. Only
+   * Conversations whose latest turn ran on their own disposable computer. Only
    * `disposable` is ever stored: absent means the personal computer, so a
    * server that predates the field changes nothing.
+   *
+   * Keyed by CONVERSATION, not by (project, host): a compare column and the
+   * main chat run the same host at once on different machines, and one
+   * conversation's Cursor turn says nothing about where the next conversation
+   * runs. Keyed by host, either would have told the rail the wrong machine.
    */
-  disposableByKey: Record<string, true>;
+  disposableByConversation: Record<string, true>;
   setWorkdir: (
     projectId: string | null,
     hostId: string | null,
     workdir: string,
     machine?: HarnessMachine,
+    chatSessionId?: string | null,
   ) => void;
 }
 
 export const useHarnessWorkdirStore = create<HarnessWorkdirState>((set) => ({
   byKey: {},
-  disposableByKey: {},
-  setWorkdir: (projectId, hostId, workdir, machine) =>
+  disposableByConversation: {},
+  setWorkdir: (projectId, hostId, workdir, machine, chatSessionId) =>
     set((state) => {
       const key = workdirKey(projectId, hostId);
       const disposable = machine === "disposable";
-      const sameMachine = Boolean(state.disposableByKey[key]) === disposable;
-      if (state.byKey[key] === workdir && sameMachine) return state;
-      const { [key]: _dropped, ...rest } = state.disposableByKey;
-      return {
-        byKey: { ...state.byKey, [key]: workdir },
-        disposableByKey: disposable
-          ? { ...state.disposableByKey, [key]: true }
-          : rest,
-      };
+      // A disposable turn's workdir is a path on THAT machine. The cache below
+      // is what the rail's (personal-computer) terminal opens at, so it keeps
+      // the last personal path rather than one that does not exist there.
+      const byKey =
+        disposable || state.byKey[key] === workdir
+          ? state.byKey
+          : { ...state.byKey, [key]: workdir };
+      let disposableByConversation = state.disposableByConversation;
+      if (chatSessionId) {
+        const flagged = Boolean(disposableByConversation[chatSessionId]);
+        if (disposable && !flagged) {
+          disposableByConversation = {
+            ...disposableByConversation,
+            [chatSessionId]: true,
+          };
+        } else if (!disposable && flagged) {
+          const { [chatSessionId]: _dropped, ...rest } =
+            disposableByConversation;
+          disposableByConversation = rest;
+        }
+      }
+      if (
+        byKey === state.byKey &&
+        disposableByConversation === state.disposableByConversation
+      ) {
+        return state;
+      }
+      return { byKey, disposableByConversation };
     }),
 }));
 
@@ -64,15 +90,15 @@ export function useHarnessWorkdir(
 }
 
 /**
- * Did the latest turn for this (project, host) run on the conversation's
- * disposable computer rather than the personal one? The Shell rail uses it to
- * say so, and to stop opening its (personal-computer) terminal at a path that
- * only exists on the other machine.
+ * Did this conversation's latest turn run on its disposable computer rather
+ * than the personal one? The Shell rail uses it (for the conversation on
+ * screen) to say so, and to stop opening its personal-computer terminal at a
+ * path that only exists on the other machine.
  */
 export function useHarnessRanOnDisposable(
-  projectId: string | null,
-  hostId: string | null,
+  chatSessionId: string | null,
 ): boolean {
-  const key = workdirKey(projectId, hostId);
-  return useHarnessWorkdirStore((s) => Boolean(s.disposableByKey[key]));
+  return useHarnessWorkdirStore((s) =>
+    chatSessionId ? Boolean(s.disposableByConversation[chatSessionId]) : false,
+  );
 }

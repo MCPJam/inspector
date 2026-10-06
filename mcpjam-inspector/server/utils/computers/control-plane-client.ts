@@ -716,8 +716,12 @@ export interface PlaygroundTerminalSandbox {
  *   409 — the environment is unavailable, or its image can't boot. Terminal
  *         until the environment is fixed.
  *   429 — the member already holds the maximum number of live Playground
- *         computers (`code: "user_terminal_cap"`).
- *   503 — at capacity, or a sibling call is still booting. Retryable.
+ *         computers, all busy (`code: "user_terminal_cap"`). Not retried: an
+ *         idle one would already have been evicted to make room.
+ *   503 — at capacity, or a sibling call is still booting. RETRIED here, on
+ *         the same policy and loop as the conversation desktop
+ *         ({@link provisionPlaygroundSandbox}), so a full pool or a box still
+ *         starting up is a wait rather than a failed turn.
  */
 export async function provisionPlaygroundTerminalSandbox(args: {
   bearer: string;
@@ -725,19 +729,53 @@ export async function provisionPlaygroundTerminalSandbox(args: {
   chatSessionId: string;
   projectEnvironmentId?: string;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<ControlPlaneResult<PlaygroundTerminalSandbox>> {
-  return postJson<PlaygroundTerminalSandbox>(
-    "/playground/sandbox/terminal/provision",
-    bearerHeader(args.bearer),
+  type Result = ControlPlaneResult<PlaygroundTerminalSandbox>;
+  const atCapacity = (result: Result): boolean =>
+    !result.ok && result.status === 503 && result.code === "at_capacity";
+  const outOfTime = (
+    extra: Partial<Extract<Result, { ok: false }>> = {},
+  ): Result => ({
+    ok: false,
+    status: 503,
+    error: "Playground computer capacity did not become available in time",
+    code: "at_capacity",
+    ...extra,
+  });
+  const outcome = await withCapacityRetry<Result>(
+    (_attempt, signal) =>
+      postJson<PlaygroundTerminalSandbox>(
+        "/playground/sandbox/terminal/provision",
+        bearerHeader(args.bearer),
+        {
+          projectId: args.projectId,
+          chatSessionId: args.chatSessionId,
+          ...(args.projectEnvironmentId
+            ? { projectEnvironmentId: args.projectEnvironmentId }
+            : {}),
+        },
+        signal,
+      ),
     {
-      projectId: args.projectId,
-      chatSessionId: args.chatSessionId,
-      ...(args.projectEnvironmentId
-        ? { projectEnvironmentId: args.projectEnvironmentId }
-        : {}),
+      ...PLAYGROUND_CAPACITY_POLICY,
+      totalBudgetMs: args.timeoutMs ?? PLAYGROUND_CAPACITY_POLICY.totalBudgetMs,
+      shouldRetry: atCapacity,
+      retryAfterMsOf: (result) =>
+        !result.ok && typeof result.retryAfterMs === "number"
+          ? result.retryAfterMs
+          : undefined,
+      ...(args.signal ? { signal: args.signal } : {}),
     },
-    args.signal,
   );
+  if (outcome.kind === "settled") return outcome.result;
+  if (outcome.reason === "aborted") {
+    return { ok: false, status: 499, error: "cancelled" };
+  }
+  if (outcome.reason === "budget_before_delay" && outcome.plannedDelayMs) {
+    return outOfTime({ retryAfterMs: outcome.plannedDelayMs });
+  }
+  return outOfTime();
 }
 
 /**
@@ -973,6 +1011,12 @@ export type TouchSandboxOutcome = "touched" | "gone" | "failed";
 export async function touchSandbox(args: {
   sandboxRowId: string;
   sandboxId: string;
+  /**
+   * The holder's turn is OVER: its last touch. The control plane records the
+   * end, which lets the Playground's per-member cap evict this idle box rather
+   * than refuse a new conversation. An older control plane ignores the field.
+   */
+  ended?: boolean;
   signal?: AbortSignal;
 }): Promise<TouchSandboxOutcome> {
   const headers = authHeaders();
@@ -980,7 +1024,11 @@ export async function touchSandbox(args: {
   const result = await postJson(
     "/computers/sandbox/touch",
     headers,
-    { sandboxRowId: args.sandboxRowId, sandboxId: args.sandboxId },
+    {
+      sandboxRowId: args.sandboxRowId,
+      sandboxId: args.sandboxId,
+      ...(args.ended ? { ended: true } : {}),
+    },
     args.signal,
     { quietNetworkErrors: true },
   );

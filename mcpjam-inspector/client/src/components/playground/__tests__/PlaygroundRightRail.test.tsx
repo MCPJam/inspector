@@ -112,11 +112,16 @@ vi.mock("@/lib/local-computer-consent", () => ({
 const harnessStream = vi.hoisted(() => ({
   workdir: undefined as string | undefined,
   disposable: false,
+  /** Which conversation the rail asked about. */
+  askedFor: [] as Array<string | null>,
 }));
 
 vi.mock("@/stores/harness-workdir-store", () => ({
   useHarnessWorkdir: () => harnessStream.workdir,
-  useHarnessRanOnDisposable: () => harnessStream.disposable,
+  useHarnessRanOnDisposable: (chatSessionId: string | null) => {
+    harnessStream.askedFor.push(chatSessionId);
+    return harnessStream.disposable;
+  },
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -308,6 +313,8 @@ describe("PlaygroundRightRail — which machine ran the turn", () => {
       "data-cwd",
       "",
     );
+    // Asked about the conversation on screen, not about the host.
+    expect(harnessStream.askedFor.at(-1)).toBe("chat-1");
   });
 
   it("says nothing on a host that runs no harness", () => {
