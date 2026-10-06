@@ -913,3 +913,75 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
     expect(sweep.errorMessage).not.toMatch(/contact support/i);
   });
 });
+
+describe("sponsorship rejection scope", () => {
+  it("refunds later sponsored sessions without claiming them, while credits and healthy targets continue", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.runtime.sponsorship?.targetId === A.targetId
+        ? {
+            outcome: "failed",
+            errorReason: "swarm_sponsorship_rejected",
+            errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 3,
+        sessionFunding: [
+          ...funding(A.targetId, "starter", "starter", "credits"),
+          ...funding(B.targetId, "starter", "starter", "starter"),
+        ],
+      }) as never,
+    );
+    expect(
+      claimed()
+        .filter((c) => c.targetId === A.targetId)
+        .map((c) => c.sessionIdx),
+    ).toEqual([0, 2]);
+    expect(claimed().filter((c) => c.targetId === B.targetId)).toHaveLength(3);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      targetId: A.targetId,
+      fundingScope: "sponsored",
+      terminalStatus: "failed",
+      errorCode: "swarm_sponsorship_rejected",
+    });
+  });
+  it("keeps queued healthy targets running after a target setup rejection", async () => {
+    const hosts = [A, B, target("c"), target("d"), target("e")];
+    setupTurnMock.mockImplementation(async ({ target }: any) => {
+      if (target.targetId !== A.targetId) return READY_SETUP;
+      throw new SwarmSetupError(
+        {
+          status: "failed",
+          readiness: "unavailable",
+          reason: "transport_failed",
+        } as never,
+        {
+          code: "swarm_sponsorship_rejected",
+          message: SPONSORSHIP_UNCONFIRMED_MESSAGE,
+        },
+      );
+    });
+    await startJourneyRun(
+      opts({
+        hosts,
+        setupWrites: true,
+        sessionsPerTarget: 2,
+        sessionFunding: hosts.flatMap((h) =>
+          funding(h.targetId, "starter", "starter"),
+        ),
+      }) as never,
+    );
+    expect(claimed().filter((c) => c.targetId === A.targetId)).toHaveLength(0);
+    expect(claimed().filter((c) => c.targetId !== A.targetId)).toHaveLength(8);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      targetId: A.targetId,
+      fundingScope: "sponsored",
+      errorMessage: SPONSORSHIP_REJECTED_MESSAGE,
+    });
+  });
+});

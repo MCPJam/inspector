@@ -17,6 +17,7 @@ import type {
   SwarmReport,
 } from "@mcpjam/sdk/contract";
 import { swarmSessionNeverRan } from "@mcpjam/sdk/contract";
+import { invalidateSwarmSponsorshipAllowance } from "@/lib/swarm-sponsorship-allowance-store";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -1109,6 +1110,7 @@ export async function launchJourneyRun(
   const funding = parseFundingSummary(
     (body as { funding?: unknown } | undefined)?.funding,
   );
+  invalidateSwarmSponsorshipAllowance();
   return { runId, ...(funding ? { funding } : {}) };
 }
 

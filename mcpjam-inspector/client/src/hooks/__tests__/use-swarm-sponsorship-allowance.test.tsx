@@ -1,5 +1,6 @@
-import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { invalidateSwarmSponsorshipAllowance } from "@/lib/swarm-sponsorship-allowance-store";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchPreviewMock = vi.fn();
 vi.mock("@/lib/swarm-api", () => ({
@@ -65,4 +66,79 @@ describe("useSwarmSponsorshipAllowance", () => {
     renderHook(() => useSwarmSponsorshipAllowance());
     expect(fetchPreviewMock).not.toHaveBeenCalled();
   });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+it("shares the read and refreshes every mounted surface when a launch invalidates the allowance", async () => {
+  fetchPreviewMock.mockResolvedValueOnce({
+    supported: true,
+    remaining: 500,
+    granted: 500,
+    runs: [],
+  });
+  const sidebar = renderHook(() => useSwarmSponsorshipAllowance());
+  const billing = renderHook(() => useSwarmSponsorshipAllowance());
+  await waitFor(() => expect(billing.result.current?.remaining).toBe(500));
+  expect(fetchPreviewMock).toHaveBeenCalledTimes(1);
+  fetchPreviewMock.mockResolvedValue({
+    supported: true,
+    remaining: 485,
+    granted: 500,
+    runs: [],
+  });
+  act(() => invalidateSwarmSponsorshipAllowance());
+  await waitFor(() => expect(sidebar.result.current?.remaining).toBe(485));
+  expect(billing.result.current?.remaining).toBe(485);
+  expect(fetchPreviewMock).toHaveBeenCalledTimes(2);
+});
+it("refreshes refunds periodically and cancels its timer after the last reader leaves", async () => {
+  vi.useFakeTimers();
+  fetchPreviewMock.mockResolvedValue({
+    supported: true,
+    remaining: 485,
+    granted: 500,
+    runs: [],
+  });
+  const view = renderHook(() => useSwarmSponsorshipAllowance());
+  await act(async () => {});
+  expect(view.result.current?.remaining).toBe(485);
+  fetchPreviewMock.mockResolvedValue({
+    supported: true,
+    remaining: 490,
+    granted: 500,
+    runs: [],
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30_000);
+  });
+  expect(view.result.current?.remaining).toBe(490);
+  view.unmount();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(fetchPreviewMock).toHaveBeenCalledTimes(2);
+});
+
+it("ignores a stale in-flight read after launch invalidation", async () => {
+  let resolveOld!: (value: unknown) => void;
+  fetchPreviewMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+  );
+  const view = renderHook(() => useSwarmSponsorshipAllowance());
+  fetchPreviewMock.mockResolvedValue({
+    supported: true,
+    remaining: 485,
+    granted: 500,
+    runs: [],
+  });
+  act(() => invalidateSwarmSponsorshipAllowance());
+  await waitFor(() => expect(view.result.current?.remaining).toBe(485));
+  await act(async () => {
+    resolveOld({ supported: true, remaining: 500, granted: 500, runs: [] });
+  });
+  expect(view.result.current?.remaining).toBe(485);
 });

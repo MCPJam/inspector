@@ -1153,6 +1153,8 @@ export function NewSwarmConfirmStep({
   // would be counted and never created. So neither can be done. The counters
   // stay live: they reach the preview and the launch as per-run overrides.
   const structureLocked = createdTargets != null;
+  const legacyIterationsLocked =
+    createdTargets?.some((target) => target.iterationsKey === undefined) ?? false;
   // The created goals are frozen once a launch attempt made them, but the
   // iterations beside them are not: ask about the runs as they will now launch,
   // or lowering a counter to fit the allowance would change the estimate and
@@ -1354,8 +1356,11 @@ export function NewSwarmConfirmStep({
               data-testid="new-swarm-confirm-locked"
             >
               This swarm&rsquo;s goals are already set, so personas and goals
-              can&rsquo;t be added or removed here. You can still change the
-              iterations. To start a different mix, leave this swarm; goals it
+              can&rsquo;t be added or removed here.{" "}
+              {legacyIterationsLocked
+                ? "This older draft keeps its original iterations."
+                : "You can still change the iterations."}{" "}
+              To start a different mix, leave this swarm; goals it
               created stay in Goals.
             </p>
           ) : null}
@@ -1510,7 +1515,7 @@ export function NewSwarmConfirmStep({
                       goalCount={launchableGoals}
                       iterations={iterationsFor(persona.key)}
                       personaName={persona.name}
-                      disabled={launching}
+                      disabled={launching || legacyIterationsLocked}
                       onChange={(value) =>
                         onIterationsChange(persona.key, value)
                       }
@@ -1599,7 +1604,7 @@ export function NewSwarmConfirmStep({
                     }
                     resolved={reusedResolved[persona._id]}
                     iterations={reusedIterationsFor(persona._id)}
-                    disabled={launching}
+                    disabled={launching || legacyIterationsLocked}
                     onIterationsChange={(value) =>
                       onIterationsChange(persona._id, value)
                     }

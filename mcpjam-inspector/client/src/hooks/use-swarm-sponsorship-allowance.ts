@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { fetchSwarmFundingPreview } from "@/lib/swarm-api";
 
-export interface SwarmSponsorshipAllowance {
-  /** Sponsored swarm conversations left in the signed-in user's allowance. */
-  remaining: number;
-  granted: number;
-}
+import {
+  subscribeSwarmAllowance,
+  type SwarmSponsorshipAllowance,
+} from "@/lib/swarm-sponsorship-allowance-store";
+export type { SwarmSponsorshipAllowance } from "@/lib/swarm-sponsorship-allowance-store";
 
 /**
  * The signed-in user's remaining sponsored swarm conversations, for the usage
@@ -35,20 +35,12 @@ export function useSwarmSponsorshipAllowance(
   useEffect(() => {
     setAllowance(null);
     if (!enabled || !projectId) return;
-    const controller = new AbortController();
-    fetchSwarmFundingPreview(projectId, [], controller.signal)
-      .then((preview) => {
-        if (controller.signal.aborted) return;
-        setAllowance(
-          preview.supported && preview.granted > 0
-            ? { remaining: preview.remaining, granted: preview.granted }
-            : null,
-        );
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setAllowance(null);
-      });
-    return () => controller.abort();
+    return subscribeSwarmAllowance(projectId, setAllowance, async (signal) => {
+      const preview = await fetchSwarmFundingPreview(projectId, [], signal);
+      return preview.supported && preview.granted > 0
+        ? { remaining: preview.remaining, granted: preview.granted }
+        : null;
+    });
   }, [enabled, projectId]);
 
   return allowance;
