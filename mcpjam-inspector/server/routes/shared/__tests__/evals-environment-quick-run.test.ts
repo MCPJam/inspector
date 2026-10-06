@@ -84,6 +84,8 @@ const clientManager = {
   listServers: vi.fn(() => ["srv-1"]),
   hasServer: vi.fn((id: string) => id === "srv-1"),
   getToolsForAiSdk: vi.fn(async () => ({})),
+  listTools: vi.fn(async () => ({ tools: [] })),
+  getConnectionStatus: vi.fn(() => "connected"),
 };
 
 function baseRequest(overrides: Record<string, unknown> = {}) {
@@ -342,6 +344,24 @@ describe("environment quick runs", () => {
     expect(failure.status).toBe(409);
     expect(streamTestCaseMock).not.toHaveBeenCalled();
     expect(actionCalls("testSuites:updateTestIteration")).toHaveLength(0);
+  });
+
+  it("refuses a disconnected server before committing any attempt", async () => {
+    clientManager.listTools.mockRejectedValueOnce(
+      new Error('MCP server "srv-1" is not connected.'),
+    );
+    clientManager.getConnectionStatus.mockReturnValueOnce("disconnected");
+    const failure = await streamEvalTestCaseWithManager(
+      clientManager as never,
+      baseRequest(),
+    ).catch((error) => error);
+    expect(failure).toBeInstanceOf(WebRouteError);
+    expect(failure.status).toBe(409);
+    expect(failure.message).toBe(
+      'Could not start eval because "billing" is not connected. Reconnect the server and try again.',
+    );
+    expect(actionCalls("testSuites:startQuickRunIterations")).toHaveLength(0);
+    expect(streamTestCaseMock).not.toHaveBeenCalled();
   });
 
   it("fails closed when the backend commits no environment", async () => {
