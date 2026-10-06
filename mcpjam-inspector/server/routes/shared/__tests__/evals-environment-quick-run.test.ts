@@ -407,6 +407,25 @@ describe("environment quick runs", () => {
       expect(text).toContain('"iterationId":"iter-1"');
     });
 
+    it("finalizes a fresh commit and keeps the refusal", async () => {
+      // The lookup saw the key, but its request row expired before the
+      // commit, so the commit reserved new attempts instead of replaying.
+      answerLookup(async () => ({ iterationIdGroups: [["iter-0"]] }));
+
+      await expect(fallingRequest()).rejects.toMatchObject({
+        status: 409,
+        code: "SERVER_UNREACHABLE",
+      });
+      const failed = actionCalls("testSuites:updateTestIteration").map(
+        (call) => call[1] as { iterationId: string; status: string },
+      );
+      expect(failed.map((row) => row.iterationId).sort()).toEqual([
+        "iter-1",
+        "iter-2",
+      ]);
+      expect(streamTestCaseMock).not.toHaveBeenCalled();
+    });
+
     it("still refuses when nothing was committed under the key", async () => {
       answerLookup(async () => null);
 

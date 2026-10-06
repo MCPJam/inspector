@@ -3759,6 +3759,7 @@ export async function prepareSingleCaseExecution(
       resolvedServerIds,
       { logPrefix: "evals" },
     );
+    let preflightRefusal: unknown;
     try {
       throwIfEvalToolSnapshotFailed({
         toolSnapshot,
@@ -3780,6 +3781,7 @@ export async function prepareSingleCaseExecution(
       ) {
         throw refusal;
       }
+      preflightRefusal = refusal;
     }
     const committed = await commitEnvironmentQuickRun(convexClient, {
       testCaseId,
@@ -3793,6 +3795,20 @@ export async function prepareSingleCaseExecution(
       // request's own key still makes the backend call retry-safe.
       idempotencyKey: idempotencyKey ?? `quick-run:${randomUUID()}`,
     });
+    // The preflight was waived only because the key had a quick run to
+    // replay. A fresh commit (the request row expired between the lookup and
+    // the commit) would execute against the server that failed, so it is
+    // finalized and the refusal kept, as the suite launch does.
+    if (preflightRefusal !== undefined && !committed.replayed) {
+      await failCommittedQuickRun(
+        convexClient,
+        committed.iterationIds,
+        preflightRefusal instanceof Error
+          ? preflightRefusal.message
+          : String(preflightRefusal),
+      );
+      throw preflightRefusal;
+    }
     let frozenSkills: BuiltPinnedSkillSource | undefined;
     if (!committed.replayed) {
       try {
