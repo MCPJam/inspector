@@ -130,9 +130,9 @@ describe("isOperationAvailable", () => {
   });
 
   it("never hides a way to stop what outlives a feature being turned off", () => {
-    // Each of these stops or takes down something still running, spending or
-    // public after an organization loses the feature, or reads what to stop.
-    // The backend leaves them open for exactly that case.
+    // Each stops, takes down or cleans up something that can outlive an
+    // organization losing the feature, or reads what to act on. The backend
+    // leaves them open for exactly that case.
     for (const name of [
       "set_eval_suite_schedule",
       "list_trace_destinations",
@@ -152,6 +152,21 @@ describe("isOperationAvailable", () => {
       "set_study_guest_execution",
       "get_share_settings",
       "set_share_mode",
+      "list_readiness_runs",
+      "get_readiness_run",
+      "cancel_readiness_run",
+      "cancel_swarm_run_insights",
+      "cancel_study_insights",
+      "list_personas",
+      "delete_persona",
+      "list_goals",
+      "archive_goal",
+      "archive_journey",
+      "list_swarms",
+      "archive_swarm",
+      "list_sandbox_images",
+      "delete_sandbox_image",
+      "archive_project_environment",
     ]) {
       expect(isOperationAvailable(name, {}), name).toBe(true);
     }
@@ -163,6 +178,13 @@ describe("isOperationAvailable", () => {
       "publish_study",
       "upsert_study_member",
       "rotate_share_link",
+      "start_claude_readiness_run",
+      "request_swarm_run_insights",
+      "create_persona",
+      "create_goal",
+      "create_swarm",
+      "create_sandbox_image",
+      "restore_project_environment",
     ]) {
       expect(isOperationAvailable(name, {}), name).toBe(false);
     }

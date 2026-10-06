@@ -12,12 +12,11 @@
  * cannot ship without someone deciding which feature it belongs to
  * (`tests/platform/features.test.ts` fails until it is listed).
  *
- * One rule overrides the obvious tag: an operation that stops or takes down
- * something which can outlive the feature being turned off (a schedule, trace
- * egress, a running goal run, a public study or share) is never hidden, nor
- * are the reads needed to find it. The backend leaves those open on purpose,
- * and hiding them would leave an organization that lost the feature no
- * advertised way to stop what it started.
+ * One rule overrides the obvious tag. What the backend deliberately leaves
+ * open for an organization that lost a feature, so it can still stop, take
+ * down or clean up what it started or authored, is never hidden, and neither
+ * are the reads needed to find it. Hiding it would leave that organization no
+ * advertised way to do so.
  */
 
 /**
@@ -107,9 +106,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   // Conformance and directory readiness.
   start_claude_readiness_run: "conformance",
   start_openai_readiness_run: "conformance",
-  get_readiness_run: "conformance",
-  list_readiness_runs: "conformance",
-  cancel_readiness_run: "conformance",
   get_readiness_report: "conformance",
   start_conformance_run: "conformance",
   get_conformance_run: "conformance",
@@ -131,8 +127,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_project_skills: "skills",
   get_project_skill: "skills",
   // Computers and their sandbox images.
-  list_sandbox_images: "computers",
-  get_sandbox_image: "computers",
   create_sandbox_image: "computers",
   update_sandbox_image: "computers",
   validate_sandbox_image_blueprint: "computers",
@@ -141,13 +135,11 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   promote_sandbox_image: "computers",
   use_sandbox_image: "computers",
   reset_computer: "computers",
-  delete_sandbox_image: "computers",
   // Named environments. Reading one, and the ad-hoc compose path
   // (`ensure_adhoc_environment`), are released.
   create_project_environment: "environments",
   name_environment: "environments",
   update_project_environment: "environments",
-  archive_project_environment: "environments",
   restore_project_environment: "environments",
   // Trace destinations.
   create_trace_destination: "trace-destinations",
@@ -169,33 +161,23 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   start_eval_description_experiment: "description-experiments",
   get_eval_description_experiment: "description-experiments",
   // Swarms, goals, personas and studies.
-  list_personas: "sandboxes",
-  get_persona: "sandboxes",
   create_persona: "sandboxes",
   update_persona: "sandboxes",
-  delete_persona: "sandboxes",
   generate_personas: "sandboxes",
-  list_goals: "sandboxes",
-  get_goal: "sandboxes",
   create_goal: "sandboxes",
   update_goal: "sandboxes",
-  archive_goal: "sandboxes",
   generate_goals: "sandboxes",
   list_goal_run_sessions: "sandboxes",
   launch_goal_run: "sandboxes",
   get_goal_run_scorecard: "sandboxes",
-  list_swarms: "sandboxes",
-  get_swarm: "sandboxes",
   create_swarm: "sandboxes",
   update_swarm: "sandboxes",
-  archive_swarm: "sandboxes",
   get_swarms_overview: "sandboxes",
   list_swarm_findings: "sandboxes",
   dismiss_swarm_finding: "sandboxes",
   undismiss_swarm_finding: "sandboxes",
   get_swarm_run_insights: "sandboxes",
   request_swarm_run_insights: "sandboxes",
-  cancel_swarm_run_insights: "sandboxes",
   publish_study: "sandboxes",
   update_study: "sandboxes",
   list_study_sessions: "sandboxes",
@@ -206,7 +188,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_study_signals: "sandboxes",
   get_study_insights: "sandboxes",
   request_study_insights: "sandboxes",
-  cancel_study_insights: "sandboxes",
   dismiss_study_finding: "sandboxes",
   undismiss_study_finding: "sandboxes",
   upsert_study_member: "sandboxes",
@@ -215,13 +196,14 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   // of them is. The backend checks the resource type (study shares follow
   // `sandboxes`, eval and conformance runs their own share beta).
   rotate_share_link: SHARE_FAMILY,
-  // Kept available whatever the feature reports. Each stops or takes down
-  // something that can outlive the feature being turned off for an
-  // organization (a recurring schedule, trace egress, an in-flight goal run,
-  // a public study or share link), and the backend leaves it open on purpose
-  // for exactly that case. Hiding it would strand that organization with no
-  // advertised way to stop it. The reads needed to find what to stop stay
-  // with it. Enabling, widening and resuming are still refused server-side.
+  // Kept available whatever the feature reports: what the backend leaves
+  // open on purpose so an organization that lost a feature can still stop,
+  // take down or clean up what it started or authored (a schedule, trace
+  // egress, a running readiness or goal run or insights job, a public study
+  // or share, an authored persona, goal, swarm, image or environment). Hiding
+  // it would strand that organization with no advertised way to do so. The
+  // reads needed to find what to stop stay with it. Starting, widening and
+  // resuming are still refused server-side.
   set_eval_suite_schedule: null,
   list_trace_destinations: null,
   get_trace_destination: null,
@@ -238,6 +220,24 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   set_study_guest_execution: null,
   get_share_settings: null,
   set_share_mode: null,
+  list_readiness_runs: null,
+  get_readiness_run: null,
+  cancel_readiness_run: null,
+  list_personas: null,
+  get_persona: null,
+  delete_persona: null,
+  list_goals: null,
+  get_goal: null,
+  archive_goal: null,
+  list_swarms: null,
+  get_swarm: null,
+  archive_swarm: null,
+  cancel_swarm_run_insights: null,
+  cancel_study_insights: null,
+  list_sandbox_images: null,
+  get_sandbox_image: null,
+  delete_sandbox_image: null,
+  archive_project_environment: null,
   // Released: no feature.
   get_me: null,
   list_models: null,
@@ -336,13 +336,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   send_feedback: null,
   // Deprecated aliases, absent from `ALL_OPERATIONS`: the same feature as
   // the operation that replaced them.
-  archive_journey: "sandboxes",
-  cancel_user_testing_insights: "sandboxes",
-  cancel_wave_insights: "sandboxes",
   create_journey: "sandboxes",
   dismiss_user_testing_finding: "sandboxes",
   generate_journeys: "sandboxes",
-  get_journey: "sandboxes",
   get_journey_run_scorecard: "sandboxes",
   get_user_testing_insights: "sandboxes",
   get_user_testing_metrics: "sandboxes",
@@ -352,7 +348,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_wave_insights: "sandboxes",
   launch_journey_run: "sandboxes",
   list_journey_run_sessions: "sandboxes",
-  list_journeys: "sandboxes",
   list_user_testing_findings: "sandboxes",
   list_user_testing_sessions: "sandboxes",
   publish_scenario: "sandboxes",
@@ -364,6 +359,11 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   update_user_testing_scenario: "sandboxes",
   upsert_user_testing_member: "sandboxes",
   // The deprecated aliases of the operations kept available above.
+  archive_journey: null,
+  get_journey: null,
+  list_journeys: null,
+  cancel_user_testing_insights: null,
+  cancel_wave_insights: null,
   cancel_journey_run: null,
   get_journey_run: null,
   list_journey_runs: null,
