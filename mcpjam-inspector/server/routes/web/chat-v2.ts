@@ -7,7 +7,10 @@ import { pluginHostBindingDigest } from "../../services/plugin-host/bindings.js"
 import { createModelMrtrAdapter } from "../../services/plugin-host/model-mrtr.js";
 import { parseMrtrChatResumeRequest } from "@/shared/mrtr-continuation";
 import { installedFormClientCapabilities } from "../../services/plugin-host/owned-legacy.js";
-import { chatPluginFormPlan } from "./chat-v2-plugin-forms.js";
+import {
+  chatPluginFormPlan,
+  chatPluginToolExecutor,
+} from "./chat-v2-plugin-forms.js";
 import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
 import { admitPluginWorkspace, assertPluginWorkspaceRuntime } from "../../services/plugin-host/admission.js";
 import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
@@ -1403,19 +1406,24 @@ chatV2.post("/", async (c) => {
       : undefined;
     // Emulated and Codex harness turns (whose MCP tools run here, in process)
     // take the same plugin executor; see `chatPluginFormPlan`.
-    const pluginFormPlan =
+    const pluginPins =
       pluginWorkspace && hostRuntimeConfig && !isScenarioSession
-        ? (() => {
-            const pins = buildHostConnectionPins(hostRuntimeConfig as never, WEB_STREAM_TIMEOUT_MS);
-            return chatPluginFormPlan({
-              harness: resolvedExecution.harness,
-              serverIds: effectiveServerIds,
-              pinFor: (id) => pins.mcpProtocolVersionsByServerId?.[id] ?? pins.initializePins?.mcpProtocolVersion,
-              mrtrEnabled,
-              forms: pluginExtensions?.capabilities.forms,
-            });
-          })()
+        ? buildHostConnectionPins(hostRuntimeConfig as never, WEB_STREAM_TIMEOUT_MS)
         : undefined;
+    const pluginPinFor = (id: string) =>
+      pluginPins?.mcpProtocolVersionsByServerId?.[id] ?? pluginPins?.initializePins?.mcpProtocolVersion;
+    const pluginFormPlan = pluginPins
+      ? chatPluginFormPlan({
+          harness: resolvedExecution.harness,
+          serverIds: effectiveServerIds,
+          pinFor: pluginPinFor,
+          mrtrEnabled,
+          forms: pluginExtensions?.capabilities.forms,
+        })
+      : undefined;
+    // Set once the turn's manager exists: an Auto server's era is the one its
+    // connection negotiated.
+    let pluginNegotiatedVersion: (serverId: string) => string | undefined = () => undefined;
     if (pluginWorkspace && hostRuntimeConfig && pluginFormPlan?.admitted) {
       assertPluginWorkspaceRuntime({ harness: resolvedExecution.harness, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
       modelPluginBearer = await getConvexBearerForRequest(c);
@@ -1427,17 +1435,24 @@ chatV2.post("/", async (c) => {
       const { modernServerIds, legacyServerIds: eligibleServerIds } = pluginFormPlan;
       if (modernServerIds.length) {
         modelMrtr = createModelMrtrAdapter({ c, admission: modelPluginAdmission, bearer: modelPluginBearer, identity: { actorId: modelPluginAdmission.actorId, projectId: modelPluginAdmission.projectId, workspaceId: modelPluginAdmission.workspaceId, subject: modelPluginSubject }, hostId, hostRevision: pluginHostBindingDigest(hostRuntimeConfig), serverIds: modernServerIds, modelVisibleMcpToolResults });
-        modelToolExecutor = modelMrtr.execute;
       }
       // All of the turn's servers or none (shared connection capabilities).
+      let legacyExecutor: typeof modelToolExecutor;
       if (eligibleServerIds.length) {
         modelFormDispatch = createModelFormDispatch(eligibleServerIds);
-        modelToolExecutor = createModelFormExecutor({
+        legacyExecutor = createModelFormExecutor({
           c, admission: modelPluginAdmission, bearer: modelPluginBearer,
           identity: { actorId: modelPluginAdmission.actorId, projectId: modelPluginAdmission.projectId, workspaceId: modelPluginAdmission.workspaceId, subject: modelPluginSubject },
           hostId, hostRevision: pluginHostBindingDigest(hostRuntimeConfig), serverIds: effectiveServerIds, eligibleServerIds, dispatch: modelFormDispatch,
         });
       }
+      // An Auto server is in both plans; each call follows its negotiated era.
+      modelToolExecutor = chatPluginToolExecutor({
+        ...(modelMrtr ? { modern: { serverIds: modernServerIds, execute: modelMrtr.execute } } : {}),
+        legacy: legacyExecutor,
+        pinFor: pluginPinFor,
+        negotiatedVersion: (serverId) => pluginNegotiatedVersion(serverId),
+      });
     }
 
     // Membership chat (no share/scenario token) is the default — the backend
@@ -1462,7 +1477,9 @@ chatV2.post("/", async (c) => {
         effectiveClientCapabilities && pluginExtensions
           ? applyPluginExtensionsToClientCapabilities(effectiveClientCapabilities, pluginExtensions)
           : effectiveClientCapabilities,
-        { ...(modelFormDispatch ? { legacy: { binding: modelFormDispatch.handlers } } : {}), mrtr: !!modelMrtr },
+        // An Auto server's MRTR answers standard elicitation; only a pinned
+        // modern server keeps OpenAI's claim for MRTR (unchanged by Auto).
+        { ...(modelFormDispatch ? { legacy: { binding: modelFormDispatch.handlers } } : {}), mrtr: !!modelMrtr && effectiveServerIds.some((id) => pluginPinFor(id) === "2026-07-28") },
         pluginExtensions?.capabilities.forms,
       ),
       {
@@ -1510,6 +1527,8 @@ chatV2.post("/", async (c) => {
       );
 
     oauthServerUrls = urls;
+    pluginNegotiatedVersion = (serverId) =>
+      manager.getInitializationInfo(serverId)?.protocolVersion;
     // Inject the live manager so the collector's fingerprint/era thunks can
     // read the negotiated identity at suspend time (post-connect).
     mrtrBridge?.setManager(manager);
