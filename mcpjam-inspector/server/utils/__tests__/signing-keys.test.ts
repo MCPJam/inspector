@@ -1,0 +1,205 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { deriveLabeledKey, resolveSigningKeyRing } from "../signing-keys.js";
+import {
+  mintToolApprovalId,
+  resolveToolApprovalKeyRing,
+  resolveToolApprovalSigningKey,
+  verifyToolApprovalId,
+} from "../tool-approval-token.js";
+import {
+  historyProvenanceContextFor,
+  historyVerificationFor,
+  resolveHistoryProvenanceKeyRing,
+  signAssistantText,
+  verifyAssistantText,
+} from "../history-provenance.js";
+
+const SERVICE = "service-token-0123456789abcdef";
+const OLD_SECRET = "old-dedicated-secret-0123456789";
+const NEW_SECRET = "new-dedicated-secret-0123456789";
+const LABEL = "mcpjam/test/v1";
+
+describe("resolveSigningKeyRing", () => {
+  it("is null with no dedicated secret and no service credential", () => {
+    expect(
+      resolveSigningKeyRing({ secretEnv: "X", label: LABEL, env: {} }),
+    ).toBeNull();
+  });
+
+  it("falls back to the legacy service-token key while the secret is unset", () => {
+    const ring = resolveSigningKeyRing({
+      secretEnv: "X",
+      label: LABEL,
+      env: { INSPECTOR_SERVICE_TOKEN: SERVICE },
+    })!;
+    expect(ring.signing.equals(deriveLabeledKey(SERVICE, LABEL)!)).toBe(true);
+    expect(ring.accepted).toHaveLength(1);
+  });
+
+  it("signs with the dedicated secret and still accepts previous + legacy", () => {
+    const ring = resolveSigningKeyRing({
+      secretEnv: "X",
+      label: LABEL,
+      env: {
+        X: NEW_SECRET,
+        X_PREVIOUS: OLD_SECRET,
+        INSPECTOR_SERVICE_TOKEN: SERVICE,
+      },
+    })!;
+    expect(ring.signing.equals(deriveLabeledKey(NEW_SECRET, LABEL)!)).toBe(
+      true,
+    );
+    expect(ring.accepted.map((key) => key.toString("hex"))).toEqual(
+      [NEW_SECRET, OLD_SECRET, SERVICE].map((secret) =>
+        deriveLabeledKey(secret, LABEL)!.toString("hex"),
+      ),
+    );
+  });
+
+  it("ignores a too-short secret", () => {
+    expect(deriveLabeledKey("short", LABEL)).toBeNull();
+    const ring = resolveSigningKeyRing({
+      secretEnv: "X",
+      label: LABEL,
+      env: { X: "short", INSPECTOR_SERVICE_TOKEN: SERVICE },
+    })!;
+    expect(ring.signing.equals(deriveLabeledKey(SERVICE, LABEL)!)).toBe(true);
+  });
+
+  it("setting PREVIOUS to the old service token reproduces the legacy key", () => {
+    expect(
+      deriveLabeledKey(SERVICE, LABEL)!.equals(
+        resolveSigningKeyRing({
+          secretEnv: "X",
+          label: LABEL,
+          env: { X: NEW_SECRET, X_PREVIOUS: SERVICE },
+        })!.accepted[1]!,
+      ),
+    ).toBe(true);
+  });
+});
+
+const call = {
+  toolCallId: "call_1",
+  toolName: "create_suite",
+  input: { a: 1 },
+};
+const binding = {
+  subject: "user_1",
+  projectId: "proj_1",
+  chatSessionId: "chat_1",
+};
+
+describe("tool approvals across a key rotation", () => {
+  it("an approval signed under the legacy token verifies after the dedicated secret is set", () => {
+    const legacy = resolveToolApprovalSigningKey(
+      { INSPECTOR_SERVICE_TOKEN: SERVICE },
+      true,
+    );
+    const approvalId = mintToolApprovalId({ call, binding, key: legacy })!;
+    const ring = resolveToolApprovalKeyRing({
+      TOOL_APPROVAL_SIGNING_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: SERVICE,
+    })!;
+    // The new signer is the dedicated secret…
+    expect(ring.signing.equals(legacy!)).toBe(false);
+    // …and the old approval still verifies under the ring's accept-list.
+    expect(
+      ring.accepted.some(
+        (key) => verifyToolApprovalId({ approvalId, call, binding, key }).ok,
+      ),
+    ).toBe(true);
+  });
+
+  it("rotating the service token no longer invalidates approvals signed under the dedicated secret", () => {
+    const before = resolveToolApprovalKeyRing({
+      TOOL_APPROVAL_SIGNING_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: SERVICE,
+    })!;
+    const approvalId = mintToolApprovalId({
+      call,
+      binding,
+      key: before.signing,
+    })!;
+    const after = resolveToolApprovalKeyRing({
+      TOOL_APPROVAL_SIGNING_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: "rotated-service-token-abcdef0123",
+    })!;
+    expect(
+      verifyToolApprovalId({ approvalId, call, binding, key: after.signing })
+        .ok,
+    ).toBe(true);
+  });
+});
+
+describe("tool approval verification reads the whole ring by default", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("verifies an approval minted under the previous secret with no explicit key", () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("TOOL_APPROVAL_SIGNING_SECRET", OLD_SECRET);
+    const approvalId = mintToolApprovalId({ call, binding })!;
+    vi.stubEnv("TOOL_APPROVAL_SIGNING_SECRET", NEW_SECRET);
+    vi.stubEnv("TOOL_APPROVAL_SIGNING_SECRET_PREVIOUS", OLD_SECRET);
+    expect(verifyToolApprovalId({ approvalId, call, binding }).ok).toBe(true);
+    vi.stubEnv("TOOL_APPROVAL_SIGNING_SECRET_PREVIOUS", "");
+    expect(verifyToolApprovalId({ approvalId, call, binding })).toEqual({
+      ok: false,
+      reason: "signature_mismatch",
+    });
+  });
+});
+
+describe("history provenance across a key rotation", () => {
+  it("stored history signed under the previous secret keeps verifying", () => {
+    const oldRing = resolveHistoryProvenanceKeyRing(
+      { HISTORY_PROVENANCE_SECRET: OLD_SECRET },
+      true,
+    )!;
+    const signer = historyProvenanceContextFor("proj_1", "chat_1", oldRing)!;
+    const signature = signAssistantText(signer, "hello");
+
+    const rotated = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      HISTORY_PROVENANCE_SECRET_PREVIOUS: OLD_SECRET,
+    })!.ctx!;
+    expect(verifyAssistantText(rotated, "hello", signature)).toBe(true);
+    expect(verifyAssistantText(rotated, "tampered", signature)).toBe(false);
+
+    const forgotten = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+    })!.ctx!;
+    expect(verifyAssistantText(forgotten, "hello", signature)).toBe(false);
+  });
+
+  it("rotating the service token no longer wipes history signed under the dedicated secret", () => {
+    const signer = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: SERVICE,
+    })!.ctx!;
+    const signature = signAssistantText(signer, "remember me");
+    const afterRotation = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: "rotated-service-token-abcdef0123",
+    })!.ctx!;
+    expect(verifyAssistantText(afterRotation, "remember me", signature)).toBe(
+      true,
+    );
+  });
+
+  it("history signed under the legacy token still verifies during the fallback release", () => {
+    const legacy = historyVerificationFor("proj_1", "chat_1", true, {
+      INSPECTOR_SERVICE_TOKEN: SERVICE,
+    })!.ctx!;
+    const signature = signAssistantText(legacy, "from before the switch");
+    const switched = historyVerificationFor("proj_1", "chat_1", true, {
+      HISTORY_PROVENANCE_SECRET: NEW_SECRET,
+      INSPECTOR_SERVICE_TOKEN: SERVICE,
+    })!.ctx!;
+    expect(
+      verifyAssistantText(switched, "from before the switch", signature),
+    ).toBe(true);
+  });
+});

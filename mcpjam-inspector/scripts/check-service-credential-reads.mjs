@@ -49,11 +49,11 @@ const SCAN_ROOTS = ["server", "src", "shared", "lib", "bin"];
 const MODULE = join("server", "services", "service-credential.ts");
 
 /**
- * Files still allowed a raw read while they are migrated. Must only shrink;
- * an entry that no longer reads raw is stale and fails the check, so it cannot
- * silently re-permit a read later.
+ * Files still allowed a raw read. Empty, and meant to stay that way: every
+ * reader has been migrated. An entry that no longer reads raw is stale and
+ * fails the check, so it cannot silently re-permit a read later.
  */
-const ALLOWLIST = new Set(["server/utils/tool-approval-token.ts"]);
+const ALLOWLIST = new Set([]);
 
 const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"];
 
