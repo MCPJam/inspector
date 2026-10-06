@@ -363,6 +363,45 @@ describe("rollback after a bad activation", () => {
     expect(restored.state === "ready" && restored.health).toBeUndefined();
   });
 
+  it("a failed re-probe restarts the clock, and concurrent re-probes share one probe", async () => {
+    await machineOnOldPackWithUpdatePinned();
+    serve(NEW);
+    await installRuntimePack({ harnessId: "claude-code", trigger: "gesture" });
+    const onNew = (await selected()) as Extract<RuntimeInstallStatus, { state: "ready" }>;
+    for (let i = 0; i < LAUNCH_FAILURE_THRESHOLD; i += 1) {
+      await noteRuntimeLaunch({ harnessId: "claude-code", status: onNew, outcome: { ok: false, reason: "x" } });
+    }
+    let probes = 0;
+    setRuntimeProbeForTests(async () => {
+      probes += 1;
+      await new Promise((r) => setTimeout(r, 20));
+      return { ok: false, message: "bridge exited 1" };
+    });
+    try {
+      // An hour on, background triggers may re-check it. Several arriving at
+      // once (a turn, a focus, a grant renewal) run ONE probe between them.
+      const markedAt = Date.now();
+      const anHourOn = markedAt + 60 * 60 * 1000 + 1;
+      const clock = vi.spyOn(Date, "now").mockReturnValue(anHourOn);
+      const results = await Promise.all(
+        [1, 2, 3].map(() => startRuntimeInstall({ harnessId: "claude-code", trigger: "readiness" })),
+      );
+      expect(probes).toBe(1);
+      for (const result of results) expect(result).toMatchObject({ kind: "refused", status: { stage: "probe" } });
+
+      // It still fails, so its clock restarts: a minute later a background
+      // trigger backs off instead of probing on every readiness call again.
+      clock.mockReturnValue(anHourOn + 60 * 1000);
+      expect(await startRuntimeInstall({ harnessId: "claude-code", trigger: "readiness" })).toMatchObject({
+        kind: "refused",
+        refusal: "backoff",
+      });
+      expect(probes).toBe(1);
+    } finally {
+      setRuntimeProbeForTests(async () => probeResult);
+    }
+  });
+
   it("a session that starts on a degraded pack clears its unhealthy mark", async () => {
     pin(NEW);
     serve(NEW);

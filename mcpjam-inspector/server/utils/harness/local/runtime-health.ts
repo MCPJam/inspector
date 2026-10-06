@@ -134,3 +134,24 @@ export async function recordRuntimeLaunch(args: {
     return folded;
   });
 }
+
+/**
+ * A re-probe of a pack marked unhealthy failed: restart the mark's clock.
+ * Background triggers re-check an unhealthy pack only once the mark is an
+ * interval old; without this, a pack that keeps failing its probe was
+ * re-probed on every readiness call (each turn, each focus) from then on.
+ */
+export async function noteFailedReprobe(args: {
+  key: RuntimeOperationKey;
+  versionRoot: string;
+  now?: number;
+}): Promise<void> {
+  await withRuntimeLifecycleLock(args.key, async () => {
+    const existing = await readRuntimeHealth(args.versionRoot);
+    if (existing === null || !isUnhealthy(existing, args.key.treeDigest)) return;
+    await writeRuntimeHealth(args.versionRoot, {
+      ...existing,
+      unhealthy: { ...existing.unhealthy!, at: args.now ?? Date.now() },
+    });
+  });
+}

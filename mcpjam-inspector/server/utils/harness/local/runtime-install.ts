@@ -77,6 +77,7 @@ import { chooseRuntime, type CandidateFacts, type RuntimeRole } from "./runtime-
 import {
   isUnhealthy,
   newHealthRecord,
+  noteFailedReprobe,
   readRuntimeHealth,
   writeRuntimeHealth,
 } from "./runtime-health.js";
@@ -837,6 +838,7 @@ const active = new Map<string, ActiveInstall>();
 /** Test seam: in-process single flight is module state by design. */
 export function resetRuntimeInstallStateForTests(): void {
   active.clear();
+  reprobesInFlight.clear();
   resetRuntimeLifecycleForTests();
 }
 
@@ -890,11 +892,26 @@ const REPROBE_UNHEALTHY_AFTER_MS = 60 * 60 * 1000;
  * write it a fresh health record (clearing the unhealthy mark). Shared by
  * `startRuntimeInstall` and `harness repair`.
  */
-async function reprobeInstalledPack(args: {
+type ReprobeArgs = {
   harnessId: SupportedLocalHarnessId;
   resolved: Extract<ResolvedInstallTarget, { ok: true }>;
   health: Awaited<ReturnType<typeof readRuntimeHealth>>;
-}): Promise<{ ok: true } | { ok: false; message: string }> {
+};
+type ReprobeResult = { ok: true } | { ok: false; message: string };
+
+/** One probe per version directory at a time in this process; callers share it. */
+const reprobesInFlight = new Map<string, Promise<ReprobeResult>>();
+
+async function reprobeInstalledPack(args: ReprobeArgs): Promise<ReprobeResult> {
+  const id = args.resolved.versionRoot;
+  const running = reprobesInFlight.get(id);
+  if (running !== undefined) return running;
+  const attempt = reprobeInstalledPackOnce(args).finally(() => reprobesInFlight.delete(id));
+  reprobesInFlight.set(id, attempt);
+  return attempt;
+}
+
+async function reprobeInstalledPackOnce(args: ReprobeArgs): Promise<ReprobeResult> {
   const { versionRoot, expected, target, platform } = args.resolved;
   const probe = await probeRuntimeCandidate({
     harnessId: args.harnessId,
@@ -904,6 +921,9 @@ async function reprobeInstalledPack(args: {
     layerRuntimeRoot: runtimeInstallRoot(),
   });
   if (!probe.ok) {
+    // Restart the unhealthy mark's clock, so background triggers wait a full
+    // interval before probing it again (an explicit request still may).
+    await noteFailedReprobe({ key: args.resolved.key, versionRoot }).catch(() => {});
     return { ok: false, message: `the installed ${expected.packVersion} still fails its startup probe: ${probe.message}` };
   }
   await writeRuntimeHealth(
