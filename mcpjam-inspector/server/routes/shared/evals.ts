@@ -585,6 +585,18 @@ export const RunEvalsRequestSchema = z.object({
    */
   useCurrentSuiteConfig: z.boolean().optional(),
   /**
+   * A SUBSET rerun of `replayedFromRunId`. Both or neither, with
+   * `rerunOfRunId === replayedFromRunId`; the backend picks the cases (any
+   * case with a trial that did not complete and pass) and refuses
+   * `RERUN_NOTHING_TO_RERUN` when none qualify. Threaded into Convex
+   * `startTestSuiteRun` only when set.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  rerunOfRunId: z.string().min(1).optional(),
+  rerunScope: z.literal("failed_cases").optional(),
+  /**
    * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
    *
    * Claim-only in both directions: the caller supplies an id and a reason, and
@@ -2418,6 +2430,8 @@ export async function prepareEvalRun(
     toolDescriptionOverride,
     replayedFromRunId,
     useCurrentSuiteConfig,
+    rerunOfRunId,
+    rerunScope,
     ephemeralEnvironment,
     toolPolicy,
     importApprovals,
@@ -2730,6 +2744,8 @@ export async function prepareEvalRun(
     ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
     ...(replayedFromRunId ? { replayedFromRunId } : {}),
     ...(useCurrentSuiteConfig !== undefined ? { useCurrentSuiteConfig } : {}),
+    ...(rerunOfRunId ? { rerunOfRunId } : {}),
+    ...(rerunScope ? { rerunScope } : {}),
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
     // Named explicitly, like every other field in this call: `startSuiteRun-
     // WithRecorder` reconstructs the mutation args from its own parameters,

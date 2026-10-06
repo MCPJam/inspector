@@ -1,55 +1,55 @@
 /**
- * Installing the runtime pack — the one place a 515 MB third-party tree gets
- * onto the user's machine, and the one place it is proven to be ours.
+ * Installing runtime packs — the one place third-party trees get onto the
+ * user's machine, the one place they are proven to be ours, and the place a
+ * build decides which installed pack it runs.
  *
- * ── Why this is a separate, explicit step ────────────────────────────────
- * The pack cannot ship inside the npm package or the DMG (size, and coupling
- * notarization to a vendor binary), so it is downloaded. The argument this
- * module was written around was against fetching it UNASKED — at boot, on a
- * poll, on a component remount, on the way into a turn — and that argument
- * still holds exactly as it did: none of those is a user asking for 515 MB.
+ * ── When a pack is downloaded ────────────────────────────────────────────
+ * Updates are routine, and happen in the background (the update policy,
+ * `runtime-update-policy.ts`, is `auto` unless an administrator set `manual`):
  *
- * What has changed is that a user CAN now ask, in one gesture, from the
- * composer. `startRuntimeInstall` is called from that gesture ("Install &
- * allow") and from `harness install`, and from nowhere else. A session that
- * finds no pack still refuses with `bundle-absent` rather than fetching one;
- * boot still only reports. Downloading on an explicit request is the thing the
- * user asked for, and is not the thing this module refuses to do.
+ *   - at server boot, when this machine already holds a durable
+ *     authorization for the harness (somebody chose to run it here);
+ *   - from the Playground's readiness check, when the desired pack is not the
+ *     one installed;
+ *   - on the explicit "Install & allow" gesture, and `harness install`.
  *
- * ── The verification chain ───────────────────────────────────────────────
- * Three checks, in this order, each covering the next:
+ * Under `manual` only `harness install` (and `--from` pre-provisioning)
+ * install. A turn never waits on a download it does not need: while a
+ * candidate desired pack downloads and probes, new sessions run on the
+ * permitted previous pack. Only a first-time install waits, with progress.
  *
- *   1. the manifest's Ed25519 signature — proves MCPJam published it;
- *   2. the archive's sha256 against the manifest — proves the bytes that
- *      arrived are the bytes the manifest describes;
- *   3. the extracted tree's canonical digest against the manifest — proves
- *      extraction produced what was archived, and is the same digest the
- *      session-start path re-verifies against later.
+ * ── Which installed pack runs (invariant 4) ──────────────────────────────
+ * `readRuntimeInstallStatus` SELECTS, per build, with no shared pointer
+ * (`runtime-selection.ts`): the desired pack if installed, healthy and not
+ * revoked; else the one permitted previous pack under the same conditions.
+ * A revoked digest (`runtime-revocation.ts`) is never selected.
  *
- * Doing (3) as well as (2) is not redundant: extraction is where a path
- * traversal, a symlink, or a truncated write would land, and the tree digest
- * is what every later check compares against.
+ * ── The candidate flow ───────────────────────────────────────────────────
+ * Each stage is named, so a failure says where it stopped
+ * (`install_failed{stage}`):
+ *
+ *   disk-space  the signed manifest first, then free space against its size;
+ *   download    the archive, streamed and hashed;
+ *   verify      signature → archive sha → extracted tree digest, each
+ *               covering the next (extraction is where a traversal, a link or
+ *               a truncated write would land, so the tree is digested too);
+ *   probe       this build's Inspector layer started on the staged pack, and
+ *               the vendor binary's version handshake (`runtime-probe.ts`);
+ *   activate    one rename into place, with the probe recorded as the pack's
+ *               health (`runtime-health.ts`). Only now is it selectable.
+ *
+ * A candidate that fails any stage is never activated, so never selected.
  *
  * ── Atomicity, and who else is holding the door ──────────────────────────
  * Extraction goes into a sibling `.mcpjam-tmp-*` directory and is renamed into
- * place only after all three checks pass. A crashed or failed install leaves a
- * temp directory, never a half-written version directory that
- * `resolveManagedBundle` would then try to digest.
+ * place only after every stage passes. Another Inspector window, the install
+ * CLI and running sessions all reach the same root; `runtime-lifecycle.ts`
+ * coordinates them, and every irreversible step asks it immediately before
+ * taking the step.
  *
- * The rename is not the only thing that has to be safe, though, because this
- * process is not the only one here: another Inspector window, the install CLI,
- * and a running session all reach the same root. `runtime-lifecycle.ts` owns
- * that coordination — who is installing, who is using a version directory, and
- * which staging directories are provably abandoned — and every irreversible
- * step below asks it, immediately before taking the step rather than once at
- * the start.
- *
- * ── What this module does NOT do ─────────────────────────────────────────
- * It does not delete old versions. It used to sweep every other version after
- * activating, which is how a running session lost the tree it had already
- * verified and was executing from. Verified versions now sit side by side and
- * cost disk; reclaiming them needs an ownership answer across processes that
- * spans more than one install, and that is deliberately not in this pass.
+ * ── Cleanup ──────────────────────────────────────────────────────────────
+ * Old versions are reclaimed by `runtime-gc.ts`, after every activation and at
+ * boot: only versions no live Inspector may select and no session holds.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -60,20 +60,41 @@ import {
   rename,
   rm,
   stat,
+  statfs,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { x as extractTar } from "tar";
 import { logger } from "../../logger.js";
+import { runtimeInstallRoot } from "./runtime-root.js";
 import {
-  EXPECTED_PACK_VERSIONS,
   PACK_RECORDS,
+  PERMITTED_PACK_RECORDS,
 } from "./pack-digests.generated.js";
+import { chooseRuntime, type CandidateFacts, type RuntimeRole } from "./runtime-selection.js";
+import {
+  isUnhealthy,
+  newHealthRecord,
+  noteFailedReprobe,
+  readRuntimeHealth,
+  writeRuntimeHealth,
+} from "./runtime-health.js";
+import { isPackRevoked, readCachedRevocations, refreshRevocations, revocationFor } from "./runtime-revocation.js";
+import { probeRuntimeCandidate } from "./runtime-probe.js";
+import { emitLocalRuntimeEvent } from "./runtime-metrics.js";
+import {
+  isBackgroundTrigger,
+  readLocalRuntimeUpdatePolicy,
+  triggerAllowed,
+  type RuntimeInstallTrigger,
+} from "./runtime-update-policy.js";
+import { collectRuntimeGarbage, writeLivenessRecord } from "./runtime-gc.js";
+import { predictManagedRuntimeId } from "./runtime-identity.js";
+import { installerFetch } from "./runtime-fetch.js";
 import { packAssetStem, packReleaseBaseUrl } from "./pack-naming.js";
-import { verifyPackManifestSignature } from "./pack-signing-key.js";
+import { PACK_SIGNING_KEYS, verifyPackManifestSignature, type PackSigningKey } from "./pack-signing-key.js";
 import {
   clearRuntimeVerificationCache,
   computeTreeDigest,
@@ -98,6 +119,7 @@ import {
   sweepAbandonedStaging,
   updateInstallAttempt,
   withRuntimeLifecycleLock,
+  type RuntimeInstallStage,
   type RuntimeOperationKey,
   type RuntimeOperationRecord,
 } from "./runtime-lifecycle.js";
@@ -117,20 +139,8 @@ const MAX_ARCHIVE_BYTES = 1_500 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 
-/**
- * Where packs live.
- *
- * Electron sets `MCPJAM_RUNTIME_ROOT` from `app.getPath("userData")` so a
- * packaged app keeps its runtime with the rest of its own state; npx falls
- * back to the same `~/.mcpjam` tree the grants and machine identity already
- * use. Both are per-user and outside any workspace, which is what keeps the
- * pack out of reach of the agent it launches.
- */
-export function runtimeInstallRoot(): string {
-  const override = process.env.MCPJAM_RUNTIME_ROOT;
-  if (override && override.trim().length > 0) return override.trim();
-  return join(homedir(), ".mcpjam", "harness-local", "runtime");
-}
+/** Where packs live (see `runtime-root.ts`). */
+export { runtimeInstallRoot };
 
 /**
  * The directory a pack activates into, and the `runtimeRoot` the availability
@@ -179,7 +189,11 @@ export type RuntimeInstallFailureReason =
   | "network"
   | "verification"
   | "disk"
+  /** The candidate verified but this build's layer could not start on it. */
+  | "probe"
   | "unknown";
+
+export type { RuntimeInstallStage, RuntimeInstallTrigger, RuntimeRole };
 
 /**
  * The state of the RUNTIME, as one value the UI renders from.
@@ -208,13 +222,28 @@ export type RuntimeInstallStatus =
       attemptId?: string;
     }
   | { state: "verifying"; packVersion: string; attemptId?: string }
-  | { state: "ready"; packVersion: string; runtimeRoot: string; digest: string }
+  | {
+      state: "ready";
+      packVersion: string;
+      runtimeRoot: string;
+      digest: string;
+      /** Which of this build's packs was selected (absent: the desired one). */
+      role?: RuntimeRole;
+      /** Selected although marked unhealthy, because nothing healthier is installed. */
+      health?: "unhealthy";
+      /** The desired pack's own state, when the selected one is the permitted previous. */
+      update?: RuntimeInstallStatus;
+    }
   /** A pack is installed and does not verify. Repairable, not re-downloadable. */
   | { state: "corrupt"; packVersion: string; message: string }
+  /** The desired pack was withdrawn, and no permitted previous pack is usable. */
+  | { state: "revoked"; packVersion: string; message: string }
   | {
       state: "failed";
       packVersion: string;
       reason: RuntimeInstallFailureReason;
+      /** How far the candidate got. */
+      stage?: RuntimeInstallStage;
       message: string;
       attemptId?: string;
     }
@@ -262,6 +291,44 @@ export function expectedPackFor(
   const record = PACK_RECORDS[harnessId]?.[target];
   if (record === undefined) return null;
   return { packVersion: record.packVersion, treeDigest: record.treeDigest };
+}
+
+/**
+ * The one previous pack this build was tested against and may fall back to,
+ * for a target — or null. None under the development override: a locally
+ * built pack has no previous one.
+ */
+export function permittedPackFor(
+  harnessId: SupportedLocalHarnessId,
+  target: LocalPackTarget,
+): { packVersion: string; treeDigest: string } | null {
+  if (developmentPackExpectation() !== null) return null;
+  const record = PERMITTED_PACK_RECORDS[harnessId]?.[target];
+  if (record === undefined) return null;
+  return { packVersion: record.packVersion, treeDigest: record.treeDigest };
+}
+
+/**
+ * May this build select this pack at all? Its desired or permitted pack, and
+ * not revoked. The availability gate asks this of the digest a turn names.
+ */
+export async function isSelectablePack(
+  harnessId: SupportedLocalHarnessId,
+  target: LocalPackTarget,
+  treeDigest: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const candidates = [expectedPackFor(harnessId, target), permittedPackFor(harnessId, target)];
+  if (!candidates.some((pack) => pack?.treeDigest === treeDigest)) {
+    return {
+      ok: false,
+      message: "that runtime pack is neither the desired nor the permitted pack of this Inspector build",
+    };
+  }
+  const revoked = await isPackRevoked(harnessId, treeDigest);
+  if (revoked !== null) {
+    return { ok: false, message: `that runtime pack was withdrawn by MCPJam (${revoked.reason})` };
+  }
+  return { ok: true };
 }
 
 /**
@@ -362,6 +429,102 @@ export async function readRuntimeInstallStatus(args: {
   harnessId: SupportedLocalHarnessId;
   platform?: NodeJS.Platform;
   arch?: string;
+  /**
+   * The runtime a live grant names. If it is still selectable and healthy it
+   * is selected, so an update activating in the background never refuses the
+   * next turn of a session bound to the pack it replaced.
+   */
+  preferRuntimeId?: string | null;
+}): Promise<RuntimeInstallStatus> {
+  const resolved = resolveInstallTarget(args);
+  if (!resolved.ok) return resolved.status;
+  const desiredStatus = await readDesiredRuntimeStatus(args);
+  const { expected, target, platform } = resolved;
+  const revocations = await readCachedRevocations();
+  const manifest = LOCAL_HARNESS_MANIFEST[args.harnessId];
+
+  const facts = async (
+    pack: { packVersion: string; treeDigest: string },
+    installed: RuntimeInstallStatus,
+  ): Promise<CandidateFacts & { status: RuntimeInstallStatus }> => {
+    const versionRoot = packVersionRoot(args.harnessId, pack.packVersion, target);
+    return {
+      ...pack,
+      installed: installed.state === "ready",
+      revoked: revocationFor(revocations, args.harnessId, pack.treeDigest) !== null,
+      unhealthy: isUnhealthy(await readRuntimeHealth(versionRoot), pack.treeDigest),
+      status: installed,
+    };
+  };
+  const desired = await facts(expected, desiredStatus);
+  const permittedPack = permittedPackFor(args.harnessId, target);
+  const permitted =
+    permittedPack === null
+      ? null
+      : await facts(
+          permittedPack,
+          await readMarkerStatus({
+            harnessId: args.harnessId,
+            versionRoot: packVersionRoot(args.harnessId, permittedPack.packVersion, target),
+            expected: permittedPack,
+          }),
+        );
+
+  const preferTreeDigest =
+    args.preferRuntimeId == null
+      ? null
+      : ([desired, permitted].find(
+          (candidate) =>
+            candidate !== null &&
+            predictManagedRuntimeId(manifest, platform, candidate.treeDigest) === args.preferRuntimeId,
+        )?.treeDigest ?? null);
+  const choice = chooseRuntime({ desired, permitted, preferTreeDigest });
+
+  // The desired pack's own state, annotated, for display beside a fallback.
+  const desiredView = (): RuntimeInstallStatus =>
+    desired.revoked
+      ? {
+          state: "revoked",
+          packVersion: desired.packVersion,
+          message: revokedMessage(args.harnessId, desired.packVersion, desired.treeDigest, revocations),
+        }
+      : desiredStatus.state === "ready" && desired.unhealthy
+        ? { ...desiredStatus, health: "unhealthy" }
+        : desiredStatus;
+
+  if (choice.kind === "none") return choice.why === "revoked" ? desiredView() : desiredStatus;
+  const chosen = choice.role === "desired" ? desired : permitted!;
+  const ready = chosen.status as Extract<RuntimeInstallStatus, { state: "ready" }>;
+  return {
+    ...ready,
+    role: choice.role,
+    ...(choice.degraded ? { health: "unhealthy" as const } : {}),
+    ...(choice.role === "permitted" ? { update: desiredView() } : {}),
+  };
+}
+
+function revokedMessage(
+  harnessId: SupportedLocalHarnessId,
+  packVersion: string,
+  treeDigest: string,
+  list: Awaited<ReturnType<typeof readCachedRevocations>>,
+): string {
+  const entry = revocationFor(list, harnessId, treeDigest);
+  return (
+    `MCPJam withdrew the ${harnessId} runtime ${packVersion}${entry ? ` (${entry.reason})` : ""}, and no ` +
+    `earlier runtime this Inspector supports is installed. Update the Inspector to get a replacement.`
+  );
+}
+
+/**
+ * The DESIRED pack's status alone: the install operation and the marker, with
+ * no selection. What an install acts on; `readRuntimeInstallStatus` is what a
+ * turn runs on.
+ */
+export async function readDesiredRuntimeStatus(args: {
+  harnessId: SupportedLocalHarnessId;
+  platform?: NodeJS.Platform;
+  arch?: string;
 }): Promise<RuntimeInstallStatus> {
   const resolved = resolveInstallTarget(args);
   if (!resolved.ok) return resolved.status;
@@ -415,10 +578,22 @@ export async function readRuntimeInstallStatus(args: {
  */
 export function manifestWithExpectedBundleDigest<
   T extends LocalHarnessCompatibility,
->(manifest: T, harnessId: SupportedLocalHarnessId, target: LocalPackTarget | null): T {
+>(
+  manifest: T,
+  harnessId: SupportedLocalHarnessId,
+  target: LocalPackTarget | null,
+  /**
+   * The SELECTED pack's digest, when a caller has a selection — the desired
+   * pack's or the permitted previous one's. Callers pass what
+   * `readRuntimeInstallStatus` selected; the availability gate separately
+   * refuses a digest this build may not select (`isSelectablePack`).
+   */
+  selectedDigest?: string,
+): T {
   if (target === null) return manifest;
   if (manifest.runtime.source !== "managed-bundle") return manifest;
-  const expected = expectedPackFor(harnessId, target);
+  const expected =
+    selectedDigest !== undefined ? { treeDigest: selectedDigest } : expectedPackFor(harnessId, target);
   if (expected === null) return manifest;
   if (manifest.runtime.bundleDigest[target] === expected.treeDigest) {
     return manifest;
@@ -455,8 +630,10 @@ export async function readVerifiedRuntimeStatus(args: {
   harnessId: SupportedLocalHarnessId;
   platform?: NodeJS.Platform;
   arch?: string;
+  /** Verify the desired pack rather than the selected one (an install's question). */
+  desiredOnly?: boolean;
 }): Promise<RuntimeInstallStatus> {
-  const status = await readRuntimeInstallStatus(args);
+  const status = args.desiredOnly ? await readDesiredRuntimeStatus(args) : await readRuntimeInstallStatus(args);
   if (status.state !== "ready") return status;
   const platform = currentLocalPlatform(args.platform ?? process.platform);
   if (platform === null) return status;
@@ -466,6 +643,7 @@ export async function readVerifiedRuntimeStatus(args: {
       LOCAL_HARNESS_MANIFEST[args.harnessId],
       args.harnessId,
       localPackTarget(args.platform, args.arch),
+      status.digest,
     ),
     runtimeRoot: status.runtimeRoot,
     platform,
@@ -543,6 +721,7 @@ function operationRecordStatus(
         state: "failed",
         packVersion: record.packVersion,
         reason: record.reason ?? "unknown",
+        ...(record.stage ? { stage: record.stage } : {}),
         message: record.message ?? "the install did not complete",
         attemptId: record.attemptId,
       };
@@ -659,6 +838,7 @@ const active = new Map<string, ActiveInstall>();
 /** Test seam: in-process single flight is module state by design. */
 export function resetRuntimeInstallStateForTests(): void {
   active.clear();
+  reprobesInFlight.clear();
   resetRuntimeLifecycleForTests();
 }
 
@@ -681,7 +861,88 @@ export interface InstallRuntimePackOptions {
    *  fraction to report. */
   onProgress?: (status: RuntimeInstallStatus) => void;
   signal?: AbortSignal;
+  /**
+   * What asked for this install. The update policy decides which triggers may
+   * install (`manual` admits only `cli` and `provision`), and background
+   * triggers back off after a recent failure instead of retrying on every boot
+   * and every readiness check. Defaults to `gesture`.
+   */
+  trigger?: RuntimeInstallTrigger;
+  /**
+   * Pre-provisioning: install from a local archive with NO network. Its signed
+   * manifest and signature must sit beside it under their release names
+   * (`<stem>.manifest.json`, `<stem>.manifest.json.sig`), and every check a
+   * download gets still applies — signature, archive sha, tree digest against
+   * the pack this build pins. Unlike the development override, an unsigned
+   * archive is refused.
+   */
+  fromArchive?: string;
 }
+
+/** Background retries wait this long after a candidate failed verification or its probe… */
+const BACKOFF_AFTER_BAD_CANDIDATE_MS = 6 * 60 * 60 * 1000;
+/** …and this long after any other failure (offline, disk). */
+const BACKOFF_AFTER_FAILURE_MS = 10 * 60 * 1000;
+
+/** How long a background trigger waits before re-probing a pack marked unhealthy. */
+const REPROBE_UNHEALTHY_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * Re-run the startup probe on the INSTALLED desired pack and, if it passes,
+ * write it a fresh health record (clearing the unhealthy mark). Shared by
+ * `startRuntimeInstall` and `harness repair`.
+ */
+type ReprobeArgs = {
+  harnessId: SupportedLocalHarnessId;
+  resolved: Extract<ResolvedInstallTarget, { ok: true }>;
+  health: Awaited<ReturnType<typeof readRuntimeHealth>>;
+};
+type ReprobeResult = { ok: true } | { ok: false; message: string };
+
+/** One probe per version directory at a time in this process; callers share it. */
+const reprobesInFlight = new Map<string, Promise<ReprobeResult>>();
+
+async function reprobeInstalledPack(args: ReprobeArgs): Promise<ReprobeResult> {
+  const id = args.resolved.versionRoot;
+  const running = reprobesInFlight.get(id);
+  if (running !== undefined) return running;
+  const attempt = reprobeInstalledPackOnce(args).finally(() => reprobesInFlight.delete(id));
+  reprobesInFlight.set(id, attempt);
+  return attempt;
+}
+
+async function reprobeInstalledPackOnce(args: ReprobeArgs): Promise<ReprobeResult> {
+  const { versionRoot, expected, target, platform } = args.resolved;
+  const probe = await probeRuntimeCandidate({
+    harnessId: args.harnessId,
+    packRoot: join(versionRoot, args.harnessId),
+    platform,
+    target,
+    layerRuntimeRoot: runtimeInstallRoot(),
+  });
+  if (!probe.ok) {
+    // Restart the unhealthy mark's clock, so background triggers wait a full
+    // interval before probing it again (an explicit request still may).
+    await noteFailedReprobe({ key: args.resolved.key, versionRoot }).catch(() => {});
+    return { ok: false, message: `the installed ${expected.packVersion} still fails its startup probe: ${probe.message}` };
+  }
+  await writeRuntimeHealth(
+    versionRoot,
+    newHealthRecord({
+      packVersion: expected.packVersion,
+      treeDigest: expected.treeDigest,
+      probe: { at: Date.now(), node: probe.node, vendorVersion: probe.vendorVersion },
+      ...(args.health?.installStartedAt !== undefined ? { installStartedAt: args.health.installStartedAt } : {}),
+      ...(args.health?.activatedAt !== undefined ? { activatedAt: args.health.activatedAt } : {}),
+      ...(args.health?.activatedAsUpdate !== undefined ? { activatedAsUpdate: args.health.activatedAsUpdate } : {}),
+    }),
+  );
+  return { ok: true };
+}
+
+export const MANUAL_UPDATES_MESSAGE =
+  "Runtime updates on this machine are managed by your administrator (updates: manual). " +
+  "Install with `mcpjam-inspector harness install`, or ask IT.";
 
 export type StartRuntimeInstallResult =
   /** This call started the work. Poll for progress. */
@@ -691,7 +952,13 @@ export type StartRuntimeInstallResult =
   /** A verified runtime is already installed. Nothing was downloaded. */
   | { kind: "ready"; status: RuntimeInstallStatus }
   /** The request cannot start work at all. */
-  | { kind: "refused"; status: RuntimeInstallStatus; reason: string };
+  | {
+      kind: "refused";
+      status: RuntimeInstallStatus;
+      reason: string;
+      /** Why, when it is not the request's fault: policy, revocation, backoff. */
+      refusal?: "policy" | "revoked" | "backoff";
+    };
 
 /**
  * Start — or join — an install, and return as soon as that is decided.
@@ -745,23 +1012,98 @@ export async function startRuntimeInstall(
     };
   }
 
-  // Claimed SYNCHRONOUSLY, before any await. Two clicks, or a click and the
-  // CLI in the same process, must not both get past the "is one running?"
-  // check while a filesystem round trip is in flight.
+  // Joining what is already running in THIS process needs no policy check:
+  // somebody allowed to start it already did.
   const keyString = operationKeyString(key);
   const running = active.get(keyString);
   if (running !== undefined) {
     return { kind: "joined", status: running.status };
   }
 
+  const trigger = options.trigger ?? "gesture";
+
+  // A withdrawn pack is never downloaded, whoever asks. Refreshed first
+  // (rate-limited, soft-failing, bounded by a timeout): selection reads only
+  // the cache, and a new machine's first install has none, so without this a
+  // pack MCPJam already withdrew would install and run. Provisioning from a
+  // local archive is the offline path; it trusts the cache it has.
+  if (trigger !== "provision") await refreshRevocations();
+  const revoked = await isPackRevoked(options.harnessId, expected.treeDigest);
+  if (revoked !== null) {
+    const message =
+      `MCPJam withdrew the ${options.harnessId} runtime ${expected.packVersion} (${revoked.reason}); ` +
+      "update the Inspector to get a replacement.";
+    return {
+      kind: "refused",
+      refusal: "revoked",
+      reason: message,
+      status: { state: "revoked", packVersion: expected.packVersion, message },
+    };
+  }
+
   await recoverInterruptedActivation({ key, versionRoot });
 
   // Already installed AND verified: no download, and the answer is as fresh as
-  // the probe that produced it.
-  const verified = await readVerifiedRuntimeStatus(options);
-  if (verified.state === "ready") return { kind: "ready", status: verified };
+  // the probe that produced it. The DESIRED pack — a fallback being selected
+  // is exactly the case an install exists to end.
+  const verified = await readVerifiedRuntimeStatus({ ...options, desiredOnly: true });
+  if (verified.state === "ready") {
+    // Installed and verified, but marked unhealthy after repeated launch
+    // failures: selection has rolled back from it. The bytes are right, so
+    // nothing is downloaded; the startup probe is re-run instead, and a pass
+    // starts its health afresh. Background triggers do this at most hourly.
+    const health = await readRuntimeHealth(versionRoot);
+    if (isUnhealthy(health, expected.treeDigest)) {
+      if (isBackgroundTrigger(trigger) && Date.now() - health!.unhealthy!.at < REPROBE_UNHEALTHY_AFTER_MS) {
+        return {
+          kind: "refused",
+          refusal: "backoff",
+          reason: "the installed runtime was marked unhealthy recently; it is re-checked later, or now on request",
+          status: verified,
+        };
+      }
+      const reprobed = await reprobeInstalledPack({ harnessId: options.harnessId, resolved, health });
+      if (reprobed.ok) return { kind: "ready", status: await readRuntimeInstallStatus({ harnessId: options.harnessId }) };
+      return {
+        kind: "refused",
+        reason: reprobed.message,
+        status: { state: "failed", packVersion: expected.packVersion, reason: "probe", stage: "probe", message: reprobed.message },
+      };
+    }
+    return { kind: "ready", status: verified };
+  }
 
-  const attempt = await beginInstallAttempt(key);
+  // Only a NEW install is subject to the update policy: a runtime an
+  // administrator already provisioned is answered as ready above, whoever asks.
+  const policy = await readLocalRuntimeUpdatePolicy();
+  if (!triggerAllowed(trigger, policy.policy)) {
+    return {
+      kind: "refused",
+      refusal: "policy",
+      reason: MANUAL_UPDATES_MESSAGE,
+      status: { state: "absent", packVersion: expected.packVersion },
+    };
+  }
+
+  // Nobody is waiting on a background trigger, so it does not hammer a
+  // candidate that just failed (or a machine that is offline).
+  if (isBackgroundTrigger(trigger)) {
+    const last = await readRuntimeOperation(key);
+    const age = last === null ? Infinity : Date.now() - last.updatedAt;
+    const backoff =
+      last?.state === "failed" &&
+      (last.stage === "probe" || last.stage === "verify" ? age < BACKOFF_AFTER_BAD_CANDIDATE_MS : age < BACKOFF_AFTER_FAILURE_MS);
+    if (backoff) {
+      return {
+        kind: "refused",
+        refusal: "backoff",
+        reason: "a recent attempt at this runtime failed; it is retried later, or now on request",
+        status: operationRecordStatus(last),
+      };
+    }
+  }
+
+  const attempt = await beginInstallAttempt(key, { trigger });
   if (attempt.kind === "joined") {
     return {
       kind: "joined",
@@ -783,8 +1125,13 @@ export async function startRuntimeInstall(
     }),
   };
   active.set(keyString, record);
+  emitLocalRuntimeEvent("local_runtime_install_started", {
+    harness_id: options.harnessId,
+    pack_version: expected.packVersion,
+    trigger,
+  });
   record.promise = runInstallAttempt({
-    options,
+    options: { ...options, trigger },
     resolved,
     attemptId: attempt.record.attemptId,
     record,
@@ -882,16 +1229,35 @@ async function runInstallAttempt(args: {
     }).catch(() => {});
   };
 
+  const startedAt = Date.now();
+  const trigger = options.trigger ?? "gesture";
   try {
-    const result = await performInstall({
+    const { status: result, activatedAsUpdate } = await performInstall({
       ...options,
       platform: resolved.platform,
       expected,
       key,
       attemptId,
       setStatus,
+      installStartedAt: startedAt,
     });
     record.status = result;
+    emitLocalRuntimeEvent("local_runtime_install_succeeded", {
+      harness_id: options.harnessId,
+      pack_version: expected.packVersion,
+      trigger,
+      duration_ms: Date.now() - startedAt,
+    });
+    if (activatedAsUpdate) {
+      emitLocalRuntimeEvent("local_runtime_update_activated", {
+        harness_id: options.harnessId,
+        pack_version: expected.packVersion,
+        trigger,
+      });
+    }
+    // The version this replaced is now reclaimable unless something still
+    // selects or holds it; asked of every live Inspector, not assumed.
+    void collectRuntimeGarbage({ extra: ownExpectedDigests() }).catch(() => {});
     // Best-effort, exactly as the failure path below already is. `record.status`
     // above has already recorded the true outcome; this write only publishes it
     // to the shared operation file, and `writeJsonAtomic` can reject on ENOSPC
@@ -911,12 +1277,29 @@ async function runInstallAttempt(args: {
     const failure = classifyInstallFailure(error, expected.packVersion);
     logger.warn("[local-harness] runtime pack install failed", {
       reason: failure.reason,
+      stage: failure.stage,
       message: failure.message,
     });
     record.status = failure;
+    emitLocalRuntimeEvent("local_runtime_install_failed", {
+      harness_id: options.harnessId,
+      pack_version: expected.packVersion,
+      trigger,
+      reason: failure.reason,
+      ...(failure.stage ? { stage: failure.stage } : {}),
+      duration_ms: Date.now() - startedAt,
+    });
+    if (failure.stage === "probe") {
+      emitLocalRuntimeEvent("local_runtime_candidate_probe_failed", {
+        harness_id: options.harnessId,
+        pack_version: expected.packVersion,
+        trigger,
+      });
+    }
     await updateInstallAttempt(key, attemptId, {
       state: "failed",
       reason: failure.reason,
+      ...(failure.stage ? { stage: failure.stage } : {}),
       message: failure.message,
     }).catch(() => {});
     return failure;
@@ -968,8 +1351,71 @@ export function classifyInstallFailure(
           ? "verification"
           : "unknown";
 
-  return { state: "failed", packVersion, reason, message };
+  const stage = (error as { installStage?: RuntimeInstallStage } | undefined)?.installStage;
+  return {
+    state: "failed",
+    packVersion,
+    reason:
+      stage === "probe"
+        ? "probe"
+        : stage === "disk-space"
+          ? "disk"
+          : stage === "verify" && reason === "unknown"
+            ? "verification"
+            : reason,
+    ...(stage ? { stage } : {}),
+    message,
+  };
 }
+
+/** Tag an error with the candidate stage it happened in. */
+function atStage(stage: RuntimeInstallStage, error: unknown): Error {
+  const tagged = error instanceof Error ? error : new Error(String(error));
+  if ((tagged as { installStage?: RuntimeInstallStage }).installStage === undefined) {
+    (tagged as { installStage?: RuntimeInstallStage }).installStage = stage;
+  }
+  return tagged;
+}
+
+/** The digests this process expects, per harness — what GC must keep for it. */
+function ownExpectedDigests(): Partial<Record<SupportedLocalHarnessId, string[]>> {
+  const target = localPackTarget();
+  if (target === null) return {};
+  return Object.fromEntries(
+    SUPPORTED_LOCAL_HARNESS_IDS.map((harnessId) => [
+      harnessId,
+      [expectedPackFor(harnessId, target), permittedPackFor(harnessId, target)]
+        .filter((pack): pack is { packVersion: string; treeDigest: string } => pack !== null)
+        .map((pack) => pack.treeDigest),
+    ]),
+  );
+}
+
+type FreeSpaceProbe = (path: string) => Promise<number | null>;
+const defaultFreeSpace: FreeSpaceProbe = async (path) => {
+  try {
+    const info = await statfs(path);
+    return Number(info.bavail) * Number(info.bsize);
+  } catch {
+    return null; // unknowable here: do not refuse on a guess
+  }
+};
+let freeSpaceProbe: FreeSpaceProbe = defaultFreeSpace;
+
+/** Test seam: pretend the disk has this much room. */
+export function setFreeSpaceProbeForTests(probe: FreeSpaceProbe | null): void {
+  freeSpaceProbe = probe ?? defaultFreeSpace;
+}
+
+let manifestKeys: readonly PackSigningKey[] = PACK_SIGNING_KEYS;
+
+/** Test seam: a test cannot sign with MCPJam's key, so it brings its own. */
+export function setPackSigningKeysForTests(keys: readonly PackSigningKey[] | null): void {
+  manifestKeys = keys ?? PACK_SIGNING_KEYS;
+}
+
+/** Headroom on top of the archive and the extracted tree. */
+const DISK_HEADROOM_BYTES = 64 * 1024 * 1024;
 
 async function performInstall(args: {
   harnessId: SupportedLocalHarnessId;
@@ -980,7 +1426,9 @@ async function performInstall(args: {
   attemptId: string;
   setStatus: (status: RuntimeInstallStatus) => void;
   signal?: AbortSignal;
-}): Promise<RuntimeInstallStatus> {
+  installStartedAt: number;
+  fromArchive?: string;
+}): Promise<{ status: RuntimeInstallStatus; activatedAsUpdate: boolean }> {
   const { expected, setStatus, key, attemptId } = args;
   const platformKey = packPlatformKey(args.platform, args.arch);
   const target = localPackTarget(args.platform, args.arch);
@@ -998,8 +1446,12 @@ async function performInstall(args: {
   await mkdir(staging, { recursive: true, mode: 0o700 });
   await claimStagingDirectory({ staging, attemptId });
 
+  let stage: RuntimeInstallStage = "download";
   try {
-    const source = packSourceFor(args.harnessId, expected.packVersion, platformKey);
+    const source: { kind: "file" | "url"; location: string } =
+      args.fromArchive !== undefined
+        ? { kind: "file", location: args.fromArchive }
+        : packSourceFor(args.harnessId, expected.packVersion, platformKey);
     const archivePath = join(staging, "pack.tar.gz");
 
     setStatus({
@@ -1008,6 +1460,47 @@ async function performInstall(args: {
       percent: 0,
       attemptId,
     });
+
+    // The signed manifest FIRST. It is a few kilobytes, it says how big the
+    // pack is (so disk space can be checked before 200 MB arrive), and a
+    // manifest that is not ours stops the install before the archive moves.
+    // A local development source is allowed to skip the signature, because it
+    // names a file the developer built themselves.
+    const manifest = await loadAndVerifyManifest({
+      harnessId: args.harnessId,
+      source,
+      packVersion: expected.packVersion,
+      platformKey,
+      staging,
+      requireSignature: args.fromArchive !== undefined,
+    });
+
+    // ── disk-space ──────────────────────────────────────────────────────
+    stage = "disk-space";
+    const extracted =
+      manifest !== null && Number.isFinite(manifest.bytes) && manifest.bytes > 0
+        ? manifest.bytes
+        : source.kind === "file"
+          ? (await stat(source.location)).size * 3
+          : 0;
+    if (extracted > 0) {
+      // The archive and the extracted tree coexist in staging until
+      // activation; the archive is smaller than the tree it holds.
+      const needed = extracted * 2 + DISK_HEADROOM_BYTES;
+      const free = await freeSpaceProbe(installRoot);
+      if (free !== null && free < needed) {
+        const error = new Error(
+          `not enough free disk space for the ${args.harnessId} runtime: it needs about ` +
+            `${Math.ceil(needed / 1024 / 1024)} MB under ${installRoot} and ` +
+            `${Math.floor(free / 1024 / 1024)} MB is free`,
+        ) as NodeJS.ErrnoException;
+        error.code = "ENOSPC";
+        throw error;
+      }
+    }
+
+    // ── download ────────────────────────────────────────────────────────
+    stage = "download";
     const archiveSha = await fetchArchive({
       source,
       destination: archivePath,
@@ -1021,24 +1514,15 @@ async function performInstall(args: {
       ...(args.signal ? { signal: args.signal } : {}),
     });
 
+    // ── verify ──────────────────────────────────────────────────────────
+    stage = "verify";
     setStatus({
       state: "verifying",
       packVersion: expected.packVersion,
       attemptId,
     });
 
-    // 1. Signature over the manifest. A local development source is allowed to
-    //    skip this, because it names a file the developer built themselves
-    //    rather than something fetched from anywhere.
-    const manifest = await loadAndVerifyManifest({
-      harnessId: args.harnessId,
-      source,
-      packVersion: expected.packVersion,
-      platformKey,
-      staging,
-    });
-
-    // 2. The archive against the manifest.
+    // The archive against the manifest.
     if (manifest !== null && manifest.archive?.sha256 !== undefined) {
       if (manifest.archive.sha256 !== archiveSha) {
         throw new Error(
@@ -1048,11 +1532,11 @@ async function performInstall(args: {
       }
     }
 
-    // 3. Extract, then the tree against the manifest and against what this
-    //    Inspector build expects. Both, because they answer different
-    //    questions: the manifest says "this is the pack that was built", the
-    //    build's own expectation says "and it is the pack this code was
-    //    reviewed against".
+    // Extract, then the tree against the manifest and against what this
+    // Inspector build expects. Both, because they answer different
+    // questions: the manifest says "this is the pack that was built", the
+    // build's own expectation says "and it is the pack this code was
+    // reviewed against".
     const extractRoot = join(staging, "extracted");
     await mkdir(extractRoot, { recursive: true, mode: 0o700 });
     await extractTar({
@@ -1073,6 +1557,9 @@ async function performInstall(args: {
       preservePaths: false,
       strict: true,
     });
+    // The archive has served its purpose; do not hold its space through the
+    // probe and activation.
+    await rm(archivePath, { force: true }).catch(() => {});
 
     const packRoot = join(extractRoot, args.harnessId);
     const info = await stat(packRoot).catch(() => null);
@@ -1101,15 +1588,40 @@ async function performInstall(args: {
     // binary and Node are both Developer-ID signed with hardened runtime, so
     // the quarantine flag is the only thing standing between a verified pack
     // and Gatekeeper refusing to exec it. Cleared only on the tree this
-    // install just wrote and just verified.
+    // install just wrote and just verified — and before the probe execs it.
     if (args.platform === "darwin") await clearQuarantine(extractRoot);
 
-    // The ownership marker goes in BEFORE the rename, so the rename is the one
-    // and only commit point. Written afterwards, a crash in the window between
-    // them left a fully activated ~515 MB version directory that carried no
-    // marker, and nothing would ever reclaim it. It is a SIBLING of the
-    // digested `<harnessId>/` subtree, not a member of it, so writing it here
-    // cannot disturb the digest that was just verified.
+    // ── probe ───────────────────────────────────────────────────────────
+    // This build's Inspector layer, started on the staged pack, and the
+    // vendor binary's version handshake. A candidate that cannot start is
+    // never activated, so nothing ever selects it.
+    stage = "probe";
+    const probe = await probeRuntimeCandidate({
+      harnessId: args.harnessId,
+      packRoot,
+      platform: args.platform,
+      target: target ?? (platformKey as LocalPackTarget),
+      layerRuntimeRoot: runtimeInstallRoot(),
+    });
+    if (!probe.ok) {
+      throw new Error(`the ${args.harnessId} runtime ${expected.packVersion} failed its startup probe: ${probe.message}`);
+    }
+    // Ours, not the user's: the probe may not leave anything behind in the
+    // tree it vouches for.
+    if ((await computeTreeDigest(packRoot)) !== digest) {
+      throw new Error("the runtime pack changed while it was being probed");
+    }
+
+    // ── activate ────────────────────────────────────────────────────────
+    stage = "activate";
+    const activatedAsUpdate = await hasOtherInstalledVersion(installRoot, expected.packVersion);
+
+    // The ownership marker and the health record go in BEFORE the rename, so
+    // the rename is the one and only commit point. Written afterwards, a crash
+    // in the window between them left a fully activated version directory
+    // that carried no marker, and nothing would ever reclaim it. Both are
+    // SIBLINGS of the digested `<harnessId>/` subtree, not members of it, so
+    // writing them cannot disturb the digest that was just verified.
     await writeFile(
       join(extractRoot, INSTALL_MARKER),
       `${JSON.stringify(
@@ -1124,6 +1636,17 @@ async function performInstall(args: {
         2,
       )}\n`,
       { mode: 0o600 },
+    );
+    await writeRuntimeHealth(
+      extractRoot,
+      newHealthRecord({
+        packVersion: expected.packVersion,
+        treeDigest: digest,
+        probe: { at: Date.now(), node: probe.node, vendorVersion: probe.vendorVersion },
+        installStartedAt: args.installStartedAt,
+        activatedAt: Date.now(),
+        activatedAsUpdate,
+      }),
     );
 
     setStatus({
@@ -1144,14 +1667,33 @@ async function performInstall(args: {
       platform: platformKey,
     });
     return {
-      state: "ready",
-      packVersion: expected.packVersion,
-      runtimeRoot: versionRoot,
-      digest,
+      status: {
+        state: "ready",
+        packVersion: expected.packVersion,
+        runtimeRoot: versionRoot,
+        digest,
+        role: "desired",
+      },
+      activatedAsUpdate,
     };
+  } catch (error) {
+    throw atStage(stage, error);
   } finally {
     await rm(staging, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/** Is another version of this harness's pack already installed beside this one? */
+async function hasOtherInstalledVersion(installRoot: string, packVersion: string): Promise<boolean> {
+  for (const entry of await readdir(installRoot).catch(() => [] as string[])) {
+    if (entry.startsWith(".") || entry === packVersion || entry.endsWith(PREVIOUS_SUFFIX)) continue;
+    const marker = await stat(join(installRoot, entry, INSTALL_MARKER)).then(
+      () => true,
+      () => false,
+    );
+    if (marker) return true;
+  }
+  return false;
 }
 
 /**
@@ -1219,8 +1761,12 @@ async function activateVerifiedPack(args: {
       if (hasCurrent) await rename(previous, versionRoot).catch(() => {});
       throw error;
     }
-    await rm(previous, { recursive: true, force: true }).catch(() => {});
   });
+  // Outside the lock: a recursive delete of a whole pack is not a short
+  // critical section, and reservations wait on this lock. A crash before it
+  // completes leaves `<version>.mcpjam-previous` beside a complete version,
+  // which `recoverInterruptedActivation` (and GC) removes.
+  await rm(`${versionRoot}${PREVIOUS_SUFFIX}`, { recursive: true, force: true }).catch(() => {});
 
   // A previous process may have verified a DIFFERENT tree at this path.
   clearRuntimeVerificationCache();
@@ -1269,7 +1815,10 @@ async function loadAndVerifyManifest(args: {
   packVersion: string;
   platformKey: string;
   staging: string;
+  /** Pre-provisioning: a local archive must be signed exactly like a download. */
+  requireSignature?: boolean;
 }): Promise<PackManifest | null> {
+  const lenient = args.source.kind === "file" && args.requireSignature !== true;
   const stem = packAssetStem(args.harnessId, args.platformKey, args.packVersion);
   const manifestName = `${stem}.manifest.json`;
   const signatureName = `${manifestName}.sig`;
@@ -1294,7 +1843,7 @@ async function loadAndVerifyManifest(args: {
       signature = await (await fetchOrThrow(base + signatureName)).text();
     }
   } catch (error) {
-    if (args.source.kind === "file") {
+    if (lenient) {
       logger.warn(
         "[local-harness] local pack source has no signed manifest; " +
           "installing on the digest alone",
@@ -1302,18 +1851,24 @@ async function loadAndVerifyManifest(args: {
       );
       return null;
     }
-    throw new Error(
-      `the runtime pack has no signed manifest alongside it, so it cannot ` +
-        `be shown to have come from MCPJam`,
+    throw atStage(
+      args.source.kind === "file" ? "verify" : "download",
+      new Error(
+        args.source.kind === "file"
+          ? `the archive has no ${manifestName} and ${signatureName} beside it, so it cannot ` +
+              `be shown to have come from MCPJam. Keep the release's three files together.`
+          : `the runtime pack has no signed manifest alongside it, so it cannot ` +
+              `be shown to have come from MCPJam`,
+      ),
     );
   }
 
   if (manifestBytes.length > MAX_MANIFEST_BYTES) {
-    throw new Error("the runtime pack manifest is implausibly large");
+    throw atStage("verify", new Error("the runtime pack manifest is implausibly large"));
   }
-  const verified = verifyPackManifestSignature(manifestBytes, signature);
+  const verified = verifyPackManifestSignature(manifestBytes, signature, manifestKeys);
   if (!verified.ok) {
-    if (args.source.kind === "file") {
+    if (lenient) {
       logger.warn(
         "[local-harness] local pack manifest signature not verified; " +
           "installing on the digest alone",
@@ -1321,34 +1876,43 @@ async function loadAndVerifyManifest(args: {
       );
       return null;
     }
-    throw new Error(verified.message);
+    throw atStage("verify", new Error(verified.message));
   }
   const manifest = JSON.parse(manifestBytes.toString("utf8")) as PackManifest;
   if (manifest.packVersion !== args.packVersion) {
-    throw new Error(
-      `the signed manifest is for pack version ${manifest.packVersion}, not ` +
+    throw atStage(
+      "verify",
+      new Error(
+        `the signed manifest is for pack version ${manifest.packVersion}, not ` +
         `${args.packVersion}`,
+      ),
     );
   }
   if (manifest.platform !== args.platformKey) {
-    throw new Error(
-      `the signed manifest is for ${manifest.platform}, not ${args.platformKey}`,
+    throw atStage(
+      "verify",
+      new Error(
+        `the signed manifest is for ${manifest.platform}, not ${args.platformKey}`,
+      ),
     );
   }
   // Both harnesses' packs are signed by the same key, so a valid signature
   // alone does not say WHICH runtime this is. A Codex manifest served where a
   // Claude Code one was asked for would otherwise pass every check above.
   if (manifest.harnessId !== args.harnessId) {
-    throw new Error(
-      `the signed manifest is for the ${manifest.harnessId} runtime, not ` +
+    throw atStage(
+      "verify",
+      new Error(
+        `the signed manifest is for the ${manifest.harnessId} runtime, not ` +
         `${args.harnessId}`,
+      ),
     );
   }
   return manifest;
 }
 
 async function fetchOrThrow(url: string): Promise<Response> {
-  const response = await fetch(url);
+  const response = await installerFetch(url);
   if (!response.ok) {
     throw new Error(`${url} responded ${response.status}`);
   }
@@ -1409,7 +1973,7 @@ async function fetchArchive(args: {
     return hash.digest("hex");
   }
 
-  const response = await fetch(args.source.location, {
+  const response = await installerFetch(args.source.location, {
     ...(args.signal ? { signal: args.signal } : {}),
   });
   if (!response.ok || response.body === null) {
@@ -1435,40 +1999,231 @@ async function fetchArchive(args: {
 }
 
 /**
- * Startup hook: report what is installed, and never install anything.
+ * Boot: the runtime maintenance a server does once it is up, in order —
  *
- * Mirrors `startLocalBrowserRenderingSetupInBackground`'s shape but not its
- * behaviour — Chromium is a dependency the eval path cannot work without, so
- * fetching it unasked is defensible; a 515 MB agent runtime for a feature
- * behind a flag, a kill switch and a consent grant is not. A user asking for
- * it in the composer is a different thing entirely, and that is
- * `startRuntimeInstall`; boot has nobody to ask.
+ *   1. its LIVENESS record, so GC in any Inspector on this root keeps the packs
+ *      this build may select;
+ *   2. GC, after the janitor has reclaimed orphaned sessions (whose use
+ *      reservations would otherwise look live);
+ *   3. per harness, only where this machine already holds a durable
+ *      authorization for it AND the update policy is `auto`: refresh the
+ *      revocation list and PREFETCH the desired pack if it is not installed.
+ *      A machine where nobody chose to run a harness downloads nothing for it.
  *
- * Boot also deletes nothing. Reading the status recovers an activation that
- * was interrupted mid-rename — which puts a runtime BACK — but no version
- * directory and no staging directory is reclaimed here.
+ * Best-effort throughout: maintenance never affects startup.
  */
-export function reportLocalHarnessRuntimeStatusInBackground(): void {
-  void (async () => {
+export function startLocalHarnessRuntimeMaintenance(options: {
+  /** Resolves when the janitor's orphan reclaim is done. */
+  afterJanitor?: Promise<unknown>;
+} = {}): Promise<void> {
+  return (async () => {
+    const extra = ownExpectedDigests();
+    await writeLivenessRecord(undefined, extra).catch((error) => {
+      logger.warn("[local-harness] could not write the runtime liveness record", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+    await options.afterJanitor?.catch(() => {});
+    await collectRuntimeGarbage({ extra });
+
+    const policy = await readLocalRuntimeUpdatePolicy();
+    let machineId: string | null = null;
+    try {
+      const { getLocalMachineId } = await import("./grants.js");
+      machineId = await getLocalMachineId();
+    } catch {
+      machineId = null;
+    }
+    const { hasLocalHarnessAuthorizationOnMachine } = await import("./authorization.js");
+    let refreshed = false;
     for (const harnessId of SUPPORTED_LOCAL_HARNESS_IDS) {
       try {
+        const authorized =
+          machineId !== null && (await hasLocalHarnessAuthorizationOnMachine(machineId, harnessId));
         const status = await readRuntimeInstallStatus({ harnessId });
-        if (status.state === "ready") {
-          logger.info("[local-harness] runtime pack present", {
-            harnessId,
-            packVersion: status.packVersion,
-          });
-          continue;
-        }
-        logger.debug("[local-harness] no runtime pack installed", {
+        logger.debug("[local-harness] runtime at boot", {
           harnessId,
           state: status.state,
-          expected: EXPECTED_PACK_VERSIONS[harnessId] || "(none built)",
+          ...(status.state === "ready" ? { role: status.role ?? "desired" } : {}),
+          authorized,
+          updates: policy.policy,
         });
+        if (!authorized) continue;
+        // Under either policy: a refresh is a read, not an install, and a
+        // `manual` fleet must still stop selecting a withdrawn pack.
+        if (!refreshed) {
+          refreshed = true;
+          await refreshRevocations();
+        }
+        if (policy.policy !== "auto") continue;
+        const desired = await readDesiredRuntimeStatus({ harnessId });
+        if (desired.state === "ready" || desired.state === "downloading" || desired.state === "verifying") continue;
+        if (desired.state === "unsupported-platform") continue;
+        await startRuntimeInstall({ harnessId, trigger: "boot" });
       } catch {
-        // Reporting is best-effort by construction: a status probe that
-        // throws must not affect server startup, nor the next harness's report.
+        // One harness's maintenance never stops the next one's.
       }
     }
-  })();
+  })().catch(() => {});
+}
+
+/**
+ * The Playground's readiness check, when the runtime a session would run is
+ * not this build's desired pack (or nothing is installed yet): refresh the
+ * revocation list and start — never await — the desired pack's install.
+ * Policy, revocation and backoff are `startRuntimeInstall`'s to decide.
+ */
+export async function startBackgroundRuntimeUpdate(harnessId: SupportedLocalHarnessId): Promise<StartRuntimeInstallResult> {
+  await refreshRevocations();
+  return startRuntimeInstall({ harnessId, trigger: "readiness" });
+}
+
+/** @deprecated boot now runs `startLocalHarnessRuntimeMaintenance`. */
+export function reportLocalHarnessRuntimeStatusInBackground(): void {
+  void startLocalHarnessRuntimeMaintenance();
+}
+
+/**
+ * One session's bridge start, recorded against the pack it ran on — the
+ * signal that rolls a broken update back. Fire-and-forget from the launch
+ * path; never throws.
+ *
+ *   success → clears the pack's failure count; the first one after an install
+ *             reports `time_to_first_usable_turn`;
+ *   failure → counted; after an update it reports
+ *             `launch_failed_after_update`, and the failure that crosses the
+ *             threshold marks the pack unhealthy. Selection then falls back to
+ *             the permitted previous pack for NEW sessions
+ *             (`rolled_back_to_previous`). The failed turn is not replayed.
+ */
+export async function noteRuntimeLaunch(args: {
+  harnessId: SupportedLocalHarnessId;
+  status: Extract<RuntimeInstallStatus, { state: "ready" }>;
+  outcome: { ok: true } | { ok: false; reason: string };
+}): Promise<void> {
+  try {
+    const target = localPackTarget();
+    if (target === null) return;
+    const { recordRuntimeLaunch } = await import("./runtime-health.js");
+    const folded = await recordRuntimeLaunch({
+      key: {
+        runtimeRoot: runtimeInstallRoot(),
+        harnessId: args.harnessId,
+        target,
+        packVersion: args.status.packVersion,
+        treeDigest: args.status.digest,
+      },
+      versionRoot: args.status.runtimeRoot,
+      outcome: args.outcome,
+    });
+    const role = args.status.role ?? "desired";
+    const common = { harness_id: args.harnessId, pack_version: args.status.packVersion, role };
+    if (args.outcome.ok) {
+      if (folded.firstUsable && folded.record.installStartedAt !== undefined) {
+        emitLocalRuntimeEvent("local_runtime_time_to_first_usable_turn", {
+          ...common,
+          duration_ms: Date.now() - folded.record.installStartedAt,
+        });
+      }
+      return;
+    }
+    if (role === "desired" && folded.record.activatedAsUpdate) {
+      emitLocalRuntimeEvent("local_runtime_launch_failed_after_update", common);
+    }
+    if (folded.becameUnhealthy) {
+      logger.warn("[local-harness] runtime marked unhealthy after repeated launch failures", {
+        harnessId: args.harnessId,
+        packVersion: args.status.packVersion,
+      });
+      const now = await readRuntimeInstallStatus({ harnessId: args.harnessId });
+      if (now.state === "ready" && now.role === "permitted") {
+        emitLocalRuntimeEvent("local_runtime_rolled_back_to_previous", {
+          ...common,
+          pack_version: now.packVersion,
+        });
+      }
+    }
+  } catch {
+    // Health is advisory bookkeeping; a launch never fails on it.
+  }
+}
+
+/** Is exactly this pack (version AND digest) installed here? Marker-based, cheap. */
+export async function isPackInstalled(
+  harnessId: SupportedLocalHarnessId,
+  pack: { packVersion: string; treeDigest: string },
+  target: LocalPackTarget | null = localPackTarget(),
+): Promise<boolean> {
+  if (target === null) return false;
+  const status = await readMarkerStatus({
+    harnessId,
+    versionRoot: packVersionRoot(harnessId, pack.packVersion, target),
+    expected: pack,
+  });
+  return status.state === "ready";
+}
+
+/**
+ * `harness repair`: put this machine's desired runtime back into a state a
+ * session can use, through the normal installer.
+ *
+ *   1. clear what is provably abandoned (staging, half-finished retirements,
+ *      an interrupted activation);
+ *   2. RE-VERIFY the installed desired pack by digest — a fresh process has no
+ *      verification cache, so this reads every byte;
+ *   3. corrupt, absent, failed or interrupted → reinstall it (download, or
+ *      `fromArchive` with no network), through the full candidate flow;
+ *   4. installed but marked unhealthy → re-run the startup probe on it and,
+ *      if it passes, start its health record afresh.
+ *
+ * Allowed under any update policy: it is an administrator's command.
+ */
+export async function repairRuntime(options: {
+  harnessId: SupportedLocalHarnessId;
+  fromArchive?: string;
+  onProgress?: (status: RuntimeInstallStatus) => void;
+}): Promise<{ status: RuntimeInstallStatus; actions: string[] }> {
+  const actions: string[] = [];
+  const resolved = resolveInstallTarget(options);
+  if (!resolved.ok) return { status: resolved.status, actions };
+  const { key, versionRoot, expected } = resolved;
+
+  if (await recoverInterruptedActivation({ key, versionRoot })) actions.push("restored an interrupted activation");
+  const staging = await sweepAbandonedStaging(key);
+  if (staging.removed > 0) actions.push(`removed ${staging.removed} abandoned staging director${staging.removed === 1 ? "y" : "ies"}`);
+  const { sweepRetired } = await import("./runtime-lifecycle.js");
+  const retired = await sweepRetired(key);
+  if (retired > 0) actions.push(`finished removing ${retired} retired version${retired === 1 ? "" : "s"}`);
+
+  const verified = await readVerifiedRuntimeStatus({ harnessId: options.harnessId, desiredOnly: true });
+  if (verified.state === "ready") {
+    const health = await readRuntimeHealth(versionRoot);
+    if (!isUnhealthy(health, expected.treeDigest)) {
+      actions.push(`verified ${expected.packVersion} byte for byte`);
+      return { status: await readRuntimeInstallStatus({ harnessId: options.harnessId }), actions };
+    }
+    const reprobed = await reprobeInstalledPack({ harnessId: options.harnessId, resolved, health });
+    if (!reprobed.ok) {
+      actions.push(reprobed.message);
+      return {
+        status: { state: "failed", packVersion: expected.packVersion, reason: "probe", stage: "probe", message: reprobed.message },
+        actions,
+      };
+    }
+    actions.push(`re-probed ${expected.packVersion} and cleared its unhealthy mark`);
+    return { status: await readRuntimeInstallStatus({ harnessId: options.harnessId }), actions };
+  }
+
+  actions.push(
+    verified.state === "corrupt"
+      ? `the installed ${expected.packVersion} does not verify; reinstalling it`
+      : `installing ${expected.packVersion}`,
+  );
+  const installed = await installRuntimePack({
+    harnessId: options.harnessId,
+    trigger: options.fromArchive !== undefined ? "provision" : "cli",
+    ...(options.fromArchive !== undefined ? { fromArchive: options.fromArchive } : {}),
+    ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+  });
+  return { status: installed.state === "ready" ? await readRuntimeInstallStatus({ harnessId: options.harnessId }) : installed, actions };
 }

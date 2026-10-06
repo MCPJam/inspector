@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BrowserSessionService } from "../session-service.js";
+import {
+  BrowserSessionService,
+  BrowserSessionServiceError,
+} from "../session-service.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -95,6 +98,51 @@ describe("BrowserSessionService", () => {
       box: { sandboxRowId: "sandbox-row-1" },
     });
     expect(requestFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a gate refusal's code and feature alongside its message", async () => {
+    const refuse = (body: unknown) =>
+      new BrowserSessionService({
+        baseUrl: "https://convex.example",
+        enabled: true,
+        fetch: vi.fn(
+          async () =>
+            new Response(JSON.stringify(body), {
+              status: 403,
+              headers: { "content-type": "application/json" },
+            }),
+        ) as unknown as typeof globalThis.fetch,
+      })
+        .getConversationSession({
+          projectId: "project-1",
+          conversationId: "chat-1",
+          bearer: "user-token",
+        })
+        .catch((error: unknown) => error);
+
+    const gated = await refuse({
+      error: "Hosted Browser is not currently available",
+      code: "FEATURE_UNAVAILABLE",
+      feature: "hosted-browser",
+    });
+    expect(gated).toBeInstanceOf(BrowserSessionServiceError);
+    expect(gated).toMatchObject({
+      status: 403,
+      detail: "Hosted Browser is not currently available",
+      code: "FEATURE_UNAVAILABLE",
+      feature: "hosted-browser",
+    });
+
+    // A refusal that names no code keeps the shape it always had.
+    const plain = (await refuse({
+      error: "Browser access refused",
+    })) as BrowserSessionServiceError;
+    expect(plain).toMatchObject({
+      status: 403,
+      detail: "Browser access refused",
+    });
+    expect(plain.code).toBeUndefined();
+    expect(plain.feature).toBeUndefined();
   });
 
   describe("saved profile archives (MJ-005)", () => {

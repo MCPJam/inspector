@@ -1386,9 +1386,9 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
           type: "content",
           value: [
             {
-              type: "media",
-              data: (output as { screenshotBase64: string }).screenshotBase64,
+              type: "file",
               mediaType: "image/png",
+              data: { type: "data", data: (output as { screenshotBase64: string }).screenshotBase64 },
             },
           ],
         })),
@@ -1411,7 +1411,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     expect(part.toolCallId).toBe("call-cu-1");
     expect(part.output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
     });
   });
 
@@ -1446,7 +1446,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
         execute: async () => implResult,
         toModelOutput: () => ({
           type: "content",
-          value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+          value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
         }),
         _mcpjamPreserveRawResultForUi: true,
       },
@@ -1460,7 +1460,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const part = (newMessages[0] as any).content[0];
     expect(part.output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
     });
     expect(part.result).toEqual(implResult);
   });
@@ -1620,7 +1620,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const part = (newMessages[0] as any).content[0];
     expect(part.output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
     });
     expect(part.result).toEqual(implResult);
   });
@@ -1652,7 +1652,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const part = (newMessages[0] as any).content[0];
     expect(part.output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
     });
     expect(part.result).toEqual(implResult);
   });
@@ -1695,7 +1695,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
     const part = (newMessages[0] as any).content[0];
     expect(part.output).toEqual({
       type: "content",
-      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
     });
     expect(part.result).toEqual(implResult);
     expect(readLinkedResource).toHaveBeenCalledWith({
@@ -1751,7 +1751,7 @@ describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)"
         abortController.abort();
         return {
           type: "content",
-          value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+          value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
         };
       }
     );

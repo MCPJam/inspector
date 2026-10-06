@@ -1,5 +1,6 @@
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
+  browserFeatureUnavailable,
   getConversationBrowser,
   openConversationBrowser,
   provisionConversationBrowser,
@@ -2298,6 +2299,9 @@ async function handleTurn(c: Context): Promise<Response> {
         },
         error.status,
       );
+    const unavailable = browserFeatureUnavailable(error);
+    if (unavailable)
+      return v1Error(c, "FORBIDDEN", unavailable.message, unavailable.details);
     throw error;
   } finally {
     clearTimeout(wallClock);

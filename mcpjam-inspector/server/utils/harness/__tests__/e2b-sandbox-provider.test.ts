@@ -48,6 +48,7 @@ vi.mock("e2b", () => ({
 }));
 
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
+import { HARNESS_TEMPLATE_PNPM_VERSION } from "../harness-bake.js";
 import {
   HarnessInfraSetupError,
   harnessFailureEvidenceOf,
@@ -129,6 +130,18 @@ describe("the pnpm guard", () => {
     await expect(provider().createSession()).resolves.toMatchObject({
       id: "sbx_1",
     });
+  });
+
+  it("installs the template's pinned pnpm, never whatever is current", async () => {
+    // A custom image or an old template has no pnpm, and the fallback used to
+    // be a bare `npm install -g pnpm` — which is how pnpm 11 reached hosted
+    // turns. The fallback is the same exact version the template bakes.
+    await provider().createSession();
+    const command = sandboxState.run.mock.calls[0]?.[0] as string;
+    expect(command).toBe(
+      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`
+    );
+    expect(command).toMatch(/pnpm@\d+\.\d+\.\d+$/);
   });
 });
 

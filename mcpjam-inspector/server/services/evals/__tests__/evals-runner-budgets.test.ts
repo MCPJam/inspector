@@ -461,6 +461,7 @@ describe.each(["local", "hosted"] as const)(
         streamTextMock.mockImplementation(({ abortSignal }) => ({
           consumeStream: () => waitForAbort(abortSignal),
           response: Promise.resolve({ messages: [] }),
+          responseMessages: Promise.resolve([]),
           steps: Promise.resolve([]),
           totalUsage: Promise.resolve({}),
           finishReason: Promise.resolve("stop"),
