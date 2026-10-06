@@ -90,6 +90,8 @@ jobs:
       DEFAULT_BACKEND_VITE_CONVEX_URL: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL || vars.STAGING_VITE_CONVEX_URL }}
       DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+      PUBLIC_PREVIEW_HOST: pr-${{ github.event.pull_request.number }}.mcpjam.dev
+      PUBLIC_PREVIEW_ORIGIN: https://pr-${{ github.event.pull_request.number }}.mcpjam.dev
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -173,13 +175,13 @@ jobs:
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
-            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_ENVIRONMENT=preview \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
-            WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
+            ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN" \
+            WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
             CONVEX_HTTP_URL="$DEFAULT_BACKEND_CONVEX_HTTP_URL"
 
@@ -239,9 +241,9 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL" \
-            WEB_ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL"
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
+            ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN" \
+            WEB_ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN"
 
       - name: Register preview URL with WorkOS staging
         if: steps.preview_domain.outputs.url != ''
@@ -400,6 +402,8 @@ jobs:
       DEFAULT_BACKEND_VITE_CONVEX_URL: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL || vars.STAGING_VITE_CONVEX_URL }}
       DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+      PUBLIC_PREVIEW_HOST: pr-be-${{ github.event.client_payload.backend_pr_number }}.mcpjam.dev
+      PUBLIC_PREVIEW_ORIGIN: https://pr-be-${{ github.event.client_payload.backend_pr_number }}.mcpjam.dev
     steps:
       # `client_payload.branch` is the *backend* PR's head ref, and for
       # `backend_pr_preview_requested` it is the only ref the dispatch sends
@@ -458,13 +462,13 @@ jobs:
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
-            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_ENVIRONMENT=preview \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
-            WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
+            ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN" \
+            WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
             CONVEX_HTTP_URL="$DEFAULT_BACKEND_CONVEX_HTTP_URL"
 
@@ -524,9 +528,9 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL" \
-            WEB_ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL"
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
+            ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN" \
+            WEB_ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN"
 
       - name: Register preview URL with WorkOS staging
         if: steps.preview_domain.outputs.url != ''
@@ -699,6 +703,8 @@ jobs:
       DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
       PREVIEW_BACKEND_CONFIGURED: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL != '' }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+      PUBLIC_PREVIEW_HOST: pr-${{ github.event.client_payload.inspector_pr_number }}.mcpjam.dev
+      PUBLIC_PREVIEW_ORIGIN: https://pr-${{ github.event.client_payload.inspector_pr_number }}.mcpjam.dev
     steps:
       # Never fall back to `client_payload.branch` here either: it names a
       # branch in mcpjam-backend, not in this repo. See the same checkout in
@@ -751,7 +757,7 @@ jobs:
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
-            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_ENVIRONMENT=preview \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
@@ -807,9 +813,9 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL" \
-            WEB_ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL"
+            MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app,$PUBLIC_PREVIEW_HOST" \
+            ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN" \
+            WEB_ALLOWED_ORIGINS="${{ steps.preview_domain.outputs.url }},$STAGING_APP_URL,$PUBLIC_PREVIEW_ORIGIN"
 
       - name: Register preview URL with WorkOS staging
         if: steps.preview_domain.outputs.url != ''
