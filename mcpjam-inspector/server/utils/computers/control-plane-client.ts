@@ -853,8 +853,9 @@ export async function releaseSandbox(args: {
 /**
  * What a turn heartbeat learned from one touch.
  *   - `touched` — the box is live and its idle clock restarted.
- *   - `gone`    — the box is released, reaping, or not this one (404/409), or
- *     the control plane predates the route (also a 404). Stop beating.
+ *   - `gone`    — the box is released, reaping, past its scope's lifetime
+ *     ceiling, or not this one (404/409), or the control plane predates the
+ *     route (also a 404). Stop beating.
  *   - `failed`  — anything else (network, 5xx, no credential). Keep beating:
  *     one missed touch costs nothing while the next lands inside the TTL.
  */

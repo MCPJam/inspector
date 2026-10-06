@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { needsEphemeralEvalSandbox } from "../needs-ephemeral-sandbox";
+import {
+  needsEphemeralEvalSandbox,
+  singleCaseHarnessBoxRefusal,
+} from "../needs-ephemeral-sandbox";
 
 /**
  * Which iterations get a disposable box booted for them.
@@ -62,7 +65,6 @@ describe("needsEphemeralEvalSandbox", () => {
         needsEphemeralEvalSandbox({
           harness: "claude-code",
           runId,
-          iterationId: "it-1",
         })
       ).toEqual({ needed: true, runtimeKind: "terminal" });
     }
@@ -78,16 +80,17 @@ describe("needsEphemeralEvalSandbox", () => {
           builtInToolIds: ["browser"],
           browserToolPolicy: POLICY,
           runId,
-          iterationId: "it-1",
         })
       ).toEqual({ needed: false, runtimeKind: "terminal" });
     }
   });
 
-  it("boots nothing for a single-case harness with no iteration to key it to", () => {
+  it("still books a box for a single-case harness whose iteration was not recorded", () => {
+    // Booking nothing here let the harness fall back to the member's personal
+    // computer. The runner refuses the missing iteration instead.
     expect(
       needsEphemeralEvalSandbox({ harness: "claude-code", runId: null })
-    ).toEqual({ needed: false, runtimeKind: "terminal" });
+    ).toEqual({ needed: true, runtimeKind: "terminal" });
   });
 
   it("boots a DESKTOP box for a declared browser policy", () => {
@@ -191,5 +194,42 @@ describe("needsEphemeralEvalSandbox", () => {
         runId: RUN,
       })
     ).toEqual({ needed: false, runtimeKind: "terminal" });
+  });
+});
+
+describe("singleCaseHarnessBoxRefusal", () => {
+  const POLICY = { mode: "allow_all" as const };
+
+  it("refuses a declared browser: the single-case box is only a terminal", () => {
+    const reason = singleCaseHarnessBoxRefusal({
+      builtInToolIds: ["browser"],
+      browserToolPolicy: POLICY,
+    });
+    expect(reason).toContain("browser tool policy");
+    expect(reason).toContain("as part of a suite");
+  });
+
+  it("refuses case attachments: they are seeded through a suite run", () => {
+    const reason = singleCaseHarnessBoxRefusal({ hasAttachments: true });
+    expect(reason).toContain("attached files");
+    expect(reason).toContain("as part of a suite");
+  });
+
+  it("admits a host whose browser would not be advertised anyway", () => {
+    // Same predicate as the suite path's desktop arm: no policy, or a replica
+    // that cannot advertise the browser, books no desktop there either.
+    expect(
+      singleCaseHarnessBoxRefusal({ builtInToolIds: ["browser"] })
+    ).toBeUndefined();
+    expect(
+      singleCaseHarnessBoxRefusal({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: POLICY,
+        hostedBrowserAvailable: false,
+      })
+    ).toBeUndefined();
+    expect(
+      singleCaseHarnessBoxRefusal({ builtInToolIds: ["bash"], hasAttachments: false })
+    ).toBeUndefined();
   });
 });

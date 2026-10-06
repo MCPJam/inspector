@@ -164,10 +164,11 @@ export function targetWantsSandbox(
  * one and didn't".
  *
  * Wire contract: the pin/reason pair is an explicit tri-state, and BOTH ABSENT
- * means a pre-B-isolation run snapshot, NOT "unavailable". Absence alone cannot
- * distinguish an old backend from a new backend with no image, and the two need
- * different behaviour — the first must keep today's suppression silently, the
- * second must say what's wrong.
+ * means "boot the default template" for a harness target with a computer, and
+ * otherwise a pre-B-isolation run snapshot, NOT "unavailable". Absence alone
+ * cannot distinguish an old backend from a new backend with no image, and the
+ * two need different behaviour — the first must keep today's suppression
+ * silently, the second must say what's wrong.
  */
 export type SandboxIntent =
   | { kind: "provision"; runtimeKind: "terminal" | "desktop-browser" }
@@ -272,6 +273,9 @@ export async function provisionAttemptSandbox(
     surface: "swarm",
     provision: () => provisionAttemptBox(args),
     release: releaseAttemptSandbox,
+    // The attempt's signal: a stopped run stops beating even if its session
+    // never unwinds to the release.
+    ...(args.signal ? { signal: args.signal } : {}),
   });
   if (!acquired.ok) return acquired.refusal;
   const { binding, release } = acquired.box;

@@ -950,12 +950,14 @@ async function runJourneyFanOut(
                 ? "This target runs the " +
                   target.harness +
                   " harness, which needs a disposable sandbox per session. " +
-                  // Only an UNAVAILABLE pin lands here: a harness target that
-                  // pinned nothing boots the default template instead
-                  // (`sandboxIntentFor`). The reason names the broken pin, and
-                  // the target is refused before any box is booted for it.
+                  // Only an UNAVAILABLE pin lands here, and only on a run
+                  // created before the backend began refusing such a target at
+                  // launch: a harness target that pinned nothing boots the
+                  // default template instead (`sandboxIntentFor`). The reason
+                  // names the broken pin, and the target is refused before any
+                  // box is booted for it.
                   (harnessTargetIntent.reason ??
-                    "This run pinned no computer image, so one cannot be created.")
+                    "The computer image this target pinned is unavailable, so one cannot be created.")
                 : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,
