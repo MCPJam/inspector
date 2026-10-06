@@ -76,14 +76,25 @@ export declare function failureIssueBody(input: {
   runUrl: string;
   commit: string | null;
 }): string;
-export declare function pinPullRequest(input: {
-  harnessId: string;
-  kind: "pin" | "equivalence";
-  version: string;
-  previous: string | null;
-  permitPrevious: boolean;
+export declare const PIN_INTENT_SCHEMA: "mcpjam.local-harness-pin-intent/1";
+export interface PinIntent {
+  schema: typeof PIN_INTENT_SCHEMA;
+  harness: string;
+  kind: "pin" | "equivalence" | "up-to-date";
+  run?: string;
+  previous?: string | null;
+  version?: string;
+  digests?: Record<string, string>;
+  fingerprint?: string;
+  conformance?: string;
+  permitPrevious?: boolean;
   permitReason?: string;
-  fingerprint: string;
-  runUrl: string;
-  commit: string | null;
-}): { branch: string; title: string; body: string };
+  record?: string;
+  sha256?: string;
+}
+export declare function checkPinIntent(intent: unknown): PinIntent;
+export declare function checkPinIntents(intents: readonly unknown[], harnessIds: readonly string[]): PinIntent[];
+export declare function pinSummary(intents: readonly PinIntent[]): string;
+export declare const GITHUB_READ_ATTEMPTS: number;
+export declare function setGithubRetryDelayForTests(delay: ((attempt: number) => Promise<void>) | null): void;
+export declare function githubClient(): { repo: string; api: (path: string, init?: RequestInit) => Promise<Response> };

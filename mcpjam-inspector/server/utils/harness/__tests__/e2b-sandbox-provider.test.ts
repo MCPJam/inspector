@@ -47,6 +47,7 @@ vi.mock("e2b", () => ({
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
 }));
 
+import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 import { HARNESS_TEMPLATE_PNPM_VERSION } from "../harness-bake.js";
 import {
@@ -289,6 +290,96 @@ describe("abort plumbing", () => {
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
       expect.objectContaining({ signal: controller.signal })
+    );
+  });
+});
+
+describe("bridge spawn", () => {
+  // `commands.run` stands in for both the foreground reaper and the
+  // background bridge; only a background call gets a process handle.
+  beforeEach(() => {
+    sandboxState.run.mockImplementation(
+      async (_command: string, opts?: { background?: boolean }) =>
+        opts?.background
+          ? { pid: 42, wait: () => new Promise(() => {}), kill: vi.fn() }
+          : { exitCode: 0, stdout: "", stderr: "" },
+    );
+  });
+  const STATE_DIR = "/home/user/.agent-runs/s-1/bridge";
+  const bridgeSpawn = {
+    command:
+      "node '/home/user/.bootstrap/bridge.mjs' --workdir '/home/user/w' " +
+      `--bridge-state-dir '${STATE_DIR}'`,
+    env: { BRIDGE_WS_PORT: "0", BRIDGE_CHANNEL_TOKEN: "t" },
+  };
+
+  it("lets each bridge bind a port of its own", async () => {
+    // A bridge outlives its turn. On one fixed port, a chat whose bridge is
+    // paused on an approval would block every other chat on the computer —
+    // or have to be killed for them, losing the approval.
+    const session = await provider().createSession();
+    expect(session.ports).toEqual([0]);
+  });
+
+  it("runs the bridge with no command timeout, so E2B cannot kill it after a minute", async () => {
+    // E2B's default command timeout (60s) applies to background commands too.
+    // It killed every bridge a minute after it started.
+    const session = await provider().createSession();
+    await session.spawn(bridgeSpawn);
+
+    const [, opts] = sandboxState.run.mock.calls.at(-1)!;
+    expect(opts).toMatchObject({ background: true, timeoutMs: 0 });
+  });
+
+  it("reaps the bridges no turn will reattach to before starting one", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+
+    await session.spawn(bridgeSpawn);
+
+    expect(sandboxState.run.mock.calls.map(([command]) => command)).toEqual([
+      reapHarnessBridgesCommand(STATE_DIR),
+      bridgeSpawn.command,
+    ]);
+    // Reaping needs no secrets; the session env stays with the bridge.
+    expect(sandboxState.run.mock.calls[0]![1]).not.toHaveProperty("envs");
+  });
+
+  it("reaps nothing for a spawn that is not a bridge", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+
+    await session.spawn({ command: "tail -f /dev/null" });
+
+    expect(sandboxState.run.mock.calls.map(([command]) => command)).toEqual([
+      "tail -f /dev/null",
+    ]);
+  });
+
+  it("reaps nothing for a bridge whose state dir it cannot read", async () => {
+    // Without the spawning bridge's state dir there is no sessions root to
+    // bound the reaper to, so it does not run at all.
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+
+    await session.spawn({ ...bridgeSpawn, command: "node bridge.mjs" });
+
+    expect(sandboxState.run.mock.calls.map(([command]) => command)).toEqual([
+      "node bridge.mjs",
+    ]);
+  });
+
+  it("still starts the bridge when reaping fails", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+    sandboxState.run.mockRejectedValueOnce(new Error("socket hang up"));
+
+    const proc = await session.spawn(bridgeSpawn);
+
+    expect(proc.pid).toBe(42);
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      bridgeSpawn.command,
+      expect.objectContaining({ background: true }),
     );
   });
 });
