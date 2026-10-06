@@ -8,6 +8,12 @@
  */
 import { vi, afterEach, beforeAll, afterAll } from "vitest";
 
+// The default guest authority is the hosted Inspector (`app.mcpjam.com`). A
+// test that reaches a guest route without stubbing `fetch` must never mint a
+// real guest in production, so the default points at a name that cannot
+// resolve. Tests that assert the real default delete this first.
+process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN ??= "https://guest-authority.invalid";
+
 // The local-harness installer refreshes the signed revocation list before an
 // install. Keep unit tests off the network: a closed loopback port fails fast,
 // which the refresh treats as "offline, keep the cache". Tests that exercise

@@ -135,7 +135,14 @@ if (typeof sdkVersion !== "string" || sdkVersion.trim() === "") {
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, rootDir, "");
+  // A launcher that resolved this instance's configuration
+  // (`bin/runtime-profile.mjs`) passes it in the environment and marks it.
+  // Then no `.env*` file is read at all — neither here nor for
+  // `import.meta.env` — so a value the selected profile left out cannot be
+  // filled in from another target's file.
+  const resolvedRuntime = process.env.MCPJAM_RESOLVED_RUNTIME === "1";
+  const envDir: string | false = resolvedRuntime ? false : rootDir;
+  const env = loadEnv(mode, envDir, "");
 
   // Sentry `dist`. Set by whichever pipeline runs this build; a checkout that
   // names no surface is `local`, and an unrecognised one throws — same
@@ -145,7 +152,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     root: clientDir,
-    envDir: rootDir,
+    envDir,
     // Vite would derive this from the nearest package.json, so every dev server
     // started from this package shares one dep cache. The OAuth debugger e2e
     // runs two at once, and the second one's re-optimization answers the first

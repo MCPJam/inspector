@@ -1,6 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { Hono } from "hono";
 import guestSession from "../guest-session.js";
+import { resetGuestAuthorityForTests } from "../../../utils/guest-authority.js";
 
 /**
  * A 5xx from this route must carry its cause into `webErrorMeta`, which is
@@ -31,6 +40,7 @@ describe("guest-session 5xx diagnosability", () => {
       "test-guest-session-secret";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    resetGuestAuthorityForTests();
     // The upstream is down: this is the shape that produced the 07-22 rows.
     global.fetch = vi
       .fn()
@@ -42,6 +52,7 @@ describe("guest-session 5xx diagnosability", () => {
     process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = ORIGINAL_SHARED_SECRET;
+    resetGuestAuthorityForTests();
   });
 
   it("stashes the failure cause in webErrorMeta", async () => {
@@ -111,8 +122,18 @@ describe("guest-session 5xx diagnosability", () => {
     });
 
     it("names a relay network failure without leaking the host", async () => {
-      // Self-hosted: relays to the hosted Inspector instead of Convex.
+      // The standard OSS profile carries no backend secret, so its guest
+      // authority is the hosted Inspector rather than its Convex deployment.
       process.env.NODE_ENV = "production";
+      delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+      const savedOrigin = process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+      delete process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+      onTestFinished(() => {
+        if (savedOrigin !== undefined) {
+          process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN = savedOrigin;
+        }
+      });
+      resetGuestAuthorityForTests();
       global.fetch = vi.fn().mockRejectedValue(
         new TypeError("fetch failed", {
           cause: Object.assign(
