@@ -866,6 +866,63 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
+  it("declares it can run a participant's harness box only when it is a data plane", async () => {
+    const { app, token } = createWebTestApp();
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(fetchScenarioRuntimeConfigMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ harnessBox: true })
+    );
+
+    isComputersDataPlaneConfiguredMock.mockReturnValue(false);
+    await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(fetchScenarioRuntimeConfigMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ harnessBox: false })
+    );
+  });
+
+  it("a PARTICIPANT's harness (no computer in their config) runs on the conversation's box", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral" },
+        { harness: "claude-code", builtInToolIds: [], computer: undefined }
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(200);
+    expect(provisionScenarioSandboxMock).toHaveBeenCalledTimes(1);
+    expect(
+      handleMCPJamFreeChatModelMock.mock.calls.at(-1)?.[0]
+        ?.harnessSandboxBinding
+    ).toMatchObject({ sandboxRowId: "row_1", sandboxId: "sbx_conversation_1" });
+    expect(buildBashToolMock).not.toHaveBeenCalled();
+  });
+
+  it("a PARTICIPANT past the scenario's caps gets a 429 that says which cap", async () => {
+    provisionScenarioSandboxMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      error:
+        "This scenario already has 4 of its 4 participant sessions running. Try again in a few minutes.",
+      code: "participant_cap",
+    });
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: scenarioConfig(
+        { mode: "ephemeral" },
+        { harness: "claude-code", builtInToolIds: [], computer: undefined }
+      ),
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+
+    expect(response.status).toBe(429);
+    expect(await response.text()).toMatch(/4 of its 4 participant sessions/);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
   it("REFUSES a harness turn whose box could not be provisioned — no degrade, no personal computer", async () => {
     provisionScenarioSandboxMock.mockResolvedValue({
       ok: false,

@@ -278,6 +278,32 @@ function scenarioHarnessProvisionRefusal(
   harness: string,
   refusal: { status: number; error: string; code?: string } | undefined,
 ): WebRouteError {
+  // A PARTICIPANT past the scenario's caps. The backend's sentence already
+  // says which cap and when to come back; it is the whole message.
+  if (refusal?.status === 429) {
+    return new WebRouteError(
+      429,
+      ErrorCode.RATE_LIMITED,
+      refusal.error ||
+        "This scenario has reached its limit for participant sessions. Try again later.",
+      {
+        reason: "SCENARIO_PARTICIPANT_CAP",
+        ...(refusal.code ? { code: refusal.code } : {}),
+      },
+    );
+  }
+  // A refusal that names a fix (an image, a secret, access) keeps its status.
+  if (refusal?.status === 409 || refusal?.status === 403) {
+    return new WebRouteError(
+      refusal.status,
+      refusal.status === 409 ? ErrorCode.CONFLICT : ErrorCode.FORBIDDEN,
+      `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started: ${refusal.error}`,
+      {
+        reason: "SANDBOX_PROVISION_FAILED",
+        ...(refusal.code ? { code: refusal.code } : {}),
+      },
+    );
+  }
   const atCapacity = refusal?.status === 503;
   return new WebRouteError(
     atCapacity ? 503 : 502,
@@ -581,6 +607,10 @@ chatV2.post("/", async (c) => {
         // that has since moved (rebind, mode change, republish); it must
         // re-redeem rather than have its stale view honored.
         accessVersion,
+        // Only a server that can provision the conversation's box may be
+        // told a participant's harness runs on one; anyone else would have
+        // nowhere to run it.
+        harnessBox: canProvisionHarnessBoxes(),
       });
       if (runtime.ok) {
         // Environment-backed scenario (live-follow): the backend resolved the

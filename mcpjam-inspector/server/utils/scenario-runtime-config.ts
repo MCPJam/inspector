@@ -247,6 +247,12 @@ export function shouldWarnSecretsUndelivered(args: {
   return true;
 }
 
+/**
+ * The client version that can run a non-member participant's harness on the
+ * conversation's box. Pinned to the backend's literal of the same name.
+ */
+export const SCENARIO_HARNESS_BOX_VERSION = 1;
+
 export interface ScenarioSandboxPlan {
   /**
    * `provision` — reserve the per-conversation box, then bind bash to it.
@@ -388,6 +394,13 @@ export async function fetchScenarioRuntimeConfig(args: {
    * config the caller no longer has a current view of. Omitted ⇒ unchecked.
    */
   accessVersion?: number;
+  /**
+   * This caller can provision the conversation's disposable box, so a
+   * NON-MEMBER participant's harness may be granted on it. Declared by version
+   * (`SCENARIO_HARNESS_BOX_VERSION`): a caller that omits it — one that cannot
+   * provision — is told the participant has no harness, exactly as before.
+   */
+  harnessBox?: boolean;
   signal?: AbortSignal;
 }): Promise<ScenarioRuntimeConfigResult> {
   const url = new URL(
@@ -410,6 +423,9 @@ export async function fetchScenarioRuntimeConfig(args: {
         scenarioId: args.scenarioId,
         ...(typeof args.accessVersion === "number"
           ? { accessVersion: args.accessVersion }
+          : {}),
+        ...(args.harnessBox
+          ? { harnessBoxVersion: SCENARIO_HARNESS_BOX_VERSION }
           : {}),
       }),
       signal: args.signal,
