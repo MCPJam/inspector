@@ -65,6 +65,7 @@ import {
   classifyRateLimit,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
 import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
@@ -856,6 +857,58 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
       errorCode: "user_rate_limit",
       errorMessage: expect.stringContaining("in-flight"),
     });
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+  // `user_rate_limit` is the credit denial. Stored beside a sentence that is not
+  // a hold it reads as an empty wallet, and the run opens the credits dialog
+  // and locks hosted models. A busy reservation stops the target the same way
+  // but is not about credits, so the sessions it stops keep its own code.
+  it("keeps a busy reservation's own code on the sessions it stops", async () => {
+    // "spend" in the sentence is what folds the turn into rate_limited.
+    const message =
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam could not reserve spend capacity.","isRetryable":true}';
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? {
+            outcome: "rate_limited",
+            errorMessage: message,
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    const stopped = terminals.filter(
+      (t) => t.hostId === "host-1" && t.sessionIdx > 0,
+    );
+    expect(stopped.map((t) => t.sessionIdx).sort()).toEqual([1, 2]);
+    for (const row of stopped) {
+      expect(row).toMatchObject({
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+      });
+      // How the run reads the stored pair: not an empty wallet.
+      expect(
+        isCreditExhaustion({ code: row.errorCode, message: row.errorMessage }),
+      ).toBe(false);
+    }
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(3);
     expect(
       finalizePendingAttemptsMock.mock.calls.some(
         (c) => c[2].errorCode === "spend_cap_exceeded",

@@ -570,6 +570,27 @@ export function classifyRateLimit(
   return "provider_rate_limit";
 }
 
+/**
+ * What the sessions a wait stops are stored as. A hold keeps the credit denial
+ * its sentence quotes (`user_rate_limit`), which is how a stored row is read as
+ * a hold. A busy reservation keeps its own code: beside its sentence
+ * `user_rate_limit` reads as an empty wallet, and the run opens the credits
+ * dialog and locks hosted models for a wallet that was never empty.
+ */
+function transientStop(
+  message: string | undefined,
+  hint?: SpendRefusal,
+): { code: string; message: string } {
+  const refusal = hint ?? humanizeSwarmAttemptError(message);
+  return {
+    code:
+      refusal.code === "spending_reservation_busy"
+        ? "spending_reservation_busy"
+        : "user_rate_limit",
+    message: humanizeSwarmAttemptErrorMessage(message),
+  };
+}
+
 /** Concise structured log — ids + status only; NEVER prompts/transcripts/keys. */
 function logEvent(
   event: string,
@@ -1733,7 +1754,7 @@ async function runJourneyFanOut(
               sessionIdx + 1,
               sessionsPerTarget,
               cause === "transient_capacity"
-                ? humanizeSwarmAttemptErrorMessage(errorMessage)
+                ? transientStop(errorMessage, errorRefusal)
                 : undefined,
             );
             return;
@@ -2135,7 +2156,7 @@ async function markRemainingTargetAttemptsRateLimited(
   },
   fromIdx: number,
   toIdx: number,
-  transientMessage?: string,
+  transient?: { code: string; message: string },
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
@@ -2164,8 +2185,8 @@ async function markRemainingTargetAttemptsRateLimited(
         sessionIdx,
         status: "rate_limited",
         chatSessionId,
-        errorCode: transientMessage ? "user_rate_limit" : "rate_limited",
-        ...(transientMessage ? { errorMessage: transientMessage } : {}),
+        errorCode: transient ? transient.code : "rate_limited",
+        ...(transient ? { errorMessage: transient.message } : {}),
       });
       if (terminal.canceled) return;
     } catch (err) {
