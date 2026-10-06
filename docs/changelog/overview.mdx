@@ -9,6 +9,15 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-06
+
+#### Changed
+
+- **Stopping a swarm run now returns immediately and shows progress during cleanup** — the Stop button accepts the request right away instead of waiting for every in-flight session to settle. While sessions are still being wound down, the run detail page, the swarm overview row, and the launch wizard all show **Stop requested**. Once cleanup finishes, the label changes to **Stopped**. Both states survive a page refresh — the UI reads `cancelRequested` and `cleanupPending` from the run data rather than relying on a local click record.
+
+  - **Mixed-wave outcomes are preserved** — if one goal in a wave was stopped but another failed on its own, the wave shows **Completed with issues** rather than **Stopped**, so a real failure is never hidden behind the cancellation label.
+  - **API and SDK**: `cancelRequested` (boolean, optional) and `cleanupPending` (boolean, optional) are now present on goal-run and journey-run objects. The cancel endpoint (`POST …/cancel`) returns immediately; check `cleanupPending` in the response before treating the run as fully settled. Both fields are absent on older server responses — treat absence as `false`.
+
 ### 2026-10-05
 
 #### Changed
