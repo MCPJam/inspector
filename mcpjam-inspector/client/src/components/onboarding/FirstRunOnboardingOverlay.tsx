@@ -404,8 +404,8 @@ export function FirstRunOnboardingOverlay({
           : "Client ID is required when using custom credentials",
       );
       window.setTimeout(() => {
-        document
-          .querySelector<HTMLInputElement>('input[aria-required="true"]')
+        contentRef.current
+          ?.querySelector<HTMLInputElement>('input[aria-required="true"]')
           ?.focus();
       }, 0);
       return false;
@@ -970,11 +970,13 @@ export function FirstRunOnboardingOverlay({
                     clientId={clientId}
                     onClientIdChange={(value) => {
                       setClientId(value);
+                      if (value.trim()) setClearClientCredentials(false);
                       setClientIdError(null);
                     }}
                     clientSecret={clientSecret}
                     onClientSecretChange={(value) => {
                       setClientSecret(value);
+                      if (value.trim()) setClearClientCredentials(false);
                       setClientSecretError(null);
                     }}
                     clientIdError={clientIdError}
@@ -1267,11 +1269,13 @@ export function FirstRunOnboardingOverlay({
                   clientId={clientId}
                   onClientIdChange={(value) => {
                     setClientId(value);
+                    if (value.trim()) setClearClientCredentials(false);
                     setClientIdError(null);
                   }}
                   clientSecret={clientSecret}
                   onClientSecretChange={(value) => {
                     setClientSecret(value);
+                    if (value.trim()) setClearClientCredentials(false);
                     setClientSecretError(null);
                   }}
                   clientIdError={clientIdError}

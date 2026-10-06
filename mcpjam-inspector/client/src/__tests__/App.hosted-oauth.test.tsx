@@ -113,6 +113,9 @@ const {
     handleDisconnect: vi.fn(),
     handleRuntimeDisconnect: vi.fn(),
     handleReconnect: vi.fn(),
+    reconnectServerWithResult: vi
+      .fn()
+      .mockResolvedValue({ status: "connected" }),
     connectServerWithResult: vi.fn().mockResolvedValue({
       status: "missing",
       error: "Server was not found",
@@ -5433,71 +5436,85 @@ describe("App hosted OAuth callback handling", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("1 tool ready to use.")).toBeInTheDocument();
     expect(appState.connectServerWithResult).not.toHaveBeenCalled();
-    expect(appState.handleReconnect).not.toHaveBeenCalled();
+    expect(appState.reconnectServerWithResult).not.toHaveBeenCalled();
     expect(sonnerToast.success).not.toHaveBeenCalled();
   });
 
-  it("reconnects once when OAuth callback recovery releases without a terminal runtime row", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    const startedAt = Date.now() - 1_000;
-    localStorage.setItem(
-      "mcp-first-run-server-choice-state",
-      JSON.stringify({
-        status: "started",
+  it.each(["connected", "reauth"] as const)(
+    "reconnects once when OAuth callback recovery releases with %s outcome",
+    async (reconnectStatus) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      const startedAt = Date.now() - 1_000;
+      localStorage.setItem(
+        "mcp-first-run-server-choice-state",
+        JSON.stringify({
+          status: "started",
+          startedAt,
+          shownAt: startedAt,
+          attemptedServerName: "OAuth server",
+        }),
+      );
+      window.history.replaceState({}, "", "/home");
+      mockConvexAuthState.isAuthenticated = true;
+      mockWorkOsAuthState.user = null;
+      mockHostedShellGateState.value = "ready";
+      mockFreshGuestUser();
+      const server = {
+        name: "OAuth server",
+        connectionStatus: "disconnected" as const,
+        enabled: true,
+        retryCount: 0,
+        lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+        config: {
+          transportType: "http" as const,
+          url: "https://oauth.example/mcp",
+        },
+      };
+      const appState = createAppStateMock();
+      appState.reconnectServerWithResult.mockResolvedValue({
+        status: reconnectStatus,
+        error:
+          reconnectStatus === "reauth" ? "Authorization required" : undefined,
+      });
+      appState.appState.servers = { "OAuth server": server };
+      appState.projectServers = { "OAuth server": server };
+      appState.pendingDashboardOAuth = {
+        serverName: "OAuth server",
+        serverUrl: "https://oauth.example/mcp",
         startedAt,
-        shownAt: startedAt,
-        attemptedServerName: "OAuth server",
-      }),
-    );
-    window.history.replaceState({}, "", "/home");
-    mockConvexAuthState.isAuthenticated = true;
-    mockWorkOsAuthState.user = null;
-    mockHostedShellGateState.value = "ready";
-    mockFreshGuestUser();
-    const server = {
-      name: "OAuth server",
-      connectionStatus: "disconnected" as const,
-      enabled: true,
-      retryCount: 0,
-      lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
-      config: {
-        transportType: "http" as const,
-        url: "https://oauth.example/mcp",
-      },
-    };
-    const appState = createAppStateMock();
-    appState.appState.servers = { "OAuth server": server };
-    appState.projectServers = { "OAuth server": server };
-    appState.pendingDashboardOAuth = {
-      serverName: "OAuth server",
-      serverUrl: "https://oauth.example/mcp",
-      startedAt,
-    };
-    mockUseAppState.mockReturnValue(appState);
+      };
+      mockUseAppState.mockReturnValue(appState);
 
-    const { rerender } = render(<App />);
-    await screen.findByRole("heading", {
-      name: "Connecting to OAuth server",
-    });
-    expect(appState.handleReconnect).not.toHaveBeenCalled();
+      const { rerender } = render(<App />);
+      await screen.findByRole("heading", {
+        name: "Connecting to OAuth server",
+      });
+      expect(appState.reconnectServerWithResult).not.toHaveBeenCalled();
 
-    appState.pendingDashboardOAuth = null;
-    rerender(<App />);
+      appState.pendingDashboardOAuth = null;
+      rerender(<App />);
 
-    await waitFor(() =>
-      expect(appState.handleReconnect).toHaveBeenCalledOnce(),
-    );
-    expect(appState.handleReconnect).toHaveBeenCalledWith("OAuth server", {
-      forceOAuthFlow: false,
-      allowInteractiveOAuthFlow: false,
-      suppressErrors: true,
-      suppressSuccessToast: true,
-    });
+      await waitFor(() =>
+        expect(appState.reconnectServerWithResult).toHaveBeenCalledOnce(),
+      );
+      expect(appState.reconnectServerWithResult).toHaveBeenCalledWith(
+        "OAuth server",
+        {
+          forceOAuthFlow: false,
+          allowInteractiveOAuthFlow: false,
+          suppressErrors: true,
+          suppressSuccessToast: true,
+        },
+      );
 
-    rerender(<App />);
-    expect(appState.handleReconnect).toHaveBeenCalledOnce();
-  });
+      rerender(<App />);
+      expect(appState.reconnectServerWithResult).toHaveBeenCalledOnce();
+      if (reconnectStatus === "reauth") {
+        await screen.findByText("Your server needs authorization to connect.");
+      }
+    },
+  );
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
     clearHostedOAuthPendingState();

@@ -87,6 +87,7 @@ if (electronMcpReturnUrl) {
   let oauthBootRoot: Root | null = null;
   let oauthBootHost: HTMLDivElement | null = null;
   let oauthBootTimeoutId: number | null = null;
+  let oauthBootErrorObserver: MutationObserver | null = null;
   const dismissOAuthBootScreen = () => {
     if (oauthBootTimeoutId !== null) {
       window.clearTimeout(oauthBootTimeoutId);
@@ -96,10 +97,18 @@ if (electronMcpReturnUrl) {
       FIRST_RUN_OAUTH_OVERLAY_READY_EVENT,
       dismissOAuthBootScreen,
     );
-    oauthBootRoot?.unmount();
-    oauthBootHost?.remove();
+    oauthBootErrorObserver?.disconnect();
+    oauthBootErrorObserver = null;
+    const rootToUnmount = oauthBootRoot;
+    const hostToRemove = oauthBootHost;
     oauthBootRoot = null;
     oauthBootHost = null;
+    // The ready event fires from the app root's layout effect. Unmounting a
+    // different root in that commit triggers a React cross-root warning.
+    queueMicrotask(() => {
+      rootToUnmount?.unmount();
+      hostToRemove?.remove();
+    });
   };
 
   if (firstRunOAuthReturnServerName) {
@@ -117,6 +126,14 @@ if (electronMcpReturnUrl) {
       dismissOAuthBootScreen,
       { once: true },
     );
+    const appHost = document.getElementById("root");
+    if (appHost) {
+      oauthBootErrorObserver = new MutationObserver(() => {
+        // An auth/bootstrap error must not sit behind the callback card.
+        if (appHost.querySelector('[role="alert"]')) dismissOAuthBootScreen();
+      });
+      oauthBootErrorObserver.observe(appHost, { childList: true, subtree: true });
+    }
     // If auth or project setup fails before the onboarding overlay mounts,
     // expose the app's recovery UI instead of covering it indefinitely.
     oauthBootTimeoutId = window.setTimeout(dismissOAuthBootScreen, 20_000);

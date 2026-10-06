@@ -863,6 +863,55 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
+  it("keeps newly entered credentials after switching registration modes", async () => {
+    const { onConnectOwnServer } = renderOverlay(
+      {
+        status: "failed",
+        serverName: "Secure",
+        serverKind: "personal",
+        error: "Connection refused",
+      },
+      true,
+    );
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "https://secure.example/mcp" },
+    });
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "OAuth" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Advanced Settings" }),
+    );
+    const registrationSelect = screen
+      .getByText("Registration Strategy")
+      .parentElement?.querySelector('[role="combobox"]');
+    await userEvent.click(registrationSelect!);
+    await userEvent.click(
+      screen.getByRole("option", { name: /Preregistration/ }),
+    );
+    await userEvent.click(registrationSelect!);
+    await userEvent.click(screen.getByRole("option", { name: "Automatic" }));
+    await userEvent.click(registrationSelect!);
+    await userEvent.click(
+      screen.getByRole("option", { name: /Preregistration/ }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
+      target: { value: "new-client" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Your OAuth Client Secret"), {
+      target: { value: "new-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "new-client",
+        clientSecret: "new-secret",
+        clearClientSecret: false,
+      }),
+    );
+  });
+
   it("drops hidden OAuth credentials when authorization switches to bearer", async () => {
     const { onAuthorizeConnection } = renderOverlay(
       {

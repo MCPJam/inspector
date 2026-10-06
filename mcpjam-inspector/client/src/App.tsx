@@ -21,6 +21,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
+import { autoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
@@ -1011,10 +1012,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-        ? "pending"
-        : routeHosts.some((h) => h.hostId === idShapedHostId)
-          ? "live"
-          : "dead";
+      ? "pending"
+      : routeHosts.some((h) => h.hostId === idShapedHostId)
+      ? "live"
+      : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -1657,7 +1658,7 @@ export function ConformanceRoute() {
     projectId: convexProjectId,
   });
   const savedServerId = selectedServerEntry?.name
-    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    ? serversByName.get(selectedServerEntry.name) ?? null
     : null;
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -2199,7 +2200,8 @@ export function SkillsRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
   const servers = appState?.servers as
-    Record<string, ServerWithName> | undefined;
+    | Record<string, ServerWithName>
+    | undefined;
   // Names, in both modes. The local manager registers connections under their
   // name, and the hosted API layer resolves a name to its Convex server id
   // inside `buildServerRequest` — so resolving here too would duplicate that,
@@ -3479,6 +3481,7 @@ export default function App() {
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerWithResult,
     reconnectServerForClientSwitch,
     ensureServersReady,
     ensureHostedServerIdsForNames,
@@ -3792,23 +3795,33 @@ export default function App() {
         savedServer?.hasBearerToken === true;
       let headerPatch: Record<string, string> | undefined;
       if (authorizationHeader || clearSavedBearer) {
-        let existingHeaders =
-          savedServer?.config && "headers" in savedServer.config
-            ? savedServer.config.headers
+        const failHeaderLoad = (error: string) => {
+          setFirstRunConnectionState({
+            status:
+              firstRunAuthorizationRetryServerRef.current === effectiveServerName
+                ? "authorization-required"
+                : "failed",
+            serverName: effectiveServerName,
+            serverKind: "personal",
+            error,
+          });
+        };
+        const savedRequestHeaders =
+          savedServer?.config && "requestInit" in savedServer.config
+            ? savedServer.config.requestInit?.headers
             : undefined;
+        let existingHeaders = savedRequestHeaders
+          ? Object.fromEntries(new Headers(savedRequestHeaders).entries())
+          : undefined;
         if (
           savedServer?.hasHeaders &&
           (!existingHeaders || Object.keys(existingHeaders).length === 0)
         ) {
           const serverId = hostedServerIdsByName[effectiveServerName];
           if (!convexProjectId || !serverId) {
-            setFirstRunConnectionState({
-              status: "failed",
-              serverName: effectiveServerName,
-              serverKind: "personal",
-              error:
-                "Saved server headers are still loading. Try again before changing authentication.",
-            });
+            failHeaderLoad(
+              "Saved server headers are still loading. Try again before changing authentication.",
+            );
             return;
           }
           try {
@@ -3821,23 +3834,16 @@ export default function App() {
               ).headers ?? undefined;
           } catch {
             if (firstRunConnectionAttemptRef.current !== attemptId) return;
-            setFirstRunConnectionState({
-              status: "failed",
-              serverName: effectiveServerName,
-              serverKind: "personal",
-              error:
-                "Couldn't load this server's saved headers. Try again before changing authentication.",
-            });
+            failHeaderLoad(
+              "Couldn't load this server's saved headers. Try again before changing authentication.",
+            );
             return;
           }
           if (!existingHeaders) {
-            setFirstRunConnectionState({
-              status: "failed",
-              serverName: effectiveServerName,
-              serverKind: "personal",
-              error:
-                "Couldn't load this server's saved headers. Try again before changing authentication.",
-            });
+            if (firstRunConnectionAttemptRef.current !== attemptId) return;
+            failHeaderLoad(
+              "Couldn't load this server's saved headers. Try again before changing authentication.",
+            );
             return;
           }
         }
@@ -3946,6 +3952,22 @@ export default function App() {
   // that project is available instead of surfacing an unusable connection UI.
   const isFirstRunProjectReady =
     !isConnectionPreflightPending && (!HOSTED_MODE || isAuthenticated);
+  useEffect(() => {
+    if (
+      !HOSTED_MODE ||
+      !isSettledSignedOut ||
+      firstRunConnectionState.status !== "preparing"
+    )
+      return;
+    setPendingFirstRunConnection(null);
+    setFirstRunConnectionState({
+      status: "failed",
+      serverName: firstRunConnectionState.serverName,
+      serverKind: firstRunConnectionState.serverKind,
+      error:
+        "Your session could not be established. Sign in, then try connecting again.",
+    });
+  }, [isSettledSignedOut, firstRunConnectionState]);
   const requestFirstRunOAuthAuthorization = useCallback(
     (serverName: string, attemptId: number) =>
       new Promise<
@@ -4022,9 +4044,19 @@ export default function App() {
       // exists. Start a fresh first-run attempt so the settings selected in the
       // inline authentication editor are applied before retrying. Reconnecting
       // the saved row directly would silently discard those edits.
+      autoOAuthEscalation.markFailed({
+        projectId: convexProjectId,
+        serverId: hostedServerIdsByName[serverName],
+        serverName,
+      });
       openFirstRunServerConnection(draft);
     },
-    [firstRunConnectionState, openFirstRunServerConnection],
+    [
+      convexProjectId,
+      firstRunConnectionState,
+      hostedServerIdsByName,
+      openFirstRunServerConnection,
+    ],
   );
 
   useEffect(() => {
@@ -4081,7 +4113,8 @@ export default function App() {
     // has released its marker without doing so, retry exactly once rather than
     // leaving first-run onboarding on an endless spinner.
     firstRunOAuthReconnectServerRef.current = serverName;
-    void handleReconnect(serverName, {
+    const attemptId = firstRunConnectionAttemptRef.current;
+    void reconnectServerWithResult(serverName, {
       forceOAuthFlow: false,
       // OAuth has already returned to onboarding. This recovery pass may use
       // the credential that was just stored, but it must never launch a
@@ -4090,11 +4123,38 @@ export default function App() {
       allowInteractiveOAuthFlow: false,
       suppressErrors: true,
       suppressSuccessToast: true,
-    });
+    })
+      .then((result) => {
+        if (result.status === "connected") return;
+        if (firstRunConnectionAttemptRef.current !== attemptId) return;
+        firstRunOAuthReconnectServerRef.current = null;
+        setFirstRunConnectionState({
+          status: "authorization-required",
+          serverName,
+          serverKind: serverName === EXCALIDRAW_SERVER_NAME ? "demo" : "personal",
+          error: sanitizeHostedOAuthErrorMessage(
+            result.error,
+            "MCPJam could not verify the server after authorization. Try again.",
+          ),
+        });
+      })
+      .catch((error: unknown) => {
+        if (firstRunConnectionAttemptRef.current !== attemptId) return;
+        firstRunOAuthReconnectServerRef.current = null;
+        setFirstRunConnectionState({
+          status: "authorization-required",
+          serverName,
+          serverKind: serverName === EXCALIDRAW_SERVER_NAME ? "demo" : "personal",
+          error: sanitizeHostedOAuthErrorMessage(
+            error instanceof Error ? error.message : undefined,
+            "MCPJam could not verify the server after authorization. Try again.",
+          ),
+        });
+      });
   }, [
     appState.servers,
     firstRunConnectionState,
-    handleReconnect,
+    reconnectServerWithResult,
     pendingDashboardOAuth,
   ]);
 
@@ -4185,6 +4245,11 @@ export default function App() {
 
     if (server.connectionStatus === "failed") {
       if (server.lastError === OAUTH_AUTHORIZATION_CANCELLED_MESSAGE) {
+        autoOAuthEscalation.markFailed({
+          projectId: convexProjectId,
+          serverId: hostedServerIdsByName[firstRunConnectionState.serverName],
+          serverName: firstRunConnectionState.serverName,
+        });
         firstRunOAuthReturnServerRef.current = null;
         firstRunAuthorizationRetryServerRef.current = null;
         firstRunOAuthReconnectServerRef.current = null;
@@ -4235,7 +4300,9 @@ export default function App() {
   }, [
     appState.servers,
     clearPendingDashboardOAuth,
+    convexProjectId,
     firstRunConnectionState,
+    hostedServerIdsByName,
     pendingDashboardOAuth,
   ]);
 
@@ -6529,7 +6596,7 @@ export default function App() {
       registrationMode: savedServer.registrationMode,
       oauthScopes: savedServer.oauthFlowProfile?.scopes
         ?.trim()
-        .split(",")
+        .split(/[,\s]+/)
         .map((scope) => scope.trim())
         .filter(Boolean),
       clientId: savedServer.oauthFlowProfile?.clientId,

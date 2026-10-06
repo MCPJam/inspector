@@ -1,4 +1,7 @@
-import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
+import {
+  serverCheckQueue,
+  isServerCheckQueueError,
+} from "@/lib/server-check-queue";
 import { startDesktopOperation } from "@/lib/desktop-diagnostics";
 import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
 import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
@@ -327,7 +330,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     "headers",
   );
   const customHeaders = hasExplicitHeaderPatch
-    ? (formData.secretPatch?.headers ?? {})
+    ? formData.secretPatch?.headers ?? {}
     : {
         ...(existingOAuthConfig.customHeaders ?? {}),
         ...(formData.headers ?? {}),
@@ -545,8 +548,8 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
     typeof error === "string"
       ? error
       : error instanceof Error
-        ? error.message
-        : "";
+      ? error.message
+      : "";
 
   if (!errorMessage) {
     return false;
@@ -984,11 +987,20 @@ export function useServerState({
   const oauthCallbackHandledRef = useRef(new Set<string>());
   const opTokenRef = useRef<Map<string, number>>(new Map());
   const checkWasConnectedRef = useRef(new Map<string, boolean>());
-  useEffect(() => serverCheckQueue.onCancel((_projectId, name) => {
-    opTokenRef.current.set(name, (opTokenRef.current.get(name) ?? 0) + 1);
-    const currentScope = tryResolveProjectServer(name);
-    if (currentScope?.projectId === _projectId) dispatch({ type: "CONNECT_CANCELLED", name, wasConnected: checkWasConnectedRef.current.get(name) ?? false });
-  }), [dispatch]);
+  useEffect(
+    () =>
+      serverCheckQueue.onCancel((_projectId, name) => {
+        opTokenRef.current.set(name, (opTokenRef.current.get(name) ?? 0) + 1);
+        const currentScope = tryResolveProjectServer(name);
+        if (currentScope?.projectId === _projectId)
+          dispatch({
+            type: "CONNECT_CANCELLED",
+            name,
+            wasConnected: checkWasConnectedRef.current.get(name) ?? false,
+          });
+      }),
+    [dispatch],
+  );
   const nextOpToken = (name: string) => {
     const current = opTokenRef.current.get(name) ?? 0;
     const next = current + 1;
@@ -1026,8 +1038,8 @@ export function useServerState({
         access === "membership"
           ? "You no longer have access to this project. Ask a project owner for access, then reconnect."
           : access === "identity"
-            ? "Your sign-in changed during authorization. Sign in with the original account, then reconnect."
-            : "This authorization needs to be restarted. Return to the server and reconnect.";
+          ? "Your sign-in changed during authorization. Sign in with the original account, then reconnect."
+          : "This authorization needs to be restarted. Return to the server and reconnect.";
       failPendingOAuthConnection(message);
       clearPendingOAuthAttempt(context.serverName, state);
       if (context.organizationId)
@@ -1351,7 +1363,7 @@ export function useServerState({
               activeHostConfig.connectionDefaults,
               perServerOverride,
             ).timeout
-          : (serverConfig.timeout ?? projectConnectionDefaults.requestTimeout),
+          : serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
       } as MCPServerConfig;
@@ -1462,7 +1474,8 @@ export function useServerState({
         defaults.timeoutMs = serverConfig.timeout;
       }
       const caps = serverConfig.clientCapabilities as
-        Record<string, unknown> | undefined;
+        | Record<string, unknown>
+        | undefined;
       if (caps && typeof caps === "object") defaults.clientCapabilities = caps;
       const ci = mcpProfile?.initialize?.clientInfo;
       if (ci && typeof ci === "object" && !Array.isArray(ci)) {
@@ -1597,8 +1610,8 @@ export function useServerState({
         serverOverride === effectiveProtocolVersion
           ? "server_override"
           : hostPin === effectiveProtocolVersion
-            ? "host_default"
-            : "unknown";
+          ? "host_default"
+          : "unknown";
 
       return {
         ...standardEventProps("use_server_state"),
@@ -1871,11 +1884,11 @@ export function useServerState({
       }
       const hasSecretOperation = Boolean(
         hasClientSecretValue ||
-        clearClientSecret ||
-        hasEnvSecretPatch ||
-        hasHeadersSecretPatch ||
-        (!secretOptions && config?.env !== undefined) ||
-        (!secretOptions && headers !== undefined),
+          clearClientSecret ||
+          hasEnvSecretPatch ||
+          hasHeadersSecretPatch ||
+          (!secretOptions && config?.env !== undefined) ||
+          (!secretOptions && headers !== undefined),
       );
 
       // Resolve "does a server with this name already exist?" from the local
@@ -3284,11 +3297,11 @@ export function useServerState({
           error instanceof Error
             ? error.message
             : typeof error === "object" &&
-                error !== null &&
-                "message" in error &&
-                typeof (error as { message?: unknown }).message === "string"
-              ? (error as { message: string }).message
-              : "Unknown error";
+              error !== null &&
+              "message" in error &&
+              typeof (error as { message?: unknown }).message === "string"
+            ? (error as { message: string }).message
+            : "Unknown error";
         if (!suppressErrorToast) {
           toast.error(`Error completing OAuth flow: ${errorMessage}`);
         }
@@ -3594,7 +3607,8 @@ export function useServerState({
       const token = nextOpToken(formData.name);
       let hostedServerId: string | undefined;
       let syncedConnectionTarget:
-        { projectId: string; serverId: string } | undefined;
+        | { projectId: string; serverId: string }
+        | undefined;
       const existingServerForSave = appState.servers[formData.name];
       const formOAuthProfile = buildOAuthProfileFromFormData(
         formData,
@@ -3604,8 +3618,8 @@ export function useServerState({
         (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
-              formData.hasClientSecret ||
-              existingServerForSave?.hasClientSecret,
+                formData.hasClientSecret ||
+                existingServerForSave?.hasClientSecret,
             )
           : false;
       const clientSecretSyncOptions = buildSecretSyncOptions(formData);
@@ -3619,7 +3633,7 @@ export function useServerState({
         enabled: true,
         useOAuth: formData.useOAuth ?? false,
         oauthProtocolMode: formData.useOAuth
-          ? (formData.oauthProtocolMode ?? "auto")
+          ? formData.oauthProtocolMode ?? "auto"
           : undefined,
         oauthFlowProfile: formOAuthProfile,
         hasClientSecret: nextHasClientSecret,
@@ -3714,8 +3728,8 @@ export function useServerState({
         const errorMessage = workspaceNameTaken
           ? `A server named "${formData.name}" already exists in this workspace. Choose a different name.`
           : syncErr instanceof Error
-            ? syncErr.message
-            : "Could not save the hosted server before connecting. Please try again.";
+          ? syncErr.message
+          : "Could not save the hosted server before connecting. Please try again.";
         dispatch({
           type: "CONNECT_FAILURE",
           name: formData.name,
@@ -3746,7 +3760,7 @@ export function useServerState({
       const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
       const storedServerUrlBeforeSave = HOSTED_MODE
         ? undefined
-        : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
+        : localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined;
       saveOAuthConfigToLocalStorage(formData);
 
       try {
@@ -3850,13 +3864,15 @@ export function useServerState({
               formData = { ...formData, ...proceed };
               const updatedEntry: ServerWithName = {
                 ...serverEntryForSave,
+                authMethod: formData.authMethod,
                 oauthFlowProfile: buildOAuthProfileFromFormData(
                   formData,
                   serverEntryForSave.oauthFlowProfile,
                 ),
                 oauthProtocolMode: formData.oauthProtocolMode ?? "auto",
                 registrationMode:
-                  formData.registrationMode ?? serverEntryForSave.registrationMode,
+                  formData.registrationMode ??
+                  serverEntryForSave.registrationMode,
                 oauthAllowPathScopedIssuer:
                   formData.oauthAllowPathScopedIssuer ??
                   serverEntryForSave.oauthAllowPathScopedIssuer,
@@ -4189,22 +4205,22 @@ export function useServerState({
                   },
                 }
               : // For XAA servers, offer a shortcut to the XAA Debugger so the
-                // dev can step through the handshake and pinpoint the failing
-                // claim (subject not provisioned, audience/issuer mismatch).
-                formData.useXaa
-                ? {
-                    action: {
-                      label: "Open XAA Debugger",
-                      onClick: () => {
-                        dispatch({
-                          type: "SELECT_SERVER",
-                          name: formData.name,
-                        });
-                        navigateApp(routePaths.xaaFlow);
-                      },
+              // dev can step through the handshake and pinpoint the failing
+              // claim (subject not provisioned, audience/issuer mismatch).
+              formData.useXaa
+              ? {
+                  action: {
+                    label: "Open XAA Debugger",
+                    onClick: () => {
+                      dispatch({
+                        type: "SELECT_SERVER",
+                        name: formData.name,
+                      });
+                      navigateApp(routePaths.xaaFlow);
                     },
-                  }
-                : undefined,
+                  },
+                }
+              : undefined,
           );
         }
       } catch (error) {
@@ -4299,19 +4315,19 @@ export function useServerState({
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile =
         formData.useOAuth || formData.useXaa
-          ? (options?.oauthProfile ??
+          ? options?.oauthProfile ??
             buildOAuthProfileFromFormData(
               formData,
               existingServer?.oauthFlowProfile,
             ) ??
-            existingServer?.oauthFlowProfile)
+            existingServer?.oauthFlowProfile
           : undefined;
       const nextHasClientSecret =
         (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
-              formData.hasClientSecret ||
-              existingServer?.hasClientSecret,
+                formData.hasClientSecret ||
+                existingServer?.hasClientSecret,
             )
           : false;
 
@@ -4326,7 +4342,7 @@ export function useServerState({
         oauthFlowProfile: nextOAuthProfile,
         useOAuth: formData.useOAuth ?? false,
         oauthProtocolMode: formData.useOAuth
-          ? (formData.oauthProtocolMode ?? existingServer?.oauthProtocolMode)
+          ? formData.oauthProtocolMode ?? existingServer?.oauthProtocolMode
           : undefined,
         hasClientSecret: nextHasClientSecret,
         hasEnv:
@@ -4381,8 +4397,8 @@ export function useServerState({
         hostedWriteTarget?.projectId ?? effectiveActiveProjectId;
       const activeHostedProjectId =
         effectiveActiveProjectId && effectiveActiveProjectId !== "none"
-          ? (effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
-            effectiveActiveProjectId)
+          ? effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+            effectiveActiveProjectId
           : null;
       // A pinned hosted write can outlive an OAuth redirect that changes the
       // ambient project. Convex still updates the pinned row, but this client
@@ -4579,10 +4595,12 @@ export function useServerState({
           projectId: resolved.projectId,
         })) as RemoteServer[];
         const target = rows?.find(
-          (row) => row._id === resolved.serverId &&
-            remoteServerBelongsToProject(row, resolved.projectId)
+          (row) =>
+            row._id === resolved.serverId &&
+            remoteServerBelongsToProject(row, resolved.projectId),
         );
-        if (!target) throw new Error("OAuth server is no longer in this project");
+        if (!target)
+          throw new Error("OAuth server is no longer in this project");
         if (
           target.useOAuth !== true ||
           (target.authMethod !== undefined &&
@@ -4598,7 +4616,8 @@ export function useServerState({
             useXaa: false,
             oauthImportTransition: { kind: "prepare" },
           });
-          if (!authChange) throw new Error("Could not prepare OAuth token import");
+          if (!authChange)
+            throw new Error("Could not prepare OAuth token import");
         }
         await importHostedOAuthTokens({
           projectId: resolved.projectId,
@@ -4623,14 +4642,17 @@ export function useServerState({
             : {}),
           clientInformation: {
             clientId: tokens.clientId,
-            ...(tokens.clientSecret ? { clientSecret: tokens.clientSecret } : {}),
+            ...(tokens.clientSecret
+              ? { clientSecret: tokens.clientSecret }
+              : {}),
           },
           tokens: normalizedTokens,
         });
       } catch (error) {
-        let message = error instanceof Error
-          ? error.message
-          : "Could not store OAuth tokens";
+        let message =
+          error instanceof Error
+            ? error.message
+            : "Could not store OAuth tokens";
         if (authChange) {
           try {
             await convexUpdateServer({
@@ -4882,7 +4904,7 @@ export function useServerState({
     const hasServerPayload = (cliConfig: any): boolean =>
       Boolean(
         (Array.isArray(cliConfig.servers) && cliConfig.servers.length > 0) ||
-        cliConfig.command,
+          cliConfig.command,
       );
 
     const formDataFromCliServer = (
@@ -4891,7 +4913,8 @@ export function useServerState({
     ): ServerFormData => ({
       name: server.name || fallbackName,
       type: (server.type === "sse" ? "http" : server.type || "stdio") as
-        "stdio" | "http",
+        | "stdio"
+        | "http",
       command: server.command,
       args: server.args || [],
       url: server.url,
@@ -4938,9 +4961,9 @@ export function useServerState({
 
       const hasActiveConvexProject = Boolean(
         activeProject?.sharedProjectId &&
-        effectiveActiveProjectId &&
-        effectiveActiveProjectId !== "none" &&
-        !useLocalFallback,
+          effectiveActiveProjectId &&
+          effectiveActiveProjectId !== "none" &&
+          !useLocalFallback,
       );
       if (isLoadingProjects || !hasActiveConvexProject) {
         return;
@@ -5052,16 +5075,22 @@ export function useServerState({
   );
 
   useEffect(() => {
-    const projectId = activeProject?.sharedProjectId ?? effectiveActiveProjectId;
+    const projectId =
+      activeProject?.sharedProjectId ?? effectiveActiveProjectId;
     if (!projectId) return;
     serverCheckQueue.keepProject(projectId);
-  }, [activeProject?.sharedProjectId, effectiveActiveProjectId, previewedHostIdForToast]);
+  }, [
+    activeProject?.sharedProjectId,
+    effectiveActiveProjectId,
+    previewedHostIdForToast,
+  ]);
 
   const handleDisconnect = useCallback(
     async (serverName: string) => {
       checkWasConnectedRef.current.delete(serverName);
       const queuedScope = tryResolveProjectServer(serverName);
-      if (queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
+      if (queuedScope)
+        serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
       logger.info("Disconnecting from server", { serverName });
       dispatch({ type: "DISCONNECT", name: serverName });
@@ -5097,7 +5126,8 @@ export function useServerState({
       // this, a late completion can overwrite this disconnect with success or
       // failure and reopen a canceled onboarding attempt.
       const queuedScope = tryResolveProjectServer(serverName);
-      if (queuedScope) serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
+      if (queuedScope)
+        serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
       const resolved = tryResolveProjectServer(serverName);
       autoOAuthEscalation.markFailed({
@@ -5228,7 +5258,10 @@ export function useServerState({
       serverName: string,
       options?: ReconnectServerInternalOptions,
     ): Promise<EnsureServerConnectionResult> => {
-      const reconnectForAttempt = (...args: Parameters<typeof guardedReconnectServer>) => guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
+      const reconnectForAttempt = (
+        ...args: Parameters<typeof guardedReconnectServer>
+      ) =>
+        guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
       // Snapshot before anything awaits. `reportError` runs at the END of a
@@ -5326,7 +5359,10 @@ export function useServerState({
         };
       }
 
-      checkWasConnectedRef.current.set(serverName, server.connectionStatus === "connected");
+      checkWasConnectedRef.current.set(
+        serverName,
+        server.connectionStatus === "connected",
+      );
       if (!options?.connectionIntent)
         dispatch({
           type: "RECONNECT_REQUEST",
@@ -5474,7 +5510,8 @@ export function useServerState({
           );
         } catch (error) {
           if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
-          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
+          if (options?.queueSignal && isServerCheckQueueError(error))
+            throw error;
           const errorMessage =
             error instanceof Error
               ? error.message
@@ -5519,7 +5556,8 @@ export function useServerState({
           });
         } catch (error) {
           if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
-          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
+          if (options?.queueSignal && isServerCheckQueueError(error))
+            throw error;
           if (isStaleOp(serverName, token)) {
             return {
               status: "superseded",
@@ -5758,7 +5796,8 @@ export function useServerState({
           hadSyncedOAuthRetry = true;
         } catch (error) {
           if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
-          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
+          if (options?.queueSignal && isServerCheckQueueError(error))
+            throw error;
           if (isStaleOp(serverName, token)) {
             return {
               status: "superseded",
@@ -5939,7 +5978,7 @@ export function useServerState({
         };
       } catch (error) {
         if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
-          if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
+        if (options?.queueSignal && isServerCheckQueueError(error)) throw error;
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         if (isStaleOp(serverName, token)) {
@@ -6019,7 +6058,7 @@ export function useServerState({
     [executeReconnectServerInternal, dispatch],
   );
 
-  const handleReconnect = useCallback(
+  const reconnectServerWithResult = useCallback(
     async (
       serverName: string,
       options?: {
@@ -6058,7 +6097,7 @@ export function useServerState({
             };
         }
       }
-      await reconnectServerInternal(serverName, {
+      return reconnectServerInternal(serverName, {
         forceOAuthFlow: options?.forceOAuthFlow,
         connectionIntent,
         allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? true,
@@ -6068,6 +6107,14 @@ export function useServerState({
       });
     },
     [reconnectServerInternal],
+  );
+  const handleReconnect = useCallback(
+    async (
+      ...args: Parameters<typeof reconnectServerWithResult>
+    ): Promise<void> => {
+      await reconnectServerWithResult(...args);
+    },
+    [reconnectServerWithResult],
   );
 
   /**
@@ -6127,7 +6174,11 @@ export function useServerState({
       // owns the outcome — not a failure. Treat it as a no-op so the
       // client-switch recycle doesn't surface a spurious "Failed to reconnect"
       // toast.
-      if (result.status === "connected" || result.status === "superseded" || result.error === "Server check cancelled") {
+      if (
+        result.status === "connected" ||
+        result.status === "superseded" ||
+        result.error === "Server check cancelled"
+      ) {
         return;
       }
       throw new Error(result.error || `Failed to reconnect ${serverName}`);
@@ -6409,15 +6460,15 @@ export function useServerState({
           oauthTokens: originalServer?.oauthTokens,
           oauthFlowProfile:
             formData.useOAuth || formData.useXaa
-              ? (buildOAuthProfileFromFormData(
+              ? buildOAuthProfileFromFormData(
                   formData,
                   originalServer?.oauthFlowProfile,
-                ) ?? originalServer?.oauthFlowProfile)
+                ) ?? originalServer?.oauthFlowProfile
               : undefined,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
           oauthProtocolMode: formData.useOAuth
-            ? (formData.oauthProtocolMode ?? originalServer?.oauthProtocolMode)
+            ? formData.oauthProtocolMode ?? originalServer?.oauthProtocolMode
             : undefined,
           xaaAuthzIssuer:
             formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
@@ -6632,6 +6683,7 @@ export function useServerState({
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerWithResult,
     connectServerWithResult,
     reconnectServerForClientSwitch,
     ensureServersReady,

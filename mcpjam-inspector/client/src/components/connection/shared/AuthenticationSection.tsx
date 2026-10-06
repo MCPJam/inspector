@@ -1,4 +1,4 @@
-import { useEffect, useState, type Ref } from "react";
+import { useEffect, useId, useState, type Ref } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
@@ -118,7 +118,9 @@ interface AuthenticationSectionProps {
   projectDefaultIdentity?: { subject: string; email: string } | null;
   xaaDcrClientId?: string;
   xaaDcrTokenEndpointAuthMethod?:
-    "client_secret_post" | "client_secret_basic" | "none";
+    | "client_secret_post"
+    | "client_secret_basic"
+    | "none";
   xaaDcrIssuer?: string;
   xaaDcrClientSecretExpiresAt?: number;
   xaaDcrRegisteredAt?: number;
@@ -229,6 +231,7 @@ export function AuthenticationSection({
   // itself if they clear it back to empty).
   const [isReplacingSecret, setIsReplacingSecret] = useState(false);
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
+  const bearerTokenErrorId = useId();
 
   const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
   // Keep the XAA option visible if a server is already configured with it,
@@ -343,7 +346,7 @@ export function AuthenticationSection({
   // revealed value; once the user starts editing it tracks their replacement.
   const secretFieldValue = isReplacingSecret
     ? clientSecret
-    : (visibleRevealedClientSecret ?? "");
+    : visibleRevealedClientSecret ?? "";
   const showClientCredentials =
     registrationMode === "preregistered" || useCustomClientId;
   const effectiveXaaRegistrationMode =
@@ -431,8 +434,8 @@ export function AuthenticationSection({
                   ? "Host policy: enterprise-managed — uses Cross-App Access for this server."
                   : "Host policy: enterprise-managed — fails to connect until an XAA client registration is added or an explicit method overrides."
                 : autoSelectsXaa
-                  ? "Uses Cross-App Access for this server."
-                  : "Anonymous first, then OAuth if required."}
+                ? "Uses Cross-App Access for this server."
+                : "Anonymous first, then OAuth if required."}
             </p>
           )}
           {hostPolicyEnterpriseManaged && authType !== "auto" && (
@@ -479,7 +482,7 @@ export function AuthenticationSection({
                 }
                 aria-invalid={bearerTokenError ? true : undefined}
                 aria-describedby={
-                  bearerTokenError ? "bearer-token-error" : undefined
+                  bearerTokenError ? bearerTokenErrorId : undefined
                 }
                 className={cn(
                   "h-10 pr-10",
@@ -511,7 +514,7 @@ export function AuthenticationSection({
             </div>
             {bearerTokenError ? (
               <p
-                id="bearer-token-error"
+                id={bearerTokenErrorId}
                 className="text-xs text-destructive"
                 role="alert"
               >
