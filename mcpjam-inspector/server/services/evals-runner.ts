@@ -95,10 +95,14 @@ import {
   EVAL_BASH_TOOL_NAME,
 } from "../utils/built-in-tools/sandbox-bash.js";
 import {
-  isComputersDataPlaneConfigured,
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import {
+  acquireHarnessBox,
+  harnessBoxUnavailableReason,
+  type HarnessBox,
+} from "../utils/harness/harness-box.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import {
   collectHostedRecordingThenRelease,
@@ -5213,11 +5217,10 @@ const runLocalIteration = async ({
         // and RELEASE needs a server-to-server credential — without them
         // releaseEvalSandbox silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
-        if (!isComputersDataPlaneConfigured()) {
-          throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-          );
-        }
+        const unavailable = harnessBoxUnavailableReason(
+          "This eval pins a reproducible computer environment",
+        );
+        if (unavailable) throw new Error(unavailable);
         const capacityBudgetMs = Math.min(
           EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
           Math.max(0, iterationDeadlineAt - Date.now()),
@@ -6430,6 +6433,7 @@ const runHostedIterationWithBrowser = async (
     sandboxId: string;
     sandboxRowId: string;
     runtimeKind: "terminal" | "desktop-browser";
+    workdir?: string;
   }) => {
     // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
     // provisioned, never the project computer: an unattended run drives a
@@ -6577,8 +6581,7 @@ const runHostedIterationWithBrowser = async (
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
-  let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
-    null;
+  let evalBox: HarnessBox | null = null;
   /**
    * The video the hosted browser recorded, if this iteration used one.
    *
@@ -6588,22 +6591,24 @@ const runHostedIterationWithBrowser = async (
    * fires first — after the release there is nothing left to read.
    */
   let hostedRecording: HostedRecording | null = null;
+  const releaseEvalBox = async (sandboxRowId: string): Promise<void> => {
+    // Collect BEFORE the release — after it there is nothing left to read —
+    // and release REGARDLESS of how the collect went. Both facts live in the
+    // helper, which is where they are tested: a collector that throws or
+    // hangs past its bound yields no video and the box is released on the
+    // same schedule, because a box that outlives its iteration costs money
+    // until the GC cron reaps it and no video is worth that.
+    const collected = await collectHostedRecordingThenRelease({
+      sandboxRowId,
+      release: () => releaseEvalSandbox({ sandboxRowId }),
+    });
+    hostedRecording = hostedRecording ?? collected;
+  };
   const releaseEvalSandboxIfAny = async (): Promise<void> => {
-    if (evalSandbox?.ok) {
-      const { sandboxRowId } = evalSandbox.value;
-      evalSandbox = null;
-      // Collect BEFORE the release — after it there is nothing left to read —
-      // and release REGARDLESS of how the collect went. Both facts live in the
-      // helper, which is where they are tested: a collector that throws or
-      // hangs past its bound yields no video and the box is released on the
-      // same schedule, because a box that outlives its iteration costs money
-      // until the GC cron reaps it and no video is worth that.
-      const collected = await collectHostedRecordingThenRelease({
-        sandboxRowId,
-        release: () => releaseEvalSandbox({ sandboxRowId }),
-      });
-      hostedRecording = hostedRecording ?? collected;
-    }
+    const box = evalBox;
+    evalBox = null;
+    // Stops the turn heartbeat, then runs `releaseEvalBox` above.
+    await box?.release();
   };
   let prepared: PrepareChatV2Result;
   try {
@@ -6644,35 +6649,64 @@ const runHostedIterationWithBrowser = async (
       }
     }
     if (sandboxNeed.needed && !harnessExecutionTarget) {
-      if (!isComputersDataPlaneConfigured()) {
-        throw new Error(
-          sandboxNeed.runtimeKind === "desktop-browser"
-            ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : pinnedEnvironmentId
-              ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-              : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-        );
-      }
+      const unavailable = harnessBoxUnavailableReason(
+        sandboxNeed.runtimeKind === "desktop-browser"
+          ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration"
+          : pinnedEnvironmentId
+            ? "This eval pins a reproducible computer environment"
+            : "This eval runs on a harness, which boots a disposable computer per iteration",
+      );
+      if (unavailable) throw new Error(unavailable);
       const capacityBudgetMs = Math.min(
         EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
         Math.max(0, iterationDeadlineAt - Date.now()),
       );
       const capacityStartedAt = Date.now();
-      evalSandbox = await provisionEvalSandbox({
-        timeoutMs: capacityBudgetMs,
-        bearer: convexAuthToken,
-        runId: String(runId),
-        ...(iterationId ? { iterationId: String(iterationId) } : {}),
-        // Absent for a terminal box, so every request that predates desktops
-        // is byte-identical on the wire.
-        ...(sandboxNeed.runtimeKind === "desktop-browser"
-          ? { runtimeKind: "desktop-browser" as const }
-          : {}),
+      // The shared box holder: it keeps the box's idle clock running while the
+      // iteration's turns do, so a long harness turn cannot outlive its box.
+      const acquired = await acquireHarnessBox({
+        surface: "eval",
+        provision: async () => {
+          const result = await provisionEvalSandbox({
+            timeoutMs: capacityBudgetMs,
+            bearer: convexAuthToken,
+            runId: String(runId),
+            ...(iterationId ? { iterationId: String(iterationId) } : {}),
+            // Absent for a terminal box, so every request that predates
+            // desktops is byte-identical on the wire.
+            ...(sandboxNeed.runtimeKind === "desktop-browser"
+              ? { runtimeKind: "desktop-browser" as const }
+              : {}),
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
+          return result.ok
+            ? {
+                ok: true as const,
+                box: {
+                  sandboxRowId: result.value.sandboxRowId,
+                  sandboxId: result.value.sandboxId,
+                  // What ACTUALLY booted, read off the response rather than
+                  // off the request: a reuse answers with the row's own kind.
+                  ...(result.value.runtimeKind
+                    ? { runtimeKind: result.value.runtimeKind }
+                    : {}),
+                  ...(result.value.workdir
+                    ? { workdir: result.value.workdir }
+                    : {}),
+                },
+              }
+            : { ok: false as const, refusal: result };
+        },
+        release: releaseEvalBox,
+        // The ITERATION signal. Past its budget grace the iteration is
+        // abandoned and may never reach a release; the abort still stops the
+        // heartbeat, so the box goes idle and the reaper takes it.
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
-      if (!evalSandbox.ok) {
-        const error = new Error(describeEvalSandboxRefusal(evalSandbox));
-        if (evalSandbox.status === 503 && evalSandbox.code === "at_capacity") {
+      if (!acquired.ok) {
+        const refusal = acquired.refusal;
+        const error = new Error(describeEvalSandboxRefusal(refusal));
+        if (refusal.status === 503 && refusal.code === "at_capacity") {
           iterationMetadataBase.timeout = {
             clock: "sandboxCapacity",
             budgetMs: capacityBudgetMs,
@@ -6685,15 +6719,19 @@ const runHostedIterationWithBrowser = async (
         }
         throw error;
       }
+      evalBox = acquired.box;
     }
     const sandboxBinding =
-      evalSandbox?.ok && sandboxNeed.needed
+      evalBox && sandboxNeed.needed
         ? {
-            sandboxId: evalSandbox.value.sandboxId,
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            // What ACTUALLY booted, read off the response rather than off the
-            // request: a reuse answers with the row's own kind.
-            runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
+            sandboxId: evalBox.binding.sandboxId,
+            sandboxRowId: evalBox.binding.sandboxRowId,
+            runtimeKind: evalBox.binding.runtimeKind,
+            // `bash` roots at the box's workdir exactly as the harness does;
+            // dropping it ran the two in different directories.
+            ...(evalBox.binding.workdir
+              ? { workdir: evalBox.binding.workdir }
+              : {}),
           }
         : undefined;
     // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
@@ -7039,13 +7077,11 @@ const runHostedIterationWithBrowser = async (
     // harness as well: one box per iteration, never two. It rides the handler
     // options rather than the host config because the run's config snapshot is
     // member-readable, so a binding writable there would be forgeable.
-    ...(resolvedExecution.harness && evalSandbox?.ok
-      ? {
-          harnessSandboxBinding: {
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            sandboxId: evalSandbox.value.sandboxId,
-          },
-        }
+    //
+    // The whole binding, `workdir` included: dropping it rooted every eval
+    // harness Shell at whatever the turn fell back to instead of the box's.
+    ...(resolvedExecution.harness && evalBox
+      ? { harnessSandboxBinding: evalBox.binding }
       : {}),
     // How the sandbox reaches this inspector's MCP proxy. An eval run builds
     // an ephemeral authorized manager exactly as the hosted chat routes do, so

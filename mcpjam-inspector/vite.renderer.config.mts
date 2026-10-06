@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -30,8 +30,45 @@ const chatUiJsonTokensEntry = resolve(
 );
 const widgetReactEntry = resolve(__dirname, "../widget-react/src/index.ts");
 
+const NO_RENDERER_ENTRY = "virtual:mcpjam-no-renderer";
+
+/**
+ * Resolves the packaging build's only input to an empty module.
+ *
+ * forge's renderer list is a fixed array and its builds have no off switch, so
+ * the cheapest way to not build the client is to hand it one empty chunk.
+ */
+function emptyRendererEntry(): Plugin {
+  const resolved = `\0${NO_RENDERER_ENTRY}`;
+  return {
+    name: "mcpjam:empty-renderer-entry",
+    resolveId: (source) => (source === NO_RENDERER_ENTRY ? resolved : null),
+    load: (id) => (id === resolved ? "export {};" : null),
+  };
+}
+
 // https://vitejs.dev/config
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
+  // `electron-forge package` / `make` run this config with command "build",
+  // and nothing it produces is ever used. The packaged window loads the
+  // embedded server, which serves `dist/client` from `npm run build`
+  // (`createMainWindow` in src/main.ts), and this output lands under
+  // `client/.vite/renderer` (root is ./client), outside the `.vite` folder
+  // forge packs. Rebuilding the whole client here ran alongside the main bundle
+  // and starved it: locally the main build went from 39s to 12s without it,
+  // and the packed `.vite` is byte-identical either way.
+  // Dev (`electron-forge start`) is command "serve" and is unaffected.
+  if (command === "build") {
+    return {
+      root: "./client",
+      plugins: [emptyRendererEntry()],
+      build: {
+        copyPublicDir: false,
+        rollupOptions: { input: NO_RENDERER_ENTRY },
+      },
+    };
+  }
+
   // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, __dirname, "");
 
@@ -106,13 +143,6 @@ export default defineConfig(({ mode }) => {
       // ever builds the Electron renderer, and forge builds it on the machine
       // that packages it, so the build host's platform IS the target's.
       __BUILD_SURFACE__: JSON.stringify(electronBuildSurface(process.platform)),
-    },
-    build: {
-      // Desktop stack traces were unsymbolicated: the renderer build emitted
-      // no source maps at all, so every Electron issue in Sentry showed
-      // minified frames. The release workflows upload these to
-      // `inspector-client` and the maps are not shipped in the installer.
-      sourcemap: true,
     },
   };
 });
