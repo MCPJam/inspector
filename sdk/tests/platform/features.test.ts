@@ -1,0 +1,157 @@
+import { describe, expect, it } from "vitest";
+import * as operationsModule from "../../src/platform/operations.js";
+import {
+  ALL_OPERATIONS,
+  OPERATION_FEATURES,
+  PLATFORM_FEATURES,
+  PLATFORM_FEATURE_KEYS,
+  disabledOperations,
+  isOperationAvailable,
+  operationFeature,
+  type PlatformFeatureKey,
+} from "../../src/platform/index.js";
+
+/**
+ * Every operation the module exports: `ALL_OPERATIONS` plus the deprecated
+ * aliases kept out of it. Read from the exports rather than listed here, so a
+ * new alias is caught the same way a new operation is.
+ */
+function exportedOperationNames(): string[] {
+  const names = new Set<string>();
+  for (const value of Object.values(operationsModule)) {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof (value as { name?: unknown }).name === "string" &&
+      typeof (value as { execute?: unknown }).execute === "function" &&
+      "inputSchema" in value
+    ) {
+      names.add((value as { name: string }).name);
+    }
+  }
+  return [...names];
+}
+
+const known = new Set<string>(PLATFORM_FEATURE_KEYS);
+
+describe("OPERATION_FEATURES", () => {
+  it("lists exactly the operations, deprecated aliases included", () => {
+    // A new operation fails here until someone decides its feature.
+    const expected = new Set([
+      ...ALL_OPERATIONS.map((operation) => operation.name),
+      ...exportedOperationNames(),
+    ]);
+    expect(Object.keys(OPERATION_FEATURES).sort()).toEqual(
+      [...expected].sort()
+    );
+  });
+
+  it("names only known features", () => {
+    for (const [name, feature] of Object.entries(OPERATION_FEATURES)) {
+      if (feature === null) continue;
+      const keys = typeof feature === "string" ? [feature] : feature;
+      expect(keys.length, name).toBeGreaterThan(0);
+      for (const key of keys)
+        expect(known.has(key), `${name}: ${key}`).toBe(true);
+    }
+  });
+
+  it("labels every feature, and nothing else", () => {
+    expect(Object.keys(PLATFORM_FEATURES).sort()).toEqual(
+      [...PLATFORM_FEATURE_KEYS].sort()
+    );
+    expect(new Set(PLATFORM_FEATURE_KEYS).size).toBe(
+      PLATFORM_FEATURE_KEYS.length
+    );
+  });
+});
+
+describe("operationFeature", () => {
+  it("reads the table, and knows nothing it does not list", () => {
+    expect(operationFeature("start_conformance_run")).toBe("conformance");
+    expect(operationFeature("get_me")).toBeNull();
+    expect(operationFeature("not_an_operation")).toBeUndefined();
+    expect(operationFeature("__proto__")).toBeUndefined();
+    expect(operationFeature("constructor")).toBeUndefined();
+  });
+
+  it("gives a deprecated alias the feature of its replacement", () => {
+    expect(operationFeature("list_journeys")).toBe(
+      operationFeature("list_goals")
+    );
+    expect(operationFeature("list_scenarios")).toBe(
+      operationFeature("list_studies")
+    );
+    expect(operationFeature("list_hosts")).toBe(
+      operationFeature("list_clients")
+    );
+  });
+});
+
+describe("isOperationAvailable", () => {
+  it("keeps released operations available with nothing reported", () => {
+    expect(isOperationAvailable("get_me", {})).toBe(true);
+    expect(isOperationAvailable("list_chat_sessions", {})).toBe(true);
+  });
+
+  it("fails closed on a gated feature that is missing or not true", () => {
+    expect(isOperationAvailable("start_conformance_run", {})).toBe(false);
+    expect(
+      isOperationAvailable("start_conformance_run", { conformance: false })
+    ).toBe(false);
+    expect(
+      isOperationAvailable("start_conformance_run", {
+        conformance: "yes" as unknown as boolean,
+      })
+    ).toBe(false);
+    expect(
+      isOperationAvailable("start_conformance_run", { conformance: true })
+    ).toBe(true);
+    // Inherited properties are not reported features.
+    expect(
+      isOperationAvailable(
+        "start_conformance_run",
+        Object.create({ conformance: true }) as Record<string, boolean>
+      )
+    ).toBe(false);
+  });
+
+  it("makes a multi-feature operation available when any feature is", () => {
+    expect(isOperationAvailable("set_share_mode", {})).toBe(false);
+    expect(isOperationAvailable("set_share_mode", { sandboxes: true })).toBe(
+      true
+    );
+    expect(
+      isOperationAvailable("set_share_mode", { "unified-share-evals": true })
+    ).toBe(true);
+  });
+
+  it("treats an operation it does not know as unavailable", () => {
+    expect(isOperationAvailable("not_an_operation", {})).toBe(false);
+  });
+});
+
+describe("disabledOperations", () => {
+  const allOn = Object.fromEntries(
+    PLATFORM_FEATURE_KEYS.map((key) => [key, true])
+  ) as Record<PlatformFeatureKey, boolean>;
+
+  it("disables nothing when every feature is on", () => {
+    expect(disabledOperations(allOn)).toEqual([]);
+  });
+
+  it("disables every gated operation, and only those, when none is", () => {
+    const disabled = new Set(disabledOperations({}));
+    for (const [name, feature] of Object.entries(OPERATION_FEATURES)) {
+      expect(disabled.has(name), name).toBe(feature !== null);
+    }
+  });
+
+  it("disables exactly one feature's operations when only it is off", () => {
+    const disabled = disabledOperations({ ...allOn, "hosted-browser": false });
+    expect(disabled.sort()).toEqual(
+      ["drive_chat_session_browser", "observe_chat_session_browser"].sort()
+    );
+  });
+});
