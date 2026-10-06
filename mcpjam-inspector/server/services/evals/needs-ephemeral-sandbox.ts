@@ -52,6 +52,10 @@ export interface EphemeralEvalSandboxNeed {
  * a harness, keyed to the iteration (the control plane authorizes the
  * iteration itself, since there is no run). A pinned image or a browser alone
  * boots nothing there — admission refuses a host that needs one instead.
+ *
+ * Needed whether or not the iteration was recorded. A harness with no box
+ * falls back to the member's personal computer, so a missing iteration is the
+ * runner's to REFUSE, never a reason to book nothing.
  */
 export function needsEphemeralEvalSandbox(args: {
   pinnedEnvironmentId?: string | undefined;
@@ -75,28 +79,11 @@ export function needsEphemeralEvalSandbox(args: {
    */
   hostedBrowserAvailable?: boolean;
   runId: unknown;
-  /** The iteration a single-case box is keyed to. Unread for a suite run. */
-  iterationId?: unknown;
 }): EphemeralEvalSandboxNeed {
   if (args.runId === null || args.runId === undefined) {
-    return {
-      needed:
-        Boolean(args.harness) &&
-        args.iterationId !== null &&
-        args.iterationId !== undefined,
-      runtimeKind: "terminal",
-    };
+    return { needed: Boolean(args.harness), runtimeKind: "terminal" };
   }
-  const wantsBrowser =
-    (args.builtInToolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID) &&
-    parseBrowserToolPolicy(args.browserToolPolicy, {
-      source: "needs-ephemeral-sandbox",
-      // The delivery parse a few lines later in the runner reports a malformed
-      // policy; this one only decides whether to book a box.
-      quiet: true,
-    }) !== undefined &&
-    args.hostedBrowserAvailable !== false;
-  if (wantsBrowser) {
+  if (declaresUnattendedBrowser(args)) {
     // A browser needs the DESKTOP image whatever else is true. A pinned
     // environment alongside it is refused by the control plane
     // (`desktop_pin_conflict`) with a sentence the run surfaces — deliberately
@@ -108,4 +95,54 @@ export function needsEphemeralEvalSandbox(args: {
     needed: Boolean(args.pinnedEnvironmentId) || Boolean(args.harness),
     runtimeKind: "terminal",
   };
+}
+
+/**
+ * The browser arm's whole condition: the tool attached, a policy that parses,
+ * and a replica that can advertise it. Shared with the single-case refusal
+ * below so the two cannot disagree about what "declares a browser" means.
+ */
+export function declaresUnattendedBrowser(args: {
+  builtInToolIds?: readonly string[] | undefined;
+  browserToolPolicy?: unknown;
+  hostedBrowserAvailable?: boolean;
+}): boolean {
+  return (
+    (args.builtInToolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID) &&
+    parseBrowserToolPolicy(args.browserToolPolicy, {
+      source: "needs-ephemeral-sandbox",
+      // The delivery parse in the runner reports a malformed policy; this one
+      // only decides whether to book a box.
+      quiet: true,
+    }) !== undefined &&
+    args.hostedBrowserAvailable !== false
+  );
+}
+
+/**
+ * What a SINGLE-CASE harness box cannot give a host, as the refusal to show.
+ *
+ * That box is a terminal keyed to the iteration. A browser needs a desktop,
+ * which only a suite run boots, and case attachments are seeded through the
+ * run (`/evals/sandbox/attachments`). Running anyway would drop the browser or
+ * the files and score the result as an ordinary one, so the runner's rule
+ * applies: fail, do not downgrade. `undefined` when nothing is missing.
+ */
+export function singleCaseHarnessBoxRefusal(args: {
+  builtInToolIds?: readonly string[] | undefined;
+  browserToolPolicy?: unknown;
+  hostedBrowserAvailable?: boolean;
+  hasAttachments?: boolean;
+}): string | undefined {
+  const missing = declaresUnattendedBrowser(args)
+    ? "declares a browser tool policy, which needs a desktop computer"
+    : args.hasAttachments
+      ? "has attached files, which are seeded through a suite run"
+      : undefined;
+  if (!missing) return undefined;
+  return (
+    `This case runs on a harness and ${missing}, but a single-case run boots ` +
+    "only a terminal computer for its iteration. Run it as part of a suite " +
+    "instead. It was refused rather than run with that silently missing."
+  );
 }

@@ -796,6 +796,21 @@ function memoizedBuiltinTools(
 // runs with `buildBrokerDummyAuth` placeholders pointed at the metered model
 // proxy, which normalizes its own per-protocol proxyBaseUrl.
 
+/**
+ * CLI environment every Claude Code turn runs with, whatever its effort.
+ *
+ * Background tasks are off because a turn cannot carry one. The bridge ends
+ * the turn on the CLI's first `result` and closes the query, so a subagent or
+ * shell command the model sends to the background (`run_in_background`, or the
+ * CLI auto-backgrounding a slow one) has nowhere to report: the model tells
+ * the user "I'll let you know when it's ready" and the answer never reaches
+ * the chat. Worse, the NEXT turn's resumed CLI first reports the stopped task
+ * with an empty `result`, which ends that turn before it answers the user.
+ * Off, the same subagent runs in the foreground and its answer comes back
+ * inside the turn that asked for it.
+ */
+const CLAUDE_CODE_TURN_ENV = { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" };
+
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
@@ -875,8 +890,9 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   createHarness({ auth, mcpJson, reasoningEffort }) {
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
-    // local session swaps this bootstrap for its verified pack's own
-    // (`withLocalPackBootstrap`), so the local pack bytes are untouched.
+    // local session swaps this bootstrap for the Inspector layer's
+    // (`withLocalRuntimeBootstrap`): the bridge it runs is the one compiled
+    // into the layer and re-hashed before every exec.
     return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
       auth,
@@ -909,9 +925,14 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
         ? {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
-            env: { CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
+            env: {
+              ...CLAUDE_CODE_TURN_ENV,
+              CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
+            },
           }
-        : { env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" } }),
+        : {
+            env: { ...CLAUDE_CODE_TURN_ENV, CLAUDE_CODE_EFFORT_LEVEL: "unset" },
+          }),
     });
   },
 };

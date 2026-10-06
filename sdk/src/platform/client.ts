@@ -4047,7 +4047,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * Stop a running goal run.
+   * Request a stop for a running goal run. Check cleanupPending before treating it as settled.
    *
    * Idempotent: cancelling an already-cancelled run succeeds with
    * `alreadyCanceled: true` rather than conflicting. A run that finished on
@@ -4323,7 +4323,7 @@ export class PlatformApiClient {
   }
 
   /**
-   * Stop a running journey run.
+   * Request a stop for a running journey run. Check cleanupPending before treating it as settled.
    *
    * Idempotent: cancelling an already-cancelled run succeeds with
    * `alreadyCanceled: true` rather than conflicting. A run that finished on
