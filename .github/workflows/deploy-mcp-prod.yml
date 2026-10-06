@@ -85,7 +85,8 @@ jobs:
       # what's live on staging is byte-identical (for the worker's
       # purposes) to what we'd ship. The mcp-relevant path list mirrors
       # deploy-mcp-staging.yml's `paths:` trigger filter, minus the
-      # workflow file itself (which isn't a build input).
+      # workflow file itself (which isn't a build input);
+      # .github/scripts/mcp-workflow-paths.test.mjs keeps the two in sync.
       - name: Require green staging for current MCP build inputs
         uses: actions/github-script@v9
         with:
@@ -139,6 +140,9 @@ jobs:
 
             const isMcpRelevant = (filename) =>
               filename.startsWith("mcp/") ||
+              filename.startsWith("design-system/") ||
+              filename.startsWith("sdk/") ||
+              filename.startsWith("evaluators/") ||
               filename === "package.json" ||
               filename === "package-lock.json" ||
               filename === ".changeset/config.json";
