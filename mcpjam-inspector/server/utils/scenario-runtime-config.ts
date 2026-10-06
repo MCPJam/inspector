@@ -183,10 +183,16 @@ export type ScenarioRuntimeConfig = RuntimeExecutionFields & {
    *
    * Never carries a template id or a build id: the image is re-resolved
    * server-side at provision.
+   *
+   * `harness: true` — the HARNESS runs on this box too, and the backend's
+   * reserve and lease authorizer admit this actor for it. A harness turn moves
+   * to the box ONLY when this is present: a marker without it (an older
+   * backend, or an actor the reserve would refuse) keeps the harness where it
+   * always ran.
    */
   computerSandbox?:
-    | { mode: "ephemeral" }
-    | { mode: "unavailable"; reason?: string };
+    | { mode: "ephemeral"; harness?: true }
+    | { mode: "unavailable"; reason?: string; harness?: true };
 };
 
 /**
@@ -205,6 +211,20 @@ export function readComputerSandboxMode(
   if (!raw || typeof raw !== "object") return null;
   const mode = (raw as { mode?: unknown }).mode;
   return mode === "ephemeral" || mode === "unavailable" ? mode : null;
+}
+
+/**
+ * Whether the backend runs this scenario's HARNESS on the conversation's box
+ * (`computerSandbox.harness === true` on a well-formed marker). Anything else
+ * — no marker, a shell-only marker from an older backend, a malformed value —
+ * is `false`: the harness keeps its old path rather than being refused.
+ */
+export function readComputerSandboxHarness(config: unknown): boolean {
+  if (readComputerSandboxMode(config) === null) return false;
+  return (
+    (config as { computerSandbox: { harness?: unknown } }).computerSandbox
+      .harness === true
+  );
 }
 
 /**

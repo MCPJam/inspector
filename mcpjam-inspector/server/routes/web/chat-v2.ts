@@ -107,6 +107,7 @@ import {
   shouldWarnSecretsUndelivered,
   readScenarioEnvironment,
   readComputerSandboxMode,
+  readComputerSandboxHarness,
   type ScenarioEnvironmentRuntime,
   type ScenarioSandboxPlan,
 } from "../../utils/scenario-runtime-config.js";
@@ -1781,17 +1782,24 @@ chatV2.post("/", async (c) => {
       resolved: runtimeSecrets ?? [],
     });
 
-    // Read for a HARNESS turn too: a backend that runs a member's harness on
-    // the conversation's box says so with this marker, and its absence (an
-    // older backend) keeps today's behaviour for both.
+    // A CLOUD harness needs a machine whether or not it asks for `bash`, and
+    // takes the conversation's box ONLY when the backend says its harness runs
+    // there (`computerSandbox.harness`). Without that field — an older backend,
+    // or an actor its reserve would refuse — a harness turn keeps its old path
+    // and reads no marker at all, as before. A local harness runs on the
+    // member's own machine and never takes a box.
+    const harnessWantsScenarioBox =
+      Boolean(resolvedExecution.harness) &&
+      !harnessExecutionTarget &&
+      isScenarioSession &&
+      Boolean(scenarioId) &&
+      readComputerSandboxHarness(hostRuntimeConfig);
     const computerSandboxMode =
-      isScenarioSession && scenarioId
+      isScenarioSession &&
+      scenarioId &&
+      (!resolvedExecution.harness || harnessWantsScenarioBox)
         ? readComputerSandboxMode(hostRuntimeConfig)
         : null;
-    // A CLOUD harness needs a machine whether or not it asks for `bash`. A
-    // local one runs on the member's own machine and needs no box.
-    const harnessWantsScenarioBox =
-      Boolean(resolvedExecution.harness) && !harnessExecutionTarget;
     let sandboxBinding: TrustedSandboxBinding | undefined;
     let sandboxNotices: SandboxNoticeReason[] | undefined;
     // Set only when the backend PEEKED (returned notices still pending). The

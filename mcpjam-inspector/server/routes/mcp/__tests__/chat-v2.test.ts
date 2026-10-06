@@ -229,11 +229,11 @@ vi.mock("../../../utils/scenario-runtime-config.js", async () => ({
   fetchScenarioRuntimeConfig: (...args: unknown[]) =>
     fetchScenarioRuntimeConfigMock(...args),
   // Pure; the real reader, so the route sees the marker exactly as served.
-  readComputerSandboxMode: (
+  readComputerSandboxHarness: (
     await vi.importActual<
       typeof import("../../../utils/scenario-runtime-config.js")
     >("../../../utils/scenario-runtime-config.js")
-  ).readComputerSandboxMode,
+  ).readComputerSandboxHarness,
 }));
 
 // Host-bound direct sessions (Playground `hostId`) resolve their host config
@@ -378,7 +378,7 @@ describe("POST /api/mcp/chat-v2", () => {
         config: {
           harness: "claude-code",
           computer: { kind: "personal" },
-          computerSandbox: { mode: "ephemeral" },
+          computerSandbox: { mode: "ephemeral", harness: true },
         },
       });
 
@@ -408,6 +408,31 @@ describe("POST /api/mcp/chat-v2", () => {
 
       const body = await res.json().catch(() => ({}));
       expect(body?.reason).not.toBe("not_a_data_plane");
+    });
+
+    it("leaves a harness scenario whose marker lacks the harness field (an older backend) to the usual gates", async () => {
+      for (const computerSandbox of [
+        { mode: "ephemeral" },
+        { mode: "unavailable", reason: "no ready build" },
+      ]) {
+        fetchScenarioRuntimeConfigMock.mockResolvedValue({
+          ok: true,
+          config: {
+            harness: "claude-code",
+            computer: { kind: "personal" },
+            computerSandbox,
+          },
+        });
+
+        const res = await postAuthenticatedJson({
+          scenarioId: "cbx_1",
+          messages: [{ role: "user", content: "hi" }],
+          model: { id: "gpt-4", provider: "openai" },
+        });
+
+        const body = await res.json().catch(() => ({}));
+        expect(body?.reason).not.toBe("not_a_data_plane");
+      }
     });
   });
 

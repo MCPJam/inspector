@@ -1,6 +1,8 @@
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
+import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
+import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { listBaseServers } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
@@ -3612,6 +3614,29 @@ export async function prepareSingleCaseExecution(
         harnessAdmission.reason,
         { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness },
       );
+    }
+    // That box is a terminal keyed to the iteration: it cannot carry a browser
+    // or the case's attachments, so a harness host or case needing either is
+    // refused here rather than run without it.
+    const builtInToolIds = effectiveHostConfig?.builtInToolIds;
+    const boxRefusal = harnessOfHostConfig(effectiveHostConfig)
+      ? singleCaseHarnessBoxRefusal({
+          builtInToolIds: Array.isArray(builtInToolIds)
+            ? builtInToolIds.filter(
+                (id): id is string => typeof id === "string",
+              )
+            : undefined,
+          browserToolPolicy: effectiveHostConfig?.browserToolPolicy,
+          hostedBrowserAvailable: hostedBrowserAdvertisable(),
+          hasAttachments:
+            Array.isArray(testCase.attachments) &&
+            testCase.attachments.length > 0,
+        })
+      : undefined;
+    if (boxRefusal) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, boxRefusal, {
+        reason: "EVAL_EXECUTION_UNAVAILABLE",
+      });
     }
   }
 
