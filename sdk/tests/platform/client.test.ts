@@ -4,6 +4,7 @@ import {
   DEFAULT_PLATFORM_USER_AGENT,
   PlatformApiClient,
   PlatformApiError,
+  isFeatureUnavailable,
 } from "../../src/platform/index.js";
 
 type FetchMock = ReturnType<typeof vi.fn>;
@@ -485,6 +486,42 @@ describe("PlatformApiClient", () => {
     expect(apiError.message).toBe("Server requires OAuth");
     expect(apiError.details).toEqual({ oauthRequired: true, serverId: "s1" });
     expect(apiError.endpoint).toBe("/projects/p1/servers/s1/doctor");
+  });
+
+  it("tells a feature that is off apart from a permission denial", async () => {
+    const refuse = (details?: Record<string, unknown>) =>
+      makeClient(
+        vi.fn(async () =>
+          jsonResponse(
+            { code: "FORBIDDEN", message: "Not available.", details },
+            { status: 403 }
+          )
+        )
+      )
+        .doctorServer({ projectId: "p1", serverId: "s1" })
+        .catch((caught: unknown) => caught);
+
+    // Both arrive as the same public FORBIDDEN; only `details.code` differs.
+    const off = await refuse({
+      code: "FEATURE_UNAVAILABLE",
+      feature: "conformance",
+    });
+    expect(off).toMatchObject({ code: "FORBIDDEN", status: 403 });
+    expect(isFeatureUnavailable(off)).toBe(true);
+    expect((off as PlatformApiError).details?.feature).toBe("conformance");
+
+    expect(isFeatureUnavailable(await refuse())).toBe(false);
+    expect(
+      isFeatureUnavailable(await refuse({ code: "account_suspended" }))
+    ).toBe(false);
+    // Only a platform error qualifies, whatever else carries the same shape.
+    expect(
+      isFeatureUnavailable(
+        Object.assign(new Error("x"), {
+          details: { code: "FEATURE_UNAVAILABLE" },
+        })
+      )
+    ).toBe(false);
   });
 
   it("captures Retry-After on 429 responses", async () => {
