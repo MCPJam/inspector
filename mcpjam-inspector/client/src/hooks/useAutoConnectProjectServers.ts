@@ -110,12 +110,19 @@ function isAttempted(
  * future "Retry all" affordance.
  */
 export function resetAutoConnectAttempts(projectId?: string): void {
+  // A dropped batch can no longer report, so close its loading toast now.
+  // Sonner loading toasts never close on their own.
   if (projectId === undefined) {
+    for (const batch of recycleBatchByProject.values()) {
+      toast.dismiss(batch.toastId);
+    }
     attemptedByProject.clear();
     lastSeenScopeByProject.clear();
     pendingRecycleScopeByProject.clear();
     recycleBatchByProject.clear();
   } else {
+    const batch = recycleBatchByProject.get(projectId);
+    if (batch) toast.dismiss(batch.toastId);
     attemptedByProject.delete(projectId);
     lastSeenScopeByProject.delete(projectId);
     pendingRecycleScopeByProject.delete(projectId);
