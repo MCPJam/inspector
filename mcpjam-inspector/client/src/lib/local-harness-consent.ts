@@ -313,16 +313,26 @@ export interface LocalHarnessRuntimeStatus {
     | "verifying"
     | "ready"
     | "corrupt"
+    | "revoked"
     | "failed"
     | "interrupted"
     | "unsupported-platform";
   packVersion?: string;
   percent?: number;
   message?: string;
-  reason?: "network" | "verification" | "disk" | "unknown";
+  reason?: "network" | "verification" | "disk" | "probe" | "unknown";
+  /** How far a failed install got. */
+  stage?: "disk-space" | "download" | "verify" | "probe" | "activate";
   attemptId?: string;
   runtimeRoot?: string;
+  /** For `ready`: the SELECTED pack's tree digest — what a grant must name. */
   digest?: string;
+  /** For `ready`: the build's desired pack, or the permitted previous one. */
+  role?: "desired" | "permitted";
+  /** For `ready`: selected although marked unhealthy (nothing healthier installed). */
+  health?: "unhealthy";
+  /** For `ready` on the permitted pack: the desired pack's own state. */
+  update?: LocalHarnessRuntimeStatus;
 }
 
 export interface LocalHarnessAvailabilityView {

@@ -869,8 +869,9 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   createHarness({ auth, mcpJson, reasoningEffort }) {
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
-    // local session swaps this bootstrap for its verified pack's own
-    // (`withLocalPackBootstrap`), so the local pack bytes are untouched.
+    // local session swaps this bootstrap for the Inspector layer's
+    // (`withLocalRuntimeBootstrap`): the bridge it runs is the one compiled
+    // into the layer and re-hashed before every exec.
     return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
       auth,

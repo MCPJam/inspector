@@ -48,7 +48,8 @@ jobs:
           node --test \
             .github/scripts/unpublished-versions.test.mjs \
             .github/scripts/release-pr.test.mjs \
-            .github/scripts/release-trigger.test.mjs
+            .github/scripts/release-trigger.test.mjs \
+            .github/scripts/local-harness-bot-pr.test.mjs
 
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
@@ -74,11 +75,19 @@ jobs:
       - name: Lint DESIGN.md against the pinned spec
         run: npm run design:lint
 
-      - name: Verify local runtime input fingerprint
-        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs
+      # Advisory: a moved fingerprint on a PR is what merging will publish,
+      # not a defect. `local-harness-pack-auto.yml` builds the pack on main and
+      # opens the pin PR that records it, so this only says which harness
+      # moves (in the job summary). The release gate is still strict.
+      - name: Report local runtime input fingerprints
+        run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory
 
-      - name: Verify pinned runtime remains publishable
-        run: node mcpjam-inspector/scripts/check-local-harness-release.mjs --assets
+      # No `check-local-harness-release.mjs --assets` here. It compares the
+      # PUBLISHED packs with this checkout, and packs publish only from main,
+      # so a PR that changes a pack input could never pass it and had to merge
+      # red. It also downloaded every pinned pack (~1.1 GB) on every PR. The
+      # published-asset check runs where it can be satisfied: before a release
+      # is versioned (prepare-release.yml) and before it publishes (release.yml).
 
       - name: Typecheck releasable packages
         run: npm run typecheck
