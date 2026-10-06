@@ -428,6 +428,61 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     );
   });
 
+  it("does NOT name a provider for the generic busy wording the live stream carries", async () => {
+    // What a backend that has not been redeployed wrote for the same refusal,
+    // after the runner's humanizer dropped the code from it.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = "MCPJam is temporarily busy. Please retry.";
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("reads a busy reservation by the code the live event carries, whatever its wording", async () => {
+    // The terminal event now brings the code the attempt is stored under, so
+    // the pane does not have to recognise a sentence while the row is still on
+    // its way.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const live = streamState.sessions[CHAT_SESSION_ID] as {
+      errorMessage: string;
+      errorCode?: string;
+    };
+    live.errorMessage = "Retry in a moment.";
+    live.errorCode = "spending_reservation_busy";
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still names the provider when the live event's code is the generic one", async () => {
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const live = streamState.sessions[CHAT_SESSION_ID] as {
+      errorMessage: string;
+      errorCode?: string;
+    };
+    live.errorMessage = "429 Too Many Requests";
+    live.errorCode = "rate_limited";
+    renderStep();
+    await openTheSession();
+
+    const card = await screen.findByTestId("swarm-live-pane-rate-limit");
+    expect(card).toHaveTextContent("Your provider hit its limit");
+  });
+
   it("explains an account limit above the table when other sessions succeeded", async () => {
     // With a success in the wave the run banner stays silent, so without this
     // the stopped sessions would be amber chips with no reason given.

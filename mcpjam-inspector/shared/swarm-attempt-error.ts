@@ -197,11 +197,12 @@ export function isBusyReservation(code?: string | null): boolean {
 
 /**
  * The busy reservation's own sentences: the backend's ("could not reserve
- * spending capacity because ...", and its older "spend capacity" wording) and
- * the one {@link humanizeSwarmAttemptError} words it with.
+ * spending capacity because ...", and its older "spend capacity" and "MCPJam
+ * is temporarily busy" wordings) and the one {@link humanizeSwarmAttemptError}
+ * words it with. All of them say MCPJam is the one waiting.
  */
 const BUSY_RESERVATION_SENTENCE =
-  /\bcould not reserve (?:spend|spending) capacity\b|\btemporarily busy reserving spending capacity\b/i;
+  /\bcould not reserve (?:spend|spending) capacity\b|\bMCPJam is temporarily busy\b|\btemporarily busy reserving spending capacity\b/i;
 
 /**
  * A busy reservation by its code, or by its own sentence when the code was

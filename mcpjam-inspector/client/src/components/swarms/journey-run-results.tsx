@@ -591,7 +591,8 @@ export function SwarmLiveStreamPane({
   // attempt row decides it: a whole-run spend-cap finalize stamps its code with
   // no message, so the stream's text alone cannot tell the two apart. A busy
   // reservation is a third thing: MCPJam's own wait, with no provider involved.
-  // The live event carries only the humanized sentence, so that counts too.
+  // Until the row lands the live event decides it, by the code it carries
+  // beside the humanized sentence, and by the sentence when it did not.
   const rateLimitInfo =
     outcome === "rate_limited"
       ? humanizeSwarmAttemptError(
@@ -599,7 +600,8 @@ export function SwarmLiveStreamPane({
           attempt?.errorCode,
         )
       : null;
-  const rateLimitCode = attempt?.errorCode ?? rateLimitInfo?.code;
+  const rateLimitCode =
+    attempt?.errorCode ?? live?.errorCode ?? rateLimitInfo?.code;
   const providerRateLimit =
     rateLimitInfo &&
     !isAccountLimit(rateLimitInfo.message, rateLimitCode) &&

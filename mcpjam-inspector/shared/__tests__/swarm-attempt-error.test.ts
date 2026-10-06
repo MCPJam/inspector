@@ -550,16 +550,34 @@ describe("isBusyReservationRefusal", () => {
   it("reads the code, and the busy sentence when the code was lost", () => {
     expect(isBusyReservationRefusal("spending_reservation_busy")).toBe(true);
     // A live event or stored row that kept only the sentence: the backend's,
-    // its older "spend capacity" wording, and the one the humanizer writes.
+    // its older wordings, and the one the humanizer writes.
     for (const message of [
       BACKEND,
       "MCPJam could not reserve spend capacity.",
+      "MCPJam is temporarily busy. Please retry.",
       humanizeSwarmAttemptError(BACKEND, "spending_reservation_busy").message,
     ]) {
       expect(isBusyReservationRefusal(undefined, message)).toBe(true);
       // Under the runner's own generic code, which says nothing.
       expect(isBusyReservationRefusal("rate_limited", message)).toBe(true);
     }
+  });
+
+  it("reads the generic wording the live event carries for a busy reservation", () => {
+    // What the runner's humanizer leaves of the backend's older body once the
+    // code is dropped: no "reserve" in it, only that MCPJam is busy.
+    const live = humanizeSwarmAttemptErrorMessage(
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+    );
+    expect(live).toBe("MCPJam is temporarily busy. Please retry.");
+    expect(isBusyReservationRefusal(undefined, live)).toBe(true);
+    expect(isBusyReservationRefusal("wallet_locked", live)).toBe(false);
+    expect(
+      isBusyReservationRefusal(
+        undefined,
+        `${live} Daily MCPJam model limit reached.`,
+      ),
+    ).toBe(false);
   });
 
   it("does not read a busy reservation out of another refusal", () => {

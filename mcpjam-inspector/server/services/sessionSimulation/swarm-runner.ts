@@ -1246,6 +1246,7 @@ async function runJourneyFanOut(
               type: "attempt_status",
               status: "failed",
               errorMessage: humanizeSwarmAttemptErrorMessage(message),
+              errorCode: "sandbox_unavailable",
             });
             await reportRunAttempt(convexHttpUrl, bearer, {
               projectId,
@@ -1344,6 +1345,7 @@ async function runJourneyFanOut(
                 type: "attempt_status",
                 status: failure.status,
                 errorMessage: failure.errorMessage,
+                errorCode: failure.errorCode,
               });
               await reportRunAttempt(convexHttpUrl, bearer, {
                 projectId,
@@ -1613,6 +1615,9 @@ async function runJourneyFanOut(
             ...(terminal.errorMessage
               ? { errorMessage: terminal.errorMessage }
               : {}),
+            // The humanized message has dropped the code; the run screen reads
+            // a busy reservation or an account limit by it before the row lands.
+            ...(terminal.errorCode ? { errorCode: terminal.errorCode } : {}),
           });
           try {
             await reportRunAttempt(convexHttpUrl, bearer, {

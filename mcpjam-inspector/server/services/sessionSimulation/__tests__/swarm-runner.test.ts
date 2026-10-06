@@ -1179,6 +1179,40 @@ describe("swarm runner — live stream emit", () => {
     expect(getRunningJourneyStreamHub("run-1")).toBeUndefined();
   });
 
+  // The humanized message the live event carries has dropped the code, so the
+  // run screen could not tell a busy reservation (MCPJam's own wait) from the
+  // user's provider throttling their key until the attempt row arrived.
+  it("carries the code the attempt is stored under on the terminal attempt_status", async () => {
+    const events: any[] = [];
+    runSyntheticHostSessionMock.mockImplementation(async () => {
+      getRunningJourneyStreamHub("run-1")!.subscribe((e) => events.push(e));
+      return {
+        outcome: "rate_limited",
+        errorMessage:
+          'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+        errorRefusal: { code: "spending_reservation_busy", httpStatus: 503 },
+      };
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = events.find(
+      (e) => e.type === "attempt_status" && e.status === "rate_limited",
+    );
+    expect(terminal).toMatchObject({
+      errorCode: "spending_reservation_busy",
+      errorMessage: "MCPJam is temporarily busy. Please retry.",
+    });
+    // The same pair the attempt row is written with.
+    const row = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status === "rate_limited");
+    expect(row).toMatchObject({
+      errorCode: terminal.errorCode,
+      errorMessage: terminal.errorMessage,
+    });
+  });
+
   it("wires emit on the adapter for every session", async () => {
     await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
