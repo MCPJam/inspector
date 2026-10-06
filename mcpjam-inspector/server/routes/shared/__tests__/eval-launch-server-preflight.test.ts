@@ -20,7 +20,11 @@ vi.mock("convex/browser", () => ({
   },
 }));
 
-import { prepareEvalRun, shouldSkipExecution } from "../evals";
+import {
+  prepareEvalRun,
+  runEvalsWithManager,
+  shouldSkipExecution,
+} from "../evals";
 import { WebRouteError } from "../../web/errors";
 
 function manager(args: {
@@ -32,27 +36,26 @@ function manager(args: {
     hasServer: () => true,
     getConnectionStatus: () => args.status,
     listTools: args.listTools,
-    getServerReplayConfigs: () => [],
   };
 }
+
+const request = (overrides: Record<string, unknown> = {}) =>
+  ({
+    suiteId: "suite-1",
+    suiteRerun: true,
+    serverIds: ["s1"],
+    serverNames: ["Linear"],
+    tests: [],
+    convexAuthToken: "token",
+    orgModelConfig: { providers: [] },
+    ...overrides,
+  }) as never;
 
 function launch(
   clientManager: ReturnType<typeof manager>,
   overrides: Record<string, unknown> = {},
 ) {
-  return prepareEvalRun(
-    clientManager as never,
-    {
-      suiteId: "suite-1",
-      suiteRerun: true,
-      serverIds: ["s1"],
-      serverNames: ["Linear"],
-      tests: [],
-      convexAuthToken: "token",
-      orgModelConfig: { providers: [] },
-      ...overrides,
-    } as never,
-  );
+  return prepareEvalRun(clientManager as never, request(overrides));
 }
 
 const disconnected = () =>
@@ -127,14 +130,10 @@ describe("eval launch server preflight", () => {
       );
     });
 
-    it("is handed its in-flight run without executing it", async () => {
+    it("is handed its in-flight run without executing or failing it", async () => {
       answerLookup(async () => ({ runId: "run-1" }));
-      const lookup = mocks.query.getMockImplementation()!;
-      mocks.query.mockImplementation(async (name: string, args: unknown) =>
-        name === "testSuites:resolveRunPluginServersForExecution"
-          ? { servers: [], unavailable: [], droppedSnapshotServerIds: [] }
-          : lookup(name, args),
-      );
+      // Nothing answers the setup queries, so any setup gate that ran would
+      // refuse and finalize the run as failed.
       mocks.mutation.mockImplementation(async (name: string) =>
         name === "testSuites:startTestSuiteRun"
           ? { runId: "run-1", testCases: [], deduped: true, status: "running" }
@@ -152,6 +151,25 @@ describe("eval launch server preflight", () => {
         serverUnreachable: true,
       });
       expect(shouldSkipExecution(prepared)).toBe(true);
+      expect(mocks.mutation.mock.calls.map(([name]) => name)).toEqual([
+        "testSuites:startTestSuiteRun",
+      ]);
+    });
+
+    it("is not executed by the inline runner either", async () => {
+      answerLookup(async () => ({ runId: "run-1" }));
+      mocks.mutation.mockImplementation(async (name: string) =>
+        name === "testSuites:startTestSuiteRun"
+          ? { runId: "run-1", testCases: [], deduped: true, status: "running" }
+          : null,
+      );
+
+      await expect(
+        runEvalsWithManager(
+          disconnected() as never,
+          request({ idempotencyKey: "trigger-1" }),
+        ),
+      ).resolves.toMatchObject({ runId: "run-1" });
     });
 
     it("with no run under its key is still refused", async () => {

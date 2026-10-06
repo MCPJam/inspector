@@ -2829,6 +2829,29 @@ export async function prepareEvalRun(
       ? { ciMetadata: launchContext.ciMetadata }
       : {}),
   });
+  // A run handed back through a failed preflight belongs to an earlier attempt
+  // and is never executed from here (`shouldSkipExecution`). Every gate below
+  // finalizes the run as failed when it refuses, which would fail a run that
+  // attempt may still be driving, so none of them runs.
+  if (serverUnreachable && runWasDeduped === true) {
+    return {
+      suiteId: resolvedSuiteId,
+      runId,
+      caseUpsert: {
+        committed: committedCases,
+        failed: failedCases,
+      },
+      recorder,
+      deduped: true,
+      status: existingRunStatus,
+      serverUnreachable,
+      execute: async () => {
+        throw new Error(
+          `eval run ${runId} was handed back without execution: its server failed the preflight`,
+        );
+      },
+    };
+  }
   if (
     githubExecutionPolicy() &&
     githubCredentialPolicy !== githubExecutionPolicy()
@@ -3287,7 +3310,6 @@ export async function prepareEvalRun(
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
-    ...(serverUnreachable ? { serverUnreachable } : {}),
     execute,
   };
 }
@@ -3297,7 +3319,9 @@ export async function runEvalsWithManager(
   request: RunEvalsWithManagerRequest,
 ) {
   const prepared = await prepareEvalRun(clientManager, request);
-  await prepared.execute();
+  if (!shouldSkipExecution(prepared)) {
+    await prepared.execute();
+  }
 
   return {
     success: true,
