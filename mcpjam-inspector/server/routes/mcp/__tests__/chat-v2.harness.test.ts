@@ -439,6 +439,8 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(response.status).toBe(200);
       expect(verifyAuthKitTokenMock).toHaveBeenCalledWith(
         "authkit-session-token",
+        undefined,
+        { allowMcpResourceAudience: true },
       );
       const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
       expect(engineArgs.harnessExecutionTarget).toMatchObject({
