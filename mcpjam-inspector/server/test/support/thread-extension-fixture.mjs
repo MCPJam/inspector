@@ -8,7 +8,7 @@ if (!directory) throw new Error("Pass a disposable output directory");
 await mkdir(directory, { recursive: true, mode: 0o700 });
 const bundle = await build({
   stdin: {
-    resolveDir: fileURLToPath(new URL("../../../", import.meta.url)),
+    resolveDir: fileURLToPath(new URL(".", import.meta.url)),
     loader: "ts",
     contents: `
   import { App } from '@modelcontextprotocol/ext-apps';

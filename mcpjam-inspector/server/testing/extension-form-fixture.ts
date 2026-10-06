@@ -1,9 +1,4 @@
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type {
-  ServerRequest,
-  ServerNotification,
-} from "@modelcontextprotocol/sdk/types.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import {
   createElicitInput,
   OpenAIFormSchema,
@@ -12,14 +7,7 @@ import { z } from "zod/v4";
 import { extendedFormFixture } from "../../shared/plugin-extensions/testing/form-fixtures.js";
 
 /** Opt-in synthetic supplement. Never registered by the product server. */
-export function registerExtensionFormFixture(
-  server: McpServer,
-  options: {
-    requestClient?: (
-      context: RequestHandlerExtra<ServerRequest, ServerNotification>,
-    ) => Parameters<typeof createElicitInput>[0]["server"];
-  } = {},
-) {
+export function registerExtensionFormFixture(server: McpServer) {
   const schemas = {
     "fixture.formEdges": extendedFormFixture,
     "fixture.largeForm": {
@@ -58,9 +46,14 @@ export function registerExtensionFormFixture(
         inputSchema: z.object({}),
         annotations: { readOnlyHint: true, destructiveHint: false },
       },
-      async (_args, context) => {
+      async () => {
+        // The extension package is typed against the v1 SDK. It only calls
+        // request(request, resultSchema) and getClientCapabilities(), which
+        // the v2 server provides with the same shape.
         const elicit = createElicitInput({
-          server: options.requestClient?.(context) ?? server.server,
+          server: server.server as unknown as Parameters<
+            typeof createElicitInput
+          >[0]["server"],
         });
         const result = await elicit(
           {
