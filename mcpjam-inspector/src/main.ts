@@ -65,6 +65,7 @@ import fs from "fs";
 // in `startHonoServer()` enforces that ordering.
 import {
   probeFreePort,
+  resolveServerPortAttempts,
   resolveServerStartPort,
 } from "./server-port-fallback.js";
 import { computeInstanceEnv } from "../bin/runtime-profile.mjs";
@@ -493,11 +494,13 @@ async function startHonoServer(): Promise<number> {
       // own API calls and ngrok would target the wrong local address.
       // Start from SERVER_PORT when the launcher set it: `electron:dev` picks
       // the free port the renderer's proxy already points at, so main and
-      // renderer agree on which server this window talks to.
+      // renderer agree on which server this window talks to. When it pinned
+      // the renderer to that port, main may not fall forward: the window
+      // would keep calling whoever owns SERVER_PORT.
       port = await probeFreePort(
         hostname,
         resolveServerStartPort(process.env, DEFAULT_SERVER_PORT),
-        SERVER_PORT_FALLBACK_ATTEMPTS,
+        resolveServerPortAttempts(process.env, SERVER_PORT_FALLBACK_ATTEMPTS),
         {
           onAttemptFailed: (failedPort, err) => {
             log.warn(

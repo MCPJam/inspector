@@ -35,6 +35,26 @@ export function resolveServerStartPort(
 }
 
 /**
+ * Set by `scripts/electron-dev.mjs` when the renderer's `/api` proxy already
+ * targets SERVER_PORT exactly.
+ */
+export const SERVER_PORT_PINNED_ENV = "MCPJAM_SERVER_PORT_PINNED";
+
+/**
+ * How many consecutive ports main may try. When the launcher pinned the
+ * renderer to SERVER_PORT, exactly one: binding the next port instead would
+ * leave the window calling whichever process owns SERVER_PORT, i.e. another
+ * Inspector. Failing loudly (the recovery dialog) is the only safe outcome.
+ * Otherwise the long-standing fallback walk applies.
+ */
+export function resolveServerPortAttempts(
+  env: NodeJS.ProcessEnv,
+  fallbackAttempts: number,
+): number {
+  return env[SERVER_PORT_PINNED_ENV] === "1" ? 1 : fallbackAttempts;
+}
+
+/**
  * Probe `startPort`, `startPort + 1`, ..., up to `maxAttempts` total, looking
  * for one that is free to bind on `hostname`. Returns the first port that
  * binds successfully (immediately closing the probe server before returning).

@@ -90,6 +90,38 @@ export async function findFreeServerPort({
   );
 }
 
+/**
+ * Set for the main process when the renderer's proxy is already pinned to
+ * SERVER_PORT. Mirrors `SERVER_PORT_PINNED_ENV` in `src/server-port-fallback.ts`.
+ */
+export const SERVER_PORT_PINNED_ENV = "MCPJAM_SERVER_PORT_PINNED";
+
+/**
+ * The ONE port both the renderer proxy and the main process will use.
+ *
+ * An explicit `--server-port N` is a promise to the renderer: its proxy
+ * targets N. If N is already taken, the only safe answer is to refuse:
+ * starting anyway would let main fall forward to N+1 while the window keeps
+ * calling N, i.e. some other Inspector (the bug this launcher exists to fix).
+ * Without an explicit port, the first free port from `start` is chosen.
+ */
+export async function resolveLaunchServerPort({
+  explicitPort,
+  start = DEFAULT_SERVER_PORT,
+  isFree = isPortFree,
+} = {}) {
+  if (explicitPort !== undefined) {
+    if (!(await isFree(explicitPort))) {
+      throw new Error(
+        `--server-port ${explicitPort} is already in use (another Inspector?). ` +
+          "Pick a free port, or omit --server-port to have one chosen for you.",
+      );
+    }
+    return explicitPort;
+  }
+  return findFreeServerPort({ start, isFree });
+}
+
 /** electron-forge's JS entry, run with this Node: no shell, no Windows .cmd shim. */
 function forgeCliEntry() {
   const require = createRequire(import.meta.url);
@@ -104,13 +136,13 @@ async function main() {
   let port;
   try {
     args = parseElectronDevArgs(process.argv.slice(2));
-    port =
-      args.serverPort ??
-      (await findFreeServerPort({
-        start: process.env.SERVER_PORT && /^\d+$/.test(process.env.SERVER_PORT)
+    port = await resolveLaunchServerPort({
+      explicitPort: args.serverPort,
+      start:
+        process.env.SERVER_PORT && /^\d+$/.test(process.env.SERVER_PORT)
           ? Number(process.env.SERVER_PORT)
           : DEFAULT_SERVER_PORT,
-      }));
+    });
   } catch (error) {
     process.stderr.write(`electron:dev: ${error.message}\n`);
     process.exit(1);
@@ -132,6 +164,10 @@ async function main() {
         ...process.env,
         NODE_ENV: "development",
         SERVER_PORT: String(port),
+        // The renderer's proxy already points at exactly this port, so main
+        // must bind it or fail; falling forward to the next port would split
+        // the window from its own server (`resolveServerPortAttempts`).
+        [SERVER_PORT_PINNED_ENV]: "1",
       },
     },
   );
