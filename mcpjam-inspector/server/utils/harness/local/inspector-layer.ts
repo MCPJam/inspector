@@ -112,9 +112,9 @@ export async function removeReadOnlyTree(path: string): Promise<void> {
  * Write (or repair) this build's layer for a harness and return where it is.
  *
  * Idempotent and safe across processes: the tree is written to a staging
- * directory, verified against the compiled digest, made read-only, and renamed
- * into place. Losing the rename to another process that wrote the same digest
- * is success, after that directory verifies too.
+ * directory, verified against the compiled digest, renamed into place, and
+ * made read-only. Losing the rename to another process that wrote the same
+ * digest is success, after that directory verifies too.
  */
 export async function ensureInspectorLayer(
   harnessId: SupportedLocalHarnessId,
@@ -158,6 +158,10 @@ export async function ensureInspectorLayer(
         });
         const retired = join(base, `${RETIRED_PREFIX}${randomUUID()}`);
         try {
+          // macOS refuses to rename a directory its owner cannot write, even
+          // within one parent, so a 0555 layer has to be opened first. Never
+          // through a link (see `removeReadOnlyTree`): a link renames as is.
+          if ((await lstat(root)).isDirectory()) await chmod(root, 0o700);
           await rename(root, retired);
         } catch {
           continue;
@@ -183,15 +187,22 @@ export async function ensureInspectorLayer(
             `the Inspector layer did not digest as compiled (expected ${digest}, wrote ${staged})`,
           );
         }
-        await chmod(staging, 0o555);
+        // Renamed while still writable, sealed after: macOS refuses to rename
+        // a directory its owner cannot write (EACCES), even within one parent.
+        // The mode is not part of the digest, so a reader racing the chmod
+        // verifies the same tree either way.
         try {
           await rename(staging, root);
-          return done();
         } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          // Another process won the race to the same content address.
-          if (code !== "EEXIST" && code !== "ENOTEMPTY" && code !== "EPERM") throw error;
+          // Another process won the race to the same content address; the next
+          // round verifies what it wrote. Which code a lost race raises varies
+          // by platform (EEXIST, ENOTEMPTY, EPERM, and EACCES against a sealed
+          // directory on macOS), so the winner's directory is the test.
+          if (!(await exists(root))) throw error;
+          continue;
         }
+        await chmod(root, 0o555);
+        return done();
       } finally {
         if (await exists(staging)) await removeReadOnlyTree(staging);
       }
