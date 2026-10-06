@@ -114,6 +114,18 @@ describe("foldLaunch: when an update is rolled back", () => {
     expect(cleared.record.launchFailures).toEqual([]);
   });
 
+  it("clears an unhealthy mark on a clean start — the failures may have been the machine's", () => {
+    let record = fresh;
+    for (let i = 1; i <= LAUNCH_FAILURE_THRESHOLD; i += 1) {
+      record = foldLaunch(record, { ok: false, reason: "x" }, i).record;
+    }
+    expect(record.unhealthy).toBeDefined();
+    const cleared = foldLaunch(record, { ok: true }, 100);
+    expect(cleared.record.unhealthy).toBeUndefined();
+    expect(cleared.record.launchFailures).toEqual([]);
+    expect(cleared.becameUnhealthy).toBe(false);
+  });
+
   it("reports the first usable launch exactly once", () => {
     const first = foldLaunch(fresh, { ok: true }, 10);
     expect(first.firstUsable).toBe(true);

@@ -9,7 +9,7 @@ import { resolveLocalHarnessActor, type LocalHarnessActor } from "./acting-user.
 import { authorizeLocalHarness, readLocalHarnessAuthorization } from "./authorization.js";
 import { getLocalMachineId, grantLocalHarnessConsent, registerWorkspaceGrant, resolveWorkspaceGrant } from "./grants.js";
 import { readRuntimeInstallStatus, installRuntimePack, startRuntimeInstall, startBackgroundRuntimeUpdate, manifestWithExpectedBundleDigest, MANUAL_UPDATES_MESSAGE } from "./runtime-install.js";
-import { readLocalRuntimeUpdatePolicy } from "./runtime-update-policy.js";
+import { readLocalRuntimeUpdatePolicy, type RuntimeInstallTrigger } from "./runtime-update-policy.js";
 import { noteRuntimeMetricsActor } from "./runtime-metrics.js";
 import { logger } from "../../logger.js";
 import { resolveManagedBundle } from "./runtime-identity.js";
@@ -70,7 +70,9 @@ export async function setupLocalHarness(args: { bearer: string; projectId: strin
   if (!workspace.ok) throw new Error(workspace.message);
   // Persist intent before downloading so reload/restart can safely finish setup.
   await authorizeLocalHarness({ userId: actor.userId, machineId, projectId: args.projectId, workspaceGrantId: workspace.grant.workspaceGrantId, harnessId });
-  return ensureLocalHarnessTarget({ ...args, harnessId, scope: "attended" });
+  // Setup is the user's explicit gesture: it never backs off the way a
+  // background readiness check does after a failed attempt.
+  return ensureLocalHarnessTarget({ ...args, harnessId, scope: "attended", trigger: "gesture" });
 }
 
 export async function ensureLocalHarnessTarget(args: {
@@ -84,6 +86,9 @@ export async function ensureLocalHarnessTarget(args: {
   /** Which local harness. Each has its own runtime, rollout flag and durable
    *  authorization; one never borrows another's. */
   harnessId?: SupportedLocalHarnessId;
+  /** What asked: `gesture` for an explicit setup; background renewals default
+   *  to `readiness`, which backs off after a failed attempt. */
+  trigger?: RuntimeInstallTrigger;
 }) {
   const harnessId = args.harnessId ?? "claude-code";
   const name = LOCAL_HARNESS_DISPLAY_NAMES[harnessId];
@@ -112,10 +117,10 @@ export async function ensureLocalHarnessTarget(args: {
     // that waits (with progress, through the 202 the route answers).
     if ((await readLocalRuntimeUpdatePolicy()).policy === "manual") throw new Error(MANUAL_UPDATES_MESSAGE);
     if (args.waitForInstall === false) {
-      const started = await startRuntimeInstall({ harnessId, trigger: "readiness" });
+      const started = await startRuntimeInstall({ harnessId, trigger: args.trigger ?? "readiness" });
       if (started.kind !== "ready" && started.kind !== "refused") throw new LocalRuntimePreparingError(`Installing ${name}`);
       status = started.kind === "ready" ? await readRuntimeInstallStatus({ harnessId }) : started.status;
-    } else status = await installRuntimePack({ harnessId, trigger: "readiness" });
+    } else status = await installRuntimePack({ harnessId, trigger: args.trigger ?? "readiness" });
   }
   if (status.state === "revoked") throw new Error(status.message);
   if (status.state !== "ready") throw new Error(`${name} installation is ${status.state}. Retry setup when the runtime is available.`);

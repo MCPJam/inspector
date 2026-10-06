@@ -534,6 +534,33 @@ describe("phases", () => {
     });
     const { result } = render();
     await waitFor(() => expect(result.current.phase).toBe("ready"));
+    // And the send backstop agrees: a turn sent now runs on the permitted pack
+    // instead of being refused for the whole length of the download.
+    expect(result.current.resolveSendTarget()).not.toBeNull();
+  });
+
+  it("does not send on a grant for the desired pack while the server selects the permitted one", async () => {
+    // The other direction of the same rule: once the server falls back (an
+    // unhealthy desired pack, a rollback), a grant on the desired pack is not
+    // what would run, so both the phase and the backstop lead to the dialog.
+    const previous = `sha256:${"c".repeat(64)}`;
+    localStorage.setItem(localHarnessConsentStorageKey(PROJECT), JSON.stringify(storedConsent()));
+    fetchAvailabilityMock.mockResolvedValue({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: {
+          state: "ready",
+          packVersion: "3.3.0",
+          runtimeRoot: "/r",
+          digest: previous,
+          role: "permitted",
+        },
+      },
+    });
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).toBe("needs-consent"));
+    expect(result.current.resolveSendTarget()).toBeNull();
   });
 
   it("fails closed with MCPJam's message when the runtime was withdrawn", async () => {

@@ -36,7 +36,9 @@ function parseArgs(argv) {
 
 /** The file name a record is written and uploaded under. */
 export function evidenceFileName({ harnessId, target, treeDigest }) {
-  return `conformance-evidence-${harnessId}-${target}-${treeDigest.slice(7, 19)}.json`;
+  // The FULL digest: two packs merged into one artifact directory (a
+  // candidate and its predecessor) must never share a file name.
+  return `conformance-evidence-${harnessId}-${target}-${treeDigest.slice(7)}.json`;
 }
 
 async function main() {

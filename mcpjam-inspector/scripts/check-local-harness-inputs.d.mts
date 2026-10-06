@@ -19,7 +19,6 @@ export interface PackInputIo {
     | { kind: "installed"; version: string }
   >;
 }
-export declare const defaultPackInputIo: PackInputIo;
 export declare function packDependencyClosure(
   packages: Record<string, any>,
   roots?: readonly string[],
@@ -32,8 +31,13 @@ export declare function computePackInputs(io?: PackInputIo): Promise<{
   schema: 2;
   harnesses: Record<string, { fingerprint: string; inputs: Record<string, string> }>;
 }>;
+/** An IO that can say what is installed: what the drift check needs. */
+export type PackInputIoWithInstalls = PackInputIo & {
+  inspectInstalled: NonNullable<PackInputIo["inspectInstalled"]>;
+};
 /** Why the installed tree cannot produce a trustworthy snapshot; [] when it can. */
-export declare function installedClosureDrift(io?: PackInputIo): Promise<string[]>;
+export declare const defaultPackInputIo: PackInputIoWithInstalls;
+export declare function installedClosureDrift(io?: PackInputIoWithInstalls): Promise<string[]>;
 export declare function readRecordedPackInputs(
   harnessId: string,
 ): Promise<{ fingerprint: string; inputs: Record<string, string> } | null>;

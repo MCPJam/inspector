@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), actor: vi.fn(), authorization: vi.fn(), grant: vi.fn(), rollout: vi.fn(),
   status: vi.fn(), install: vi.fn(), register: vi.fn(),
+  workspace: vi.fn(async () => ({ ok: true, grant: { workspaceGrantId: "set-up-workspace" } })),
   background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"),
 }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class { setAuth() {} query = mocks.query; } }));
@@ -15,12 +16,12 @@ vi.mock("../runtime-identity.js", () => ({ resolveManagedBundle: async () => ({ 
 vi.mock("../availability.js", () => ({ localHarnessManifestsForDevelopment: (value: unknown) => value }));
 vi.mock("../grants.js", () => ({
   getLocalMachineId: async () => "machine", grantLocalHarnessConsent: mocks.grant,
-  localHarnessStateRoot: () => "/unused", registerWorkspaceGrant: vi.fn(),
+  localHarnessStateRoot: () => "/unused", registerWorkspaceGrant: mocks.workspace,
   resolveWorkspaceGrant: async () => ({ ok: true, canonicalPath: "/workspace" }),
 }));
 vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
-import { ensureLocalHarnessTarget, localHarnessAccountEnabled } from "../readiness.js";
+import { ensureLocalHarnessTarget, localHarnessAccountEnabled, setupLocalHarness } from "../readiness.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -130,6 +131,13 @@ describe("a turn never waits on a download it does not need", () => {
     const ready = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
     expect(mocks.install).toHaveBeenCalledWith({ harnessId: "claude-code", trigger: "readiness" });
     expect(ready.runtime.packVersion).toBe("1");
+  });
+
+  it("installs for an explicit setup as the user's gesture, which never backs off", async () => {
+    mocks.status.mockResolvedValue({ state: "absent", packVersion: "1" });
+    mocks.install.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "1", digest: "sha256:new" });
+    await setupLocalHarness({ bearer: "session", projectId: "project", workspacePath: "/workspace" });
+    expect(mocks.install).toHaveBeenCalledWith({ harnessId: "claude-code", trigger: "gesture" });
   });
 
   it("installs nothing under an administrator's manual update policy", async () => {

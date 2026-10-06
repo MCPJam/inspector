@@ -34,6 +34,9 @@ git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git switch -C "$branch"
 git commit -m "$title"
+# The checkout persisted no credential (so nothing an install script ran could
+# read one); authenticate git for this push from GH_TOKEN, here and only here.
+gh auth setup-git
 git push --force origin "HEAD:refs/heads/$branch"
 
 existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"

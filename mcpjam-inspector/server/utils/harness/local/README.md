@@ -523,7 +523,12 @@ an explicit retry does not.
 (`onBridgeStarted` / `onBridgeFailed` → `noteRuntimeLaunch`). Repeated
 runtime-attributable launch failures with no success between them mark the pack
 unhealthy and selection falls back to the permitted previous pack for NEW
-sessions. The failed turn is never replayed (invariant 5).
+sessions. The failed turn is never replayed (invariant 5). The mark is not
+permanent, because the failures may have been the machine's. An install
+request re-runs the startup probe on the installed pack (background triggers
+at most hourly), as does `harness repair`. A pass clears the mark and the pack
+is selected again, with nothing downloaded. A session that starts on a degraded
+pack (nothing healthier installed) clears it too.
 
 `startRuntimeInstall` reserves in-process synchronously and awaits only the
 short cross-process reservation and the on-disk lookup, never the download, so

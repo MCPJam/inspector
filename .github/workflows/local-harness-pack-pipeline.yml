@@ -47,6 +47,13 @@ jobs:
   plan:
     name: plan ${{ inputs.harness }}
     runs-on: ubuntu-latest
+    # `contents: write` only so the release listing INCLUDES DRAFTS: GitHub
+    # shows drafts to push-capable tokens alone, and a plan that cannot see the
+    # draft a failed publish left behind re-plans the same version, rebuilds
+    # it, and then fails at publish on that draft — forever. Nothing here
+    # writes; the one PATCH (`finish-draft`) runs in the pack workflow.
+    permissions:
+      contents: write
     outputs:
       action: ${{ steps.plan.outputs.action }}
       version: ${{ steps.plan.outputs.version }}
@@ -123,11 +130,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      # The release token, not GITHUB_TOKEN: GitHub starts no workflows for a
-      # push made with GITHUB_TOKEN, so the PR's required checks never report.
+      # No credential persisted into the checkout: `npm ci` runs next, and an
+      # install script must not find a push token in the git config. The bot
+      # PR step authenticates git itself, from its own GH_TOKEN.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          persist-credentials: false
 
       - name: Read pack toolchain pins
         id: toolchain
@@ -231,9 +239,12 @@ jobs:
       contents: read
       attestations: read
     steps:
+      # No credential persisted into the checkout: `npm ci` runs next, and an
+      # install script must not find a push token in the git config. The bot
+      # PR step authenticates git itself, from its own GH_TOKEN.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          persist-credentials: false
 
       - name: Read pack toolchain pins
         id: toolchain

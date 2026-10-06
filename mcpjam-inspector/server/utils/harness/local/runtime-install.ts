@@ -75,7 +75,6 @@ import {
 } from "./pack-digests.generated.js";
 import { chooseRuntime, type CandidateFacts, type RuntimeRole } from "./runtime-selection.js";
 import {
-  HEALTH_FILE,
   isUnhealthy,
   newHealthRecord,
   readRuntimeHealth,
@@ -883,6 +882,44 @@ const BACKOFF_AFTER_BAD_CANDIDATE_MS = 6 * 60 * 60 * 1000;
 /** …and this long after any other failure (offline, disk). */
 const BACKOFF_AFTER_FAILURE_MS = 10 * 60 * 1000;
 
+/** How long a background trigger waits before re-probing a pack marked unhealthy. */
+const REPROBE_UNHEALTHY_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * Re-run the startup probe on the INSTALLED desired pack and, if it passes,
+ * write it a fresh health record (clearing the unhealthy mark). Shared by
+ * `startRuntimeInstall` and `harness repair`.
+ */
+async function reprobeInstalledPack(args: {
+  harnessId: SupportedLocalHarnessId;
+  resolved: Extract<ResolvedInstallTarget, { ok: true }>;
+  health: Awaited<ReturnType<typeof readRuntimeHealth>>;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { versionRoot, expected, target, platform } = args.resolved;
+  const probe = await probeRuntimeCandidate({
+    harnessId: args.harnessId,
+    packRoot: join(versionRoot, args.harnessId),
+    platform,
+    target,
+    layerRuntimeRoot: runtimeInstallRoot(),
+  });
+  if (!probe.ok) {
+    return { ok: false, message: `the installed ${expected.packVersion} still fails its startup probe: ${probe.message}` };
+  }
+  await writeRuntimeHealth(
+    versionRoot,
+    newHealthRecord({
+      packVersion: expected.packVersion,
+      treeDigest: expected.treeDigest,
+      probe: { at: Date.now(), node: probe.node, vendorVersion: probe.vendorVersion },
+      ...(args.health?.installStartedAt !== undefined ? { installStartedAt: args.health.installStartedAt } : {}),
+      ...(args.health?.activatedAt !== undefined ? { activatedAt: args.health.activatedAt } : {}),
+      ...(args.health?.activatedAsUpdate !== undefined ? { activatedAsUpdate: args.health.activatedAsUpdate } : {}),
+    }),
+  );
+  return { ok: true };
+}
+
 export const MANUAL_UPDATES_MESSAGE =
   "Runtime updates on this machine are managed by your administrator (updates: manual). " +
   "Install with `mcpjam-inspector harness install`, or ask IT.";
@@ -964,15 +1001,6 @@ export async function startRuntimeInstall(
   }
 
   const trigger = options.trigger ?? "gesture";
-  const policy = await readLocalRuntimeUpdatePolicy();
-  if (!triggerAllowed(trigger, policy.policy)) {
-    return {
-      kind: "refused",
-      refusal: "policy",
-      reason: MANUAL_UPDATES_MESSAGE,
-      status: { state: "absent", packVersion: expected.packVersion },
-    };
-  }
 
   // A withdrawn pack is never downloaded, whoever asks.
   const revoked = await isPackRevoked(options.harnessId, expected.treeDigest);
@@ -994,7 +1022,43 @@ export async function startRuntimeInstall(
   // the probe that produced it. The DESIRED pack — a fallback being selected
   // is exactly the case an install exists to end.
   const verified = await readVerifiedRuntimeStatus({ ...options, desiredOnly: true });
-  if (verified.state === "ready") return { kind: "ready", status: verified };
+  if (verified.state === "ready") {
+    // Installed and verified, but marked unhealthy after repeated launch
+    // failures: selection has rolled back from it. The bytes are right, so
+    // nothing is downloaded; the startup probe is re-run instead, and a pass
+    // starts its health afresh. Background triggers do this at most hourly.
+    const health = await readRuntimeHealth(versionRoot);
+    if (isUnhealthy(health, expected.treeDigest)) {
+      if (isBackgroundTrigger(trigger) && Date.now() - health!.unhealthy!.at < REPROBE_UNHEALTHY_AFTER_MS) {
+        return {
+          kind: "refused",
+          refusal: "backoff",
+          reason: "the installed runtime was marked unhealthy recently; it is re-checked later, or now on request",
+          status: verified,
+        };
+      }
+      const reprobed = await reprobeInstalledPack({ harnessId: options.harnessId, resolved, health });
+      if (reprobed.ok) return { kind: "ready", status: await readRuntimeInstallStatus({ harnessId: options.harnessId }) };
+      return {
+        kind: "refused",
+        reason: reprobed.message,
+        status: { state: "failed", packVersion: expected.packVersion, reason: "probe", stage: "probe", message: reprobed.message },
+      };
+    }
+    return { kind: "ready", status: verified };
+  }
+
+  // Only a NEW install is subject to the update policy: a runtime an
+  // administrator already provisioned is answered as ready above, whoever asks.
+  const policy = await readLocalRuntimeUpdatePolicy();
+  if (!triggerAllowed(trigger, policy.policy)) {
+    return {
+      kind: "refused",
+      refusal: "policy",
+      reason: MANUAL_UPDATES_MESSAGE,
+      status: { state: "absent", packVersion: expected.packVersion },
+    };
+  }
 
   // Nobody is waiting on a background trigger, so it does not hammer a
   // candidate that just failed (or a machine that is offline).
@@ -2094,7 +2158,7 @@ export async function repairRuntime(options: {
   const actions: string[] = [];
   const resolved = resolveInstallTarget(options);
   if (!resolved.ok) return { status: resolved.status, actions };
-  const { key, versionRoot, expected, target, platform } = resolved;
+  const { key, versionRoot, expected } = resolved;
 
   if (await recoverInterruptedActivation({ key, versionRoot })) actions.push("restored an interrupted activation");
   const staging = await sweepAbandonedStaging(key);
@@ -2110,30 +2174,14 @@ export async function repairRuntime(options: {
       actions.push(`verified ${expected.packVersion} byte for byte`);
       return { status: await readRuntimeInstallStatus({ harnessId: options.harnessId }), actions };
     }
-    const probe = await probeRuntimeCandidate({
-      harnessId: options.harnessId,
-      packRoot: join(versionRoot, options.harnessId),
-      platform,
-      target,
-      layerRuntimeRoot: runtimeInstallRoot(),
-    });
-    if (!probe.ok) {
-      actions.push(`the installed ${expected.packVersion} still fails its startup probe: ${probe.message}`);
+    const reprobed = await reprobeInstalledPack({ harnessId: options.harnessId, resolved, health });
+    if (!reprobed.ok) {
+      actions.push(reprobed.message);
       return {
-        status: { state: "failed", packVersion: expected.packVersion, reason: "probe", stage: "probe", message: probe.message },
+        status: { state: "failed", packVersion: expected.packVersion, reason: "probe", stage: "probe", message: reprobed.message },
         actions,
       };
     }
-    await writeRuntimeHealth(
-      versionRoot,
-      newHealthRecord({
-        packVersion: expected.packVersion,
-        treeDigest: expected.treeDigest,
-        probe: { at: Date.now(), node: probe.node, vendorVersion: probe.vendorVersion },
-        ...(health?.installStartedAt !== undefined ? { installStartedAt: health.installStartedAt } : {}),
-        ...(health?.activatedAt !== undefined ? { activatedAt: health.activatedAt } : {}),
-      }),
-    );
     actions.push(`re-probed ${expected.packVersion} and cleared its unhealthy mark`);
     return { status: await readRuntimeInstallStatus({ harnessId: options.harnessId }), actions };
   }

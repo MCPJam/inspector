@@ -52,11 +52,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      # The release token: GitHub runs no checks for a PR pushed with
-      # GITHUB_TOKEN, and this PR needs its review like any other.
+      # No credential persisted into the checkout; the PR step authenticates
+      # git from its own GH_TOKEN (the release token: GitHub runs no checks
+      # for a PR pushed with GITHUB_TOKEN).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:

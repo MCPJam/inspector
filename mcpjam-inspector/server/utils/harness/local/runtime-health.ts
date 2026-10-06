@@ -16,8 +16,11 @@
  *
  * The record is a SIBLING of the digested `<harnessId>/` tree, like the
  * install marker, so writing it never changes what the pack verifies as. An
- * unhealthy pack is healthy again only by reinstalling or repairing it — a
- * fresh probe writes a fresh record.
+ * unhealthy mark is not permanent — the failures may have been the machine's:
+ * a passing startup probe writes a fresh record (`harness repair`, or an
+ * install request, which re-probes an installed pack it finds unhealthy —
+ * at most hourly when nobody asked), and a session that does start on it
+ * (the degraded case, nothing healthier installed) clears the mark.
  */
 import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
@@ -86,8 +89,11 @@ export function foldLaunch(
 ): { record: RuntimeHealthRecord; becameUnhealthy: boolean; firstUsable: boolean } {
   if (outcome.ok) {
     const firstUsable = record.firstUsableAt === undefined;
+    // A clean start clears an earlier unhealthy mark too: the failures that
+    // set it may have been the machine's, not the pack's.
+    const { unhealthy: _cleared, ...rest } = record;
     return {
-      record: { ...record, launchFailures: [], ...(firstUsable ? { firstUsableAt: now } : {}) },
+      record: { ...rest, launchFailures: [], ...(firstUsable ? { firstUsableAt: now } : {}) },
       becameUnhealthy: false,
       firstUsable,
     };

@@ -55,6 +55,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  symlinkSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -66,6 +67,13 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadPackHarness, packAssetStem } from "./local-harness-pack-harnesses.mjs";
+
+/**
+ * The SBOM generator, at an exact version: it is fetched by `npx` at build
+ * time, so "latest" would be whatever its publisher shipped that morning. It
+ * runs only after the pack is sealed (see below).
+ */
+export const CYCLONEDX_NPM = "@cyclonedx/cyclonedx-npm@6.0.1";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = resolve(scriptDir, "..");
@@ -483,10 +491,6 @@ async function main() {
   //    harness's frozen dependency graph installed into it. Hoisted: the
   //    verified tree refuses pnpm's default symlink layout.
   let bridgeDigest;
-  // Taken right after the install, while the recipe's `package.json` is still
-  // there to describe the graph: a vendor-only recipe removes its install
-  // manifests afterwards, and cyclonedx cannot read a tree without one.
-  let sbom = null;
   try {
     ({ bridgeDigest } = await recipe.stageRecipe(packRoot, () => {
       assertPnpmVersion();
@@ -501,15 +505,6 @@ async function main() {
         ],
         { cwd: packRoot, stdio: "inherit", env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.includes("SIGNING_KEY"))) },
       );
-      try {
-        sbom = execFileSync(
-          "npx",
-          ["--yes", "@cyclonedx/cyclonedx-npm", "--output-format", "JSON", "--output-file", "-"],
-          { cwd: packRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
-        );
-      } catch {
-        sbom = null;
-      }
     }));
   } catch (error) {
     fail(error.stack ?? error.message);
@@ -722,8 +717,49 @@ async function main() {
     );
   }
 
-  // An SBOM of the installed graph (taken before a recipe pruned what the pack
-  // does not ship), or a license listing of the tree as shipped.
+  // An SBOM of the graph in the pack, or a license listing of the tree.
+  //
+  // Only AFTER the archive is sealed and signed, and never inside the pack:
+  // the generator is a third-party package fetched by `npx`, so it runs from a
+  // scratch directory holding the recipe's install manifests and a link to the
+  // pack's `node_modules`, at a PINNED version, with no secret in its
+  // environment — and the tree is digested again afterwards, so a generator
+  // that wrote into the pack fails the build instead of shipping. (It used to
+  // run inside the pack before the digest, where anything it changed would
+  // have been covered by the digest and the signature.)
+  let sbom = null;
+  if (args["skip-archive"] !== true) {
+    const scratch = mkdtempSync(join(outRoot, ".sbom-"));
+    try {
+      const { bootstrapDir, files: recipeFiles } = await recipe.loadRecipe();
+      for (const file of recipeFiles) {
+        const name = file.path.slice(bootstrapDir.length + 1);
+        if (name === "package.json" || name.endsWith(".yaml") || name.endsWith(".json")) {
+          mkdirSync(dirname(join(scratch, name)), { recursive: true });
+          writeFileSync(join(scratch, name), file.content);
+        }
+      }
+      symlinkSync(join(packRoot, "node_modules"), join(scratch, "node_modules"), "junction");
+      sbom = execFileSync(
+        "npx",
+        ["--yes", CYCLONEDX_NPM, "--output-format", "JSON", "--output-file", "-"],
+        {
+          cwd: scratch,
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "ignore"],
+          env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !/SIGNING_KEY|TOKEN|SECRET/i.test(name))),
+        },
+      );
+    } catch {
+      sbom = null;
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+    if (computeTreeDigest(packRoot).digest !== digest) {
+      fail("the pack tree changed while its SBOM was generated; refusing to ship it");
+    }
+  }
   try {
     if (sbom === null) throw new Error("no SBOM");
     writeFileSync(join(outRoot, `${stem}.sbom.json`), sbom);

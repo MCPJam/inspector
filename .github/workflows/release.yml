@@ -54,9 +54,10 @@ permissions:
   contents: write
   actions: read
   packages: write
-  # `local-harness-contract` attests the runtime contract it attaches.
-  id-token: write
-  attestations: write
+  # Read only: the local harness gate verifies pinned packs' provenance.
+  # `local-harness-contract` grants itself the OIDC and attestation writes it
+  # needs; no other job gets them.
+  attestations: read
 
 jobs:
   preflight:

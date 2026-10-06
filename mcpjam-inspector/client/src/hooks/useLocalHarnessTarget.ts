@@ -85,6 +85,43 @@ const TARGET_EVENT = "local-harness-target-changed";
 /** How often to re-read a running install. Matches the route's Retry-After. */
 const POLL_INTERVAL_MS = 1_000;
 
+/**
+ * Whether a stored grant still names what this machine would run now. One
+ * rule, used by the phase and by the send backstop, so the gate and the
+ * backstop cannot disagree.
+ *
+ * The runtime is compared with the one the server SELECTED — this build's
+ * desired pack, or its permitted previous one while an update installs or
+ * after a rollback — not with the desired pack alone: a grant on the
+ * permitted pack is exactly right while it is the one that runs. Version AND
+ * digest, because a pack rebuilt at the same version is a different tree and
+ * the tree is what consent named.
+ */
+export function localHarnessGrantIsCurrent(
+  grant: Pick<StoredLocalHarnessConsent, "runtime" | "target">,
+  status: LocalHarnessRuntimeStatus | null,
+  availability: Pick<
+    LocalHarnessAvailabilityView,
+    "expectedPack" | "policyVersion" | "permissionProfile" | "machineId"
+  >,
+): boolean {
+  const selected =
+    status?.state === "ready" && status.packVersion !== undefined && status.digest !== undefined
+      ? { packVersion: status.packVersion, treeDigest: status.digest }
+      : availability.expectedPack;
+  const staleRuntime =
+    selected !== null &&
+    (grant.runtime.packVersion !== selected.packVersion ||
+      grant.runtime.digest !== selected.treeDigest);
+  const stalePolicy =
+    grant.target.policyVersion !== availability.policyVersion ||
+    grant.target.permissionProfile !== availability.permissionProfile;
+  const staleMachine =
+    availability.machineId !== null &&
+    grant.target.machineId !== availability.machineId;
+  return !staleRuntime && !stalePolicy && !staleMachine;
+}
+
 function storageKey(
   projectId: string,
   harnessId: LocalHarnessClientId = "claude-code",
@@ -780,31 +817,9 @@ export function useLocalHarnessController(
       };
     }
     if (consent !== null && status.state === "ready") {
-      // Compared with the runtime the server SELECTED — this build's desired
-      // pack, or its permitted previous one while an update installs or after
-      // a rollback — not with the desired pack alone: a grant on the permitted
-      // pack is exactly right while it is the one that runs.
-      const selected =
-        status.packVersion !== undefined && status.digest !== undefined
-          ? { packVersion: status.packVersion, treeDigest: status.digest }
-          : availability.expectedPack;
-      // Version AND digest. A pack rebuilt at the same version is a different
-      // tree, and the tree is what consent named — so comparing the version
-      // alone kept a grant `ready` across a rebuild, skipped the dialog, and
-      // sent a turn the server refuses on the runtime id it is bound to.
-      const staleRuntime =
-        selected !== null &&
-        (consent.runtime.packVersion !== selected.packVersion ||
-          consent.runtime.digest !== selected.treeDigest);
-      const stalePolicy =
-        consent.target.policyVersion !== availability.policyVersion ||
-        consent.target.permissionProfile !== availability.permissionProfile;
-      const staleMachine =
-        availability.machineId !== null &&
-        consent.target.machineId !== availability.machineId;
-      // Not `failed`: nothing went wrong. The terms simply moved, and the
-      // way back is the same dialog a first-time user sees.
-      if (!staleRuntime && !stalePolicy && !staleMachine) {
+      // Not `failed` when stale: nothing went wrong. The terms simply moved,
+      // and the way back is the same dialog a first-time user sees.
+      if (localHarnessGrantIsCurrent(consent, status, availability)) {
         return { phase: "ready", reason: null };
       }
       return {
@@ -1070,27 +1085,20 @@ export function useLocalHarnessController(
       readLocalHarnessConsentSnapshot(projectId, harnessId),
     );
     if (fresh === null) return null;
-    // The same staleness rule the phase applies, so the gate and this backstop
-    // cannot disagree. A grant naming a pack, a policy or a machine this build
-    // no longer expects is one the server will refuse — and a clear refusal
-    // here beats a round trip that fails, because this one leads back to the
-    // dialog rather than to a failed turn.
-    if (availability !== null) {
-      const expected = availability.expectedPack;
-      if (
-        (expected !== null &&
-          (fresh.runtime.packVersion !== expected.packVersion ||
-            fresh.runtime.digest !== expected.treeDigest)) ||
-        fresh.target.policyVersion !== availability.policyVersion ||
-        fresh.target.permissionProfile !== availability.permissionProfile ||
-        (availability.machineId !== null &&
-          fresh.target.machineId !== availability.machineId)
-      ) {
-        return null;
-      }
+    // The same staleness rule the phase applies — against the SELECTED
+    // runtime, so a grant on the permitted pack still sends while an update
+    // installs in the background. A grant naming a pack, a policy or a machine
+    // this build would not run is one the server will refuse — and a clear
+    // refusal here beats a round trip that fails, because this one leads back
+    // to the dialog rather than to a failed turn.
+    if (
+      availability !== null &&
+      !localHarnessGrantIsCurrent(fresh, runtimeStatus ?? availability.runtimeStatus, availability)
+    ) {
+      return null;
     }
     return { target: fresh.target, token: fresh.token, ...(fresh.serverAuthorized ? { serverAuthorized: true } : {}) };
-  }, [offerable, inScope, projectId, userKey, availability, harnessId]);
+  }, [offerable, inScope, projectId, userKey, availability, runtimeStatus, harnessId]);
 
   return {
     harnessId,

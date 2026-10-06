@@ -302,6 +302,60 @@ describe("rollback after a bad activation", () => {
     expect(events.find((e) => e.event === "local_runtime_time_to_first_usable_turn")).toBeDefined();
   });
 
+  it("an install request re-probes an unhealthy pack: a pass restores it, background triggers wait", async () => {
+    await machineOnOldPackWithUpdatePinned();
+    serve(NEW);
+    await installRuntimePack({ harnessId: "claude-code", trigger: "gesture" });
+    const onNew = (await selected()) as Extract<RuntimeInstallStatus, { state: "ready" }>;
+    for (let i = 0; i < LAUNCH_FAILURE_THRESHOLD; i += 1) {
+      await noteRuntimeLaunch({ harnessId: "claude-code", status: onNew, outcome: { ok: false, reason: "x" } });
+    }
+    expect(await selected()).toMatchObject({ role: "permitted", packVersion: OLD });
+
+    // Nobody asked: a background trigger does not re-probe a pack marked
+    // unhealthy moments ago, so a broken pack is not re-run on every turn.
+    expect(await startRuntimeInstall({ harnessId: "claude-code", trigger: "readiness" })).toMatchObject({
+      kind: "refused",
+      refusal: "backoff",
+    });
+    expect(await selected()).toMatchObject({ role: "permitted", packVersion: OLD });
+
+    // Asked, and the probe still fails: an honest failure, the fallback stays.
+    probeResult = { ok: false, message: "bridge exited 1" };
+    expect(await startRuntimeInstall({ harnessId: "claude-code", trigger: "gesture" })).toMatchObject({
+      kind: "refused",
+      status: { state: "failed", reason: "probe", stage: "probe" },
+    });
+    expect(await selected()).toMatchObject({ role: "permitted", packVersion: OLD });
+
+    // Asked, and it passes (the failures were the machine's): the desired
+    // pack is selected again, with nothing downloaded.
+    probeResult = { ok: true, node: "v24.0.0", vendorVersion: "2.0.0" };
+    serve(null);
+    expect(await startRuntimeInstall({ harnessId: "claude-code", trigger: "gesture" })).toMatchObject({
+      kind: "ready",
+      status: { state: "ready", role: "desired", packVersion: NEW },
+    });
+    const restored = await selected();
+    expect(restored).toMatchObject({ role: "desired", packVersion: NEW });
+    expect(restored.state === "ready" && restored.health).toBeUndefined();
+  });
+
+  it("a session that starts on a degraded pack clears its unhealthy mark", async () => {
+    pin(NEW);
+    serve(NEW);
+    await installRuntimePack({ harnessId: "claude-code", trigger: "gesture" });
+    const onNew = (await selected()) as Extract<RuntimeInstallStatus, { state: "ready" }>;
+    for (let i = 0; i < LAUNCH_FAILURE_THRESHOLD; i += 1) {
+      await noteRuntimeLaunch({ harnessId: "claude-code", status: onNew, outcome: { ok: false, reason: "x" } });
+    }
+    expect(await selected()).toMatchObject({ health: "unhealthy" });
+    await noteRuntimeLaunch({ harnessId: "claude-code", status: onNew, outcome: { ok: true } });
+    const after = await selected();
+    expect(after).toMatchObject({ state: "ready", role: "desired" });
+    expect(after.state === "ready" && after.health).toBeUndefined();
+  });
+
   it("an unhealthy pack with nothing to fall back to stays selectable, marked degraded", async () => {
     pin(NEW);
     serve(NEW);
@@ -389,6 +443,19 @@ describe("the update policy", () => {
       expect(await startRuntimeInstall({ harnessId: "claude-code", trigger })).toMatchObject({ kind: "refused", refusal: "policy" });
     }
     expect((await installRuntimePack({ harnessId: "claude-code", trigger: "cli" })).state).toBe("ready");
+  });
+
+  it("under manual, answers an installed runtime as ready to every trigger — the policy gates downloads only", async () => {
+    pin(NEW);
+    serve(NEW);
+    expect((await installRuntimePack({ harnessId: "claude-code", trigger: "cli" })).state).toBe("ready");
+    await writeFile(config, JSON.stringify({ localHarness: { updates: "manual" } }));
+    for (const trigger of ["gesture", "boot", "readiness"] as const) {
+      expect(await startRuntimeInstall({ harnessId: "claude-code", trigger })).toMatchObject({
+        kind: "ready",
+        status: { state: "ready", packVersion: NEW },
+      });
+    }
   });
 
   it("treats an unreadable policy file as manual rather than fetching against it", async () => {

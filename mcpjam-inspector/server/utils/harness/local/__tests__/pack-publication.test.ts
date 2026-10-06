@@ -33,6 +33,8 @@ import {
 import { fingerprintAcceptance } from "../../../../../scripts/check-local-harness-release.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import { computeHarnessPackInputs } from "../../../../../scripts/check-local-harness-inputs.mjs";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { evidenceFileName } from "../../../../../scripts/write-conformance-evidence.mjs";
 
 const fp = (n: number) => `sha256:${String(n).repeat(64).slice(0, 64)}`;
 const digest = (n: number) => `sha256:${String(n).padStart(64, "0")}`;
@@ -266,6 +268,18 @@ describe("pin evidence", () => {
     ]) {
       expect(missingEvidence({ ...input, records: [record("linux-x64", d["linux-x64"]!), wrong] })).toEqual(["darwin-arm64"]);
     }
+  });
+
+  it("names each record by the FULL digest, so a candidate and its predecessor never collide", () => {
+    // The pipeline downloads the candidate's and the previous pack's evidence
+    // into one directory. Two trees sharing a 12-character prefix must not
+    // overwrite each other's record there.
+    const prefix = "0123456789ab";
+    const one = `sha256:${prefix}${"c".repeat(52)}`;
+    const two = `sha256:${prefix}${"d".repeat(52)}`;
+    const names = [one, two].map((treeDigest) => evidenceFileName({ harnessId: "codex", target: "linux-x64", treeDigest }));
+    expect(new Set(names).size).toBe(2);
+    expect(names[0]).toBe(`conformance-evidence-codex-linux-x64-${one.slice(7)}.json`);
   });
 });
 

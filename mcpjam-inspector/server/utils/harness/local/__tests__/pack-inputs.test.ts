@@ -10,6 +10,7 @@ import {
   SHARED_PACK_INPUTS,
   withHarnessRecord,
   type PackInputIo,
+  type PackInputIoWithInstalls,
 } from "../../../../../scripts/check-local-harness-inputs.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
@@ -172,7 +173,7 @@ describe("refusing to snapshot a tree that is not the locked one", () => {
   function installedIo(
     installed: Record<string, Installed> = {},
     scopes: Record<string, string[]> = {},
-  ): PackInputIo {
+  ): PackInputIoWithInstalls {
     const base = fakeIo({
       lock: {
         "": { name: "root" },

@@ -94,8 +94,11 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    # `contents: write` only so the release listing includes DRAFTS (GitHub
+    # shows them to push-capable tokens alone): a preflight that cannot see a
+    # complete draft classifies it `none`, rebuilds, and fails at publish.
     permissions:
-      contents: read
+      contents: write
     outputs:
       state: ${{ steps.existing.outputs.state }}
       fingerprint: ${{ steps.existing.outputs.fingerprint }}
