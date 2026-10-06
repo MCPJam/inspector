@@ -836,7 +836,10 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             expect.objectContaining({ kind: "task", status: "completed" }),
           );
           expect(mocks.revoke).toHaveBeenCalledTimes(1);
-          expect(await leftovers()).toEqual([]);
+          // The tests above leave their orphaned `sleep 45` tool shell behind.
+          expect(await leftovers({ allowOrphanedTools: "sleep 45" })).toEqual(
+            [],
+          );
         },
         TURN_TIMEOUT_MS,
       );
@@ -886,7 +889,9 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             expect(answer, streamedText(second.chunks)).not.toBeNull();
             expect(Number(answer![1])).toBeGreaterThanOrEqual(2);
             stopIdleBridge();
-            expect(await leftovers()).toEqual([]);
+            expect(await leftovers({ allowOrphanedTools: "sleep 45" })).toEqual(
+              [],
+            );
           } finally {
             mocks.claimState = null;
             stopIdleBridge();

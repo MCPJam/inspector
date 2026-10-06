@@ -174,7 +174,9 @@ const server = http.createServer((req, res) => {
       const t = (text ?? "").trim();
       // Background work. The follow-up to a task's report is matched first:
       // its last user message is the CLI's notification, whatever started it.
-      if (t.includes("<task-notification>")) {
+      // A resumed CLI can deliver a leftover notification and the next prompt
+      // in ONE message; then the prompt's own command wins.
+      if (t.includes("<task-notification>") && !/^(READFILE|BASH|WRITE|COUNT|MCPPROBE)\b/m.test(t)) {
         return sse(res, textEvents(id, "BGREPORT: the background agent reported back", inputTokens));
       }
       if (t.includes("BGSUB")) {
