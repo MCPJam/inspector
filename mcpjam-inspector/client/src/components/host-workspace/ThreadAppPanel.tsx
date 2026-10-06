@@ -20,6 +20,8 @@ type AppMessageSender = (
 type PublishContext = (
   token: string,
   attachments: ContextAttachment[] | null,
+  /** The App's context is locally detached: keep it out of turns. */
+  options?: { detached?: boolean },
 ) => void;
 import {
   useCallback,
@@ -314,7 +316,18 @@ export function useThreadAppWorkspace(
   const [contextRows, setContextRows] = useState<
     Record<string, ContextAttachment[]>
   >({});
-  const publishContext = useCallback<PublishContext>((token, attachments) => {
+  const [detachedContext, setDetachedContext] = useState<
+    Record<string, true>
+  >({});
+  const publishContext = useCallback<PublishContext>((token, attachments, options) => {
+    const detached = attachments !== null && !!options?.detached;
+    setDetachedContext((old) => {
+      if (!!old[token] === detached) return old;
+      const next = { ...old };
+      if (detached) next[token] = true;
+      else delete next[token];
+      return next;
+    });
     setContextRows((old) => {
       if (attachments === null) {
         if (!(token in old)) return old;
@@ -1055,7 +1068,9 @@ export function useThreadAppWorkspace(
   }
   const contextTokens = capabilities.modelContext
     ? currentApps.flatMap((row) =>
-        row.status === "live" && row.handle?.contextEnabled
+        row.status === "live" &&
+        row.handle?.contextEnabled &&
+        !detachedContext[row.handle.instanceToken]
           ? [row.handle.instanceToken]
           : [],
       )
@@ -1374,8 +1389,15 @@ export function AppRegistration({
     publishContext(
       handle.instanceToken,
       contextAllowed ? context.attachments : null,
+      { detached: context.detached },
     );
-  }, [publishContext, handle.instanceToken, context.attachments, contextAllowed]);
+  }, [
+    publishContext,
+    handle.instanceToken,
+    context.attachments,
+    context.detached,
+    contextAllowed,
+  ]);
   useEffect(
     () => () => publishContext(handle.instanceToken, null),
     [publishContext, handle.instanceToken],

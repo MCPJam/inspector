@@ -231,6 +231,43 @@ describe("retained App composer context", () => {
     expect(result.current.error).toMatch(/Couldn't remove App context/);
   });
 
+  it("reports an unconfirmed Remove all as detached until a later revision restores it", async () => {
+    const state = {
+      updateId: "u1",
+      content: [{ type: "text", text: "Selected view" }],
+    };
+    context.mockReset().mockRejectedValue(new Error("unavailable"));
+    const { result } = renderHook(() =>
+      useAppContext(scope, {
+        ...handle,
+        contextSnapshot: { revision: 1, sequence: 1, state },
+      } as ThreadAppHandle),
+    );
+    expect(result.current.detached).toBe(false);
+    await act(async () => {
+      result.current.attachments[0]!.group!.removeAll!();
+    });
+    // Explicit, so the owner can keep the still-persisted context out of
+    // turns: no chip is not the same as no context.
+    await vi.waitFor(() => expect(result.current.detached).toBe(true));
+    expect(result.current.attachments).toEqual([]);
+    const later = {
+      updateId: "u2",
+      content: [{ type: "text", text: "New view" }],
+    };
+    context.mockReset().mockResolvedValueOnce({
+      revision: 2,
+      sequence: 2,
+      state: later,
+    });
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.detached).toBe(false);
+    expect(result.current.snapshot.state).toEqual(later);
+    expect(result.current.attachments).toHaveLength(1);
+  });
+
   it("labels untitled plain text with a short label", () => {
     const [item] = pluginContextAttachments({
       revision: 1,

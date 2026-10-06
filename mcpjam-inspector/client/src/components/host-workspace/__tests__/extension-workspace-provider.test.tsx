@@ -465,6 +465,32 @@ describe("Playground extension owners", () => {
     expect(f.close).not.toHaveBeenCalled();
   });
 
+  it("keeps a locally detached App's context out of turns until it attaches again", async () => {
+    renderCenter(registration("chat-a"));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => {
+      await owners.chat!.launch(server, thread);
+    });
+    const token = owners.chat!.apps[0].handle!.instanceToken;
+    const publish = owners.chat!.appPorts!.publishContext;
+    // Assistant-only context has no chip and still reaches turns.
+    act(() => publish(token, []));
+    expect(owners.chat?.contextReferences).toEqual([token]);
+    // Remove all failed and its reconciliation read failed: the chip is
+    // gone, and the still-persisted context must not ride the next turn.
+    act(() => publish(token, [], { detached: true }));
+    expect(owners.chat?.contextReferences).toEqual([]);
+    expect(owners.chat?.contextAttachments).toEqual([]);
+    // A later revision attaches it again.
+    act(() => publish(token, [], { detached: false }));
+    expect(owners.chat?.contextReferences).toEqual([token]);
+    // Withdrawing the App forgets its detachment.
+    act(() => publish(token, [], { detached: true }));
+    act(() => publish(token, null));
+    act(() => publish(token, []));
+    expect(owners.chat?.contextReferences).toEqual([token]);
+  });
+
   it("cancels a pending approval once and drops its late result on close", async () => {
     let executionSignal!: AbortSignal;
     let approval!: Promise<boolean>;
