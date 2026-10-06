@@ -509,6 +509,7 @@ describe("the served catalog meets Claude's directory criteria", () => {
         name: string;
         title?: string;
         description?: string;
+        inputSchema?: unknown;
         annotations?: Record<string, unknown>;
       }>,
     };
@@ -545,8 +546,22 @@ describe("the served catalog meets Claude's directory criteria", () => {
     const operationNames = new Set(
       ALL_OPERATIONS.map((operation) => operation.name)
     );
+    // Parameter descriptions are model-facing too, so they are held to the
+    // same rule as the tool's own description.
+    const schemaDescriptions = (node: unknown): string[] => {
+      if (Array.isArray(node)) return node.flatMap(schemaDescriptions);
+      if (node === null || typeof node !== "object") return [];
+      return Object.entries(node).flatMap(([key, value]) =>
+        key === "description" && typeof value === "string"
+          ? [value]
+          : schemaDescriptions(value)
+      );
+    };
     for (const tool of tools) {
-      const description = String(tool.description ?? "");
+      const description = [
+        String(tool.description ?? ""),
+        ...schemaDescriptions(tool.inputSchema),
+      ].join("\n");
       for (const token of description.match(/\b[a-z]+(?:_[a-z0-9]+)+\b/g) ??
         []) {
         if (operationNames.has(token)) {

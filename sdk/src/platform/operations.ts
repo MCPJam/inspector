@@ -5879,7 +5879,7 @@ const updateEvalSuiteInput = z
           .union([z.string().trim().min(1), z.null()])
           .optional()
           .describe(
-            "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
+            "Custom sandbox image the suite's eval runs boot from, by name or id (sandbox images are managed in the MCPJam app). null uses the provider's default base image."
           ),
       })
       .optional()
@@ -13584,7 +13584,7 @@ export const archiveGoalOperation: PlatformOperation<
   name: "archive_goal",
   title: "Archive an MCPJam goal",
   description:
-    "Take a goal off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the goal that produced it. A second call answers not-found.",
+    "Take a goal off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the goal that produced it. Archiving an already-archived goal succeeds again.",
   readOnly: false,
   risk: "destructive",
   permalink: noPermalink("mutation-only"),
@@ -17163,7 +17163,7 @@ export const getStudySignalsOperation: PlatformOperation<
   name: "get_study_signals",
   title: "Get a study's current window signals",
   description:
-    "The study's live analysis window, including the `windowId` that get_study_insights takes for the current window.",
+    "The study's live analysis window and its signals. Once the study has an analysis window, its `windowId` is what get_study_insights takes as `window`.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -17189,7 +17189,7 @@ const studyWindowInput = studySelectorInput.extend({
     .string()
     .trim()
     .min(1)
-    .describe("Window id, from get_user_testing_signals."),
+    .describe("Window id, from get_study_signals."),
 });
 
 export type GetStudyInsightsInput = z.infer<typeof studyWindowInput>;

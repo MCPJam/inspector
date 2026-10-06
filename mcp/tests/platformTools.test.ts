@@ -11,6 +11,7 @@ import {
   showServersOperation,
 } from "@mcpjam/sdk/platform";
 import {
+  compactModelCatalogForModel,
   EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
@@ -660,6 +661,7 @@ describe("platform tool registration", () => {
       "undismiss_study_finding",
       "upsert_study_member",
       "update_project",
+      "archive_goal",
     ]);
     // Writes whose effect leaves the caller's organization.
     const EXTERNAL_COMMUNICATION = new Set(["send_feedback"]);
@@ -1375,3 +1377,57 @@ describe("tool errors carry no unsolicited send_feedback suggestion", () => {
   });
 });
 
+
+describe("list_models on this surface", () => {
+  it("keeps what choosing a model needs and names what it drops", () => {
+    const full = {
+      items: [
+        {
+          id: "amazon/nova-2-lite",
+          canonical_slug: "amazon/nova-2-lite",
+          name: "Nova 2 Lite",
+          pricing: { prompt: "3e-7", completion: "0.0000025", image: "0" },
+          context_length: 1_000_000,
+          architecture: {
+            modality: "text+image->text",
+            input_modalities: ["text", "image"],
+            output_modalities: ["text"],
+          },
+          top_provider: { context_length: 1_000_000 },
+          supported_parameters: ["max_tokens", "tools", "reasoning"],
+          description: "x".repeat(500),
+          providerSource: "gateway",
+          guestAllowed: false,
+          deprecated_at: null,
+          observations: { tools: { status: "supported", observedAt: 1 } },
+        },
+      ],
+    };
+    const compact = compactModelCatalogForModel(full) as {
+      items: Array<Record<string, unknown>>;
+      compacted: { omittedFields: string[] };
+    };
+    expect(compact.items).toEqual([
+      {
+        id: "amazon/nova-2-lite",
+        name: "Nova 2 Lite",
+        providerSource: "gateway",
+        contextLength: 1_000_000,
+        pricingPerToken: { prompt: "3e-7", completion: "0.0000025" },
+        inputModalities: ["text", "image"],
+        outputModalities: ["text"],
+        supportsTools: true,
+        guestAllowed: false,
+      },
+    ]);
+    expect(compact.compacted.omittedFields).toContain("observations");
+    expect(JSON.stringify(compact).length).toBeLessThan(
+      JSON.stringify(full).length / 2
+    );
+  });
+
+  it("leaves a payload without items alone", () => {
+    const payload = { error: "x" };
+    expect(compactModelCatalogForModel(payload)).toBe(payload);
+  });
+});
