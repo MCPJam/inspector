@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ERROR_CATALOG } from "@mcpjam/sdk/browser";
 import {
@@ -109,6 +112,142 @@ it.each([
     );
   },
 );
+
+describe("describeSwarmAttemptFailure held credits", () => {
+  // What the runner stores for a `holds_committed` refusal: the backend's
+  // sentence under the generic code, with the refusal reason gone.
+  const HELD =
+    "MCPJam model limit reached for the moment: 13 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+
+  it("titles a hold as a wait, not as an empty balance", () => {
+    const result = describeSwarmAttemptFailure(
+      HELD,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Credits temporarily held");
+    expect(result.title).not.toBe(ERROR_CATALOG["provider/mcpjam_limit"].title);
+    // The backend's sentence stays as the body: it says how many requests hold credits.
+    expect(result.oneLine).toContain("13 in-flight request(s)");
+    expect(result.rawCode).toBe("user_rate_limit");
+    expect(result.rawMessage).toBe(HELD);
+  });
+
+  it("still renders like every other MCPJam limit", () => {
+    const entry = ERROR_CATALOG["provider/mcpjam_limit"];
+    const result = describeSwarmAttemptFailure(
+      HELD,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.slug).toBe(entry.slug);
+    expect(result.severity).toBe(entry.severity);
+  });
+
+  it("recognizes the sentence without a stored code", () => {
+    expect(describeSwarmAttemptFailure(HELD, null, "Anthropic").title).toBe(
+      "Credits temporarily held",
+    );
+  });
+
+  it("reads a hold from the structured reason when the row kept it", () => {
+    const result = describeSwarmAttemptFailure(
+      'Backend stream error: 429 {"code":"user_rate_limit","refusalReason":"holds_committed","error":"Try again shortly."}',
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Credits temporarily held");
+  });
+
+  it("offers no purchase, which would be a false promise", () => {
+    // The balance is not empty and nothing bought lifts a hold.
+    const result = describeSwarmAttemptFailure(
+      HELD,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    const advice = [...result.likelyCauses, ...result.nextSteps].join(" ");
+    expect(advice).not.toMatch(/upgrade|buy|top.?up|purchase|byok|api key/i);
+  });
+
+  it("keeps the top-up sentence out of the body and links the hold's own docs note", () => {
+    // With `canTopUp` the backend ends a hold's details with "Top up to add
+    // more credits." Nothing bought lifts a hold, so the card must not say it,
+    // and its "Learn more" must not land on the buy-credits section.
+    const body = `Backend stream error: 429 ${JSON.stringify({
+      code: "user_rate_limit",
+      error:
+        "MCPJam model limit reached for the moment: 13 in-flight request(s) hold the remaining credits and release them as they finish.",
+      details: "Retry in a few seconds. Top up to add more credits.",
+      canTopUp: true,
+      retryAfter: 15000,
+    })}`;
+    const result = describeSwarmAttemptFailure(
+      body,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Credits temporarily held");
+    expect(result.oneLine).toContain("13 in-flight request(s)");
+    expect(result.oneLine).toContain("Retry in a few seconds.");
+    expect(result.oneLine).not.toMatch(/top.?up/i);
+    expect(result.docsAnchor).toMatch(/#credits-temporarily-held$/);
+    expect(result.docsAnchor).not.toBe(
+      ERROR_CATALOG["provider/mcpjam_limit"].docsAnchor,
+    );
+  });
+
+  it("points at a heading that exists in the docs", () => {
+    const docs = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        "../../../../../../docs/troubleshooting/error-codes.mdx",
+      ),
+      "utf8",
+    );
+    expect(docs).toMatch(/^#{2,4} Credits temporarily held$/m);
+  });
+
+  it("leaves a locked wallet's row to its own card: the same sentence rides that code", () => {
+    // `buildSpendRefusalBody` answers `wallet_locked` with the hold sentence when
+    // a locked wallet and a hold coincide, and a stored row keeps that code.
+    const result = describeSwarmAttemptFailure(
+      HELD,
+      "wallet_locked",
+      "Anthropic",
+    );
+    expect(result.title).not.toBe("Credits temporarily held");
+    expect(result.rawCode).toBe("wallet_locked");
+  });
+
+  it("still cards a spent allowance and a shortfall as running out", () => {
+    const spent = describeSwarmAttemptFailure(
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(spent.title).toBe(
+      ERROR_CATALOG["provider/mcpjam_limit_daily"].title,
+    );
+    const shortfall = describeSwarmAttemptFailure(
+      "This request needs about 25 MCPJam credits; your organization has 23 left.",
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(shortfall.title).toBe(
+      ERROR_CATALOG["provider/mcpjam_limit_insufficient"].title,
+    );
+  });
+
+  it("does not retitle a busy reservation as a hold", () => {
+    const busy = describeSwarmAttemptFailure(
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
+      "spending_reservation_busy",
+      "Anthropic",
+    );
+    expect(busy.title).not.toBe("Credits temporarily held");
+  });
+});
 
 describe("describeSwarmAttemptFailure provider_not_allowlisted", () => {
   const backendBody = JSON.stringify({

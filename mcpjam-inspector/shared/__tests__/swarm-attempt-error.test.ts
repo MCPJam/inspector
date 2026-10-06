@@ -4,8 +4,11 @@ import {
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isHeldCreditsRefusal,
+  isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../swarm-attempt-error";
+import { isCreditExhaustion, isHoldRefusal } from "../credit-exhaustion";
 
 /**
  * The exact string that was being stored on every attempt of a rate-limited
@@ -440,5 +443,401 @@ describe("humanizeSwarmAttemptError provider_not_allowlisted", () => {
     expect(info.message).toBe(headline);
     expect(info.code).toBe("provider_not_allowlisted");
     expect(info.httpStatus).toBe(403);
+  });
+});
+
+describe("isHeldCreditsRefusal", () => {
+  const STORED_HOLDS_SENTENCE =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+
+  it("is the held-credits half of a transient refusal", () => {
+    expect(isHeldCreditsRefusal("user_rate_limit", "holds_committed")).toBe(
+      true,
+    );
+    expect(
+      isHeldCreditsRefusal("user_rate_limit", undefined, STORED_HOLDS_SENTENCE),
+    ).toBe(true);
+    expect(isHeldCreditsRefusal("user_rate_limit", "allowance_exhausted")).toBe(
+      false,
+    );
+    expect(
+      isHeldCreditsRefusal(
+        "user_rate_limit",
+        undefined,
+        "Daily MCPJam model limit reached.",
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves a busy reservation out: a wait, but not about credits", () => {
+    expect(isHeldCreditsRefusal("spending_reservation_busy")).toBe(false);
+    expect(isTransientSpendRefusal("spending_reservation_busy")).toBe(true);
+  });
+
+  it("lets a structured reason decide, and reads the sentence only without one", () => {
+    // A caller that passes `refusalReason` has the backend's own verdict; the
+    // regex over its prose is the fallback for a stored row that lost it.
+    expect(
+      isHeldCreditsRefusal(
+        "user_rate_limit",
+        "allowance_exhausted",
+        STORED_HOLDS_SENTENCE,
+      ),
+    ).toBe(false);
+    expect(
+      isTransientSpendRefusal(
+        "user_rate_limit",
+        "allowance_exhausted",
+        STORED_HOLDS_SENTENCE,
+      ),
+    ).toBe(false);
+    expect(
+      isHeldCreditsRefusal("user_rate_limit", "holds_committed", "Retry."),
+    ).toBe(true);
+    expect(
+      isHeldCreditsRefusal("user_rate_limit", undefined, STORED_HOLDS_SENTENCE),
+    ).toBe(true);
+  });
+
+  it("reads the sentence as a hold only under the code a hold rides", () => {
+    // A locked wallet answers `wallet_locked` with the same sentence
+    // (`buildSpendRefusalBody`), and a stored row keeps that code. Any other
+    // code names a different refusal, so the sentence cannot turn it into a wait.
+    for (const code of [
+      "wallet_locked",
+      "spend_budget_reached",
+      "billing_limit_reached",
+      "org_rate_limit",
+      "mcpjam_rate_limit",
+    ]) {
+      expect(isHeldCreditsRefusal(code, undefined, STORED_HOLDS_SENTENCE)).toBe(
+        false,
+      );
+      expect(
+        isTransientSpendRefusal(code, undefined, STORED_HOLDS_SENTENCE),
+      ).toBe(false);
+    }
+    // No code at all (a flattened message) and the generic one still read it.
+    expect(
+      isHeldCreditsRefusal(undefined, undefined, STORED_HOLDS_SENTENCE),
+    ).toBe(true);
+    expect(isHeldCreditsRefusal(null, null, STORED_HOLDS_SENTENCE)).toBe(true);
+  });
+});
+
+describe("isTransientSpendRefusal", () => {
+  /** What `buildSpendRefusalBody` writes, humanized as an attempt row stores it. */
+  const STORED_HOLDS_SENTENCE =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+
+  it("reads the structured pair", () => {
+    expect(isTransientSpendRefusal("user_rate_limit", "holds_committed")).toBe(
+      true,
+    );
+    expect(
+      isTransientSpendRefusal("user_rate_limit", "allowance_exhausted"),
+    ).toBe(false);
+  });
+
+  it("waits out a busy spending reservation, which committed nothing", () => {
+    expect(isTransientSpendRefusal("spending_reservation_busy")).toBe(true);
+    const info = humanizeSwarmAttemptError(
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+    );
+    expect(isTransientSpendRefusal(info.code, info.refusalReason)).toBe(true);
+  });
+
+  it("reads a stored row, which keeps the sentence but not the reason", () => {
+    expect(
+      isTransientSpendRefusal(
+        "user_rate_limit",
+        undefined,
+        STORED_HOLDS_SENTENCE,
+      ),
+    ).toBe(true);
+    expect(
+      isTransientSpendRefusal(
+        null,
+        null,
+        humanizeSwarmAttemptErrorMessage(
+          'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","error":"MCPJam model limit reached for the moment: 1 in-flight request(s) hold the remaining credits and release them as they finish.","details":"Retry in a few seconds."}',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+    "Stopped 2 in-flight tool calls before the credit limit was reached.",
+    "MCPJam model limit reached for the momentum tracker",
+  ])("stays anchored to the backend's own words: %s", (message) => {
+    expect(isTransientSpendRefusal("user_rate_limit", undefined, message)).toBe(
+      false,
+    );
+  });
+
+  it("keeps a stored held-credits row out of credit exhaustion", () => {
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: STORED_HOLDS_SENTENCE,
+      }),
+    ).toBe(false);
+    expect(isCreditExhaustion(STORED_HOLDS_SENTENCE)).toBe(false);
+    // A real exhaustion still counts, whatever `details` happens to quote.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: { history: [STORED_HOLDS_SENTENCE] },
+      }),
+    ).toBe(true);
+  });
+
+  it("reads the held-credits sentence only at the top, never off a nested object's own message", () => {
+    // A nested object under `details` whose own message/error states the
+    // sentence is quoted text: it must not veto a real exhaustion.
+    for (const key of ["message", "error", "errorMessage"]) {
+      expect(
+        isCreditExhaustion({
+          code: "user_rate_limit",
+          message: "Daily MCPJam model limit reached.",
+          details: { previous: { [key]: STORED_HOLDS_SENTENCE } },
+        }),
+      ).toBe(true);
+    }
+    // A string value under `details` is quoted too.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: { reason: STORED_HOLDS_SENTENCE },
+      }),
+    ).toBe(true);
+    // The refusal's own words still count: the top-level message fields and
+    // a string `details`.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Request refused.",
+        details: STORED_HOLDS_SENTENCE,
+      }),
+    ).toBe(false);
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        error: STORED_HOLDS_SENTENCE,
+      }),
+    ).toBe(false);
+    // The structured reason decides at any depth.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: "Daily MCPJam model limit reached.",
+        details: { refusal: { refusalReason: "holds_committed" } },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isCreditExhaustion when a hold and an exhaustion are both in play", () => {
+  const HELD =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+  const SPENT = "Daily MCPJam model limit reached.";
+  const envelope = (body: Record<string, unknown>) =>
+    `Backend stream error: 429 ${JSON.stringify(body)}`;
+
+  it("lets a structured non-hold reason win over the sentence on the same object", () => {
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        refusalReason: "allowance_exhausted",
+        message: HELD,
+      }),
+    ).toBe(true);
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        refusalReason: "holds_committed",
+        message: SPENT,
+      }),
+    ).toBe(false);
+  });
+
+  it("counts an exhaustion that shares a string with a hold", () => {
+    // One string aggregating several session errors: the hold must not hide
+    // the exhaustion next to it.
+    expect(
+      isCreditExhaustion({
+        message: "Some sessions failed",
+        details: `Session 1: ${HELD} Session 2: ${SPENT}`,
+      }),
+    ).toBe(true);
+    expect(isCreditExhaustion(`${HELD} ${SPENT}`)).toBe(true);
+    // The refusal's own fields disagree: the stated exhaustion counts.
+    expect(
+      isCreditExhaustion({
+        code: "user_rate_limit",
+        message: SPENT,
+        details: HELD,
+      }),
+    ).toBe(true);
+  });
+
+  it("counts a code-only exhaustion next to a hold's sentence", () => {
+    // `billing_limit_reached`, `org_rate_limit` and `mcpjam_rate_limit` never
+    // ride a hold (its code is `user_rate_limit`), so one beside the sentence
+    // is a real exhaustion that the hold must not hide.
+    for (const code of [
+      "billing_limit_reached",
+      "org_rate_limit",
+      "mcpjam_rate_limit",
+    ]) {
+      expect(isCreditExhaustion(`${HELD} (${code}, HTTP 429)`)).toBe(true);
+      expect(isCreditExhaustion({ code, message: HELD })).toBe(true);
+      expect(isCreditExhaustion(envelope({ code, error: HELD }))).toBe(true);
+    }
+    // The hold's own code is not an exhaustion signal.
+    expect(isCreditExhaustion(`${HELD} (user_rate_limit, HTTP 429)`)).toBe(
+      false,
+    );
+  });
+
+  it("does not read a hold under another refusal's code", () => {
+    // The object form: the code is on the refusal, so it decides.
+    expect(
+      isCreditExhaustion({ code: "billing_limit_reached", message: HELD }),
+    ).toBe(true);
+    // A locked wallet sends `wallet_locked` with the same sentence. It is not a
+    // wait and not a top-up either, so it stays out of exhaustion.
+    expect(isCreditExhaustion({ code: "wallet_locked", message: HELD })).toBe(
+      false,
+    );
+  });
+
+  it("reads the envelope a string wraps, so a quoted hold cannot hide a real exhaustion", () => {
+    const exhaustedQuotingAHold = envelope({
+      code: "user_rate_limit",
+      refusalReason: "allowance_exhausted",
+      message: "MCPJam daily credit limit reached.",
+      details: { previous: HELD },
+    });
+    expect(isCreditExhaustion(exhaustedQuotingAHold)).toBe(true);
+    expect(isCreditExhaustion({ message: exhaustedQuotingAHold })).toBe(true);
+  });
+
+  it("still reads a hold as a hold, in every shape it arrives in", () => {
+    // With and without the structured reason, bare or wrapped.
+    const withReason = envelope({
+      code: "user_rate_limit",
+      refusalReason: "holds_committed",
+      error: HELD,
+    });
+    const withoutReason = envelope({ code: "user_rate_limit", error: HELD });
+    for (const held of [
+      HELD,
+      withReason,
+      withoutReason,
+      { code: "user_rate_limit", message: HELD },
+      { message: withReason },
+      { message: withoutReason },
+    ]) {
+      expect(isCreditExhaustion(held)).toBe(false);
+    }
+    // A truncated envelope cannot be parsed; the sentence still says hold.
+    expect(isCreditExhaustion(withoutReason.slice(0, -12))).toBe(false);
+  });
+});
+
+describe("one verdict on a hold", () => {
+  const HELD =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+  const SPENT = "Daily MCPJam model limit reached.";
+
+  // A stored row keeps the sentence under whatever code the RUNNER gave a failed
+  // session when the backend's own code was lost, so a code that names no other
+  // refusal cannot be what keeps a hold from being read as one.
+  it.each(["rate_limited", "session_failed"])(
+    "reads the sentence as a hold under the runner's generic code %s",
+    (code) => {
+      expect(isHeldCreditsRefusal(code, undefined, HELD)).toBe(true);
+      expect(isTransientSpendRefusal(code, undefined, HELD)).toBe(true);
+      expect(isHoldRefusal({ code, message: HELD })).toBe(true);
+      expect(isCreditExhaustion({ code, message: HELD })).toBe(false);
+    },
+  );
+
+  it("never calls a locked wallet a hold, with or without the structured reason", () => {
+    // `buildSpendRefusalBody` can emit both at once.
+    expect(isHeldCreditsRefusal("wallet_locked", "holds_committed")).toBe(
+      false,
+    );
+    expect(
+      isHoldRefusal({ code: "wallet_locked", refusalReason: "holds_committed" }),
+    ).toBe(false);
+  });
+
+  it("reads a hold joined with a stated exhaustion as the exhaustion, wherever it is asked", () => {
+    const joined = `${HELD} ${SPENT}`;
+    expect(isHeldCreditsRefusal(undefined, undefined, joined)).toBe(false);
+    expect(isTransientSpendRefusal("user_rate_limit", undefined, joined)).toBe(
+      false,
+    );
+    expect(isHoldRefusal(joined)).toBe(false);
+    expect(isCreditExhaustion(joined)).toBe(true);
+  });
+
+  it("lets exhaustion nested under details win over a top-level hold sentence", () => {
+    const refusal = {
+      message: HELD,
+      details: {
+        code: "billing_limit_reached",
+        error: "Daily credit limit reached",
+      },
+    };
+    expect(isHoldRefusal(refusal)).toBe(false);
+    expect(isCreditExhaustion(refusal)).toBe(true);
+  });
+
+  it("lets a structured reason decide at any depth, as the dialog's scan does", () => {
+    const nested = {
+      code: "user_rate_limit",
+      message: SPENT,
+      details: { refusal: { refusalReason: "holds_committed" } },
+    };
+    expect(isHoldRefusal(nested)).toBe(true);
+    expect(isCreditExhaustion(nested)).toBe(false);
+  });
+
+  it("gives the field form and the value form of one refusal the same verdict", () => {
+    const refusals: Array<{
+      code?: string;
+      refusalReason?: string;
+      message?: string;
+    }> = [
+      { code: "user_rate_limit", refusalReason: "holds_committed" },
+      {
+        code: "user_rate_limit",
+        refusalReason: "allowance_exhausted",
+        message: HELD,
+      },
+      { code: "user_rate_limit", message: HELD },
+      { code: "user_rate_limit", message: SPENT },
+      { code: "user_rate_limit", message: `${HELD} ${SPENT}` },
+      { code: "wallet_locked", message: HELD },
+      { code: "wallet_locked", refusalReason: "holds_committed" },
+      { code: "billing_limit_reached", message: HELD },
+      { code: "rate_limited", message: HELD },
+      { message: HELD },
+    ];
+    for (const refusal of refusals) {
+      expect(isHoldRefusal(refusal), JSON.stringify(refusal)).toBe(
+        isHeldCreditsRefusal(
+          refusal.code,
+          refusal.refusalReason,
+          refusal.message,
+        ),
+      );
+    }
   });
 });
