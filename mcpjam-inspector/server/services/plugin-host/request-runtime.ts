@@ -248,13 +248,20 @@ export function createPluginRequestRuntime(
   // Capability toggles are outside the binding, so each use re-reads them.
   let latest: ResolvedPluginExtensions | undefined;
   let mrtrWire = false;
+  // An unpinned client prepares both form services and answers with the one
+  // its connection actually negotiated; a pin decides it before connect.
+  let negotiatedWire: "legacy" | "mrtr" | undefined;
+  const ownedForms = () => (negotiatedWire === "mrtr" ? undefined : forms);
+  const ownedMrtr = () => (negotiatedWire === "legacy" ? undefined : mrtr);
   const formsEnabled = () => latest?.capabilities.forms !== false;
   // Logs entries this request owes the client (returned with its response).
   const notes: PluginDiagnostic[] = [];
   const attach = (entry: Lease) => {
-    entry.hooks.legacy = forms ? forms.binding.handler : undefined;
-    entry.hooks.collector = mrtr
-      ? (mrtr.collector as NonNullable<typeof entry.hooks.collector>)
+    const legacy = ownedForms();
+    const modern = ownedMrtr();
+    entry.hooks.legacy = legacy ? legacy.binding.handler : undefined;
+    entry.hooks.collector = modern
+      ? (modern.collector as NonNullable<typeof entry.hooks.collector>)
       : undefined;
   };
   const dropLease = async (reusable: boolean) => {
@@ -401,20 +408,25 @@ export function createPluginRequestRuntime(
     // so every request for this binding shares one connection. Handlers answer
     // only for a request that owns an instance; otherwise they refuse.
     // An unpinned client (the Codex and ChatGPT templates both are)
-    // negotiates its era at connect: the legacy handler answers a 2025 era,
-    // and its claim is withheld again on a 2026 one (`legacyClaim`).
+    // negotiates its era at connect (`auto`): both handlers are installed
+    // before connect, the legacy claim is withheld again on a 2026 era
+    // (`legacyClaim`), and the negotiated era selects which service answers.
     const formsMode =
       options.ownedForms === false || !extensions.capabilities.forms
         ? ("none" as const)
         : version === "2026-07-28"
           ? ("mrtr" as const)
-          : legacyPluginFormWire(version)
-            ? ("legacy" as const)
-            : ("none" as const);
+          : version === undefined
+            ? ("auto" as const)
+            : legacyPluginFormWire(version)
+              ? ("legacy" as const)
+              : ("none" as const);
+    const legacyForms = formsMode === "legacy" || formsMode === "auto";
+    const modernForms = formsMode === "mrtr" || formsMode === "auto";
     if (!formServices && expected && formsMode !== "none") {
       formServices = true;
       forms =
-        formsMode === "legacy"
+        legacyForms
           ? createOwnedPluginLegacyForms({
               bearer,
               projectId: admission.projectId,
@@ -529,7 +541,7 @@ export function createPluginRequestRuntime(
             })
           : undefined;
       mrtr =
-        formsMode === "mrtr"
+        modernForms
           ? createOwnedPluginMrtr({
               c,
               bearer,
@@ -548,9 +560,9 @@ export function createPluginRequestRuntime(
     const clientCapabilities = {
       ...ownedLegacyFormCapabilities(
         capabilities.clientCapabilities(),
-        formsMode === "legacy" ? { binding: true } : undefined,
+        legacyForms ? { binding: true } : undefined,
       ),
-      ...(formsMode === "mrtr" ? { elicitation: { form: {} } } : {}),
+      ...(modernForms ? { elicitation: { form: {} } } : {}),
     };
     const key = pluginBindingDigest([
       "plugin-connection-v1",
@@ -591,7 +603,7 @@ export function createPluginRequestRuntime(
           {
             lazyConnect: true,
             extensionRequestHandlers:
-              formsMode === "legacy"
+              legacyForms
                 ? {
                     [binding.serverId]: [
                       {
@@ -671,7 +683,7 @@ export function createPluginRequestRuntime(
           );
           lease = adopted;
           attach(adopted);
-          if (formsMode === "mrtr")
+          if (modernForms)
             created.manager.setMrtrInputCollector(
               binding.serverId,
               (args) => {
@@ -713,6 +725,13 @@ export function createPluginRequestRuntime(
     const negotiatedVersion = manager.getInitializationInfo(
       binding.serverId,
     )?.protocolVersion;
+    if (version === undefined) {
+      // Auto: the negotiated era, not the (absent) pin, selects the form
+      // service that answers and dispatches on this connection.
+      mrtrWire = negotiatedVersion === "2026-07-28";
+      negotiatedWire = mrtrWire ? "mrtr" : "legacy";
+      attach(lease);
+    }
     const fileTargets = pluginFileTargets({
       contract: (
         config.mcpProfile?.extensions as Record<string, unknown> | undefined
@@ -926,6 +945,7 @@ export function createPluginRequestRuntime(
     collectOwnedMrtr: (
       args: Parameters<import("@mcpjam/sdk").MrtrInputCollector>[0],
     ) => {
+      const mrtr = ownedMrtr();
       if (!mrtr)
         throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
       return mrtr.collector(args);
@@ -937,11 +957,13 @@ export function createPluginRequestRuntime(
       signal: AbortSignal,
       run: () => Promise<unknown>,
     ) => {
+      const mrtr = ownedMrtr();
       if (!mrtr)
         throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
       return mrtr.execute(authorization, invocationId, params, signal, run);
     },
     handleLegacyForm: (request: { params?: Record<string, unknown> }) => {
+      const forms = ownedForms();
       if (!forms) throw new PluginInvocationError("INSTANCE_DENIED");
       return forms.binding.handler(request);
     },
@@ -951,7 +973,9 @@ export function createPluginRequestRuntime(
       signal: AbortSignal,
       run: () => Promise<T>,
     ) => {
-      if (!forms || mrtr) throw new PluginInvocationError("INSTANCE_DENIED");
+      const forms = ownedForms();
+      if (!forms || ownedMrtr())
+        throw new PluginInvocationError("INSTANCE_DENIED");
       const result = await forms.run(authorization, invocationId, signal, run);
       pluginFormFileGrants.closeOperation(authorization.owner, invocationId);
       return result;
@@ -965,6 +989,8 @@ export function createPluginRequestRuntime(
       const manager = lease?.manager;
       if (!manager)
         throw new PluginInvocationError("INSTANCE_CONNECTION_UNAVAILABLE");
+      const mrtr = ownedMrtr();
+      const forms = ownedForms();
       const execute = () =>
         manager.executeTool(
           binding.serverId,
@@ -992,6 +1018,7 @@ export function createPluginRequestRuntime(
       submission: PluginContinuationSubmission,
       signal: AbortSignal,
     ) => {
+      const mrtr = ownedMrtr();
       if (!mrtr) {
         // Forms went off after this form was shown: this request installed
         // no form service, and the pending form ends as cancelled.
