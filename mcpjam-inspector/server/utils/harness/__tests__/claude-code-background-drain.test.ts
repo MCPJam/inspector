@@ -21,6 +21,7 @@ type Step = {
   closeInput: boolean;
   abort: boolean;
   ignoreResult: boolean;
+  skip: boolean;
   mainThread: boolean;
   wantsIdle: boolean;
 };
@@ -50,6 +51,10 @@ type Helpers = {
   createController(deps: Record<string, unknown>): Controller;
   isBackgroundTask(state: DrainState, taskId: string): boolean;
   denial: string;
+  hostPresence: {
+    onDetach?: () => void;
+    onAttach?: () => void;
+  };
 };
 
 const AUTH = {
@@ -83,6 +88,7 @@ beforeEach(async () => {
         createController: mcpjamCreateBackgroundDrainController,
         isBackgroundTask: mcpjamDrainIsBackgroundTask,
         denial: MCPJAM_BACKGROUND_APPROVAL_DENIAL,
+        hostPresence: mcpjamHostPresence,
       };`,
     )() as Helpers;
   })();
@@ -343,6 +349,49 @@ describe("background drain reducer", () => {
     ]);
     expect(steps[3]!.ignoreResult).toBe(true);
     expect(steps[6]!.ignoreResult).toBe(false);
+  });
+
+  it("a stale turn's own output, while this prompt is queued, is skipped with its result", () => {
+    // Otherwise "the agent finished: PLAN" runs into this turn's answer.
+    const { steps } = run([
+      lifecycle("queued"),
+      init(),
+      assistant("the agent finished: PLAN"),
+      {
+        type: "stream_event",
+        parent_tool_use_id: null,
+        event: { type: "content_block_delta" },
+      },
+      result("the agent finished: PLAN"),
+      lifecycle("started"),
+      init(),
+      assistant("TURN2 ANSWER"),
+      result("TURN2 ANSWER"),
+    ]);
+    expect(steps.map((step) => step.skip)).toEqual([
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(steps[4]!.ignoreResult).toBe(true);
+    expect(steps[8]!.ignoreResult).toBe(false);
+  });
+
+  it("this prompt's own output is never skipped", () => {
+    const { steps } = run([
+      lifecycle("queued"),
+      lifecycle("started"),
+      init(),
+      assistant("answer"),
+      result("answer"),
+    ]);
+    expect(steps.some((step) => step.skip)).toBe(false);
   });
 
   it("an agent resumed under the same task id is waited for again", () => {
@@ -648,6 +697,113 @@ describe("background drain controller", () => {
     });
   });
 
+  it("another command's lifecycle does not disarm the backstop", async () => {
+    // Only this prompt showing life does; otherwise the turn would hang.
+    controller.observe({ ...result(""), user_message_uuid: "older" });
+    controller.observe(lifecycle("started", "replayed-notification"));
+    controller.observe(lifecycle("completed", "replayed-notification"));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deps.closeInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("the backstop never fires while the CLI reports itself busy", async () => {
+    controller.observe({ ...result(""), user_message_uuid: "older" });
+    controller.observe({
+      type: "system",
+      subtype: "status",
+      status: "compacting",
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(deps.closeInput).not.toHaveBeenCalled();
+    controller.observe({ type: "system", subtype: "status", status: null });
+    await vi.advanceTimersByTimeAsync(15_000 - 1);
+    expect(deps.closeInput).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deps.closeInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("any other message restarts the backstop's silence window; a retry waits out its delay", async () => {
+    controller.observe({ ...result(""), user_message_uuid: "older" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    controller.observe({ type: "system", subtype: "hook_started" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(deps.closeInput).not.toHaveBeenCalled();
+    controller.observe({
+      type: "system",
+      subtype: "api_retry",
+      retry_delay_ms: 30_000,
+    });
+    await vi.advanceTimersByTimeAsync(44_000);
+    expect(deps.closeInput).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(deps.closeInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("the stale turn's own output, while this prompt is queued, does not disarm the backstop", async () => {
+    controller.observe(lifecycle("queued"));
+    controller.observe({ ...result(""), user_message_uuid: "older" });
+    controller.observe(init());
+    controller.observe(assistant("stale"));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deps.closeInput).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the host detaching mid-turn", () => {
+    // The server suspends a turn (an approval, a host tool's approval, a
+    // scope step-up) by closing its socket, and revokes the turn's lease.
+    it("pauses like an approval: background work is stopped, the cap held", async () => {
+      startDrain("a1");
+      helpers.hostPresence.onDetach!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deps.stopTask).toHaveBeenCalledWith("a1");
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(raws()).not.toContainEqual({
+        mcpjam: "drain-notice",
+        reason: "cap",
+      });
+    });
+
+    it("the continuation's reattach ends the pause with a new lease", async () => {
+      startDrain("a1");
+      helpers.hostPresence.onDetach!();
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      helpers.hostPresence.onAttach!();
+      expect(controller.state.leaseStartedAt).toBe(Date.now());
+      // The 20 minutes paused do not count against the drain.
+      await vi.advanceTimersByTimeAsync(10 * 60_000 - 1);
+      expect(raws()).not.toContainEqual({
+        mcpjam: "drain-notice",
+        reason: "cap",
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(raws()).toContainEqual({ mcpjam: "drain-notice", reason: "cap" });
+    });
+
+    it("a second close is one pause", async () => {
+      startDrain("a1");
+      helpers.hostPresence.onDetach!();
+      helpers.hostPresence.onDetach!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deps.stopTask).toHaveBeenCalledTimes(1);
+      helpers.hostPresence.onAttach!();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(raws()).toContainEqual({ mcpjam: "drain-notice", reason: "cap" });
+    });
+
+    it("a stopped drain no longer listens", () => {
+      startDrain("a1");
+      controller.stop("stopped");
+      expect(helpers.hostPresence.onDetach).toBeUndefined();
+    });
+
+    it("the hooks belong to the turn: clear() removes them", () => {
+      expect(helpers.hostPresence.onDetach).toBeTypeOf("function");
+      controller.clear();
+      expect(helpers.hostPresence.onDetach).toBeUndefined();
+      expect(helpers.hostPresence.onAttach).toBeUndefined();
+    });
+  });
+
   it("a skipped result followed by the prompt's own lifecycle does not end the turn", async () => {
     controller.observe({ ...result(""), user_message_uuid: "older" });
     controller.observe(lifecycle("started"));
@@ -876,6 +1032,30 @@ describe("which tasks count as background", () => {
     helpers.reduce(state, tasksChanged(["w1", "local_workflow"]));
     expect(helpers.isBackgroundTask(state, "unknown")).toBe(true);
     expect(helpers.isBackgroundTask(state, "f1")).toBe(false);
+  });
+
+  it("a nested agent whose parent moved to the background later counts as background", () => {
+    // Foreground a1 spawns n1 (classified foreground at the time); a1 is then
+    // backgrounded. n1's failure must not fail the turn or stop the drain.
+    const state = helpers.createState({ promptUuid: PROMPT, turnStartedAt: 0 });
+    helpers.reduce(state, taskStarted("a1", "local_agent", false));
+    helpers.reduce(state, {
+      type: "assistant",
+      parent_tool_use_id: "toolu_a1",
+      message: { content: [{ type: "tool_use", id: "toolu_n1" }] },
+    });
+    helpers.reduce(state, {
+      ...taskStarted("n1", "local_agent", false),
+      tool_use_id: "toolu_n1",
+    });
+    expect(helpers.isBackgroundTask(state, "n1")).toBe(false);
+    helpers.reduce(state, {
+      type: "system",
+      subtype: "task_updated",
+      task_id: "a1",
+      patch: { is_backgrounded: true },
+    });
+    expect(helpers.isBackgroundTask(state, "n1")).toBe(true);
   });
 });
 

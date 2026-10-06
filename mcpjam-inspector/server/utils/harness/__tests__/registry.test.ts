@@ -539,6 +539,23 @@ function emitUserToolResults(msg) {
       return;
     }
 }
+async function runBridge(options) {
+  const handleInbound = async (msg, ws) => {
+    switch (msg.type) {
+      case "resume":
+        activeSocket = ws;
+        replay(ws, msg.lastSeenEventId);
+        return;
+    }
+  };
+  wss.on("connection", (ws, req) => {
+    ws.on("close", () => {
+      if (activeSocket === ws) {
+        activeSocket = void 0;
+      }
+    });
+  });
+}
 async function runTurn(start, turn) {
   const onHostAbort = () => {
     if (gracefulAbort) {
@@ -680,7 +697,15 @@ function addUsage(total, usage) {
     );
     expect(bridge?.content).toContain("!mcpjamDrainStep.keepReading");
     expect(bridge?.content).toContain(
-      "if (mcpjamDrainStep.ignoreResult) continue;",
+      "if (mcpjamDrainStep.ignoreResult || mcpjamDrainStep.skip) continue;",
+    );
+    // The server suspends a turn by detaching from the bridge, and resumes it
+    // by reattaching: both reach the drain, which pauses on the first.
+    expect(bridge?.content).toContain(
+      "activeSocket = ws;\n        mcpjamHostPresence.onAttach?.();",
+    );
+    expect(bridge?.content).toContain(
+      "activeSocket = void 0;\n        mcpjamHostPresence.onDetach?.();",
     );
     expect(bridge?.content).toContain(
       "messageId: initialMessageId ?? randomUUID3()",

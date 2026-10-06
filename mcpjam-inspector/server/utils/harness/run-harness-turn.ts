@@ -2506,6 +2506,7 @@ export async function runHarnessTurn(
               modelId,
               auth,
               mcpJson,
+              permissionMode,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2513,6 +2514,7 @@ export async function runHarnessTurn(
           : harnessAdapter.createHarness({
               modelId,
               auth,
+              permissionMode,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -3322,6 +3324,14 @@ export async function runHarnessTurn(
           }
           const type = part.type;
           if (typeof type === "string") seenHarnessPartTypes.add(type);
+          // A failed call ends with `tool-error` (a non-zero Bash exit, a
+          // missing file, a failed Edit), not `tool-result`: it is no longer
+          // in flight either way.
+          if (type === "tool-error" || type === "tool-output-error") {
+            drainOpenToolCalls.delete(
+              String((part as { toolCallId?: unknown }).toolCallId ?? ""),
+            );
+          }
           if (
             type === "reasoning-start" ||
             type === "reasoning-delta" ||
@@ -3792,6 +3802,9 @@ export async function runHarnessTurn(
                 });
                 if (drainInfo.reason === "follow-up") {
                   backgroundDrainActive = false;
+                  // The follow-up streams on its own; the keepalive is only
+                  // for the silent wait.
+                  stopDrainKeepalive();
                 } else if (drainInfo.reason === "draining") {
                   backgroundDrainActive = true;
                   if (!drainKeepalive) {

@@ -134,6 +134,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 });
 
 import { runHarnessTurn } from "../run-harness-turn";
+import { getHarnessAdapter } from "../registry.js";
 
 function options(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -217,6 +218,28 @@ describe("runHarnessTurn background drain", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.useRealTimers();
+  });
+
+  it("hands the harness the turn's permission mode, which decides background tasks", async () => {
+    harnessState.script = [
+      { type: "text-delta", delta: "hi" },
+      { type: "finish", finishReason: "stop" },
+    ];
+    harnessState.finalText = "hi";
+
+    const result = await runHarnessTurn(options() as any, "none");
+    await result.response?.text();
+
+    const createHarnessCalls = vi
+      .mocked(getHarnessAdapter)
+      .mock.results.flatMap(
+        (adapter) =>
+          (adapter.value as { createHarness: ReturnType<typeof vi.fn> })
+            .createHarness.mock.calls,
+      );
+    expect(createHarnessCalls.at(-1)![0]).toMatchObject({
+      permissionMode: "allow-all",
+    });
   });
 
   it("streams drain parts as transient background-task chunks", async () => {
@@ -419,6 +442,36 @@ describe("runHarnessTurn background drain", () => {
     expect(result.backgroundDrainEnded).toBeUndefined();
   });
 
+  it("a FAILED tool call is no longer in flight: a Stop while waiting keeps the answer", async () => {
+    // A non-zero Bash exit, a missing file or a failed Edit ends with
+    // `tool-error`, never `tool-result`.
+    const stop = new AbortController();
+    harnessState.script = [
+      {
+        type: "tool-call",
+        toolCallId: "call_1",
+        toolName: "Bash",
+        input: { command: "false" },
+      },
+      { type: "tool-error", toolCallId: "call_1", error: "exit 1" },
+      { type: "text-delta", delta: "I started the plan." },
+      task("running"),
+      notice("draining"),
+      () => stop.abort(),
+      { type: "abort" },
+    ];
+    harnessState.finalText = new Error("aborted");
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as any,
+      "none",
+    );
+
+    expect(result.aborted).toBe(false);
+    expect(result.backgroundDrainEnded).toBe(true);
+    expect(harnessState.session.detach).toHaveBeenCalledTimes(1);
+  });
+
   it("a waiting phase re-announced after a follow-up ends on a Stop again", async () => {
     const stop = new AbortController();
     harnessState.script = [
@@ -483,5 +536,39 @@ describe("runHarnessTurn background drain", () => {
         (chunk.data as { kind?: string }).kind === "keepalive",
     );
     expect(keepalives).toHaveLength(2);
+  });
+
+  it("no keepalive while a follow-up streams; it resumes when the turn waits again", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    let releaseFollowUp!: () => void;
+    const followUp = new Promise<void>(
+      (resolve) => (releaseFollowUp = resolve),
+    );
+    let releaseWait!: () => void;
+    const waitAgain = new Promise<void>((resolve) => (releaseWait = resolve));
+    harnessState.script = [
+      { type: "text-delta", delta: "I started the plan." },
+      notice("draining"),
+      notice("follow-up"),
+      () => followUp,
+      notice("draining"),
+      () => waitAgain,
+      { type: "finish", finishReason: "stop" },
+    ];
+    harnessState.finalText = "I started the plan.";
+
+    const result = await runHarnessTurn(options() as any, "ui");
+    const body = result.response!.text();
+    await vi.advanceTimersByTimeAsync(41_000);
+    releaseFollowUp();
+    await vi.advanceTimersByTimeAsync(21_000);
+    releaseWait();
+    const keepalives = sseChunks(await body).filter(
+      (chunk) =>
+        chunk.type === "data-harness-background-task" &&
+        (chunk.data as { kind?: string }).kind === "keepalive",
+    );
+    // None during the 41 s follow-up, one in the 21 s wait after it.
+    expect(keepalives).toHaveLength(1);
   });
 });

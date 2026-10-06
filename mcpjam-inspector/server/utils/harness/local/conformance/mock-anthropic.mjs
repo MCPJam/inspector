@@ -4,6 +4,10 @@
 //   "BASH <cmd>"       -> tool_use Bash {command}
 //   "WRITE <path>"     -> tool_use Write {file_path, content}
 //   "COUNT"            -> text: number of user turns seen in this request (continuity probe)
+//   "BGAGENT"          -> tool_use Agent {run_in_background: true} with a "BGSUB" prompt
+//   "BGSUB …"          -> text: the background subagent's own answer
+//   "<task-notification>" (a background task reported back) -> text: BGREPORT
+//   "BGSHELL <cmd>"    -> tool_use Bash {command, run_in_background: true}
 //   anything else      -> text echo
 // After a tool_result arrives, answers with a final text summarising the result.
 // Verifies the gateway's proof-of-possession header when MOCK_POP_SECRET is set.
@@ -168,6 +172,22 @@ const server = http.createServer((req, res) => {
         return sse(res, textEvents(id, `TOOL RESULT RECEIVED: ${content.slice(0, 200)}`, inputTokens));
       }
       const t = (text ?? "").trim();
+      // Background work. The follow-up to a task's report is matched first:
+      // its last user message is the CLI's notification, whatever started it.
+      if (t.includes("<task-notification>")) {
+        return sse(res, textEvents(id, "BGREPORT: the background agent reported back", inputTokens));
+      }
+      if (t.includes("BGSUB")) {
+        return sse(res, textEvents(id, "SUBAGENT PLAN READY", inputTokens));
+      }
+      const bg = /^(BGAGENT|BGSHELL)\b\s*(.*)$/s.exec(t.split("\n").filter((l) => /^(BGAGENT|BGSHELL)\b/.test(l)).pop() ?? "");
+      if (bg) {
+        const [, kind, arg] = bg;
+        if (kind === "BGAGENT") {
+          return sse(res, toolEvents(id, "Agent", { description: "background plan", prompt: "BGSUB write the plan", subagent_type: "general-purpose", run_in_background: true }, inputTokens));
+        }
+        return sse(res, toolEvents(id, "Bash", { command: arg.trim() || "sleep 300", description: "background shell", run_in_background: true }, inputTokens));
+      }
       if (t.split("\n").some((l) => /^SLOW\b/.test(l))) {
         log("SLOW scenario: holding the response 8s");
         setTimeout(() => sse(res, textEvents(id, "SLOW DONE", inputTokens)), 8000);

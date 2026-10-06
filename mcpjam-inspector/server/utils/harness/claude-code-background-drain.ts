@@ -24,10 +24,15 @@
  *      stamps it on the prompt's result (`user_message_uuid`). Before the
  *      first answer, a result stamped with another uuid, or arriving while
  *      the prompt is still `queued`, is forwarded as nothing: the CLI's report
- *      of a task the previous turn killed. Without a stamp, an empty success
+ *      of a task the previous turn killed. So is that stale turn's own
+ *      main-thread output while the prompt is `queued`, which would otherwise
+ *      run into this turn's answer. Without a stamp, an empty success
  *      before any main-thread message of this prompt is skipped too. If
- *      nothing of the prompt follows a skipped result within the idle grace,
- *      the turn ends as the vendor bridge would have ended it.
+ *      nothing of the prompt follows a skipped result after 15 s of silence,
+ *      the turn ends as the vendor bridge would have ended it. Only this
+ *      prompt's own lifecycle or output disarms that backstop; any other
+ *      message restarts it, and it holds while the CLI reports itself
+ *      `compacting` or `requesting`.
  *   2. WHAT TO WAIT FOR. The pending set is the latest
  *      `system/background_tasks_changed` list (REPLACE semantics, per the SDK)
  *      filtered to `local_agent` and `local_workflow`. Shells, Monitor and
@@ -55,7 +60,12 @@
  *      a foreground subagent's request a denial. A main-thread approval
  *      suspends the server request and revokes its model lease, so the
  *      background work still pending is stopped (and reported), and the cap
- *      is paused until the approval is answered.
+ *      is paused until the approval is answered. The server suspends by
+ *      DETACHING from the bridge, so a detach mid-turn is treated the same
+ *      way whatever caused it (a host tool's approval, a scope step-up), and
+ *      the continuation's reattach ends the pause with a new lease. Background
+ *      tasks only run on `allow-all` turns (`registry.ts`), where a pause is
+ *      rare.
  *   6. CAP. `min(drainStart + 10 min, leaseStart + 25 min)`: the model broker
  *      lease is 30 min from the request's start with no renewal, and an
  *      approval's continuation is a new request with a new lease. At the cap the
@@ -77,8 +87,9 @@
  * Nothing outlives the turn: the lease, the computer reservation, the
  * transcript commit, the reaper and resume-from-disk all stay turn-scoped.
  *
- * With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` set (#5944) no agent or shell
- * runs in the background, so the drain never engages. The one exception is
+ * Background tasks run on `allow-all` turns only (`registry.ts`). Every other
+ * mode sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, so no agent or shell runs
+ * in the background there and the drain never engages; the one exception is
  * the `Workflow` tool, which the CLI always runs in the background.
  *
  * Every needle is quoted VERBATIM from 1.0.121, except the Group B result
@@ -112,6 +123,7 @@ var MCPJAM_DRAIN_CAP_GRACE_MS = 15e3;
 var MCPJAM_DRAIN_STOP_TASK_TIMEOUT_MS = 2e3;
 var MCPJAM_DRAIN_CLASSIFY_WAIT_MS = 1e3;
 var MCPJAM_BACKGROUND_APPROVAL_DENIAL = "Background agents can't ask for approval; run this in the foreground.";
+var mcpjamHostPresence = { owner: void 0, onDetach: void 0, onAttach: void 0 };
 function mcpjamCreateBackgroundDrainState(input) {
   return {
     promptUuid: input.promptUuid,
@@ -159,7 +171,10 @@ function mcpjamDrainUnderBackground(state, toolUseId) {
 }
 function mcpjamDrainIsBackgroundTask(state, taskId) {
   if (state.backgroundIds.has(taskId) || state.nestedBackgroundIds.has(taskId)) return true;
-  if (state.tasks.has(taskId)) return false;
+  if (state.tasks.has(taskId)) {
+    const toolUseId = state.tasks.get(taskId).toolUseId;
+    return toolUseId !== void 0 && mcpjamDrainUnderBackground(state, toolUseId);
+  }
   for (const meta of state.pending.values()) {
     if (meta.taskType === "local_workflow") return true;
   }
@@ -172,6 +187,7 @@ function mcpjamDrainAcknowledge(state) {
 function mcpjamBackgroundDrainReducer(state, event) {
   const type = event?.type;
   let ignoreResult = false;
+  let skip = false;
   let mainThread = false;
   if (type === "command_lifecycle") {
     if (event.command_uuid === state.promptUuid && typeof event.state === "string") {
@@ -241,7 +257,8 @@ function mcpjamBackgroundDrainReducer(state, event) {
     }
   } else if ((type === "assistant" || type === "stream_event") && event.parent_tool_use_id == null) {
     mainThread = true;
-    if (state.promptLifecycle !== "queued") state.answerStarted = true;
+    if (!state.answered && state.promptLifecycle === "queued") skip = true;
+    else state.answerStarted = true;
     if (state.answered) state.followUpInProgress = true;
   } else if (type === "assistant" && event.parent_tool_use_id != null && Array.isArray(event.message?.content)) {
     for (const block of event.message.content) {
@@ -286,6 +303,7 @@ function mcpjamBackgroundDrainReducer(state, event) {
     closeInput: !keepReading,
     abort: type === "mcpjam-cap-grace",
     ignoreResult,
+    skip,
     mainThread,
     wantsIdle: state.answered && keepReading && !state.capping && state.pending.size === 0 && !state.followUpInProgress && state.unanswered.size > 0
   };
@@ -301,9 +319,12 @@ function mcpjamCreateBackgroundDrainController(deps) {
   let capTimer;
   let graceTimer;
   let staleTimer;
+  let stalePending = false;
+  let cliBusy = false;
   let phase;
   const classifyWaiters = /* @__PURE__ */ new Map();
   let approvals = 0;
+  let hostDetached = false;
   let pausedSince;
   let pausedMs = 0;
   let stopped = false;
@@ -348,6 +369,11 @@ function mcpjamCreateBackgroundDrainController(deps) {
     clearStale();
     if (graceTimer !== void 0) clearTimeout(graceTimer);
     graceTimer = void 0;
+    if (mcpjamHostPresence.owner === controller) {
+      mcpjamHostPresence.onDetach = void 0;
+      mcpjamHostPresence.onAttach = void 0;
+      mcpjamHostPresence.owner = void 0;
+    }
   };
   const stop = (reason) => {
     if (stopped) return;
@@ -403,7 +429,7 @@ function mcpjamCreateBackgroundDrainController(deps) {
     const deadline = mcpjamDrainDeadline(state, pausedMs);
     if (deadline === void 0 || stopped || state.capping) return;
     clearCap();
-    capTimer = setTimeout(onCap, Math.max(0, mcpjamDrainDeadline(state, pausedMs) - now()));
+    capTimer = setTimeout(onCap, Math.max(0, deadline - now()));
     capTimer.unref?.();
   };
   // The server keeps the delivered answer on a Stop only while the bridge is
@@ -424,8 +450,15 @@ function mcpjamCreateBackgroundDrainController(deps) {
       for (const wake of waiters) wake();
     }
   };
+  const armStale = (extraMs = 0) => {
+    clearStale();
+    if (!stalePending || stopped || cliBusy) return;
+    staleTimer = setTimeout(onStaleTimeout, MCPJAM_DRAIN_IDLE_MS + extraMs);
+    staleTimer.unref?.();
+  };
   const onStaleTimeout = () => {
     staleTimer = void 0;
+    stalePending = false;
     if (stopped) return;
     const step = mcpjamBackgroundDrainReducer(state, { type: "mcpjam-stale-timeout" });
     if (!step.keepReading && !deps.hasActiveUserMessages()) {
@@ -447,7 +480,7 @@ function mcpjamCreateBackgroundDrainController(deps) {
     }
     if (capTimer === void 0 && approvals === 0) armCap();
   };
-  return {
+  const controller = {
     state,
     get stopped() {
       return stopped;
@@ -466,12 +499,25 @@ function mcpjamCreateBackgroundDrainController(deps) {
       flushClassifyWaiters();
       // A skipped result must not leave the turn open forever: if nothing of
       // this prompt follows it, end the turn as the vendor bridge would have.
+      // Only THIS prompt showing life disarms it; anything else the CLI says
+      // is activity that restarts the silence window, and while the CLI
+      // reports itself busy (compacting, a request in flight) it never fires.
+      if (msg?.type === "system" && msg.subtype === "status") {
+        cliBusy = msg.status === "compacting" || msg.status === "requesting";
+      }
       if (step.ignoreResult) {
-        clearStale();
-        staleTimer = setTimeout(onStaleTimeout, MCPJAM_DRAIN_IDLE_MS);
-        staleTimer.unref?.();
-      } else if (staleTimer !== void 0 && (msg?.type === "command_lifecycle" || (step.mainThread && msg?.type !== "result"))) {
-        clearStale();
+        stalePending = true;
+        armStale();
+      } else if (stalePending) {
+        const promptAlive =
+          (msg?.type === "command_lifecycle" && msg.command_uuid === state.promptUuid && msg.state !== "queued") ||
+          (step.mainThread && !step.skip && msg?.type !== "result" && state.promptLifecycle !== "queued");
+        if (promptAlive) {
+          stalePending = false;
+          clearStale();
+        } else {
+          armStale(msg?.type === "system" && msg.subtype === "api_retry" && typeof msg.retry_delay_ms === "number" ? msg.retry_delay_ms : 0);
+        }
       }
       if (!stopped && msg?.type === "system" && msg.subtype === "background_tasks_changed") {
         // The level usually precedes task_started; announce a task once both
@@ -496,6 +542,7 @@ function mcpjamCreateBackgroundDrainController(deps) {
       return step;
     },
     answer() {
+      stalePending = false;
       clearStale();
       const step = mcpjamBackgroundDrainReducer(state, { type: "mcpjam-answer", at: now() });
       sync(step);
@@ -507,13 +554,19 @@ function mcpjamCreateBackgroundDrainController(deps) {
         // A request can outrun its task_started in the stream; wait for
         // observe() to classify it, bounded.
         await new Promise((resolve) => {
-          const timer = setTimeout(resolve, MCPJAM_DRAIN_CLASSIFY_WAIT_MS);
-          timer.unref?.();
           const waiters = classifyWaiters.get(agentID) ?? [];
-          waiters.push(() => {
+          const wake = () => {
             clearTimeout(timer);
             resolve();
-          });
+          };
+          const timer = setTimeout(() => {
+            const left = (classifyWaiters.get(agentID) ?? []).filter((waiter) => waiter !== wake);
+            if (left.length > 0) classifyWaiters.set(agentID, left);
+            else classifyWaiters.delete(agentID);
+            resolve();
+          }, MCPJAM_DRAIN_CLASSIFY_WAIT_MS);
+          timer.unref?.();
+          waiters.push(wake);
           classifyWaiters.set(agentID, waiters);
         });
       }
@@ -572,6 +625,23 @@ function mcpjamCreateBackgroundDrainController(deps) {
     stop,
     clear
   };
+  // The server suspends a turn by detaching from the bridge: every approval
+  // (native or a host tool's) and every scope step-up pauses that way, and
+  // the turn's model lease is revoked while it waits. So a detach mid-turn is
+  // a pause like an approval, whatever caused it, and the reattach of the
+  // continuation (a new request, with a new lease) ends it.
+  mcpjamHostPresence.owner = controller;
+  mcpjamHostPresence.onDetach = () => {
+    if (stopped || hostDetached) return;
+    hostDetached = true;
+    controller.approvalStarted();
+  };
+  mcpjamHostPresence.onAttach = () => {
+    if (!hostDetached) return;
+    hostDetached = false;
+    controller.approvalEnded();
+  };
+  return controller;
 }
 function mcpjamCloseOpenStep(state, emit) {
   for (const block of state.partialBlocks.values()) {
@@ -641,6 +711,23 @@ const REPLACEMENTS: readonly Replacement[] = [
     `                  text: initialUserMessage,
                   messageId: initialMessageId ?? randomUUID3()`,
   ],
+  // The host's socket closing mid-turn, or reattaching to resume it.
+  [
+    `      case "resume":
+        activeSocket = ws;`,
+    `      case "resume":
+        activeSocket = ws;
+        mcpjamHostPresence.onAttach?.();`,
+  ],
+  [
+    `    ws.on("close", () => {
+      if (activeSocket === ws) {
+        activeSocket = void 0;`,
+    `    ws.on("close", () => {
+      if (activeSocket === ws) {
+        activeSocket = void 0;
+        mcpjamHostPresence.onDetach?.();`,
+  ],
   // The controller (timers, notices, approvals). `q` is read lazily.
   [
     `  const skillsOption = toClaudeSkillsOption(start.skills);`,
@@ -702,7 +789,7 @@ const REPLACEMENTS: readonly Replacement[] = [
     `      emitStreamEvent(msg);
       if (type === "result") {`,
     `      const mcpjamDrainStep = mcpjamDrainController.observe(msg);
-      if (mcpjamDrainStep.ignoreResult) continue;
+      if (mcpjamDrainStep.ignoreResult || mcpjamDrainStep.skip) continue;
       emitStreamEvent(msg);
       if (type === "result") {`,
   ],
