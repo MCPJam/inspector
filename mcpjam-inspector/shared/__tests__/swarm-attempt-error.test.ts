@@ -4,6 +4,7 @@ import {
   humanizeSwarmAttemptError,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isBusyReservation,
   isHeldCreditsRefusal,
   isTransientSpendRefusal,
   MAX_ATTEMPT_ERROR_CHARS,
@@ -522,6 +523,22 @@ describe("isHeldCreditsRefusal", () => {
       isHeldCreditsRefusal(undefined, undefined, STORED_HOLDS_SENTENCE),
     ).toBe(true);
     expect(isHeldCreditsRefusal(null, null, STORED_HOLDS_SENTENCE)).toBe(true);
+  });
+});
+
+describe("isBusyReservation", () => {
+  it("names only MCPJam's own busy reservation", () => {
+    expect(isBusyReservation("spending_reservation_busy")).toBe(true);
+    for (const code of [
+      undefined,
+      null,
+      "",
+      "user_rate_limit",
+      "rate_limited",
+      "platform_capacity",
+    ]) {
+      expect(isBusyReservation(code)).toBe(false);
+    }
   });
 });
 

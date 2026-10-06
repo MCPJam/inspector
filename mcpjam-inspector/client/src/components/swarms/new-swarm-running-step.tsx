@@ -54,6 +54,7 @@ import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isBusyReservation,
   isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
 import { providerLabelForModelId } from "./session-rate-limit";
@@ -1109,9 +1110,12 @@ export function NewSwarmRunningStep({
         // The code comes off the attempt, not the humanized info: that only
         // carries a code through for the codes it words itself, so the
         // whole-run `spend_cap_exceeded` finalize reaches here carrying none.
+        // A busy reservation is MCPJam's own wait: the model was never called,
+        // so no provider throttled anything.
         if (
           isAccountLimit(info.message, attempt.errorCode ?? info.code) ||
-          isHeldAttempt(attempt, info)
+          isHeldAttempt(attempt, info) ||
+          isBusyReservation(attempt.errorCode ?? info.code)
         ) {
           continue;
         }

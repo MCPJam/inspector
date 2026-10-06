@@ -889,6 +889,15 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     const terminals = reportAttemptMock.mock.calls
       .map((c) => c[2] as any)
       .filter((a) => a.status !== "running");
+    // The session that tripped the stop carries the busy code too, so the run
+    // reads the whole stop the same way (a bare `rate_limited` reads as the
+    // user's provider throttling their key).
+    expect(
+      terminals.find((t) => t.hostId === "host-1" && t.sessionIdx === 0),
+    ).toMatchObject({
+      status: "rate_limited",
+      errorCode: "spending_reservation_busy",
+    });
     const stopped = terminals.filter(
       (t) => t.hostId === "host-1" && t.sessionIdx > 0,
     );

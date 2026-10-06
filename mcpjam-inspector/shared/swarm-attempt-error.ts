@@ -183,14 +183,24 @@ export function isHeldCreditsRefusal(
 }
 
 /**
+ * `spending_reservation_busy` (503): MCPJam's own reservation lost its
+ * concurrency race on every retry and committed nothing, so the model was not
+ * called, so asking again is safe (`runSpendingReservationWithOccRetry` in the
+ * backend's `convex/lib/occRetry.ts`).
+ *
+ * A wait on MCPJam's side: no provider throttled anything and no purchase
+ * helps, so a surface must not call it either.
+ */
+export function isBusyReservation(code?: string | null): boolean {
+  return code === "spending_reservation_busy";
+}
+
+/**
  * A refusal that lifts in seconds on its own: a wait, never an exhausted
  * wallet.
  *
  * - `holds_committed`: see {@link isHeldCreditsRefusal}.
- * - `spending_reservation_busy` (503): MCPJam's own reservation lost its
- *   concurrency race on every retry and committed nothing, so the model was not
- *   called, so asking again is safe (`runSpendingReservationWithOccRetry` in
- *   the backend's `convex/lib/occRetry.ts`).
+ * - A busy reservation: see {@link isBusyReservation}.
  */
 export function isTransientSpendRefusal(
   code?: string | null,
@@ -198,7 +208,7 @@ export function isTransientSpendRefusal(
   message?: string | null,
 ): boolean {
   return (
-    code === "spending_reservation_busy" ||
+    isBusyReservation(code) ||
     isHeldCreditsRefusal(code, refusalReason, message)
   );
 }

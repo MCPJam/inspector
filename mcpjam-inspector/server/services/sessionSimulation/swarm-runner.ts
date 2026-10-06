@@ -70,6 +70,7 @@ import {
   accountLimitCode,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isBusyReservation,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -496,6 +497,7 @@ function terminalForOutcome(
   outcome: "succeeded" | "failed" | "rate_limited",
   errorMessage: string | undefined,
   errorReason?: string,
+  errorRefusal?: SpendRefusal,
 ): { status: SwarmAttemptStatus; errorCode?: string; errorMessage?: string } {
   if (outcome === "succeeded") {
     return { status: "succeeded" };
@@ -514,8 +516,14 @@ function terminalForOutcome(
       // Keep MCPJam's own denial code (`user_rate_limit`, …) when the raw
       // message carries one. The humanized sentence has dropped it, and a bare
       // `rate_limited` reads to the run screen as the user's PROVIDER
-      // throttling their key — naming Anthropic for MCPJam's daily limit.
-      errorCode: accountLimitCode(errorMessage) ?? "rate_limited",
+      // throttling their key — naming Anthropic for MCPJam's daily limit. A
+      // busy reservation is no provider's limit either, and carries its own
+      // code for the same reason.
+      errorCode:
+        accountLimitCode(errorMessage) ??
+        (isBusyReservation(errorRefusal?.code)
+          ? "spending_reservation_busy"
+          : "rate_limited"),
       ...(safeMessage ? { errorMessage: safeMessage } : {}),
     };
   }
@@ -583,10 +591,9 @@ function transientStop(
 ): { code: string; message: string } {
   const refusal = hint ?? humanizeSwarmAttemptError(message);
   return {
-    code:
-      refusal.code === "spending_reservation_busy"
-        ? "spending_reservation_busy"
-        : "user_rate_limit",
+    code: isBusyReservation(refusal.code)
+      ? "spending_reservation_busy"
+      : "user_rate_limit",
     message: humanizeSwarmAttemptErrorMessage(message),
   };
 }
@@ -1594,7 +1601,12 @@ async function runJourneyFanOut(
                       MAX_ATTEMPT_ERROR_CHARS,
                     ),
                 }
-              : terminalForOutcome(outcome, errorMessage, errorReason);
+              : terminalForOutcome(
+                  outcome,
+                  errorMessage,
+                  errorReason,
+                  errorRefusal,
+                );
           emit({
             type: "attempt_status",
             status: terminal.status,

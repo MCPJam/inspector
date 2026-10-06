@@ -356,6 +356,31 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does NOT name a provider for a busy reservation", async () => {
+    // A busy reservation is MCPJam's own wait: the model was never called, so no
+    // provider throttled anything, and neither a purchase nor another model
+    // helps. The sessions it stops are stored `rate_limited` under its own code.
+    const busy =
+      "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+    attempt.errorCode = "spending_reservation_busy";
+    attempt.errorMessage = busy;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = busy;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
   it("explains an account limit above the table when other sessions succeeded", async () => {
     // With a success in the wave the run banner stays silent, so without this
     // the stopped sessions would be amber chips with no reason given.
