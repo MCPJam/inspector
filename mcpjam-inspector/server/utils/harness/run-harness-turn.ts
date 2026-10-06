@@ -120,6 +120,7 @@ import {
   selectDeliverableServerIds,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
+import { participantSafeStudyError } from "../scenario-runtime-config.js";
 import {
   createUiChunkProvenanceSigner,
   historyProvenanceContextFor,
@@ -746,6 +747,7 @@ export async function runHarnessTurn(
     harnessSandboxBinding,
     harnessExecutionTarget,
     executionScope,
+    scenarioParticipant,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
@@ -2391,11 +2393,19 @@ export async function runHarnessTurn(
           // Typed: lease installation is OUR platform layer, not the model.
           // The backend's own code rides along when it sent one (a billing
           // refusal, a box that is gone), so it is classified as what it is.
-          throw new HarnessInfraSetupError(broker.error, {
-            source: "platform_setup",
-            code: broker.code ?? "harness_broker_unavailable",
-            httpStatus: broker.status,
-          });
+          // A scenario's non-member participant never sees the owner-facing
+          // detail ("add credits", "Organization → Budget", "share link");
+          // the code and status still classify the failure.
+          throw new HarnessInfraSetupError(
+            scenarioParticipant && executionScope?.kind === "swarm"
+              ? participantSafeStudyError(broker)
+              : broker.error,
+            {
+              source: "platform_setup",
+              code: broker.code ?? "harness_broker_unavailable",
+              httpStatus: broker.status,
+            },
+          );
         }
         // The lease is recorded, which consumed this turn's claim on the box; the
         // lease's own per-box fence covers the rest of the turn. Releasing now

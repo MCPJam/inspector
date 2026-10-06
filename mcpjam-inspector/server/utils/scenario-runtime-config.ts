@@ -253,6 +253,68 @@ export function shouldWarnSecretsUndelivered(args: {
  */
 export const SCENARIO_HARNESS_BOX_VERSION = 1;
 
+/**
+ * The runtime config resolved this actor as a NON-MEMBER participant (a User
+ * Testing tester admitted by link or invite). Advisory, like every
+ * runtime-config execution field: it picks the copy they are shown, never
+ * what they may do.
+ */
+export function isScenarioParticipant(
+  config: { accessKind?: unknown } | null | undefined,
+): boolean {
+  return config?.accessKind === "swarm_grant";
+}
+
+export const PARTICIPANT_STUDY_AT_LIMIT =
+  "This study has reached its limit for now. Try again later.";
+export const PARTICIPANT_STUDY_MISCONFIGURED =
+  "This study isn't set up correctly yet. Let the study owner know.";
+
+/** Refusals only the study's owner can fix. */
+const PARTICIPANT_MISCONFIGURED_CODES = new Set([
+  "materialized_secrets_unsupported",
+  "free_tier_model_restricted",
+  "no_pin",
+  "image_unavailable",
+  "not_env_backed",
+]);
+
+/**
+ * What a participant is told when the study's box or model lease is refused.
+ * The backend's copy is written for the study's owner — add credits, raise the
+ * organization's budget, change the environment — none of which a tester can
+ * see or do, so they get one of two sentences instead. The participant-cap
+ * refusal is the exception: the backend wrote it for testers, and it says
+ * which cap and when to come back.
+ */
+export function participantSafeStudyError(refusal: {
+  status?: number;
+  code?: string;
+  error?: string;
+}): string {
+  if (refusal.code === "participant_cap" && refusal.error) {
+    return refusal.error;
+  }
+  if (refusal.code && PARTICIPANT_MISCONFIGURED_CODES.has(refusal.code)) {
+    return PARTICIPANT_STUDY_MISCONFIGURED;
+  }
+  if (
+    refusal.status === 429 ||
+    refusal.status === 503 ||
+    refusal.code === "spend_budget_reached"
+  ) {
+    return PARTICIPANT_STUDY_AT_LIMIT;
+  }
+  // Anything else passes through, unless it names what a tester can't see.
+  if (
+    !refusal.error ||
+    /credit|budget|organi[sz]ation|environment/i.test(refusal.error)
+  ) {
+    return PARTICIPANT_STUDY_MISCONFIGURED;
+  }
+  return refusal.error;
+}
+
 export interface ScenarioSandboxPlan {
   /**
    * `provision` — reserve the per-conversation box, then bind bash to it.
