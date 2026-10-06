@@ -40,7 +40,10 @@ describe("Claude Code effort mapping", () => {
     });
     const args = vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!;
     expect(args.thinking).toEqual({ type: "disabled" });
-    expect(args.env).toEqual({ CLAUDE_CODE_EFFORT_LEVEL: "unset" });
+    expect(args.env).toEqual({
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      CLAUDE_CODE_EFFORT_LEVEL: "unset",
+    });
     expect("effort" in args).toBe(false);
   });
 
@@ -54,7 +57,27 @@ describe("Claude Code effort mapping", () => {
     const args = vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!;
     expect(args.effort).toBe("high");
     expect(args.thinking).toEqual({ type: "adaptive" });
-    expect(args.env).toEqual({ CLAUDE_CODE_EFFORT_LEVEL: "high" });
+    expect(args.env).toEqual({
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      CLAUDE_CODE_EFFORT_LEVEL: "high",
+    });
+  });
+
+  it("turns background tasks off with or without an effort", () => {
+    // A backgrounded subagent outlives the turn that started it, and its
+    // answer never reaches the chat.
+    for (const reasoningEffort of [undefined, "low"] as const) {
+      adapter().createHarness({
+        modelId: "anthropic/claude-sonnet-4-6",
+        auth: {},
+        mcpJson,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      });
+      const args = vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!;
+      expect(args.env).toMatchObject({
+        CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      });
+    }
   });
 });
 

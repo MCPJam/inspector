@@ -48,6 +48,7 @@ describe("conformance profile manifest", () => {
       "modern-cache-hint-values-valid",
       "modern-cache-scope-stable-across-pages",
       "modern-header-names-case-insensitive",
+      "modern-log-level-filtering",
       "modern-missing-method-header-rejected",
       "modern-resource-read-no-empty-contents",
       "modern-tool-output-schema-conformant",

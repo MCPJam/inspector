@@ -201,6 +201,8 @@ type JourneyRow = {
 };
 
 type JourneyRunRow = {
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
   verdictSummary?: JourneyRunVerdictSummary;
   report?: SwarmReport;
   _id: string;
@@ -333,6 +335,8 @@ function toGoalRunDto(row: JourneyRunRow, surface: Surface) {
     // a client does not have to know that, and does not render a deliberate
     // stop as a failure.
     canceled: row.error === "canceled",
+    cancelRequested: row.cancelRequested ?? row.error === "canceled",
+    cleanupPending: row.cleanupPending ?? false,
     // Likewise for the stale-runner sweep: the run did not fail on its merits,
     // its runner went silent.
     stale: row.error === "stale_runner",
@@ -927,9 +931,9 @@ both(
 // from my list", and a scorecard that vanished with its goal would take the
 // evidence for a decision with it.
 //
-// Second call answers 404: an archived goal is filtered out of the project's
-// goals, so the scoping preflight can no longer place it. Cleanup scripts
-// should read 404 here as success.
+// A second call succeeds again: the scoping preflight reads the goal by id,
+// archived or not, and `archiveJourney` is a no-op on an archived row
+// (observed on production 2026-10-06).
 //
 // NOT flag-gated — archiving reduces exposure.
 both(
@@ -1108,6 +1112,7 @@ both(
       canceled: true;
       alreadyCanceled: boolean;
       finalized: number;
+      cleanupPending?: boolean;
     };
     try {
       result = (await client.mutation(
@@ -1135,6 +1140,9 @@ both(
       alreadyCanceled: result.alreadyCanceled,
       /** Attempts this call moved to terminal. Zero on an idempotent replay. */
       finalized: result.finalized,
+      ...(result.cleanupPending !== undefined
+        ? { cleanupPending: result.cleanupPending }
+        : {}),
     });
   },
 );
