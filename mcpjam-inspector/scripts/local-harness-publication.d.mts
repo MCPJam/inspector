@@ -95,3 +95,6 @@ export interface PinIntent {
 export declare function checkPinIntent(intent: unknown): PinIntent;
 export declare function checkPinIntents(intents: readonly unknown[], harnessIds: readonly string[]): PinIntent[];
 export declare function pinSummary(intents: readonly PinIntent[]): string;
+export declare const GITHUB_READ_ATTEMPTS: number;
+export declare function setGithubRetryDelayForTests(delay: ((attempt: number) => Promise<void>) | null): void;
+export declare function githubClient(): { repo: string; api: (path: string, init?: RequestInit) => Promise<Response> };

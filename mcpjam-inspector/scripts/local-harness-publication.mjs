@@ -351,22 +351,54 @@ export function pinSummary(intents) {
 
 // ── GitHub IO ────────────────────────────────────────────────────────────────
 
+/** How many times a GitHub read is tried before its failure stands. */
+export const GITHUB_READ_ATTEMPTS = 4;
+let githubRetryDelay = (attempt) => new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** (attempt - 1)));
+
+/** Test seam: no real waiting between retries. */
+export function setGithubRetryDelayForTests(delay) {
+  githubRetryDelay = delay ?? ((attempt) => new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** (attempt - 1))));
+}
+
+/** The GitHub REST client the commands use (exported for tests). */
+export function githubClient() {
+  return github();
+}
+
 function github() {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   const repo = process.env.GITHUB_REPOSITORY || "MCPJam/inspector";
   if (!token) throw new Error("GITHUB_TOKEN (or GH_TOKEN) is required");
   const api = async (path, init = {}) => {
-    const response = await fetch(`https://api.github.com/repos/${repo}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        Accept: "application/vnd.github+json",
-        ...(init.headers ?? {}),
-      },
-    });
-    if (!response.ok) throw new Error(`GitHub ${init.method ?? "GET"} ${path}: ${response.status}`);
-    return response;
+    const method = init.method ?? "GET";
+    // Reads are retried on a 5xx or a dropped connection: a transient GitHub
+    // 500 on one release-asset read failed a whole plan and opened a failure
+    // issue (#5949). Writes are not — a retried POST could open a second issue.
+    const attempts = method === "GET" ? GITHUB_READ_ATTEMPTS : 1;
+    for (let attempt = 1; ; attempt += 1) {
+      let response;
+      try {
+        response = await fetch(`https://api.github.com/repos/${repo}${path}`, {
+          ...init,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-GitHub-Api-Version": "2022-11-28",
+            Accept: "application/vnd.github+json",
+            ...(init.headers ?? {}),
+          },
+        });
+      } catch (error) {
+        if (attempt >= attempts) throw error;
+        await githubRetryDelay(attempt);
+        continue;
+      }
+      if (response.ok) return response;
+      if (response.status >= 500 && attempt < attempts) {
+        await githubRetryDelay(attempt);
+        continue;
+      }
+      throw new Error(`GitHub ${method} ${path}: ${response.status}`);
+    }
   };
   return { repo, api };
 }
