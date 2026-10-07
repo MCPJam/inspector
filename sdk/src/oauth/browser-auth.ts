@@ -283,19 +283,67 @@ function buildWellKnownPath(
     : `/.well-known/${wellKnownPrefix}${normalizedPath}`;
 }
 
+/** Matches the hosted proxy's own bound on a redirect chain. */
+const MAX_METADATA_DISCOVERY_REDIRECTS = 5;
+
+const METADATA_REDIRECT_STATUSES: ReadonlySet<number> = new Set([
+  301, 302, 303, 307, 308,
+]);
+
+/**
+ * Where a well-known metadata answer redirects to, or undefined when it is not
+ * a redirect this discovery should follow.
+ *
+ * A native `fetch` follows these on its own, so they only reach here when the
+ * fetch is the hosted proxy, which answers `redirect: "manual"` by design (it
+ * validates one hop per call). Every follow-up hop goes back through the same
+ * `fetchFn`, so the proxy still vets each destination. An HTTPS document is
+ * never followed down to plain HTTP.
+ */
+function metadataRedirectTarget(
+  response: Response,
+  currentUrl: URL,
+): URL | undefined {
+  if (!METADATA_REDIRECT_STATUSES.has(response.status)) return undefined;
+  const location = response.headers.get("location");
+  if (!location) return undefined;
+  let nextUrl: URL;
+  try {
+    nextUrl = new URL(location, currentUrl);
+  } catch {
+    return undefined;
+  }
+  if (nextUrl.protocol !== "https:" && nextUrl.protocol !== "http:") {
+    return undefined;
+  }
+  if (currentUrl.protocol === "https:" && nextUrl.protocol !== "https:") {
+    return undefined;
+  }
+  return nextUrl;
+}
+
 async function tryMetadataDiscovery(
   url: URL,
   protocolVersion: string,
   fetchFn: FetchFn = fetch,
 ) {
-  return fetchWithCorsRetry(
-    url,
-    {
-      "MCP-Protocol-Version": protocolVersion,
-      Accept: "application/json",
-    },
-    fetchFn,
-  );
+  const headers = {
+    "MCP-Protocol-Version": protocolVersion,
+    Accept: "application/json",
+  };
+  let currentUrl = url;
+  for (let redirectCount = 0; ; redirectCount += 1) {
+    const response = await fetchWithCorsRetry(currentUrl, headers, fetchFn);
+    const nextUrl =
+      response && redirectCount < MAX_METADATA_DISCOVERY_REDIRECTS
+        ? metadataRedirectTarget(response, currentUrl)
+        : undefined;
+    if (!response || !nextUrl) {
+      return response;
+    }
+    await response.text().catch(() => {});
+    currentUrl = nextUrl;
+  }
 }
 
 function shouldAttemptFallback(

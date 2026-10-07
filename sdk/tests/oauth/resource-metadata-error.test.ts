@@ -133,6 +133,118 @@ describe("discoverOAuthProtectedResourceMetadata failure messages", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  describe("redirects", () => {
+    const metadata = {
+      resource: SERVER_URL,
+      authorization_servers: ["https://auth.example.com"],
+    };
+    const redirect = (location: string, status = 302) =>
+      new Response("", { status, headers: { location } });
+
+    // The hosted debugger proxy answers redirects manually, one hop per call,
+    // so discovery has to follow them itself (MCPJ-9).
+    it.each([301, 302, 303, 307, 308])(
+      "follows a %s to the document",
+      async (status) => {
+        const fetchFn = vi.fn(async (url: string | URL) =>
+          String(url).startsWith("https://docs.example.com/")
+            ? Response.json(metadata)
+            : redirect("https://docs.example.com/prm.json", status)
+        );
+
+        await expect(
+          discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+        ).resolves.toEqual(metadata);
+        expect(fetchFn).toHaveBeenLastCalledWith(
+          new URL("https://docs.example.com/prm.json"),
+          expect.objectContaining({
+            headers: expect.objectContaining({ Accept: "application/json" }),
+          })
+        );
+      }
+    );
+
+    it("resolves a relative Location against the redirecting URL", async () => {
+      const fetchFn = vi.fn(async (url: string | URL) =>
+        String(url).endsWith("/v2/prm")
+          ? Response.json(metadata)
+          : redirect("/v2/prm")
+      );
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+      ).resolves.toEqual(metadata);
+      expect(fetchFn).toHaveBeenLastCalledWith(
+        new URL("https://mcp.example.com/v2/prm"),
+        expect.anything()
+      );
+    });
+
+    it("follows the redirect of an explicit resource_metadata URL", async () => {
+      const fetchFn = vi.fn(async (url: string | URL) =>
+        String(url) === "https://mcp.example.com/prm"
+          ? redirect("https://mcp.example.com/prm/")
+          : Response.json(metadata)
+      );
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(
+          SERVER_URL,
+          { resourceMetadataUrl: "https://mcp.example.com/prm" },
+          fetchFn
+        )
+      ).resolves.toEqual(metadata);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+
+    it("never follows an HTTPS document down to HTTP", async () => {
+      const fetchFn = vi.fn(async () => redirect("http://mcp.example.com/prm"));
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(
+          SERVER_URL,
+          { resourceMetadataUrl: "https://mcp.example.com/prm" },
+          fetchFn
+        )
+      ).rejects.toThrow(
+        "HTTP 302 trying to load well-known OAuth protected resource metadata."
+      );
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops after a bounded number of hops", async () => {
+      let hop = 0;
+      const fetchFn = vi.fn(async () =>
+        redirect(`https://mcp.example.com/loop/${++hop}`)
+      );
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(
+          SERVER_URL,
+          { resourceMetadataUrl: "https://mcp.example.com/prm" },
+          fetchFn
+        )
+      ).rejects.toThrow(
+        "HTTP 302 trying to load well-known OAuth protected resource metadata."
+      );
+      expect(fetchFn).toHaveBeenCalledTimes(6);
+    });
+
+    it("keeps a redirect without a Location as the failure it is", async () => {
+      const fetchFn = vi.fn(async () => new Response("", { status: 302 }));
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(
+          SERVER_URL,
+          { resourceMetadataUrl: "https://mcp.example.com/prm" },
+          fetchFn
+        )
+      ).rejects.toThrow(
+        "HTTP 302 trying to load well-known OAuth protected resource metadata."
+      );
+    });
+  });
+
   it("uses the fallback document when the root serves it", async () => {
     const metadata = {
       resource: SERVER_URL,
