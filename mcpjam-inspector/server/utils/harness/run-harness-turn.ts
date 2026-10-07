@@ -746,6 +746,7 @@ export async function runHarnessTurn(
     harness,
     harnessMcpProxy,
     harnessToolPolicy,
+    hostToolExecutor,
     evalIterationId,
     onHarnessEvidenceDecision,
     onHarnessPolicyBlocks,
@@ -1553,6 +1554,10 @@ export async function runHarnessTurn(
               // IN-PROCESS instead of by a sealed proxy token — same decision
               // function, same block envelope.
               ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
+              // The plugin executor an emulated turn wraps its tools with:
+              // a server's OpenAI form reaches the composer card, and an App
+              // result becomes an owned model App with its own context.
+              ...(hostToolExecutor ? { executor: hostToolExecutor } : {}),
               // …and, for the same reason, no proxy to extract a SEP-2350
               // challenge either. Publish straight into the turn's step-up
               // intake so a hosted-OAuth server pauses this turn instead of

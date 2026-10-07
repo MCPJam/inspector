@@ -1,4 +1,7 @@
-import { serverCheckScope, withServerCheckSignal } from "../../utils/server-check-scope.js";
+import {
+  serverCheckScope,
+  withServerCheckSignal,
+} from "../../utils/server-check-scope.js";
 import {
   connectionKey,
   type McpToolConnection,
@@ -441,11 +444,14 @@ export type ConvexAuthorizeResponse = {
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  oauthCredentialId?: string;
+  oauthCredentialAuthorizedAt?: number;
   oauthConnections?: AuthorizedOAuthConnection[];
   permissions: {
     chatOnly: boolean;
   };
   serverConfig: {
+    credentialConfigurationId?: string;
     transportType: "stdio" | "http";
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
@@ -535,6 +541,8 @@ export type ConvexBatchAuthorizeSuccess = {
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  oauthCredentialId?: string;
+  oauthCredentialAuthorizedAt?: number;
   oauthConnections?: AuthorizedOAuthConnection[];
   oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   /**
@@ -1180,6 +1188,9 @@ export interface AuthorizedManagerResult {
   oauthServerUrls: Record<string, string>;
   /** Server-authenticated Convex user/guest id for this request, when known. */
   authenticatedUserId?: string | null;
+  /** Private, freshly authorized configs for explicit connection ownership. */
+  authorizedServerConfigs?: Record<string, MCPServerConfig>;
+  authorizedServerIdentities?: Record<string, unknown>;
 }
 
 function resolveEffectiveInitializePinsForServer(
@@ -1266,6 +1277,8 @@ export async function createAuthorizedManager(
   oauthTokens?: Record<string, string>,
   clientCapabilities?: Record<string, unknown>,
   options?: {
+    /** Authorize fully, but let a request owner decide when to connect. */
+    lazyConnect?: boolean;
     multiConnection?: boolean;
     connectionIds?: Record<string, string>;
     accessScope?: "project_member" | "chat_v2";
@@ -1411,6 +1424,9 @@ export async function createAuthorizedManager(
      * whole point of the durable continuation transport (see
      * `server/utils/mrtr-hosted-collector.ts`).
      */
+    extensionRequestHandlers?: NonNullable<
+      ConstructorParameters<typeof MCPClientManager>[1]
+    >["extensionRequestHandlers"];
     mrtrInputCollectorForServer?: (
       serverId: string,
     ) => MrtrInputCollector | undefined;
@@ -1431,10 +1447,12 @@ export async function createAuthorizedManager(
       manager: new MCPClientManager(
         {},
         {
+          ...(options?.lazyConnect ? { lazyConnect: true } : {}),
           defaultTimeout: timeoutMs,
           rpcLogger: options?.rpcLogger,
           httpLogger: options?.httpLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+          extensionRequestHandlers: options?.extensionRequestHandlers,
           // Set even on the empty batch, and not for the sake of the zero
           // servers it has: `baseFetch` is resolved when a transport is built,
           // so a caller that later attaches one through `connectToServer` gets
@@ -1447,6 +1465,7 @@ export async function createAuthorizedManager(
       ),
       oauthServerUrls: {},
       authenticatedUserId: null,
+      ...(options?.lazyConnect ? { authorizedServerConfigs: {} } : {}),
     };
   }
 
@@ -2333,11 +2352,29 @@ export async function createAuthorizedManager(
       ];
     }),
   );
+  const authorizedServerIdentities = Object.fromEntries(
+    Object.entries(batch.results).flatMap(([serverId, auth]) => {
+      if (!auth.ok) return [];
+      return [
+        [
+          serverId,
+          {
+            serverId,
+            config: auth.serverConfig,
+            credentialId: auth.oauthCredentialId ?? null,
+            credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt ?? null,
+          },
+        ],
+      ];
+    }),
+  );
   const manager = new MCPClientManager(observedConfigs, {
+    ...(options?.lazyConnect ? { lazyConnect: true } : {}),
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    extensionRequestHandlers: options?.extensionRequestHandlers,
     // THE FIX FOR MJ-001. Every server in this batch carries a URL a caller
     // stored, and without this the transport dialled `globalThis.fetch`:
     // loopback and RFC1918 reachable, redirects followed unchecked. A MANAGER
@@ -2395,6 +2432,9 @@ export async function createAuthorizedManager(
     setManagerConnections(manager, connectionsByServerId);
   return {
     manager,
+    ...(options?.lazyConnect
+      ? { authorizedServerConfigs: observedConfigs, authorizedServerIdentities }
+      : {}),
     ...(Object.keys(connectionsByServerId).length
       ? { connectionsByServerId }
       : {}),
@@ -2647,7 +2687,9 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   const signal = serverCheckScope.getStore();
   let disconnecting: Promise<void> | undefined;
   const disconnect = () => (disconnecting ??= manager.disconnectAllServers());
-  const onAbort = () => { void disconnect().catch(() => undefined); };
+  const onAbort = () => {
+    void disconnect().catch(() => undefined);
+  };
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
     signal?.throwIfAborted();
@@ -2669,6 +2711,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   rawBody: Record<string, unknown>,
   schema: S,
   options?: {
+    /** See `createAuthorizedManager`; no MCP initialization before authorization. */
+    lazyConnect?: boolean;
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
@@ -2683,6 +2727,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
      * advertises `elicitation` on the initialize wire. Omit to leave the
      * connection on today's non-MRTR path.
      */
+    extensionRequestHandlers?: NonNullable<
+      ConstructorParameters<typeof MCPClientManager>[1]
+    >["extensionRequestHandlers"];
     mrtrInputCollectorForServer?: (
       serverId: string,
     ) => MrtrInputCollector | undefined;
@@ -2715,6 +2762,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   manager: InstanceType<typeof MCPClientManager>;
   body: z.infer<S>;
   convexAuthToken: string;
+  authorizedServerConfigs?: Record<string, MCPServerConfig>;
+  authorizedServerIdentities?: Record<string, unknown>;
 }> {
   // Both guest and signed-in actors flow through the same Convex
   // authorization path: the bearer token (guest JWT or WorkOS bearer) is
@@ -2840,48 +2889,57 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       )
     : merged.initializePins;
 
-  const { manager } = await createAuthorizedManager(
-    callerContextFromHono(c),
-    bearerToken,
-    raw.projectId as string,
-    serverIds,
-    hostPins?.timeoutMs ?? timeoutMs,
-    oauthTokens,
-    // The run's host wins, for the same reason its protocol pins do: the body's
-    // capabilities come from whichever host the browser had active. Falls back
-    // to the body when the host declares none, so a caller that legitimately
-    // sends its own set (an ad-hoc connection with no host) is unaffected.
-    (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
-      (raw.clientCapabilities as Record<string, unknown> | undefined),
-    {
-      accessScope,
-      scenarioId,
-      accessVersion,
-      ...(options?.advertiseSkillsExtension
-        ? { advertiseSkillsExtension: true }
-        : {}),
-      rpcLogger: options?.rpcLogger,
-      httpLogger: options?.httpLogger,
-      serverNames,
-      initializePins: effectiveInitializePins,
-      mcpProtocolVersionsByServerId: merged.mcpProtocolVersionsByServerId,
-      ...(hostPins?.requestTimeoutByServerId
-        ? { requestTimeoutByServerId: hostPins.requestTimeoutByServerId }
-        : {}),
-      xaaPolicy,
-      // Resolve the XAA issuer here (we hold the request `Context`) so the
-      // manager builder can mint Cross-App Access tokens for `useXaa` servers.
-      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      // MRTR direct-op suspend collector (PR4). Registered synchronously with
-      // the same microtask discipline as `elicitationCallback` so `elicitation`
-      // is advertised before the constructor's connects run.
-      ...(options?.mrtrInputCollectorForServer
-        ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
-        : {}),
-    },
-  );
+  const { manager, authorizedServerConfigs, authorizedServerIdentities } =
+    await createAuthorizedManager(
+      callerContextFromHono(c),
+      bearerToken,
+      raw.projectId as string,
+      serverIds,
+      hostPins?.timeoutMs ?? timeoutMs,
+      oauthTokens,
+      // The run's host wins, for the same reason its protocol pins do: the body's
+      // capabilities come from whichever host the browser had active. Falls back
+      // to the body when the host declares none, so a caller that legitimately
+      // sends its own set (an ad-hoc connection with no host) is unaffected.
+      (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
+        (raw.clientCapabilities as Record<string, unknown> | undefined),
+      {
+        ...(options?.lazyConnect ? { lazyConnect: true } : {}),
+        accessScope,
+        scenarioId,
+        accessVersion,
+        ...(options?.advertiseSkillsExtension
+          ? { advertiseSkillsExtension: true }
+          : {}),
+        rpcLogger: options?.rpcLogger,
+        httpLogger: options?.httpLogger,
+        serverNames,
+        initializePins: effectiveInitializePins,
+        mcpProtocolVersionsByServerId: merged.mcpProtocolVersionsByServerId,
+        ...(hostPins?.requestTimeoutByServerId
+          ? { requestTimeoutByServerId: hostPins.requestTimeoutByServerId }
+          : {}),
+        xaaPolicy,
+        // Resolve the XAA issuer here (we hold the request `Context`) so the
+        // manager builder can mint Cross-App Access tokens for `useXaa` servers.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        // MRTR direct-op suspend collector (PR4). Registered synchronously with
+        // the same microtask discipline as `elicitationCallback` so `elicitation`
+        // is advertised before the constructor's connects run.
+        extensionRequestHandlers: options?.extensionRequestHandlers,
+        ...(options?.mrtrInputCollectorForServer
+          ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
+          : {}),
+      },
+    );
 
-  return { manager, body: body as z.infer<S>, convexAuthToken: bearerToken };
+  return {
+    manager,
+    body: body as z.infer<S>,
+    convexAuthToken: bearerToken,
+    ...(authorizedServerConfigs ? { authorizedServerConfigs } : {}),
+    ...(authorizedServerIdentities ? { authorizedServerIdentities } : {}),
+  };
 }
 
 /**

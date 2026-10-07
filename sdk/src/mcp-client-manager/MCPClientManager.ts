@@ -1799,9 +1799,10 @@ export class MCPClientManager {
     // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
     // the request's declared client capabilities before embedding an
     // elicitation, so a collector must be registrable BEFORE connect for
-    // `elicitation` to be advertised on the connect envelope (see
-    // `buildCapabilities`). Registering for an as-yet-unknown server is a no-op
-    // until that server connects.
+    // `elicitation` to be advertised on a modern connection's request envelope
+    // (see `buildCapabilities`; never on a 2025 `initialize`, which a
+    // collector cannot answer). Registering for an as-yet-unknown server is a
+    // no-op until that server connects.
     this.mrtrInputCollectors.set(serverId, collect);
   }
 
@@ -3690,8 +3691,22 @@ export class MCPClientManager {
     // it. `era` is undefined at connect time, so the legacy fulfiller is
     // still counted then and `applyModernEraCapabilities` narrows once the
     // connection actually classifies as modern.
+    //
+    // The MRTR collector, conversely, fulfils `elicitation` ONLY on a modern
+    // connection: it answers embedded `input_required` requests and cannot
+    // answer a server-to-client `elicitation/create`. A connect-time build
+    // (`era` undefined) becomes the 2025 `initialize` whenever the
+    // connection can land on a legacy era (unpinned Auto, or a 2025 pin), so
+    // it counts the collector only for a connection pinned to a 2026 era.
+    // Otherwise a collector-only connection that falls back to 2025 would
+    // claim elicitation there and answer the server's form with `-32601`.
+    // `applyModernEraCapabilities` restores the claim once the connection
+    // classifies as modern.
     const mrtrDisabled = config.supportsMrtr === false;
-    const mrtrFulfils = !mrtrDisabled && this.mrtrInputCollectors.has(serverId);
+    const mrtrFulfils =
+      !mrtrDisabled &&
+      this.mrtrInputCollectors.has(serverId) &&
+      (era === "modern" || this.isPinnedModern(config));
     const legacyFulfils =
       this.elicitationManager.hasHandler(serverId) &&
       !(mrtrDisabled && era === "modern");
@@ -3837,9 +3852,14 @@ export class MCPClientManager {
     // A legacy-only extension claim (a binding's `legacyClaim`) narrows on
     // the same pass, exact sets included: withholding is never a widening.
     const narrowsLegacyClaims = this.legacyClaims(serverId).length > 0;
+    // An MRTR collector's `elicitation` is withheld from a connect-time set
+    // that may become a 2025 `initialize` (see `buildCapabilities`); a
+    // modern-classified connection restores it here, exact sets included.
+    const restoresMrtrElicitation = this.mrtrInputCollectors.has(serverId);
     if (
       !narrowsForMrtr &&
       !narrowsLegacyClaims &&
+      !restoresMrtrElicitation &&
       (!config.eraCapabilities?.modern || config.clientCapabilities)
     ) {
       return connectCapabilities;
@@ -4018,6 +4038,15 @@ export class MCPClientManager {
 
   private isStdioConfig(config: MCPServerConfig): config is StdioServerConfig {
     return "command" in config;
+  }
+
+  /** A connection pinned to a 2026 era: it can never land on a 2025 one.
+   *  Mirrors `wantsStateless` in the connect path (stdio carries no pin). */
+  private isPinnedModern(config: MCPServerConfig): boolean {
+    const pin = this.isStdioConfig(config)
+      ? undefined
+      : config.mcpProtocolVersion;
+    return pin !== undefined && isStatelessProtocolVersion(pin);
   }
 
   private isExecuteToolRequest(

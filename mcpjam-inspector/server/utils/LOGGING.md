@@ -54,6 +54,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `chat.harness_model_unverified` | `routes/web/chat-v2.ts`, `routes/mcp/chat-v2.ts` | `harness`, `modelId`, `reason` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
+| `plugin.instance.request.timing` | `routes/web/plugin-instances.ts` | `action`, `statusCode`, `totalMs`, `spans` (per-step `count`/`totalMs`/`maxMs`) |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |
 | `browser_profile.download.failed` | `routes/web/browser-profile-download.ts` | `stage`, `statusCode?`, `errorMessage?` |
 | `apikey.expiry.workos_refused` | `routes/web/api-keys.ts` | `statusCode` |
