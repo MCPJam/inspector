@@ -5664,6 +5664,20 @@ export async function runChatEngineLoop(
           await onFinishEngine(context.writer);
         }
       },
+      // The engine's own catch writes a described error. Anything that
+      // escapes it would reach the chat as the SDK's bare "An error
+      // occurred.", which says nothing about what failed.
+      onError: (error) => {
+        logger.error(
+          "[mcpjam-stream-handler] Error escaped the chat stream",
+          error,
+        );
+        const detail =
+          error instanceof Error && error.message.trim()
+            ? ` (${error.message.trim().slice(0, 200)})`
+            : "";
+        return `MCPJam hit an unexpected error while writing this reply, so it stopped. Send your message again to retry.${detail}`;
+      },
     });
     const response = createUIMessageStreamResponse({ stream });
     return {
