@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { ConvexError } from "convex/values";
+import { getServiceCredential } from "../service-credential.js";
 import { PluginInvocationError } from "./invocation.js";
 import { timedPluginStep } from "./timing.js";
 import { localPluginControls, pluginLocalStoresEnabled } from "./local-store.js";
-import { getServiceCredential } from "../service-credential.js";
 import {
   INVOCATION_RECEIPT_PATH,
   PLUGIN_INSTANCE_CONTROL_PATH,

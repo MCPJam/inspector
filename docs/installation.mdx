@@ -92,19 +92,21 @@ docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
-Open the private link printed in the container logs to sign in. The plain address shows instructions to open or paste that link. If you already have that tab open, pasting the link into the address bar signs you in without a reload. Keep `-p 127.0.0.1:6274:6274` for local-only access. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
+Open the private link printed in the container logs to sign in. The plain address shows instructions to open or paste that link. If you already have that tab open, pasting the link into the address bar signs you in without a reload. Keep `-p 127.0.0.1:6274:6274` for local-only access. To connect to MCP servers running on the host, use `http://host.docker.internal:PORT` instead of `127.0.0.1`. On Linux, also pass `--add-host=host.docker.internal:host-gateway` to `docker run`; `mcpjam-inspector/compose.yaml` already sets it.
 
 ### Accessing over the network
 
-A native (`npx`) install binds to localhost. You can reach a remote installation through SSH forwarding (`ssh -L 6274:127.0.0.1:6274 user@host`), then open its terminal link at your forwarded address. Keep the `#token=…` part of the link.
+A native (`npx`) install binds to localhost. You can reach a remote installation through SSH forwarding (`ssh -L 6274:127.0.0.1:6274 user@host`), then open its terminal link at your forwarded address. Keep the `#token=…` part of the link. Forwarding needs only SSH access to the host and keeps the inspector port off the network, so prefer it when you only need to reach the install from your own machine.
 
-For direct LAN access, the Docker image binds `0.0.0.0`. Set `MCPJAM_ALLOWED_HOSTS` to the address you use and publish the port on your network interface:
+For direct LAN access, the Docker image binds `0.0.0.0` inside the container. Set `MCPJAM_ALLOWED_HOSTS` to the address you use and publish the port on the host address that clients will connect to:
 
 ```bash
-docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+docker run -p 192.168.1.50:6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
 ```
 
-This publishes the port on all interfaces. Open the printed Network link, or paste the terminal link into the access screen. Allowlisting a host accepts it as a request origin; it does not grant access without the link. Cross-tab continuation works only when both tabs use the same host and port.
+A bare `-p 6274:6274` publishes the port on every host interface, IPv4 and IPv6. Anything that can route to a published address can reach the inspector, so publish it only on a network you trust and only for as long as you need it. On Linux, Docker writes its own firewall rules for published ports, so ufw and firewalld rules do not block them.
+
+Open the printed Network link, or paste the terminal link into the access screen. Allowlisting a host accepts it as a request origin; it does not grant access without the link. Cross-tab continuation works only when both tabs use the same host and port.
 
 For a remapped port, keep the link's `#token=…` part and change the address. Set `MCPJAM_INSPECTOR_FRONTEND_URL=http://devbox.local:8080` to print a fixed address. For IPv6, bracket the allowlist entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`. Comma-separate multiple hosts. Wildcards additionally require `MCPJAM_ALLOW_WILDCARD_ORIGINS=true` for request origins.
 
@@ -124,7 +126,9 @@ docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local -- \
   npx -y @modelcontextprotocol/server-everything
 
 # Launch with HTTP server
-docker run --rm -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local -- \
+docker run --rm -p 127.0.0.1:6274:6274 \
+  --add-host=host.docker.internal:host-gateway \
+  mcpjam/mcp-inspector:local -- \
   --url http://host.docker.internal:8080/mcp \
   --name "HTTP Server" \
   --tab tools
@@ -133,10 +137,11 @@ docker run --rm -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local -- \
 For more information check out our docs on [Launch from Code](https://docs.mcpjam.com/inspector/launch-from-code)
 
 <Warning>
-**Important for macOS/Windows users:**
+**Reaching the app and your host from Docker:**
 
-- Access the app via `http://127.0.0.1:6274` (not `localhost`)
+- On macOS/Windows, access the app via `http://127.0.0.1:6274` (not `localhost`)
 - When connecting to MCP servers on your host machine, use `http://host.docker.internal:PORT` instead of `http://127.0.0.1:PORT`
+- On Linux, `host.docker.internal` resolves only if you pass `--add-host=host.docker.internal:host-gateway` to `docker run`
 
 Example:
 

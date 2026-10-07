@@ -45,6 +45,9 @@ function run(id: string, source?: string): EvalSuiteRun {
   return {
     _id: id,
     suiteId: "suite_ui",
+    // Every summary row carries a status; per-run metrics compare it with
+    // the status an iteration read was taken at.
+    status: "completed",
     ...(source ? { source } : {}),
   } as EvalSuiteRun;
 }
