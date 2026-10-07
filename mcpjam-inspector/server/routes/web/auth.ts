@@ -1188,7 +1188,30 @@ export interface AuthorizedManagerResult {
   /** Private, freshly authorized configs for explicit connection ownership. */
   authorizedServerConfigs?: Record<string, MCPServerConfig>;
   authorizedServerIdentities?: Record<string, unknown>;
+  /**
+   * Present when `optionalServerGroups` was passed. Settles once every optional
+   * server has either connected or been dropped (with the rest of its group),
+   * and NEVER rejects. Await it before listing tools: a dropped group's
+   * servers are removed from the manager by then.
+   */
+  optionalServerDrops?: Promise<OptionalServerGroupDrop[]>;
 }
+
+/** One optional group left out of a manager, and the server that caused it. */
+export interface OptionalServerGroupDrop {
+  key: string;
+  serverId: string;
+  /** `authorize`: refused before connecting. `connect`: failed to connect. */
+  stage: "authorize" | "connect";
+  message: string;
+}
+
+/**
+ * How long an optional server may take to connect before its group is dropped.
+ * Generous enough for an OAuth refresh and a cold remote server, well short of
+ * the edge's first-byte limit that the tool listing after it also has to meet.
+ */
+export const OPTIONAL_SERVER_CONNECT_TIMEOUT_MS = 15_000;
 
 function resolveEffectiveInitializePinsForServer(
   serverId: string,
@@ -1435,6 +1458,23 @@ export async function createAuthorizedManager(
      * turn would resolve a DIFFERENT machine than the one the turn is using.
      */
     executionScope?: ExecutionScope;
+    /**
+     * Servers the CALLER added implicitly (a host turn's active plugins), each
+     * group all-or-nothing. Every id must also be in `serverIds`.
+     *
+     * For an id in a group, a per-server refusal, a pre-connect verdict (OAuth
+     * required, XAA not configured, …), a config failure, or a connection that
+     * does not come up within `optionalConnectTimeoutMs` drops the WHOLE group
+     * from the manager instead of failing the batch. Ids outside every group —
+     * what the user selected — keep today's behavior exactly: any failure
+     * fails the batch. The drops are reported on `optionalServerDrops`.
+     */
+    optionalServerGroups?: ReadonlyArray<{
+      key: string;
+      serverIds: readonly string[];
+    }>;
+    /** Defaults to {@link OPTIONAL_SERVER_CONNECT_TIMEOUT_MS}. */
+    optionalConnectTimeoutMs?: number;
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -1541,7 +1581,41 @@ export async function createAuthorizedManager(
     typeof getConfidentialCimdProviderForOrg
   > = undefined;
   let confidentialCimdProviderForOrgResolved = false;
-  for (const serverId of uniqueServerIds) {
+
+  // OPTIONAL GROUPS (see `optionalServerGroups`). A failure of any member
+  // drops its whole group here instead of failing the batch; every later pass
+  // skips a dropped group's servers.
+  const optionalGroupByServerId = new Map<string, string>();
+  for (const group of options?.optionalServerGroups ?? []) {
+    for (const serverId of group.serverIds) {
+      if (!optionalGroupByServerId.has(serverId)) {
+        optionalGroupByServerId.set(serverId, group.key);
+      }
+    }
+  }
+  const optionalDrops: OptionalServerGroupDrop[] = [];
+  const droppedGroupKeys = new Set<string>();
+  const isDroppedOptional = (serverId: string) => {
+    const key = optionalGroupByServerId.get(serverId);
+    return key !== undefined && droppedGroupKeys.has(key);
+  };
+  const dropOptionalGroup = (
+    serverId: string,
+    stage: OptionalServerGroupDrop["stage"],
+    error: unknown,
+  ) => {
+    const key = optionalGroupByServerId.get(serverId);
+    if (key === undefined || droppedGroupKeys.has(key)) return;
+    droppedGroupKeys.add(key);
+    const message = parseErrorMessage(error);
+    optionalDrops.push({ key, serverId, stage, message });
+    logger.warn(
+      "[connect] optional server unavailable; its group is left out of this turn",
+      { serverId, groupKey: key, stage, error: message },
+    );
+  };
+
+  const validateForConnect = (serverId: string): void => {
     const auth = batch.results[serverId];
     // Both refusals name the server. A caller that batched several servers
     // (the tools batch route) reads `details.serverId` to leave that one out
@@ -1676,7 +1750,7 @@ export async function createAuthorizedManager(
         displayServerName,
         required: effectiveAuth === "oauth",
       });
-      continue;
+      return;
     }
 
     // The organization's policy withholds a credential that EXISTS. That holds
@@ -1778,6 +1852,15 @@ export async function createAuthorizedManager(
           );
       }
     }
+  };
+  for (const serverId of uniqueServerIds) {
+    if (isDroppedOptional(serverId)) continue;
+    try {
+      validateForConnect(serverId);
+    } catch (error) {
+      if (!optionalGroupByServerId.has(serverId)) throw error;
+      dropOptionalGroup(serverId, "authorize", error);
+    }
   }
 
   // PASS 1b — recover the credentials PASS 1 deferred, still before PASS 2
@@ -1793,6 +1876,7 @@ export async function createAuthorizedManager(
   // subject, and each recovery is a network round trip to the user's own
   // machine. There is rarely more than one.
   for (const recovery of privateAuthorizationServerRecoveries) {
+    if (isDroppedOptional(recovery.serverId)) continue;
     try {
       recoveredOAuthTokens[recovery.serverId] =
         await refreshHostedOAuthAccessTokenWithLocalFallback(
@@ -1821,6 +1905,10 @@ export async function createAuthorizedManager(
         );
         continue;
       }
+      if (optionalGroupByServerId.has(recovery.serverId)) {
+        dropOptionalGroup(recovery.serverId, "authorize", error);
+        continue;
+      }
       throw error;
     }
   }
@@ -1846,8 +1934,36 @@ export async function createAuthorizedManager(
 
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
-  const configEntries = await Promise.all(
-    uniqueServerIds.map(async (serverId) => {
+  //
+  // With no optional groups this is exactly `Promise.all`. With them, every
+  // server settles first: an optional server's failure drops its group (and a
+  // sibling that succeeded goes with it), and the first failure of any other
+  // server fails the batch as before.
+  const connectServerIds = uniqueServerIds.filter(
+    (serverId) => !isDroppedOptional(serverId),
+  );
+  const settleConfigEntries = async <T extends readonly [string, unknown]>(
+    pending: Array<Promise<T>>,
+  ): Promise<T[]> => {
+    if (optionalGroupByServerId.size === 0) return Promise.all(pending);
+    const settled = await Promise.allSettled(pending);
+    const entries: T[] = [];
+    let failure: { error: unknown } | undefined;
+    settled.forEach((outcome, index) => {
+      const serverId = connectServerIds[index]!;
+      if (outcome.status === "fulfilled") {
+        entries.push(outcome.value);
+      } else if (optionalGroupByServerId.has(serverId)) {
+        dropOptionalGroup(serverId, "connect", outcome.reason);
+      } else {
+        failure ??= { error: outcome.reason };
+      }
+    });
+    if (failure) throw failure.error;
+    return entries.filter(([serverId]) => !isDroppedOptional(serverId));
+  };
+  const configEntries = await settleConfigEntries(
+    connectServerIds.map(async (serverId) => {
       // Non-null: PASS 1 threw for a missing or failed authorize result.
       const auth = batch.results[serverId] as Extract<
         (typeof batch.results)[string],
@@ -2260,6 +2376,12 @@ export async function createAuthorizedManager(
     releasePluginLeases();
     throw error;
   });
+  // A dropped group leaves no trace on the manager or the caller's maps.
+  for (const serverId of optionalGroupByServerId.keys()) {
+    if (!isDroppedOptional(serverId)) continue;
+    delete oauthServerUrls[serverId];
+    delete connectionsByServerId[serverId];
+  }
 
   const connectionEntries = configEntries.flatMap<
     readonly [string, MCPServerConfig]
@@ -2351,7 +2473,7 @@ export async function createAuthorizedManager(
   );
   const authorizedServerIdentities = Object.fromEntries(
     Object.entries(batch.results).flatMap(([serverId, auth]) => {
-      if (!auth.ok) return [];
+      if (!auth.ok || isDroppedOptional(serverId)) return [];
       return [
         [
           serverId,
@@ -2427,6 +2549,87 @@ export async function createAuthorizedManager(
   }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+
+  // OPTIONAL CONNECTS. The constructor already started every connect; this
+  // waits (bounded) for each optional server's, and removes the whole group
+  // of one that does not come up. Started now and awaited by the CALLER, so
+  // the rest of its preparation overlaps with the connects rather than
+  // queueing behind them. `ensureSkillsSupport` is the manager's public
+  // "await the connection" — it sends nothing on the wire.
+  const settleOptionalServers = async (): Promise<
+    OptionalServerGroupDrop[]
+  > => {
+    if (!options?.lazyConnect) {
+      const deadlineMs =
+        options?.optionalConnectTimeoutMs ?? OPTIONAL_SERVER_CONNECT_TIMEOUT_MS;
+      const keysOf = (serverId: string) =>
+        connectionsByServerId[serverId]?.map(
+          (connection) => connection.key,
+        ) ?? [serverId];
+      await Promise.all(
+        connectServerIds
+          .filter(
+            (serverId) =>
+              optionalGroupByServerId.has(serverId) &&
+              !isDroppedOptional(serverId),
+          )
+          .map(async (serverId) => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                Promise.all(
+                  keysOf(serverId).map((key) =>
+                    manager.ensureSkillsSupport(key),
+                  ),
+                ),
+                new Promise<never>((_resolve, reject) => {
+                  timer = setTimeout(
+                    () =>
+                      reject(
+                        new Error(
+                          `did not connect within ${Math.round(deadlineMs / 1000)}s`,
+                        ),
+                      ),
+                    deadlineMs,
+                  );
+                  timer.unref?.();
+                }),
+              ]);
+            } catch (error) {
+              dropOptionalGroup(serverId, "connect", error);
+            } finally {
+              if (timer) clearTimeout(timer);
+            }
+          }),
+      );
+    }
+    const removals = connectionEntries
+      .map(([key]) => key)
+      .filter((key) =>
+        isDroppedOptional(connectionsByKey.get(key)?.serverId ?? key),
+      );
+    await Promise.all(
+      removals.map((key) => manager.removeServer(key).catch(() => {})),
+    );
+    for (const serverId of optionalGroupByServerId.keys()) {
+      if (!isDroppedOptional(serverId)) continue;
+      delete oauthServerUrls[serverId];
+      delete connectionsByServerId[serverId];
+    }
+    return optionalDrops;
+  };
+  const optionalServerDrops =
+    optionalGroupByServerId.size > 0
+      ? settleOptionalServers().catch((error) => {
+          // Never rejects: an unexpected failure here is logged, and the
+          // drops decided so far still stand.
+          logger.warn("[connect] optional server settle failed", {
+            error: parseErrorMessage(error),
+          });
+          return optionalDrops;
+        })
+      : undefined;
+
   return {
     manager,
     ...(options?.lazyConnect
@@ -2437,6 +2640,7 @@ export async function createAuthorizedManager(
       : {}),
     oauthServerUrls,
     authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
+    ...(optionalServerDrops ? { optionalServerDrops } : {}),
   };
 }
 

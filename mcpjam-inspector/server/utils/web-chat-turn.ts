@@ -53,6 +53,10 @@ import {
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
 import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
+import type {
+  PluginNoticeData,
+  PluginNoticeDataPart,
+} from "@/shared/plugin-notice";
 import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
@@ -595,6 +599,13 @@ export interface WebChatTurnRuntime {
    */
   ackSandboxNotices?: (notices: SandboxNoticeReason[]) => void;
   /**
+   * Which of the project's active plugins this host turn did not load, and
+   * why (or that they could not be read at all). Written once, as a transient
+   * `data-plugin-notice` part, when the stream writer is ready; the client
+   * shows it once per chat.
+   */
+  pluginNotice?: PluginNoticeData;
+  /**
    * Ask MCPJam only: asks the backend to bill this turn's model calls to
    * MCPJam rather than to the customer.
    *
@@ -709,6 +720,28 @@ function emitHistoryNotice(
     } as unknown as UIMessageChunk);
   } catch (error) {
     logger.warn("[chat] history notice stream write failed", { error });
+  }
+}
+
+/**
+ * Tell the browser which active plugins this turn skipped. Best-effort: a
+ * failed write costs the notice, never the turn — the plugins it names were
+ * already left out, and the next turn says so again.
+ */
+function emitPluginNotice(
+  writer: SandboxNoticeWriter | null | undefined,
+  notice: PluginNoticeData | undefined,
+): void {
+  if (!writer || !notice) return;
+  try {
+    const part: PluginNoticeDataPart = {
+      type: "data-plugin-notice",
+      transient: true,
+      data: notice,
+    };
+    writer.write(part as unknown as UIMessageChunk);
+  } catch (error) {
+    logger.warn("[chat] plugin notice stream write failed", { error });
   }
 }
 
@@ -1600,6 +1633,7 @@ export async function streamWebChatTurn(
             runtime.abortSignal,
           );
           emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+          emitPluginNotice(writer, runtime.pluginNotice);
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1658,6 +1692,7 @@ export async function streamWebChatTurn(
           runtime.abortSignal,
         );
         emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+        emitPluginNotice(writer, runtime.pluginNotice);
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
@@ -1841,6 +1876,7 @@ export async function streamWebChatTurn(
         runtime.abortSignal,
       );
       emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+      emitPluginNotice(writer, runtime.pluginNotice);
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp

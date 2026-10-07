@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
-import { fetchPluginRuntimeAttribution } from "../plugin-attribution";
+import {
+  fetchPluginRuntimeAttribution,
+  parsePluginRuntimeAttribution,
+} from "../plugin-attribution";
 
 function clientWith(
   query: (ref: string, args: { pluginVersionIds: string[] }) => unknown
@@ -194,4 +197,24 @@ describe("fetchPluginRuntimeAttribution", () => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("parsePluginRuntimeAttribution", () => {
+  it("reads the same edges the probe does, without a network read", () => {
+    const parsed = parsePluginRuntimeAttribution(twoVersionResponse(), [
+      "pv_a",
+      "pv_b",
+      "pv_gone",
+    ]);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.unattributedVersionIds).toEqual(["pv_gone"]);
+    expect(parsed!.serverOrigins.size).toBeGreaterThan(0);
+  });
+
+  it("is null for a response that cannot carry the edge", () => {
+    expect(
+      parsePluginRuntimeAttribution({ pluginVersions: [] }, []),
+    ).toBeNull();
+    expect(parsePluginRuntimeAttribution(undefined, [])).toBeNull();
+  });
 });

@@ -176,10 +176,21 @@ import {
 } from "../../services/environments/plugin-attribution.js";
 import {
   buildLiveEffectiveCapabilities,
+  mergeLiveAndPluginCapabilities,
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
+import {
+  activePluginNotice,
+  activePluginServerGroups,
+  dropActivePlugins,
+  planActivePluginTurn,
+  readActivePlugins,
+  type ActivePluginsRead,
+  type ActivePluginTurn,
+} from "../../services/plugins/active-plugins.js";
+import type { PluginNoticeData } from "@/shared/plugin-notice";
 import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import {
@@ -516,6 +527,27 @@ chatV2.post("/", async (c) => {
       );
     }
 
+    // ── The project's ACTIVE PLUGINS (host-target turns only) ──────────────
+    // A host turn runs every installed, enabled plugin at its active version,
+    // re-resolved here on every turn, so a disable or uninstall stops the very
+    // next one. Nothing about it is persisted: hosts stay plugin-blind in
+    // storage. Started now and awaited after the host config read, which it
+    // runs alongside.
+    //
+    // Environment turns never read this (they pin exact versions and fail
+    // closed), nor do scenario turns or guests. The venue is the DEPLOYMENT's:
+    // a hosted turn says `hosted` so a local-only plugin server is skipped
+    // rather than waking the member's computer, which `resolveRuntimeVenue()`
+    // would ask for.
+    const activePluginsRead: Promise<ActivePluginsRead> | undefined =
+      executionTarget.kind === "host" && !c.get("guestId")
+        ? readActivePlugins({
+            bearer: () => getConvexBearerForRequest(c),
+            projectId: hostedBody.projectId,
+            runtimeVenue: HOSTED_MODE ? "hosted" : "local",
+          })
+        : undefined;
+
     // Host config is owned by the scenario's host, not the request body.
     // When this turn is scenario-bound, re-resolve the live values from
     // Convex so a stale client snapshot or tampered body can't route the
@@ -800,9 +832,41 @@ chatV2.post("/", async (c) => {
     // body list to the manager would connect a set the environment never
     // authorized, which is precisely the hole the atomic resolution closes.
     const environmentServers = environmentSpec ?? scenarioEnvironment;
-    const effectiveServerIds = environmentServers
+    // A host turn's active plugins: the body's selection with every plugin
+    // server stripped (plugin servers arrive only from the resolver), then
+    // the contributing plugins' servers, ids and names aligned. `undefined`
+    // when the read was off, failed, or the project has no plugins, which
+    // leaves the turn exactly as it was. A failed read still tells the user.
+    const activePlugins = activePluginsRead
+      ? await activePluginsRead
+      : undefined;
+    let activePluginTurn: ActivePluginTurn | undefined =
+      activePlugins?.status === "ok"
+        ? planActivePluginTurn({
+            result: activePlugins.result,
+            selectedServerIds,
+            selectedServerNames,
+          })
+        : undefined;
+    if (activePlugins?.status === "unavailable") {
+      logger.warn(
+        "[chat-v2] active plugins unavailable; turn runs without them",
+        {
+          projectId: hostedBody.projectId,
+          error: activePlugins.error,
+        },
+      );
+    }
+    // Only a plan that changes the selection replaces it. Plugins that add
+    // skills alone leave the body's ids and names exactly as sent.
+    const pluginTurnServers = activePluginTurn?.changesServers
+      ? activePluginTurn
+      : undefined;
+    let effectiveServerIds = environmentServers
       ? runtimeServerIds(environmentServers)
-      : selectedServerIds;
+      : pluginTurnServers
+        ? pluginTurnServers.serverIds
+        : selectedServerIds;
     // Names stay index-aligned with the ids. An empty array (older backend
     // without the name-carrying projection) makes `buildServerNamesById` return
     // undefined, and the manager falls back to showing the id — the same
@@ -810,11 +874,13 @@ chatV2.post("/", async (c) => {
     const environmentServerNameList = environmentServers
       ? runtimeServerNames(environmentServers)
       : undefined;
-    const effectiveServerNames = environmentServers
+    let effectiveServerNames = environmentServers
       ? environmentServerNameList && environmentServerNameList.length > 0
         ? environmentServerNameList
         : undefined
-      : selectedServerNames;
+      : pluginTurnServers
+        ? pluginTurnServers.serverNames
+        : selectedServerNames;
     // The environment's composed skill union, in the shape both engines
     // consume. Presence — not length — is what makes it authoritative, so an
     // environment that resolves zero skills delivers zero, and never falls back
@@ -1197,11 +1263,13 @@ chatV2.post("/", async (c) => {
         // stale/tampered request mustn't send an empty array to bypass the
         // "no MCP servers" fail-closed gate. An environment target's resolved
         // set outranks even the host config's own list: it IS the set we are
-        // about to connect.
+        // about to connect. A host turn's active plugins count too: a harness
+        // that can't pause on MCP tools must refuse rather than run a plugin's
+        // tools unapproved.
         hasSelectedMcpServers: environmentServers
           ? effectiveServerIds.length > 0
           : (resolvedExecution.selectedServerIds ?? selectedServerIds).length >
-            0,
+              0 || (activePluginTurn?.pluginServerIds.length ?? 0) > 0,
         // The RESOLVED definition — eligibility and the canonical id are both
         // derived from it inside the gate, so no call site can compute the two
         // inconsistently.
@@ -1604,10 +1672,19 @@ chatV2.post("/", async (c) => {
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)
     // since that's an orthogonal access path keyed on the token, not the actor.
+    // A host turn's plugin servers were added implicitly, so one that is
+    // refused or does not connect drops ITS plugin (servers and skills) with
+    // a notice, instead of failing a turn the user never asked it into. What
+    // the user selected keeps failing the turn exactly as before.
+    const optionalServerGroups =
+      activePluginTurn && activePluginTurn.pluginServerIds.length > 0
+        ? activePluginServerGroups(activePluginTurn)
+        : undefined;
     const {
       manager,
       oauthServerUrls: urls,
       authenticatedUserId,
+      optionalServerDrops,
     } = await createAuthorizedManager(
       callerContextFromHono(c),
       bearerToken,
@@ -1662,6 +1739,7 @@ chatV2.post("/", async (c) => {
         // component colocates into THIS turn's machine rather than waking the
         // member's personal one alongside it.
         ...(executionScope ? { executionScope } : {}),
+        ...(optionalServerGroups ? { optionalServerGroups } : {}),
       },
     );
     if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
@@ -2484,6 +2562,74 @@ chatV2.post("/", async (c) => {
       sandboxNotices,
     );
 
+    // ── The host turn's plugin set, final ──────────────────────────────────
+    // Settled here, after the work above has overlapped with the connects: a
+    // plugin whose server was refused or did not connect leaves whole (its
+    // servers are already off the manager) and joins the notice.
+    if (
+      activePluginTurn &&
+      activePlugins?.status === "ok" &&
+      optionalServerDrops
+    ) {
+      const drops = await optionalServerDrops;
+      if (drops.length > 0) {
+        activePluginTurn = dropActivePlugins(
+          activePluginTurn,
+          activePlugins.result,
+          drops.map((drop) => drop.key),
+          "connect_failed",
+        );
+        effectiveServerIds = activePluginTurn.changesServers
+          ? activePluginTurn.serverIds
+          : selectedServerIds;
+        effectiveServerNames = activePluginTurn.changesServers
+          ? activePluginTurn.serverNames
+          : selectedServerNames;
+      }
+    }
+    // The plugin-only set, when any plugin contributes. Its servers carry
+    // their plugin origin onto every RPC frame this turn produces.
+    const pluginCapabilities =
+      activePluginTurn && activePluginTurn.contributing.length > 0
+        ? activePluginTurn.capabilities
+        : undefined;
+    if (pluginCapabilities) {
+      rpcCollector?.setPluginOriginByServerId(
+        pluginOriginByServerId(pluginCapabilities),
+      );
+      if (pluginCapabilities.problems.length > 0) {
+        // Codes and ids only — same redaction rule as the environment log.
+        logger.warn("[chat-v2] active plugin capability problems", {
+          codes: pluginCapabilities.problems.map((problem) => problem.code),
+          skillIds: pluginCapabilities.problems.flatMap((problem) =>
+            "skillId" in problem ? [problem.skillId] : [],
+          ),
+        });
+      }
+    }
+    // ONE skill surface for the turn: the project's standalone skills and the
+    // plugins' `<plugin>/<skill>` skills, ref-addressed together. It stays a
+    // live surface even when the project catalog could not be read, so the
+    // plugins' skills and connected servers' skills still reach the model.
+    const hostTurnCapabilities = pluginCapabilities
+      ? mergeLiveAndPluginCapabilities(
+          liveProjectCapabilities ?? buildLiveEffectiveCapabilities({}),
+          pluginCapabilities,
+        )
+      : undefined;
+    const pluginNotice: PluginNoticeData | undefined =
+      activePlugins?.status === "unavailable"
+        ? { kind: "unavailable", plugins: [] }
+        : activePluginNotice(activePluginTurn);
+    if (activePluginTurn?.unknownSkipReasons.length) {
+      logger.info(
+        "[chat-v2] active plugins skipped for reasons the notice cannot name",
+        {
+          reasons: activePluginTurn.unknownSkipReasons,
+        },
+      );
+    }
+
     try {
       const sourceType = isScenarioSession ? "scenario" : "direct";
       // Mirrors the sourceType branch — scenario surface stays "scenario", the
@@ -2493,9 +2639,10 @@ chatV2.post("/", async (c) => {
       const isDirectChat = !isScenarioSession;
       // The turn's servers minus the ones a plugin contributed, for the
       // trace's host config (see where it is built below).
-      const pluginServerIdSet = new Set(
-        effectiveCapabilities?.pluginServerIds ?? [],
-      );
+      const pluginServerIdSet = new Set([
+        ...(effectiveCapabilities?.pluginServerIds ?? []),
+        ...(pluginCapabilities?.pluginServerIds ?? []),
+      ]);
       const hostConfigServerIds = effectiveServerIds.filter(
         (serverId) => !pluginServerIdSet.has(serverId),
       );
@@ -2576,6 +2723,27 @@ chatV2.post("/", async (c) => {
               environment_effective_server_count: effectiveServerIds.length,
               environment_skill_count: environmentSkills?.length ?? 0,
             }
+          : {}),
+        // A host turn's ACTIVE plugins. Ids, content hashes, counts and
+        // categorical reasons only — never a plugin or skill name.
+        ...(activePluginTurn
+          ? {
+              plugin_version_ids: (
+                pluginCapabilities?.pluginVersions ?? []
+              ).map((plugin) => plugin.pluginVersionId),
+              plugin_bundle_hashes: (
+                pluginCapabilities?.pluginVersions ?? []
+              ).map((plugin) => plugin.bundleHash ?? null),
+              plugin_server_count:
+                pluginCapabilities?.pluginServerIds.length ?? 0,
+              plugin_skill_count: pluginCapabilities?.pluginSkills.length ?? 0,
+              plugin_skipped_reasons: activePluginTurn.skipped.map(
+                (skip) => skip.reason,
+              ),
+            }
+          : {}),
+        ...(activePlugins?.status === "unavailable"
+          ? { plugins_unavailable: true }
           : {}),
       });
 
@@ -2720,7 +2888,15 @@ chatV2.post("/", async (c) => {
           // laziness as before — a body is fetched for the skill the model
           // loads, not for the catalog — but delivered through the one merged
           // surface instead of a parallel branch of the orchestrator.
-          ...(liveProjectCapabilities
+          //
+          // With active plugins, the ONE merged set replaces it (never both),
+          // and stays a live surface even when the catalog read failed.
+          ...(hostTurnCapabilities
+            ? {
+                effectiveCapabilities: hostTurnCapabilities,
+                liveSkillSurface: true,
+              }
+            : liveProjectCapabilities
             ? {
                 effectiveCapabilities: liveProjectCapabilities,
                 liveSkillSurface: true,
@@ -2858,6 +3034,13 @@ chatV2.post("/", async (c) => {
           effectiveCapabilities.pluginServerIds.length > 0
             ? { nonResumableServerIds: effectiveCapabilities.pluginServerIds }
             : {}),
+          // A host turn's active-plugin servers, for the same reason: the
+          // next turn re-resolves them, and a disabled plugin must not come
+          // back through a stored resume instruction.
+          ...(pluginCapabilities &&
+          pluginCapabilities.pluginServerIds.length > 0
+            ? { nonResumableServerIds: pluginCapabilities.pluginServerIds }
+            : {}),
           // Persisted resume config keeps the RAW user prompt; the blueprint
           // env block is turn-injected (added to `prepare` above), not user
           // configuration — otherwise a resumed turn would carry stale image
@@ -2880,6 +3063,9 @@ chatV2.post("/", async (c) => {
           // made it out — an unacked notice is re-delivered, never lost.
           ...(sandboxNotices ? { sandboxNotices } : {}),
           ...(ackSandboxNotices ? { ackSandboxNotices } : {}),
+          // Which active plugins this turn did not load, once per turn; the
+          // client shows it once per chat.
+          ...(pluginNotice ? { pluginNotice } : {}),
           ...(mrtrBridge ? { mrtrBridge } : {}),
           ...(modelMrtr ? { modelFormBridge: modelMrtr } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),

@@ -140,15 +140,37 @@ export async function fetchPluginRuntimeAttribution(
     return null;
   }
 
-  if (!isRecord(raw) || !Array.isArray(raw.serverComponents)) {
+  const attribution = parsePluginRuntimeAttribution(raw, args.pluginVersionIds);
+  if (attribution === null) {
     // A backend old enough to omit the component rows cannot supply the
     // version edge. Reporting no origin is honest; guessing from the flat
     // `effectiveServerIds` list is not.
     logger.warn(
       "[plugin-attribution] probe response has no serverComponents; running without plugin origin"
     );
-    return null;
   }
+  return attribution;
+}
+
+/**
+ * The server/skill → version edges from ONE attribution-shaped response.
+ *
+ * Pure, and shared by every reader of that shape: the probe above, and the
+ * active-plugin resolution (`plugins:resolveActivePlugins`), whose
+ * `attribution` field is the same shape for the versions that contribute.
+ * Keeping one parser is what keeps the two readers from labelling the same
+ * component differently.
+ *
+ * `null` when the response cannot carry the edge at all (no
+ * `serverComponents`). `expectedVersionIds` are the versions the caller is
+ * running; any the response does not name come back in
+ * `unattributedVersionIds`, so a short map announces itself.
+ */
+export function parsePluginRuntimeAttribution(
+  raw: unknown,
+  expectedVersionIds: readonly string[],
+): PluginRuntimeAttribution | null {
+  if (!isRecord(raw) || !Array.isArray(raw.serverComponents)) return null;
 
   const versionsById = new Map<string, AttributedPluginVersion>();
   for (const entry of Array.isArray(raw.pluginVersions)
@@ -202,7 +224,7 @@ export async function fetchPluginRuntimeAttribution(
   // resolved for the environment but not for this probe (disabled or
   // uninstalled in between). Its components still run; we just cannot name
   // their origin — and the short map must announce itself.
-  const unattributedVersionIds = args.pluginVersionIds.filter(
+  const unattributedVersionIds = expectedVersionIds.filter(
     (id) => !versionsById.has(id)
   );
 

@@ -25,6 +25,13 @@ export function pluginResolverIncludesAdmission(resolver: object): boolean {
   return admissionResolvers.has(resolver);
 }
 
+/**
+ * The most server ids one execution context binds. A chat turn's whole server
+ * set (explicit + plugin) is bound here, so a turn that adds plugin servers
+ * must stay within it.
+ */
+export const PLUGIN_EXECUTION_MAX_SERVER_IDS = 64;
+
 /** Exact component identity comes from the backend's reverse index, not browser labels. */
 export async function readPluginExecutionContext(options: {
   projectId: string;
@@ -43,7 +50,7 @@ export async function readPluginExecutionContext(options: {
     !options.bearer?.trim() ||
     !options.expectedActorId?.trim() ||
     !options.serverIds.length ||
-    options.serverIds.length > 64 ||
+    options.serverIds.length > PLUGIN_EXECUTION_MAX_SERVER_IDS ||
     options.serverIds.some((id) => !id?.trim()) ||
     (options.hostId !== undefined && !options.hostId.trim())
   )

@@ -491,6 +491,88 @@ export function buildLiveEffectiveCapabilities(args: {
   };
 }
 
+/**
+ * One set for a LIVE turn that also runs the project's active plugins.
+ *
+ * `live` is the turn's standalone surface ({@link buildLiveEffectiveCapabilities}
+ * over the project pool and any local skills); `plugins` is
+ * {@link resolveEffectiveCapabilities} over the active-plugin slice the backend
+ * resolved for this turn. A host turn passes ONLY the result downstream, so the
+ * model sees one ref-addressed surface rather than two that could disagree.
+ *
+ * Refs normally cannot collide across the two: a standalone ref is a bare name
+ * and a plugin ref is `<plugin>/<skill>`. The exception is a plugin skill whose
+ * attribution was unavailable, which keeps its bare name — so collisions are
+ * checked anyway, the standalone (the user's own) skill keeps the ref, and the
+ * later one is reported in `problems`. Never thrown: a collision costs one
+ * skill its ref, never the turn.
+ *
+ * Servers are a straight union. The live set carries none (a live turn's
+ * explicit servers are the body's selection, which this projection does not
+ * model), so in practice this is the plugin servers with their origin.
+ */
+export function mergeLiveAndPluginCapabilities(
+  live: EffectiveCapabilitySet,
+  plugins: EffectiveCapabilitySet,
+): EffectiveCapabilitySet {
+  const usedRefs = new Set<string>();
+  const problems: RuntimeCapabilityProblem[] = [
+    ...live.problems,
+    ...plugins.problems,
+  ];
+  const claim = <T extends { ref: string; skillId: string }>(
+    skills: T[],
+  ): T[] =>
+    skills.filter((skill) => {
+      if (usedRefs.has(skill.ref)) {
+        problems.push({
+          code: "skill_ref_collision",
+          message: `Two skills resolved to the reference "${skill.ref}"; only the first is loadable.`,
+          ref: skill.ref,
+          skillId: skill.skillId,
+        });
+        return false;
+      }
+      usedRefs.add(skill.ref);
+      return true;
+    });
+
+  const standaloneSkills = claim(live.standaloneSkills);
+  const localSkills = claim(live.localSkills);
+  const serverSkills = claim(live.serverSkills);
+  const pluginSkills = claim([...live.pluginSkills, ...plugins.pluginSkills]);
+  // A plugin slice carries no standalone skills of its own; if one ever did,
+  // it is still a candidate for the same ref space.
+  const extraStandalone = claim(plugins.standaloneSkills);
+
+  const seenServers = new Set<string>();
+  const servers = [...live.servers, ...plugins.servers].filter((entry) => {
+    if (seenServers.has(entry.serverId)) return false;
+    seenServers.add(entry.serverId);
+    return true;
+  });
+  const dedupe = (ids: string[]) => [...new Set(ids)];
+
+  return {
+    explicitServerIds: dedupe([
+      ...live.explicitServerIds,
+      ...plugins.explicitServerIds,
+    ]),
+    pluginServerIds: dedupe([
+      ...live.pluginServerIds,
+      ...plugins.pluginServerIds,
+    ]),
+    effectiveServerIds: servers.map((entry) => entry.serverId),
+    servers,
+    pluginSkills,
+    standaloneSkills: [...standaloneSkills, ...extraStandalone],
+    serverSkills,
+    localSkills,
+    pluginVersions: [...live.pluginVersions, ...plugins.pluginVersions],
+    problems,
+  };
+}
+
 export function allEffectiveSkills(
   set: EffectiveCapabilitySet
 ): Array<

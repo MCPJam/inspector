@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   allEffectiveSkills,
+  buildLiveEffectiveCapabilities,
+  mergeLiveAndPluginCapabilities,
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
 } from "../effective-capabilities";
@@ -349,5 +351,81 @@ describe("resolveEffectiveCapabilities — degraded attribution", () => {
       attribution()
     );
     expect(set.pluginVersions[0].bundleHash).toBeNull();
+  });
+});
+
+describe("mergeLiveAndPluginCapabilities", () => {
+  const standalone = (name: string) => ({
+    ref: name,
+    skillId: `sk_${name}`,
+    name,
+    description: "",
+    content: "",
+    aggregateHash: "",
+    files: [],
+    channels: [],
+  });
+  const pluginSet = (ref: string) =>
+    resolveEffectiveCapabilities(
+      {
+        servers: {
+          effectiveServerIds: ["ps_1"],
+          pluginServerIds: ["ps_1"],
+          connectable: [{ serverId: "ps_1", name: "plugin", source: "plugin" }],
+        },
+        skills: [
+          {
+            skillId: "sk_plugin",
+            name: "notes",
+            description: "",
+            content: "plugin body",
+            aggregateHash: "agg",
+            channels: ["plugin"],
+          },
+        ],
+        pluginVersions: [PLUGIN_A],
+      },
+      {
+        serverOrigins: new Map([["ps_1", PLUGIN_A]]),
+        skillOrigins: new Map(
+          ref === "notes"
+            ? []
+            : [["sk_plugin", { modelRef: ref, plugin: PLUGIN_A }]],
+        ),
+        unattributedVersionIds: [],
+      },
+    );
+
+  it("unions the standalone and plugin surfaces with their origins", () => {
+    const merged = mergeLiveAndPluginCapabilities(
+      buildLiveEffectiveCapabilities({
+        standaloneSkills: [standalone("notes")],
+      }),
+      pluginSet("alpha/notes"),
+    );
+    expect(merged.standaloneSkills.map((s) => s.ref)).toEqual(["notes"]);
+    expect(merged.pluginSkills.map((s) => s.ref)).toEqual(["alpha/notes"]);
+    expect(merged.pluginServerIds).toEqual(["ps_1"]);
+    expect(merged.effectiveServerIds).toEqual(["ps_1"]);
+    expect(merged.pluginVersions).toEqual([PLUGIN_A]);
+    expect(pluginOriginByServerId(merged)).toEqual({ ps_1: PLUGIN_A });
+    expect(merged.problems).toEqual([]);
+  });
+
+  it("keeps the standalone skill on a ref collision and reports the plugin one", () => {
+    // Attribution missing for the plugin skill: it falls back to its bare
+    // name, which a standalone skill already holds.
+    const merged = mergeLiveAndPluginCapabilities(
+      buildLiveEffectiveCapabilities({
+        standaloneSkills: [standalone("notes")],
+      }),
+      pluginSet("notes"),
+    );
+    expect(merged.standaloneSkills.map((s) => s.skillId)).toEqual(["sk_notes"]);
+    expect(merged.pluginSkills).toEqual([]);
+    expect(merged.problems.map((p) => p.code)).toEqual([
+      "plugin_skill_ref_unavailable",
+      "skill_ref_collision",
+    ]);
   });
 });
