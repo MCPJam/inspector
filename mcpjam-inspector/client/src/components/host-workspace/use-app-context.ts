@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { WidgetHost } from "@mcpjam/widget-react";
 import {
   pluginContextAttachments,
@@ -9,12 +9,18 @@ import type {
   ContextAttachmentBlock,
 } from "../chat-v2/chat-input/attachments/context-attachment-chip";
 import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
-import { createModelContextController } from "./model-context-controller";
+import {
+  createModelContextController,
+  PluginContextHeld,
+} from "./model-context-controller";
 import {
   createThreadAppApi,
+  ThreadAppError,
   type ThreadAppHandle,
   type ThreadAppScope,
 } from "./thread-app-api";
+import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
+import { describePluginError } from "@/lib/plugin-diagnostics";
 
 const EMPTY: PluginContextSnapshot = { revision: 0, sequence: 0, state: null };
 const REMOVE_ALL = "*";
@@ -95,6 +101,22 @@ export function appContextBlock(item: ContextItem): {
   };
 }
 
+/**
+ * Whether the person is using an App right now: keyboard focus is inside its
+ * frame (clicking an App moves focus into it). An App that re-sends context on
+ * its own, after the person removed it from the composer, does so while focus
+ * is still in the composer. The frame is the renderer's sandbox iframe, titled
+ * "MCP App: <tool name>" by widget-react.
+ */
+export function appFrameFocused(toolName: string | undefined): boolean {
+  if (!toolName || typeof document === "undefined") return false;
+  const active = document.activeElement;
+  return (
+    active instanceof HTMLIFrameElement &&
+    active.title === `MCP App: ${toolName}`
+  );
+}
+
 /** Mounted for the retained instance, not for panel visibility. */
 export function useAppContext(
   scope: ThreadAppScope,
@@ -106,9 +128,13 @@ export function useAppContext(
     icons?: PluginIcons;
     /** The server's icons (`server/discover`, else `initialize`). */
     serverIcons?: readonly unknown[];
+    /** The App's tool, to tell when the person is using its frame. */
+    toolName?: string;
   } = {},
 ) {
   const key = JSON.stringify([scope, handle.instanceToken, handle.generation, routePrefix]);
+  const toolNameRef = useRef(presentation.toolName);
+  toolNameRef.current = presentation.toolName;
   const [value, setValue] = useState({
     key,
     snapshot: handle.contextSnapshot ?? EMPTY,
@@ -123,7 +149,26 @@ export function useAppContext(
     const controller = createModelContextController({
       requireLive: () => lifetime.signal.throwIfAborted(),
       send: (request) =>
-        api.context(handle.instanceToken, "update", request, lifetime.signal),
+        api
+          .context(handle.instanceToken, "update", request, lifetime.signal)
+          .catch((error: unknown) => {
+            if (
+              error instanceof ThreadAppError &&
+              error.code === "INSTANCE_CONTEXT_HELD"
+            )
+              throw new PluginContextHeld(
+                "Context was removed from this chat. Use the App to attach it again.",
+              );
+            throw error;
+          }),
+      userAttaching: () => appFrameFocused(toolNameRef.current),
+      onHeld: () =>
+        logPluginExtensionIssue({
+          code: "INSTANCE_CONTEXT_HELD",
+          level: "info",
+          message: `${handle.toolTitle ?? "App"}: ${describePluginError("INSTANCE_CONTEXT_HELD")}`,
+          dedupeKey: `context-held:${handle.instanceToken}`,
+        }),
       sendRemoval: (request) =>
         api.context(handle.instanceToken, "remove", request, lifetime.signal),
       read: () =>

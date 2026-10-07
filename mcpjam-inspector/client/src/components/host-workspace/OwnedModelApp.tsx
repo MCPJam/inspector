@@ -327,6 +327,7 @@ function ModelApp({
       ...(iconSources.serverIcons
         ? { serverIcons: iconSources.serverIcons }
         : {}),
+      toolName: renderProps.toolName,
     },
   );
   // A turn carries this App only while it has context: an App with nothing
