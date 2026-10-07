@@ -457,7 +457,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       errorMessage: string;
       errorCode?: string;
     };
-    live.errorMessage = "Retry in a moment.";
+    live.errorMessage = "Too many requests. Retry in a moment.";
     live.errorCode = "spending_reservation_busy";
     renderStep();
     await openTheSession();
@@ -467,9 +467,13 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
     // The failure card reads the same code: MCPJam's own busy sentence, not the
     // raw wording the event happened to carry.
-    expect(screen.getByTestId("swarm-live-pane-failure")).toHaveTextContent(
-      "temporarily busy",
+    const card = screen.getByTestId("swarm-live-pane-failure");
+    expect(card).toHaveTextContent(
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
     );
+    expect(card).not.toHaveTextContent("rate-limited this key");
+    expect(card).not.toHaveTextContent("Raise the rate limit");
+    expect(card).not.toHaveTextContent("Out of MCPJam credits");
   });
 
   it("still names the provider when the live event's code is the generic one", async () => {
