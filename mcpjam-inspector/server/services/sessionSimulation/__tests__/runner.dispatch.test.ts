@@ -70,6 +70,11 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 import { drainAssistantTurn } from "../runner.js";
+import {
+  harnessReasoningEffortRefusalReason,
+  turnReasoningEffortOf,
+} from "../../../utils/harness/harness-availability.js";
+import { getHarnessAdapter } from "../../../utils/harness/registry.js";
 
 const TURN_TRACE = {
   turnId: "test-turn",
@@ -205,6 +210,32 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("carries a swarm turn's effort to the harness checks on a harness host (refused, not dropped)", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        harness: "claude-code",
+        reasoningEffort: "high",
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.harness).toBe("claude-code");
+    // The effort rides the hosted body, not a typed field: the check that runs
+    // inside `runAssistantTurn` must read it from there.
+    expect(opts.extraBodyFields?.reasoningEffort).toBe("high");
+    expect(turnReasoningEffortOf(opts)).toBe("high");
+    expect(
+      harnessReasoningEffortRefusalReason({
+        adapter: getHarnessAdapter("claude-code"),
+        reasoningEffort: turnReasoningEffortOf(opts),
+      }),
+    ).toMatch(/reasoning effort/);
+  });
+
   it("routes cloud-runtime BYOK models through /stream/org with providerKey + serverIds", async () => {
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
@@ -317,6 +348,158 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     // rides `rt.runtime.extraBodyFields` (asserted at the wire level in the
     // local-usage test below).
     expect(opts.origin).toBe("scenario");
+  });
+
+  it("sends a swarm host step's output ceiling in the hosted body", async () => {
+    // The backend reserves credits against this ceiling before each step, so
+    // it is what makes a swarm host step's hold realistic.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as any).extraBodyFields).toMatchObject({
+      maxOutputTokens: 16_384,
+      journeyRunId: "journey-run-1",
+    });
+  });
+
+  it("never hands a harness host's model broker an output ceiling", async () => {
+    // The broker clamps max_tokens to the ceiling without touching the
+    // model's thinking budget, so a cap below the broker's own default can
+    // make Anthropic refuse every thinking turn. The ceiling rides the hosted
+    // /stream body only; a harness host keeps the broker's default.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        harness: "claude-code",
+        maxOutputTokens: 16_384,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(calls).toHaveLength(1);
+    expect((calls[0] as any).extraBodyFields).not.toHaveProperty(
+      "maxOutputTokens",
+    );
+    expect(calls[0]).not.toHaveProperty("maxOutputTokens");
+  });
+
+  it("sends the output ceiling on the plain hosted /stream rail for a credit-funded step", async () => {
+    // A credit-funded step bills credits on the default hosted
+    // endpoint, which is the rail that reserves against the ceiling.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream");
+    expect(opts.extraBodyFields.maxOutputTokens).toBe(16_384);
+    expect(opts.extraBodyFields.billingFeature).toBeUndefined();
+    expect(opts.extraBodyFields.providerKey).toBeUndefined();
+  });
+
+  it("keeps the output ceiling off the org-BYOK rail (/stream/org)", async () => {
+    // Only the MCPJam-hosted rail holds credits against it; nothing shows
+    // /stream/org reading it, so a BYOK step keeps its own limits.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+        modelId: "claude-3-5-sonnet-latest",
+        modelDefinition: {
+          id: "claude-3-5-sonnet-latest",
+          name: "Claude",
+          provider: "anthropic",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream/org");
+    expect(opts.extraBodyFields).toMatchObject({
+      journeyRunId: "journey-run-1",
+      providerKey: "anthropic",
+    });
+    expect(opts.extraBodyFields.maxOutputTokens).toBeUndefined();
+  });
+
+  it("keeps the output ceiling off the local BYOK engine", async () => {
+    const calls: unknown[] = [];
+    stubDirectEngine(calls);
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "journey-run-1",
+        hostId: "host-1",
+        maxOutputTokens: 16_384,
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(runDirectChatTurnMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(calls[0])).not.toContain("maxOutputTokens");
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      { body: string },
+    ];
+    expect(JSON.parse(init.body).maxOutputTokens).toBeUndefined();
+  });
+
+  it("sends no output ceiling for a scenario turn", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as any).extraBodyFields?.maxOutputTokens).toBeUndefined();
   });
 
   it('posts the local-BYOK usage writeback with sourceType:"swarm" for the swarm surface', async () => {

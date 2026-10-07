@@ -49,6 +49,7 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   selectedModelId: "anthropic/claude-haiku-4.5",
+  persistedModelInitialized: undefined as boolean | undefined,
 }));
 vi.mock("@/state/app-state-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/state/app-state-context")>()),
@@ -152,6 +153,7 @@ vi.mock("@/hooks/use-persisted-model", () => ({
     setSelectedModelIds: vi.fn(),
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),
+    isInitialized: mockState.persistedModelInitialized,
   }),
 }));
 
@@ -224,7 +226,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
@@ -707,6 +712,46 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
+  it("offers a Codex client only Codex models and never falls back to a Claude one", async () => {
+    // The user's saved lead is a Claude model, which Codex cannot run.
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { projectId: "project-1", selectedServerIds: ["server-id-1"] },
+        harnessModelTarget: { harnessId: "codex" },
+        // This catalog's only Codex model; the preference order itself is
+        // covered by `harnessDefaultModel`'s tests.
+        preferredModelId: "openai/gpt-5.4-pro",
+      }),
+    );
+    await waitFor(() => {
+      expect(result.current.availableModels.length).toBeGreaterThan(0);
+    });
+    const offered = result.current.availableModels.map((model) => String(model.id));
+    expect(offered.every((id) => id.startsWith("openai/gpt-5"))).toBe(true);
+    expect(offered).not.toContain("anthropic/claude-haiku-4.5");
+    expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    // Unresolved: the shown fallback is never mirrored over the saved lead.
+    expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+  });
+
+  it("does not report a selection resolved before the saved one is read", () => {
+    mockState.persistedModelInitialized = false;
+    mockState.selectedModelId = null as unknown as string;
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { projectId: "project-1", selectedServerIds: ["server-id-1"] },
+      }),
+    );
+    expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+    mockState.persistedModelInitialized = undefined;
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+  });
+
   it("uses organization provider config to expose BYOK hosted models", async () => {
     mockState.selectedModelId = "gpt-4o-mini";
 
@@ -738,6 +783,28 @@ describe("useChatSession hosted mode", () => {
     expect(result.current.isMcpJamModel).toBe(false);
     expect(result.current.traceViewsSupported).toBe(true);
     unmount();
+  });
+
+  it("preserves the conversation on equivalent JWT refresh and resets on changed authority", async () => {
+    const claims = { iss: "https://auth.example", sub: "disposable-user", org_id: "org", exp: 100, iat: 1, jti: "first" };
+    const token = (value: Record<string, unknown>) => `e30.${btoa(JSON.stringify(value)).replaceAll("=", "")}.signature`;
+    mockState.getAccessToken = vi.fn(async () => token(claims));
+    vi.mocked(generateId).mockReturnValueOnce("original-thread").mockReturnValue("changed-thread");
+    const onReset = vi.fn();
+    const { result, rerender } = renderHook(() => useChatSession({ selectedServers: [], hostedContext: { projectId: "project", hostId: "client", selectedServerIds: [] }, onReset }));
+    await waitFor(() => expect(result.current.isSessionBootstrapComplete).toBe(true));
+    mockState.setMessages.mockClear();
+    onReset.mockClear();
+    mockState.getAccessToken = vi.fn(async () => token({ ...claims, exp: 200, iat: 101, jti: "refreshed" }));
+    rerender();
+    await waitFor(() => expect(result.current.authHeaders?.Authorization).toContain(token({ ...claims, exp: 200, iat: 101, jti: "refreshed" })));
+    expect(result.current.chatSessionId).toBe("original-thread");
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+    expect(onReset).not.toHaveBeenCalled();
+    mockState.getAccessToken = vi.fn(async () => token({ ...claims, sub: "another-user" }));
+    rerender();
+    await waitFor(() => expect(result.current.chatSessionId).toBe("changed-thread"));
+    expect(onReset).toHaveBeenCalledWith("auth-bootstrap");
   });
 
   it("resets the thread when the hosted scope changes under the same auth header", async () => {

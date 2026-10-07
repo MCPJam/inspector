@@ -61,6 +61,13 @@ export interface HostedElicitationRequestEvent {
   message: string;
   /** Form mode: the MCP `requestedSchema` (flat-object subset). */
   requestedSchema?: unknown;
+  /** Owned legacy schema fetched privately after actor and pending-window checks. */
+  hasPrivateSchema?: true;
+  /** Presentation dialect only; never grants resource access or preview authority. */
+  formDialect?: "openai";
+  pluginWorkspaceId?: string;
+  /** Opaque link to the original owned operation; never a resource grant. */
+  pluginFormSourceToken?: string;
   /** URL mode: the URL the user is asked to open. Never pre-fetched. */
   url?: string;
   /** URL mode: server-chosen correlation id. Untrusted; display/correlation only. */
@@ -188,7 +195,22 @@ export function isHostedElicitationEvent(
       !Number.isFinite(value.expiresAt) ||
       !isOptionalString(value.serverName) ||
       !isOptionalString(value.serverElicitationId) ||
-      !isOptionalString(value.chatSessionId)
+      !isOptionalString(value.chatSessionId) ||
+      !isOptionalString(value.pluginWorkspaceId) ||
+      (value.pluginFormSourceToken !== undefined &&
+        (typeof value.pluginFormSourceToken !== "string" ||
+          !/^[A-Za-z0-9_-]{43}$/.test(value.pluginFormSourceToken) ||
+          value.formDialect !== "openai" ||
+          value.mode !== "form" ||
+          !value.pluginWorkspaceId)) ||
+      (value.formDialect !== undefined && value.formDialect !== "openai") ||
+      (value.hasPrivateSchema !== undefined &&
+        value.hasPrivateSchema !== true) ||
+      (value.hasPrivateSchema === true &&
+        (value.formDialect !== "openai" ||
+          value.requestedSchema !== undefined)) ||
+      (value.formDialect === "openai" &&
+        (value.mode !== "form" || !value.pluginWorkspaceId))
     ) {
       return false;
     }

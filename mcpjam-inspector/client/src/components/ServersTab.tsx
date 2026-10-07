@@ -1,3 +1,4 @@
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
 import {
   useCallback,
@@ -611,6 +612,7 @@ export function ServersTab({
     HostsConnectAddServerSlotContext
   );
   const viewPhase = useHostsConnectViewPhase();
+  const extensionSettingsEnabled = useFeatureFlagEnabled("plugin-extensions-enabled") === true;
   const { isAuthenticated } = useConvexAuth();
   const { user: signedInUser } = useAuth();
 
@@ -2290,6 +2292,12 @@ export function ServersTab({
             existingServerNames={Object.keys(projectServers)}
             projectClientConfig={selectedProject?.clientConfig}
             projectId={hostedProjectId}
+            extensionSettingsScope={extensionSettingsEnabled && hostedProjectId && previewedHostId ? {
+              projectId: hostedProjectId,
+              hostId: previewedHostId,
+              threadId: `settings:${detailModalState.sessionKey}`,
+              pluginWorkspace: { version: 1, workspaceId: `connect-settings:${detailModalState.sessionKey}` },
+            } : null}
             hostedServerId={detailModalHostedServerId}
             organizationId={selectedProject?.organizationId ?? null}
             isSignedIn={Boolean(signedInUser)}

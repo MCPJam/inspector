@@ -25,6 +25,8 @@
  */
 
 export const ANALYTICS_EVENTS = {
+  // One outcome per logical plugin App launch (closed vocabulary, no content).
+  extension_launch_completed: { source: "client" },
   // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
   platform_launch_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
@@ -230,6 +232,19 @@ export const ANALYTICS_EVENTS = {
   local_harness_runtime_install_completed: { source: "client" },
   local_harness_runtime_install_failed: { source: "client" },
   local_harness_unavailable: { source: "client" },
+  // --- Local harness runtime lifecycle (server; background work included) ---
+  // Fired by the installer and the launch path, including installs nobody is
+  // watching (boot prefetch, background updates). Enums, versions, durations
+  // and counts only — never a digest, path, machine id or installer message.
+  // {harness_id, pack_version, trigger, stage, reason, role, duration_ms}.
+  local_runtime_install_started: { source: "server" },
+  local_runtime_install_succeeded: { source: "server" },
+  local_runtime_install_failed: { source: "server" },
+  local_runtime_candidate_probe_failed: { source: "server" },
+  local_runtime_update_activated: { source: "server" },
+  local_runtime_launch_failed_after_update: { source: "server" },
+  local_runtime_rolled_back_to_previous: { source: "server" },
+  local_runtime_time_to_first_usable_turn: { source: "server" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
@@ -368,6 +383,19 @@ export const ANALYTICS_EVENTS = {
   onboarding_connect_excalidraw_error: { source: "client" },
   onboarding_connect_excalidraw_success: { source: "client" },
   onboarding_first_run_eligible: { source: "client" },
+  // --- Explicit first-run server-choice funnel ---
+  // These events are emitted only through first-run-onboarding-analytics.ts,
+  // whose narrow typed API accepts enums and counts instead of server objects.
+  // NEVER attach a server name, URL, command, credential, or raw error.
+  first_run_onboarding_entered: { source: "client" },
+  first_run_onboarding_screen_viewed: { source: "client" },
+  first_run_onboarding_server_selected: { source: "client" },
+  first_run_onboarding_connection_started: { source: "client" },
+  first_run_onboarding_connection_succeeded: { source: "client" },
+  first_run_onboarding_connection_failed: { source: "client" },
+  first_run_onboarding_connection_cancelled: { source: "client" },
+  first_run_onboarding_setup_later_clicked: { source: "client" },
+  first_run_onboarding_playground_opened: { source: "client" },
   playground_compare_lead_promoted: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
+const localVenue = vi.hoisted(() => ({ harnesses: new Set<string>() }));
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  isLocalHarnessVenue: (harness: string | undefined) =>
+    harness !== undefined && localVenue.harnesses.has(harness),
+}));
+
 // Covers the v1 HARNESS surface (server/routes/v1/harness.ts): auth + guest
 // gating and the read-only built-in-tools catalog. No Convex — the data is
 // static published-package metadata read from the harness registry — so the
@@ -139,25 +145,25 @@ describe("v1 harness routes", () => {
       expect(body.mcpDelivery).toBe("native");
     });
 
-    it("tracks the codex transport, which is the reason this route exists", async () => {
-      // A static client-side map cannot know which transport a deployment
-      // enabled. This is the answer the host editor needs to decide whether the
-      // approval switch is really unavailable or merely off by default.
-      const execCaps = await capabilities("codex");
-      expect(execCaps.transport).toBe("exec");
-      expect(execCaps.supportsNativeToolApproval).toBe(false);
-      expect(execCaps.supportsHostExecutedToolApproval).toBe(false);
+    it("reports that Codex can pause for approval on both surfaces", async () => {
+      // The host editor enables the approval switch from this answer.
+      const caps = await capabilities("codex");
+      expect(caps.transport).toBe("app-server");
+      expect(caps.supportsNativeToolApproval).toBe(true);
+      expect(caps.supportsHostExecutedToolApproval).toBe(true);
+      expect(caps.mcpDelivery).toBe("host-executed");
+    });
 
-      process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT = "true";
+    it("answers for the local arm when this Inspector runs the harness locally", async () => {
+      // Same adapter in either venue; the route also says it runs here.
+      localVenue.harnesses.add("codex");
       try {
-        const appServerCaps = await capabilities("codex");
-        expect(appServerCaps.transport).toBe("app-server");
-        expect(appServerCaps.supportsNativeToolApproval).toBe(true);
-        expect(appServerCaps.supportsHostExecutedToolApproval).toBe(true);
-        // Delivery is unchanged: this is a transport swap, not a new harness.
-        expect(appServerCaps.mcpDelivery).toBe(execCaps.mcpDelivery);
+        const caps = (await capabilities("codex")) as Capabilities & { localExecution?: boolean };
+        expect(caps.localExecution).toBe(true);
+        expect(caps.transport).toBe("app-server");
+        expect(caps.supportsNativeToolApproval).toBe(true);
       } finally {
-        delete process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT;
+        localVenue.harnesses.clear();
       }
     });
 
@@ -230,27 +236,18 @@ describe("v1 harness routes", () => {
       for (const t of body.items) expect(t.name.length).toBeGreaterThan(0);
     });
 
-    it("reports the codex catalog for the transport that is enabled", async () => {
-      // The catalog is a property of the TRANSPORT, not of the harness name:
-      // app-server reports typed items for shell, patches and web search where
-      // exec could attribute two tools.
-      process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT = "true";
-      try {
-        const res = await request("GET", "/api/v1/harness/codex/builtin-tools");
-        expect(res.status).toBe(200);
-        const body = (await res.json()) as { items: ToolInfo[] };
-        const keys = new Set(body.items.map((t) => t.key));
-        for (const expected of ["bash", "webSearch", "fileChange"]) {
-          expect(keys).toContain(expected);
-        }
-        // Native names measured against the pinned binary, not copied from the
-        // exec transport (which reports `shell`).
-        const names = new Set(body.items.map((t) => t.name));
-        expect(names).toContain("exec_command");
-        expect(names).toContain("apply_patch");
-      } finally {
-        delete process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT;
+    it("reports the codex catalog: typed items for shell, patches and web search", async () => {
+      const res = await request("GET", "/api/v1/harness/codex/builtin-tools");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { items: ToolInfo[] };
+      const keys = new Set(body.items.map((t) => t.key));
+      for (const expected of ["bash", "webSearch", "fileChange"]) {
+        expect(keys).toContain(expected);
       }
+      // Native names measured against the pinned binary.
+      const names = new Set(body.items.map((t) => t.name));
+      expect(names).toContain("exec_command");
+      expect(names).toContain("apply_patch");
     });
 
     it("returns the cursor built-in tools (bash, read, edit, webSearch)", async () => {

@@ -10,12 +10,12 @@ vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
     children,
   }: {
-    children: React.ReactNode;
+    children: import("react").ReactNode;
   }) => <div data-testid="stick-to-bottom">{children}</div>;
   StickToBottomComponent.Content = ({
     children,
   }: {
-    children: React.ReactNode;
+    children: import("react").ReactNode;
   }) => <div>{children}</div>;
 
   return {
@@ -55,8 +55,33 @@ const mockUseChatSession = {
   startChatWithMessages: vi.fn(),
 };
 
+const lane = vi.hoisted(() => ({
+  chatOptions: vi.fn(),
+  owner: vi.fn(),
+  view: vi.fn(),
+}));
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => mockUseChatSession,
+  useChatSession: (options: unknown) => {
+    lane.chatOptions(options);
+    return mockUseChatSession;
+  },
+}));
+vi.mock("@/components/host-workspace/ThreadAppPanel", () => ({
+  useThreadAppWorkspace: (scope: unknown, servers: unknown, options: unknown) => {
+    lane.owner(scope, servers, options);
+    return { scope, contextReferences: scope ? ["lane-context"] : [] };
+  },
+}));
+vi.mock("@/components/host-workspace/CompareLaneWorkspace", () => ({
+  CompareLaneWorkspace: (props: {
+    apps: unknown;
+    showDiagnostics: boolean;
+    diagnostics: import("react").ReactNode;
+    children: import("react").ReactNode;
+  }) => {
+    lane.view(props);
+    return props.showDiagnostics ? props.diagnostics : props.children;
+  },
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
@@ -114,7 +139,7 @@ vi.mock("@/contexts/scenario-client-style-context", () => ({
   ScenarioChatUiOverrideProvider: ({
     children,
   }: {
-    children: React.ReactNode;
+    children: import("react").ReactNode;
   }) => <>{children}</>,
   useScenarioChatUiOverride: () => undefined,
 }));
@@ -123,7 +148,7 @@ vi.mock("@/contexts/scenario-client-capabilities-override-context", () => ({
   ScenarioHostCapabilitiesOverrideProvider: ({
     children,
   }: {
-    children: React.ReactNode;
+    children: import("react").ReactNode;
   }) => <>{children}</>,
   useScenarioHostCapabilitiesOverride: () => undefined,
 }));
@@ -139,7 +164,7 @@ vi.mock("@/contexts/active-host-client-capabilities-context", () => ({
   ActiveHostCapsResolverScope: ({
     children,
   }: {
-    children: React.ReactNode;
+    children: import("react").ReactNode;
   }) => <>{children}</>,
 }));
 
@@ -153,8 +178,11 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness({ browserWorkspace }: {
+function Harness({ browserWorkspace, extensionBinding }: {
   browserWorkspace?: { id: string; order: number; clientCount: number };
+  extensionBinding?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["extensionBinding"];
 }) {
   const [summaries, setSummaries] = useState<
     Record<string, MultiModelCardSummary>
@@ -168,6 +196,7 @@ function Harness({ browserWorkspace }: {
         {Object.keys(messageFlags).length}
       </div>
       <MultiModelPlaygroundCard
+        extensionBinding={extensionBinding}
         browserWorkspace={browserWorkspace}
         hostedContext={{ projectId: "project-1", selectedServerIds: [] }}
         compareId={String(model.id)}
@@ -206,6 +235,42 @@ describe("MultiModelPlaygroundCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useBrowserComparisonStore.setState({ clients: {}, selected: {} });
+  });
+
+  it("gives a lane with extensions its own owner, shared by its chat turns and its Apps", () => {
+    const binding = {
+      identity: { actorId: "actor", projectId: "project-1", hostId: "host" },
+      servers: [{ serverId: "saved", name: "Saved" }],
+      capabilities: {} as never,
+      profile: "codex" as const,
+    };
+    const { rerender } = render(<Harness extensionBinding={binding} />);
+    const options = lane.chatOptions.mock.calls.at(-1)![0];
+    const [scope, servers, ownerOptions] = lane.owner.mock.calls.at(-1)!;
+    const workspace = options.pluginWorkspace("chat-session-1");
+    expect(workspace.workspaceId).toMatch(/^compare:/);
+    expect(scope).toEqual({
+      projectId: "project-1",
+      hostId: "host",
+      threadId: "chat-session-1",
+      pluginWorkspace: workspace,
+    });
+    expect(servers).toEqual(binding.servers);
+    expect(ownerOptions.launchProfile).toBe("codex");
+    // The lane's Apps' context rides on the lane's own turns only.
+    expect(options.pluginContextReferences(workspace.workspaceId)).toEqual([
+      "lane-context",
+    ]);
+    expect(options.pluginContextReferences("another")).toEqual([]);
+    expect(lane.view.mock.calls.at(-1)![0].apps).toMatchObject({ scope });
+    // Another lane never shares the workspace.
+    expect(workspace.workspaceId).toContain('"model"');
+    rerender(<Harness extensionBinding={null} />);
+    expect(lane.owner.mock.calls.at(-1)![0]).toBeNull();
+    expect(
+      lane.chatOptions.mock.calls.at(-1)![0].pluginWorkspace("chat-session-1"),
+    ).toBeUndefined();
+    expect(lane.view.mock.calls.at(-1)![0].apps).toBeNull();
   });
 
   it("registers the model's own conversation under the shared browser workspace", () => {

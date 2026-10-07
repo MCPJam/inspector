@@ -1,4 +1,10 @@
 import {
+  MentionsPopover,
+  type MentionComposer,
+  type MentionPlugin,
+  type MentionToken,
+} from "./mentions-popover";
+import {
   Popover,
   PopoverContent,
   PopoverAnchor,
@@ -41,7 +47,17 @@ interface PromptListItem extends MCPPrompt {
   serverId: string;
 }
 
+/** An open "@" picker; the composer owns the token and the picked scope. */
+export type ActiveMention = {
+  composer: MentionComposer;
+  token: MentionToken;
+  scopedTo?: MentionPlugin | null;
+  onPickPlugin: (plugin: MentionPlugin, token: MentionToken) => void;
+  onDismiss: () => void;
+};
+
 interface PromptsPopoverProps {
+  mentions?: ActiveMention;
   anchor: { x: number; y: number };
   selectedServers?: string[];
   onPromptSelected: (mcpPromptResult: MCPPromptResult) => void;
@@ -71,7 +87,7 @@ interface PromptsPopoverProps {
 // Also used in chat-input.tsx to handle keydown events
 export const isMCPPromptsRequested = (
   value: string,
-  caretIndex: number
+  caretIndex: number,
 ): boolean => {
   const textUpToCaret = value.slice(0, caretIndex);
   // Check text up to caret position for " /" or "/" at start of line or textarea
@@ -80,6 +96,7 @@ export const isMCPPromptsRequested = (
 };
 
 export function PromptsPopover({
+  mentions,
   anchor,
   selectedServers,
   onPromptSelected,
@@ -96,7 +113,7 @@ export function PromptsPopover({
   const [open, setOpen] = useState(false);
   const [promptListItems, setPromptListItems] = useState<PromptListItem[]>([]);
   const [selectedPrompt, setSelectedPrompt] = useState<PromptListItem | null>(
-    null
+    null,
   );
   const [isPromptArgsDialogOpen, setIsPromptArgsDialogOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -175,7 +192,7 @@ export function PromptsPopover({
         setSelectedPrompt(null);
       }
     },
-    [onPromptSelected]
+    [onPromptSelected],
   );
 
   useEffect(() => {
@@ -230,7 +247,7 @@ export function PromptsPopover({
     // case where it turns out there is nothing to show.
     setOpen(
       isMCPPromptsRequested(value, caretIndex) &&
-        (totalItems > 0 || skillsEnabled)
+        (totalItems > 0 || skillsEnabled),
     );
   }, [value, caretIndex, totalItems, skillsEnabled]);
 
@@ -244,13 +261,27 @@ export function PromptsPopover({
       onSkillSelected?.(skillResult);
       setOpen(false);
     },
-    [onSkillSelected]
+    [onSkillSelected],
   );
 
   const handleOpenUploadDialog = useCallback(() => {
     setOpen(false);
     setIsSkillUploadDialogOpen(true);
   }, []);
+
+  if (mentions)
+    return (
+      <MentionsPopover
+        mentions={mentions.composer}
+        token={mentions.token}
+        scopedTo={mentions.scopedTo}
+        onPickPlugin={mentions.onPickPlugin}
+        onDismiss={mentions.onDismiss}
+        anchor={anchor}
+        actionTrigger={actionTrigger}
+        setActionTrigger={setActionTrigger}
+      />
+    );
 
   return (
     <div className="relative">
@@ -296,7 +327,7 @@ export function PromptsPopover({
                           "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
                           highlightedIndex === index
                             ? "bg-accent text-accent-foreground"
-                            : ""
+                            : "",
                         )}
                         onClick={() => setSelectedPrompt(prompt)}
                         onMouseEnter={() => {
@@ -377,7 +408,7 @@ interface PromptsArgumentsDialogProps {
   promptListItem: PromptListItem | null;
   onSubmit: (
     promptListItem: PromptListItem,
-    values: Record<string, string>
+    values: Record<string, string>,
   ) => Promise<void>;
   onCancel: () => void;
 }
@@ -411,13 +442,13 @@ export function PromptsArgumentsDialog({
       promptListItem.arguments.map((arg) => ({
         ...arg,
         value: "",
-      }))
+      })),
     );
   }, [open, promptListItem?.arguments]);
 
   const handleFieldChange = (name: string, value: string) => {
     setFields((prev) =>
-      prev.map((field) => (field.name === name ? { ...field, value } : field))
+      prev.map((field) => (field.name === name ? { ...field, value } : field)),
     );
   };
 
@@ -442,7 +473,7 @@ export function PromptsArgumentsDialog({
 
   const isSubmitDisabled = useMemo(() => {
     const missingRequired = fields.some(
-      (field) => field.required && !field.value.trim()
+      (field) => field.required && !field.value.trim(),
     );
     return missingRequired || isLoading;
   }, [fields, isLoading]);

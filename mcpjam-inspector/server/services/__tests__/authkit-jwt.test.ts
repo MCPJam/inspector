@@ -7,8 +7,10 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { SignJWT, generateKeyPair, type KeyLike } from "jose";
+import { readFileSync } from "node:fs";
+import { SignJWT, generateKeyPair, type CryptoKey } from "jose";
 import {
+  resolveMcpResourceIndicator,
   verifyAuthKitToken,
   AuthKitVerificationError,
   type AuthKitVerifyDeps,
@@ -17,10 +19,13 @@ import {
 const ISSUER = "https://login.mcpjam.com";
 const CLIENT_ID = "client_test_123";
 const SUB = "user_workos_42";
+const PRODUCTION_CLIENT_ID = "client_01K4C1TVPBE7JTBFQJF9SDW9P9";
+const STAGING_CLIENT_ID = "client_01K4C1TVA6CMQ3G32F1P301A9G";
+const DEVELOPMENT_CLIENT_ID = "client_01KTN2EWHHJCKRB8RSR307X4SG";
 
-let trustedPrivate: KeyLike;
-let trustedPublic: KeyLike;
-let attackerPrivate: KeyLike;
+let trustedPrivate: CryptoKey;
+let trustedPublic: CryptoKey;
+let attackerPrivate: CryptoKey;
 
 beforeAll(async () => {
   const trusted = await generateKeyPair("RS256");
@@ -39,7 +44,7 @@ function deps(): AuthKitVerifyDeps {
 }
 
 async function sign(
-  key: KeyLike,
+  key: CryptoKey,
   opts: {
     iss?: string;
     aud?: string;
@@ -117,6 +122,90 @@ describe("verifyAuthKitToken", () => {
     await expect(verifyAuthKitToken(token, deps())).rejects.toBeInstanceOf(
       AuthKitVerificationError,
     );
+  });
+
+  it("does not infer an MCP resource for an unknown AuthKit client id", async () => {
+    const resource = resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)!;
+    const token = await sign(trustedPrivate, { aud: resource });
+
+    expect(resolveMcpResourceIndicator(CLIENT_ID)).toBeUndefined();
+    await expect(verifyAuthKitToken(token, deps())).rejects.toBeInstanceOf(
+      AuthKitVerificationError,
+    );
+    await expect(
+      verifyAuthKitToken(token, deps(), {
+        allowMcpResourceAudience: true,
+      }),
+    ).rejects.toBeInstanceOf(AuthKitVerificationError);
+  });
+
+  it("accepts the MCP resource only for its matching OAuth issuer and client", async () => {
+    const productionIssuer = "https://login.mcpjam.com";
+    const productionDeps: AuthKitVerifyDeps = {
+      clientId: PRODUCTION_CLIENT_ID,
+      resolveKey: (issuer) =>
+        issuer === productionIssuer ? trustedPublic : null,
+    };
+    const token = await sign(trustedPrivate, {
+      iss: productionIssuer,
+      aud: resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID),
+    });
+
+    await expect(
+      verifyAuthKitToken(token, productionDeps),
+    ).rejects.toBeInstanceOf(AuthKitVerificationError);
+    await expect(
+      verifyAuthKitToken(token, productionDeps, {
+        allowMcpResourceAudience: true,
+      }),
+    ).resolves.toMatchObject({ sub: SUB });
+  });
+
+  it("rejects an MCP resource on a different issuer or environment", async () => {
+    const productionIssuer = "https://login.mcpjam.com";
+    // Even if an issuer key were mistakenly present in the injected resolver,
+    // opting into MCP audiences must not accept that issuer's resource token.
+    const productionDeps: AuthKitVerifyDeps = {
+      clientId: PRODUCTION_CLIENT_ID,
+      resolveKey: () => trustedPublic,
+    };
+    const wrongIssuer = await sign(trustedPrivate, {
+      iss: "https://other-issuer.example",
+      aud: resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID),
+    });
+    const wrongEnvironment = await sign(trustedPrivate, {
+      iss: productionIssuer,
+      aud: resolveMcpResourceIndicator(STAGING_CLIENT_ID),
+    });
+
+    for (const token of [wrongIssuer, wrongEnvironment]) {
+      await expect(
+        verifyAuthKitToken(token, productionDeps, {
+          allowMcpResourceAudience: true,
+        }),
+      ).rejects.toBeInstanceOf(AuthKitVerificationError);
+    }
+  });
+
+  it("maps only the known environment client ids and matches the worker hosts", () => {
+    expect(resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)).toBe(
+      "https://mcp.mcpjam.com/mcp",
+    );
+    expect(resolveMcpResourceIndicator(STAGING_CLIENT_ID)).toBe(
+      "https://mcp-staging.mcpjam.com/mcp",
+    );
+    expect(resolveMcpResourceIndicator(DEVELOPMENT_CLIENT_ID)).toBe(
+      "http://localhost:8787/mcp",
+    );
+    expect(resolveMcpResourceIndicator("client_unknown")).toBeUndefined();
+
+    const wrangler = readFileSync(
+      new URL("../../../../mcp/wrangler.jsonc", import.meta.url),
+      "utf8",
+    );
+    expect(wrangler).toContain('"pattern": "mcp.mcpjam.com"');
+    expect(wrangler).toContain('"pattern": "mcp-staging.mcpjam.com"');
+    expect(wrangler).toContain("localhost:8787");
   });
 
   it("rejects an expired token", async () => {

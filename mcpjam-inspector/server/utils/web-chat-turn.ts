@@ -1,3 +1,8 @@
+import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
+import {
+  appendPluginModelContext,
+  stripPluginModelContext,
+} from "../../shared/plugin-model-context.js";
 import { modelWorkloadFor } from "./model-workload.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 /**
@@ -42,16 +47,21 @@ import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
 import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js";
+import type { FailureCapture } from "./agent-failure-capture.js";
 import {
   SANDBOX_NOTICE_DATA_PART_TYPE,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
 import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
+import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { directChatEffort } from "./chat-reasoning-effort.js";
 import type {
   Harness,
   MCPClientManager,
+  RequestedModelSelection,
   ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import type {
@@ -75,7 +85,8 @@ import {
   type OrgProviderRuntime,
 } from "./org-model-config.js";
 import { type ModelDefinition } from "@/shared/types";
-import { isHostedModelDefinition } from "../services/hosted-model-catalog.js";
+import { decideTurnRail } from "./selection-rail.js";
+import { backendModelSelection } from "./model-resolution-local.js";
 import {
   buildWidgetModelContextSystemPrompt,
   guardPageToolRefresh,
@@ -142,6 +153,8 @@ import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
+import { ranTurnSelection } from "./session-model-selection";
+import type { HarnessBox } from "./harness/harness-box.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
   type HarnessMcpProxyStrategy,
@@ -202,6 +215,15 @@ export interface WebChatTurnPersistContext {
   /** Phase 3 execution scope (scenario/host runtime-config). Threaded into the
    *  harness path so the backend re-resolves live access + per-swarm caps. */
   executionScope?: ExecutionScope;
+  /**
+   * The scenario conversation's disposable box, held for this turn. A harness
+   * turn runs on it (`harnessSandboxBinding`), never on the member's personal
+   * computer; and its heartbeat is stopped when the turn's stream completes.
+   * Releasing it leaves the box for the conversation's next turn.
+   */
+  scenarioBox?: Pick<HarnessBox, "binding" | "release">;
+  /** A non-member participant's scenario turn. See `MCPJamHandlerOptions`. */
+  scenarioParticipant?: boolean;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
   authenticatedUserId?: string | null;
   /** UI messages from the inbound request — used to stamp `senderUserId`. */
@@ -257,6 +279,13 @@ export interface WebChatTurnPersistContext {
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
   harness?: Harness;
+  /**
+   * The server-resolved LOCAL target when this turn runs on the user's own
+   * machine. Forwarded verbatim to the harness turn: dropping it would run a
+   * turn the route resolved as local on the hosted path instead, which a
+   * local launch must never silently do.
+   */
+  harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
   respectToolVisibility?: boolean;
   /**
    * When `false`, skip the `exportConnectedServerToolSnapshotForEvalAuthoring`
@@ -365,10 +394,33 @@ export interface WebChatTurnPersistContext {
  * here so the helper signature is self-contained.
  */
 export interface WebChatTurnPrepareInputs {
+  modelToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   selectedServerIds: string[];
   modelDefinition: ModelDefinition;
+  /**
+   * The saved selection for `modelDefinition` that DECIDES THE RAIL
+   * (`decideTurnRail`): `hosted` → MCPJam `/stream`; `org` → the org
+   * connection (forwarded to `/stream/org/resolve` for a re-check); `local`
+   * and a stored legacy one → the org-BYOK path, never MCPJam credits (this
+   * surface holds no key of the caller's machine). Absent → today's
+   * hosted-list check, unchanged.
+   */
+  routingSelection?: RequestedModelSelection;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn runs at (the request's top-level field, else
+   * the host's saved one for this same model). Under an effort the resolved
+   * temperature is omitted. Applied per rail: a top-level body field on the
+   * hosted `/stream` and `/stream/org` rails, provider options on the direct
+   * (local-runtime org) rail, the typed field on a harness turn.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  /**
+   * A temperature the CALLER sent (not a host default). The direct rail
+   * refuses it together with an effort; the hosted rails drop it.
+   */
+  explicitTemperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   /**
@@ -387,6 +439,8 @@ export interface WebChatTurnPrepareInputs {
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
+  /** Fresh server-owned App context, never browser-supplied bytes. */
+  pluginContext?: ModelMessage;
   /** Optional progressive-discovery override. */
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
@@ -493,6 +547,9 @@ export interface WebChatTurnRuntime {
    * elicitation bridge it is NOT disposed at end of turn.
    */
   mrtrBridge?: HostedMrtrBridge;
+  modelFormBridge?: {
+    attachStreamWriter(writer: { write(chunk: UIMessageChunk): void }): void;
+  };
   /**
    * Delivers `data-task-created` parts. Present only when the host policy
    * enables tasks for this surface AND the client sent a compatible
@@ -541,14 +598,20 @@ export interface WebChatTurnRuntime {
    * Ask MCPJam only: asks the backend to bill this turn's model calls to
    * MCPJam rather than to the customer.
    *
-   * It is a REQUEST, not a decision. Convex honours it only alongside
-   * `x-inspector-service-token` and only for the pinned agent model
+   * It is a REQUEST, not a decision. Convex honours it only for a signed-in
+   * user, on their own login, and only for the pinned agent model
    * (`shared/mcpjam-agent-model.ts`), and refuses the turn outright if either
    * fails rather than falling back to a customer debit. Set by the agent route
    * for signed-in callers; absent everywhere else, which leaves every other
    * surface on exactly the path it has always taken.
    */
   billingFeature?: string;
+  /**
+   * A surface's capture rule for the engine's failures. Ask MCPJam passes
+   * `MCPJAM_AGENT_FAILURE_CAPTURE` so every one of its failures reaches Sentry
+   * classified; absent everywhere else. See `MCPJamHandlerOptions`.
+   */
+  failureCapture?: FailureCapture;
   /**
    * Per-turn step budget for the MCPJam-free engine. Set alongside
    * `billingFeature` because the backend enforces the same ceiling on every
@@ -793,7 +856,7 @@ export async function streamWebChatTurn(
 
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
-  const modelMessages = await convertToMcpjamModelMessages(
+  let modelMessages = await convertToMcpjamModelMessages(
     uiMessagesForTurn as never,
     {
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
@@ -804,14 +867,23 @@ export async function streamWebChatTurn(
     },
   );
 
+  modelMessages = appendPluginModelContext(
+    modelMessages,
+    prepare.pluginContext,
+  );
+
   let prepared;
   try {
     prepared = await prepareChatV2({
       mcpClientManager: manager,
+      modelToolExecutor: prepare.modelToolExecutor,
       selectedServers: prepare.selectedServerIds,
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,
       temperature: prepare.temperature,
+      ...(prepare.reasoningEffort !== undefined
+        ? { reasoningEffort: prepare.reasoningEffort }
+        : {}),
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
       ...(prepare.excludeMcpToolNames
@@ -822,6 +894,9 @@ export async function streamWebChatTurn(
         ? { toolCallCancellation: prepare.toolCallCancellation }
         : {}),
       customProviders: prepare.customProviders,
+      // Nothing has been streamed yet, so a hung MCP server would otherwise
+      // hold the request past the edge's first-byte limit (a Cloudflare 524).
+      toolListingTimeoutMs: WEB_CHAT_TOOL_LISTING_TIMEOUT_MS,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
       ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
@@ -1130,6 +1205,9 @@ export async function streamWebChatTurn(
     : null;
 
   const cleanupStream = async () => {
+    // The turn is over: its box stops heartbeating (and is left for the
+    // conversation's next turn). Idempotent, and never throws.
+    await persist.scenarioBox?.release();
     // Withdraw pending elicitation rows BEFORE dropping the connections: once
     // the stream is gone nobody can answer, and an abandoned row would stay
     // answerable until its TTL. Disposal is best-effort and must never block
@@ -1147,9 +1225,14 @@ export async function streamWebChatTurn(
   // turn. And the same pair, sent from the picker's "Your providers" row, means
   // the OPPOSITE: the user chose their own key. Only the picker's explicit
   // `hosted: false` tells the two apart; see `isHostedModelDefinition`.
+  //
+  // With a saved selection its `source` decides instead (`decideTurnRail`).
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isHostedModelDefinition(prepare.modelDefinition);
+    decideTurnRail({
+      selection: prepare.routingSelection,
+      model: prepare.modelDefinition,
+    }) === "hosted";
   // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
   // (`cursor/auto`) that is deliberately not MCPJam-hosted.
   //
@@ -1256,6 +1339,13 @@ export async function streamWebChatTurn(
         // somebody has to remember to extend.
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
+        // What the session records for this turn: the selection it ran,
+        // effort included (last turn wins, like its modelId).
+        modelSelection: ranTurnSelection({
+          selection: prepare.routingSelection,
+          model: prepare.modelDefinition,
+          reasoningEffort: prepare.reasoningEffort,
+        }),
         modelSource,
         projectId: persist.projectId,
         sourceType: persist.sourceType,
@@ -1282,24 +1372,27 @@ export async function streamWebChatTurn(
         // prompt exists to prevent. Hence two fields, both already on the
         // ingest contract — the local route has always filled this one.
         systemPrompt: effectiveEnhancedSystemPrompt,
-        sessionMessages: stampSenderUserIdsOnSessionMessages(
-          stripUiContextModelParts(
-            // Signed as the server's own where it is: this turn's output,
-            // and history that verified on the way in (MJ-009).
-            provenance
-              ? signHistoryForPersistence(
-                  fullHistory,
-                  provenance,
-                  allTools as ToolSet,
-                )
-              : fullHistory,
+        sessionMessages: preservePluginMessageTitles(
+          stampSenderUserIdsOnSessionMessages(
+            stripUiContextModelParts(
+              // Signed as the server's own where it is: this turn's output,
+              // and history that verified on the way in (MJ-009).
+              provenance
+                ? signHistoryForPersistence(
+                    stripPluginModelContext(fullHistory),
+                    provenance,
+                    allTools as ToolSet,
+                  )
+                : stripPluginModelContext(fullHistory),
+            ),
+            // The verified copy when there is one: it is the same list, with a
+            // system message now a user message, so user ordinals line up.
+            (provenanceReport && persist.originalMessages === prepare.uiMessages
+              ? provenanceReport.messages
+              : persist.originalMessages) as unknown[],
+            { authenticatedUserId: persist.authenticatedUserId },
           ),
-          // The verified copy when there is one: it is the same list, with a
-          // system message now a user message, so user ordinals line up.
-          (provenanceReport && persist.originalMessages === prepare.uiMessages
-            ? provenanceReport.messages
-            : persist.originalMessages) as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId },
+          persist.originalMessages as unknown[],
         ),
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
@@ -1314,6 +1407,11 @@ export async function streamWebChatTurn(
                   : {}),
                 systemPrompt: persist.systemPrompt,
                 temperature: persist.temperature,
+                // The effort this conversation ran at, so a reopened chat keeps
+                // it. Absent when the turn had none.
+                ...(prepare.reasoningEffort !== undefined
+                  ? { reasoningEffort: prepare.reasoningEffort }
+                  : {}),
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
@@ -1421,6 +1519,15 @@ export async function streamWebChatTurn(
               tools: localTools.tools,
               messages: scrubbedMessages,
             }),
+            // The saved org connection, re-checked by the backend before it
+            // hands back any key.
+            ...(prepare.routingSelection?.source === "org"
+              ? {
+                  modelSelection: backendModelSelection(
+                    prepare.routingSelection,
+                  ),
+                }
+              : {}),
           },
         )
       : { runtimeLocation: "cloud", providerKey };
@@ -1444,6 +1551,21 @@ export async function streamWebChatTurn(
           { toolNames: localTools.removed },
         );
       }
+      // The inspector calls the provider on this runtime, so the effort is
+      // applied here as provider options, or refused before any spend.
+      const localEffort = directChatEffort({
+        providerKey: orgRuntime.provider.providerKey,
+        modelId,
+        effort: prepare.reasoningEffort,
+        explicitTemperature: prepare.explicitTemperature,
+      });
+      if (!localEffort.ok) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          localEffort.reason,
+        );
+      }
       return handleLocalOrgChatModel({
         provider: orgRuntime.provider,
         ...(historyPresentation ? { historyPresentation } : {}),
@@ -1455,6 +1577,9 @@ export async function streamWebChatTurn(
         messages: scrubbedMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
+        ...(localEffort.providerOptions
+          ? { providerOptions: localEffort.providerOptions }
+          : {}),
         tools: localTools.tools,
         progressivePlan,
         discoveryState,
@@ -1500,6 +1625,9 @@ export async function streamWebChatTurn(
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
+      ...(prepare.reasoningEffort !== undefined
+        ? { reasoningEffort: prepare.reasoningEffort }
+        : {}),
       tools: refreshingEngineTools(),
       progressivePlan,
       discoveryState,
@@ -1588,12 +1716,20 @@ export async function streamWebChatTurn(
       ? { extraBodyFields: { billingFeature: runtime.billingFeature } }
       : {}),
     ...(runtime.maxSteps !== undefined ? { maxSteps: runtime.maxSteps } : {}),
+    ...(runtime.failureCapture
+      ? { failureCapture: runtime.failureCapture }
+      : {}),
     modelId: mcpjamModelId,
     provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
+    // Hosted `/stream`: the top-level body field. Harness: the typed field its
+    // adapter's declared efforts gate (refused, never dropped).
+    ...(prepare.reasoningEffort !== undefined
+      ? { reasoningEffort: prepare.reasoningEffort }
+      : {}),
     tools: refreshingEngineTools(),
     progressivePlan,
     discoveryState,
@@ -1625,6 +1761,22 @@ export async function streamWebChatTurn(
       : {}),
     ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(persist.harness && persist.harnessExecutionTarget
+      ? { harnessExecutionTarget: persist.harnessExecutionTarget }
+      : {}),
+    // A host-executed harness runs MCP tools in this process; they take the
+    // same plugin executor the emulated engine's tools do.
+    ...(persist.harness && prepare.modelToolExecutor
+      ? { hostToolExecutor: prepare.modelToolExecutor }
+      : {}),
+    // The conversation's disposable box. Never alongside a local target:
+    // a local harness runs on the member's machine and is never given one.
+    ...(persist.harness &&
+    persist.scenarioBox &&
+    !persist.harnessExecutionTarget
+      ? { harnessSandboxBinding: persist.scenarioBox.binding }
+      : {}),
+    ...(persist.scenarioParticipant ? { scenarioParticipant: true } : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.
     ...(persist.runtimeSkillsOverride !== undefined
@@ -1697,6 +1849,7 @@ export async function streamWebChatTurn(
       runtime.elicitationBridge?.attachStreamWriter(writer);
       // MRTR suspend emits `data-mrtr-input-required` on this same stream.
       runtime.mrtrBridge?.attachStreamWriter(writer);
+      runtime.modelFormBridge?.attachStreamWriter(writer);
       // A task can be created on ANY engine path, so unlike the MRTR bridge
       // this one attaches at all three sites, following the elicitation bridge.
       runtime.taskCreatedBridge?.attachStreamWriter(writer);

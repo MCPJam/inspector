@@ -12,7 +12,10 @@ import { HostChip } from "@/components/hosts/host-chip";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { EnvironmentChip } from "../run-context-chip";
 import { CaseMetricStrip } from "../case-metric-strip";
-import { computeIterationResult } from "../pass-criteria";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "../pass-criteria";
 import {
   caseRunBatchTrigger,
   groupCaseIterations,
@@ -87,12 +90,13 @@ function RunBatchGroup({
     projectEnvironmentsEnabled,
   });
   const total = batch.iterations.length;
+  // Measured results: an infra row is decided neither way.
   const decided = batch.iterations.filter((i) => {
-    const r = computeIterationResult(i);
+    const r = computeMeasuredIterationResult(i);
     return r === "passed" || r === "failed";
   });
   const passed = decided.filter(
-    (i) => computeIterationResult(i) === "passed",
+    (i) => computeMeasuredIterationResult(i) === "passed",
   ).length;
   const allPass = decided.length > 0 && passed === decided.length;
 

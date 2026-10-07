@@ -1,6 +1,12 @@
+import pluginFormAnswers from "./plugin-form-answers.js";
+import pluginInstances from "./plugin-instances.js";
 import oauthConnections from "./oauth-connections.js";
 import { Hono } from "hono";
 import { mapWebBoundaryError } from "./boundary-error.js";
+import {
+  agentRouteCapture,
+  isAgentRequestPath,
+} from "../../utils/agent-failure-capture.js";
 import { webError, webErrorFromRoute } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
@@ -8,7 +14,10 @@ import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
-import { mcpEgressRateLimitMiddleware, promoteServerCheck } from "../../middleware/mcp-egress-rate-limit.js";
+import {
+  mcpEgressRateLimitMiddleware,
+  promoteServerCheck,
+} from "../../middleware/mcp-egress-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 import servers from "./servers.js";
@@ -50,11 +59,17 @@ import browserProfiles from "./browser-profiles.js";
 import clientFlags from "./flags.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
-import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
+import { fetchGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
 
 // Require bearer auth + guest rate limiting on MCP operation routes
+web.use(
+  "/apps/plugin-instances/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+);
+web.use("/plugin-forms/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/servers/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
@@ -230,7 +245,13 @@ web.use("*", passthroughRateLimitMiddleware);
 // Registered after the per-family `bearerAuthMiddleware` lines, whose verified
 // identity it keys on, and after the passthrough limiter, so a request that
 // limiter refuses is turned away before this one reads the body.
-for (const family of ["tools", "resources", "prompts", "tasks"] as const) {
+for (const family of [
+  "tools",
+  "resources",
+  "prompts",
+  "tasks",
+  "apps/plugin-instances",
+] as const) {
   web.use(`/${family}/*`, mcpOperationRateLimit(family));
 }
 
@@ -257,6 +278,8 @@ web.route("/chat-v2", chatV2);
 // Code harness (in a cloud sandbox) connects its MCP through here.
 web.route("/harness-mcp", harnessMcp);
 web.route("/mcpjam-agent", mcpjamAgent);
+web.route("/plugin-forms", pluginFormAnswers);
+web.route("/apps/plugin-instances", pluginInstances);
 web.route("/apps", apps);
 web.route("/oauth/connections", oauthConnections);
 web.route("/oauth", oauthWeb);
@@ -319,9 +342,10 @@ web.route("/api-keys", apiKeys);
 // the same reason `/api-keys` does.
 web.route("/auth-session", authSession);
 
-// Public guest JWKS compatibility endpoint.
+// Public guest JWKS compatibility endpoint: the selected guest authority's
+// keys, read-only (it never provisions anything).
 web.get("/guest-jwks", async (c) => {
-  const response = await fetchRemoteGuestJwks();
+  const response = await fetchGuestJwks();
   if (!response) {
     return webError(c, 503, "INTERNAL_ERROR", "Guest JWKS unavailable");
   }
@@ -343,7 +367,17 @@ web.onError((error, c) => {
   // passing only `normalized` here discarded it at the very last step — for
   // every handler on /api/web/* that throws rather than returns. That drop
   // was the single largest reason `origin=mcpjam` never appeared in Axiom.
-  const routeError = mapWebBoundaryError(error);
+  //
+  // An Ask MCPJam path keeps the agent's rule even here (a throw that escaped
+  // its route, or a middleware in front of it): without it the capture would
+  // carry no `surface`/`page_class` tags, match no Ask MCPJam alert, and
+  // record `captured: true` so the request-log backstop skipped it too.
+  const routeError = mapWebBoundaryError(
+    error,
+    isAgentRequestPath(c.req.path)
+      ? { capture: agentRouteCapture("web.onError") }
+      : undefined,
+  );
   return webErrorFromRoute(c, routeError);
 });
 

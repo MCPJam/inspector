@@ -61,6 +61,9 @@ concurrency:
 
 jobs:
   scan:
+    # Skip Dependabot's own rebases (see local-browser-security.yml); the
+    # merged result is scanned again by the push to main.
+    if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
     runs-on: ubuntu-latest
     name: Scan ${{ matrix.image }}
     strategy:
@@ -76,7 +79,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # The build context includes the whole checkout; keep the token out
           # of .git/config so it cannot leak into a layer.

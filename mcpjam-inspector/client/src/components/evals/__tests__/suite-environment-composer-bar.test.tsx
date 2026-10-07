@@ -83,11 +83,14 @@ vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
     pending: capability.matrix === undefined,
   }),
 }));
+vi.mock("@/hooks/useProjectSecrets", () => ({
+  useProjectSecrets: () => [],
+}));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => false,
 }));
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => false,
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => false,
 }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: (projectId: string | null) =>

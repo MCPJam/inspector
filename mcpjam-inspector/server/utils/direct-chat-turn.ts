@@ -33,6 +33,7 @@ import {
 } from "./live-chat-trace-stream";
 import { normalizeSystemPromptForProvider } from "./model-request-payload";
 import {
+  liveChatTraceUsageFromAiSdk,
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
@@ -60,6 +61,20 @@ import {
   gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
+
+/**
+ * Stream parts that mean the model has produced something — the subset AI
+ * SDK 6 delivered to `onChunk`, which the TTFC measurement was built on.
+ */
+const TTFC_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "source",
+  "tool-call",
+  "tool-input-start",
+  "tool-input-delta",
+  "tool-result",
+]);
 
 /**
  * The chat-v2 user-API-key path (`streamDirectChatWithLiveTrace`) used to
@@ -241,11 +256,7 @@ export interface DirectChatTurnStepFinishEvent {
    * tracks per-turn aggregates, not per-step deltas). Undefined when
    * the step had no usage signal.
    */
-  turnUsage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  };
+  turnUsage?: LiveChatTraceUsage;
   settledWithError: boolean;
   /**
    * Defensive copy of `traceTurn.turnSpans` as of step settlement.
@@ -510,25 +521,6 @@ export function withMcpToolOriginChunkMetadata<
   return providerMetadata ? { ...chunk, providerMetadata } : chunk;
 }
 
-function toLiveChatTraceUsage(
-  usage:
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-      }
-    | null
-    | undefined,
-): LiveChatTraceUsage | undefined {
-  if (!usage) return undefined;
-  const next: LiveChatTraceUsage = {};
-  if (typeof usage.inputTokens === "number") next.inputTokens = usage.inputTokens;
-  if (typeof usage.outputTokens === "number")
-    next.outputTokens = usage.outputTokens;
-  if (typeof usage.totalTokens === "number") next.totalTokens = usage.totalTokens;
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
 /**
  * Engine consolidation parity (route 3 collapse): safe-fire helper for the
  * three MCPJam-parity callbacks. Mirrors `safelyEmitLiveTextDelta` /
@@ -741,6 +733,11 @@ export function runDirectChatTurn(
     result = streamText({
     model: llmModel,
     messages: messageHistory,
+    // AI SDK 7 rejects system messages in `messages` by default. The history
+    // carries them on purpose: MCP server instructions reach the model as
+    // system messages (ChatTabV2's `server-instruction` parts). Same opt-in
+    // the backend's /stream routes use.
+    allowSystemInMessages: true,
     ...(temperature !== undefined ? { temperature } : {}),
     system: providerSystemPrompt,
     tools: executableTools,
@@ -839,8 +836,14 @@ export function runDirectChatTurn(
       return stepOptions;
     },
     onChunk: async ({ chunk }) => {
-      // First streamed chunk of this step → TTFC anchor (any chunk type).
-      if (!stepFirstChunkAt.has(currentStepIndex)) {
+      // First streamed CONTENT chunk of this step → TTFC anchor. AI SDK 7
+      // also calls `onChunk` with lifecycle parts (`start-step`,
+      // `text-start`, …) that arrive before the model has produced anything;
+      // anchoring on those would report a near-zero TTFC for every step.
+      if (
+        TTFC_CONTENT_CHUNK_TYPES.has(chunk.type) &&
+        !stepFirstChunkAt.has(currentStepIndex)
+      ) {
         stepFirstChunkAt.set(currentStepIndex, Date.now());
       }
       if (chunk.type === "text-delta") {
@@ -904,7 +907,9 @@ export function runDirectChatTurn(
         afterLength > beforeLength ? beforeLength : undefined;
       const messageEndIndex =
         afterLength > beforeLength ? afterLength - 1 : undefined;
-      const stepUsage = toLiveChatTraceUsage(step.usage);
+      // Includes the reasoning / cached-input breakdown, so the local-usage
+      // writeback and the eval runner see the reasoning tokens a turn spent.
+      const stepUsage = liveChatTraceUsageFromAiSdk(step.usage);
 
       traceTurn.turnUsage = mergeLiveChatTraceUsage(
         traceTurn.turnUsage,
@@ -974,6 +979,12 @@ export function runDirectChatTurn(
                   : {}),
                 ...(traceTurn.turnUsage.totalTokens !== undefined
                   ? { totalTokens: traceTurn.turnUsage.totalTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.reasoningTokens !== undefined
+                  ? { reasoningTokens: traceTurn.turnUsage.reasoningTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.cachedInputTokens !== undefined
+                  ? { cachedInputTokens: traceTurn.turnUsage.cachedInputTokens }
                   : {}),
               }
             : undefined,
@@ -1054,7 +1065,7 @@ export function runDirectChatTurn(
       );
       traceTurn.turnSpans = [...traceContext.recordedSpans];
       traceTurn.turnUsage =
-        toLiveChatTraceUsage(event.totalUsage) ?? traceTurn.turnUsage;
+        liveChatTraceUsageFromAiSdk(event.totalUsage) ?? traceTurn.turnUsage;
 
       if (!turnFinished) {
         traceEvents?.onTurnFinish?.({
@@ -1161,12 +1172,15 @@ export async function consumeDirectChatTurnHeadless(
 ): Promise<DirectChatTurnHeadlessResult> {
   try {
     await handle.result.consumeStream();
-    const response = await handle.result.response;
+    // `responseMessages`, not `response.messages`: in AI SDK 7 `response` is
+    // the FINAL step's, so its messages would drop every earlier step's tool
+    // calls and results from the transcript.
+    const responseMessages = await handle.result.responseMessages;
     const steps = await handle.result.steps;
     const totalUsage = await handle.result.totalUsage;
     const finishReason = await handle.result.finishReason;
-    const messages = Array.isArray(response?.messages)
-      ? (response.messages as ModelMessage[])
+    const messages = Array.isArray(responseMessages)
+      ? (responseMessages as ModelMessage[])
       : [];
     // Build the real turnTrace from the engine's own accumulator — mirrors the
     // streaming `onPersist` construction (runDirectChatTurn ~902) so headless

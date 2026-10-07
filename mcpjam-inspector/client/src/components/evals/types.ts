@@ -1,10 +1,12 @@
 import type { JudgeRubric } from "@mcpjam/sdk/contract";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
   SuiteGatePolicyV1,
 } from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { TestStep } from "@/shared/steps";
 import type {
   EvalTraceBlobV1,
@@ -205,7 +207,12 @@ export type EvalSuiteConfigTest = {
   title: string;
   query: string;
   /** Persisted cases use models; singular fields support older snapshots. */
-  models?: Array<{ model: string; provider: string }>;
+  models?: Array<{
+    model: string;
+    provider: string;
+    /** The entry's saved selection (two entries of one model differ here). */
+    selection?: RequestedModelSelection;
+  }>;
   provider?: string;
   model?: string;
   runs: number;
@@ -405,6 +412,11 @@ export type EvalSuite = {
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
   /**
+   * The skills a suite WITHOUT environments runs with. An environment suite's
+   * skills live on its environments; the read sends this raw field either way.
+   */
+  selectedSkillIds?: string[];
+  /**
    * Attach-ordered project environments (`projectEnvironments` docs). When
    * non-empty, Run all fans out ONE run per environment (replacing
    * hostAttachments as the fan-out axis — env pointers win over the legacy
@@ -468,6 +480,14 @@ export type EvalCase = {
   models: Array<{
     model: string;
     provider: string;
+    /**
+     * The entry's saved selection. Two entries may share a model when their
+     * selections differ (Sonnet at Low and at High); read the model as
+     * `selection?.modelId ?? model`.
+     */
+    selection?: RequestedModelSelection;
+    /** Set when a conversion (bare-id save, backfill) chose the selection. */
+    selectionOrigin?: "backfill";
   }>;
   runs: number;
   expectedToolCalls: Array<{
@@ -567,6 +587,8 @@ export type EvalIteration = {
     query: string;
     provider: string;
     model: string;
+    /** The case entry's selection, copied at precreate (non-default only). */
+    selection?: RequestedModelSelection;
     runs?: number;
     expectedToolCalls: Array<{
       toolName: string;
@@ -605,6 +627,12 @@ export type EvalIteration = {
     probeConfig?: import("@/shared/probe-config").ProbeConfig;
   };
   suiteRunId?: string;
+  /**
+   * `comparisonKey` of the selection this iteration ran with: the bare model
+   * id for a default selection. Absent on older backends — read it through
+   * `iterationTargetKey` (`lib/eval-target-key`).
+   */
+  targetKey?: string | null;
   /** How the iteration was triggered, stamped at creation by the backend.
    *  Absent on legacy rows → readers fall back to the `suiteRunId` heuristic. */
   trigger?: "quick" | "suite" | "replay";
@@ -618,16 +646,15 @@ export type EvalIteration = {
   /**
    * PR-4 R6: present on iterations whose transcript was written via the
    * unified chatSessions path (eval→chatSessions writer flag on).
-   * Trace-repair candidate selection considers iterations with either
-   * `blob` or `chatSessionId` as trace-bearing — both source paths feed
-   * the source-aware `getTestIterationBlob` action.
+   * An iteration with either `blob` or `chatSessionId` is trace-bearing —
+   * both source paths feed the source-aware `getTestIterationBlob` action.
    */
   chatSessionId?: string;
   /**
    * PR-4 R6: set when the inspector's fanout-failure fallback flipped
-   * the iteration to legacy-only reads. Doesn't change trace-repair
-   * eligibility — readers still get a usable transcript via
-   * `getTestIterationBlob` regardless of which source feeds it.
+   * the iteration to legacy-only reads. Readers still get a usable
+   * transcript via `getTestIterationBlob` regardless of which source
+   * feeds it.
    */
   preferLegacyBlob?: boolean;
   /**
@@ -673,6 +700,14 @@ export type EvalIteration = {
   execution?: unknown;
   error?: string;
   errorDetails?: string;
+  /**
+   * Set when OUR infrastructure failed this trial (a provider outage, a rate
+   * limit, a bad key, an account limit, a sandbox) — see
+   * `@/shared/eval-infra-error`. Always paired with `status: "failed"`. Pass
+   * rates leave the row out (`computeMeasuredIterationResult`); its label
+   * stays "Failed".
+   */
+  infraError?: EvalInfraError;
   resultSource?: "reported" | "derived";
   externalIterationId?: string;
   // Widened to `unknown` because the backend metadata column now round-trips
@@ -688,7 +723,6 @@ export type EvalIteration = {
 export type CompareModelOverride = {
   systemPrompt?: string;
   temperature?: string;
-  providerFlagsJson?: string;
 };
 
 export type EditorMode = "config" | "run";
@@ -841,6 +875,8 @@ export type EvalRunMetrics = {
     skipped: number;
     /** Completed without a stored verdict; only the browser can grade these. */
     unscored: number;
+    /** OUR infrastructure failed the trial; counted in no verdict bucket. */
+    infraError?: number;
   };
   completedCount: number;
   latencyP50Ms?: number;
@@ -852,12 +888,24 @@ export type EvalRunMetrics = {
   costUsd?: number;
   costedIterations: number;
   hasRunnerReportedCost: boolean;
+  /**
+   * One entry per (model × effective reasoning effort), first-seen order. The
+   * optional fields are absent on rollups written before they existed and
+   * when not measured.
+   */
   models: Array<{
     model: string;
     total: number;
     passed: number;
     failed: number;
     timedOut: number;
+    /** The effort the entry's iterations ran at; absent: ran with none. */
+    reasoningEffort?: string;
+    /** Summed priced cost; absent when none of the entry's iterations was priced. */
+    costUsd?: number;
+    costedIterations?: number;
+    /** Summed reasoning tokens; absent when no iteration reported any. */
+    reasoningTokens?: number;
   }>;
 };
 
@@ -1093,8 +1141,14 @@ export type EvalSuiteRun = {
     apiKeyId?: string | null;
   };
   replayedFromRunId?: string;
-  /** Set when this run was created by the Auto fix suite replay step. */
-  traceRepairJobId?: string;
+  /**
+   * Set when this run re-ran a SUBSET of `rerunOfRunId`: only the cases that
+   * did not pass there. Its pass rate is biased by that selection, so it is
+   * never a suite's latest run, a trend point, a baseline, or part of a suite
+   * aggregate — see `isSubsetRerunRun`.
+   */
+  rerunOfRunId?: string;
+  rerunScope?: "failed_cases";
   hasServerReplayConfig?: boolean;
   externalRunId?: string;
   framework?: string;
@@ -1146,6 +1200,13 @@ export type EvalSuiteRun = {
    * Absent on pre-attribution rows — fall back to the env join.
    */
   effectiveModelId?: string;
+  /**
+   * `comparisonKey` of the run's effective selection — what result views key
+   * columns, lanes and baselines by. Equals `effectiveModelId` for a default
+   * selection; absent (or null) on older backends. Read it through
+   * `runTargetKey` (`lib/eval-target-key`).
+   */
+  targetKey?: string | null;
   /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
   client?: RunClientDescriptor;
   modelSource?: "client_default" | "override" | "case";
@@ -1447,70 +1508,6 @@ export type EvalRunDiff = {
       estimatedCostUsd: EvalRunNumericDiff;
     };
   }>;
-};
-
-export type EvalRefinementSession = {
-  _id: string;
-  status: "pending_candidate" | "ready" | "verifying" | "completed" | "failed";
-  outcome?: "improved_test" | "still_ambiguous" | "server_likely";
-  failureSignature?: string;
-  testWeaknessHypothesis?: string;
-  serverHypothesis?: string;
-  confidenceChecklist?: string[];
-  candidateParaphraseQuery?: string;
-  verificationRuns: Array<{
-    label: string;
-    iterationId?: string;
-    provider: string;
-    model: string;
-    query: string;
-    passed: boolean;
-    failureSignature?: string;
-  }>;
-  attributionSummary?: string;
-  promotedAt?: number;
-  updatedAt: number;
-  baseSnapshot?: {
-    caseKey?: string;
-    title: string;
-    query: string;
-    runs: number;
-    models: Array<{ model: string; provider: string }>;
-    expectedToolCalls: Array<{
-      toolName: string;
-      arguments: Record<string, any>;
-    }>;
-    isNegativeTest?: boolean;
-    scenario?: string;
-    expectedOutput?: string;
-    advancedConfig?: Record<string, unknown>;
-  };
-  candidateSnapshot?: {
-    caseKey?: string;
-    title: string;
-    query: string;
-    runs: number;
-    models: Array<{ model: string; provider: string }>;
-    expectedToolCalls: Array<{
-      toolName: string;
-      arguments: Record<string, any>;
-    }>;
-    isNegativeTest?: boolean;
-    scenario?: string;
-    expectedOutput?: string;
-    advancedConfig?: Record<string, unknown>;
-  };
-};
-
-export type EvalRunRefinementCase = {
-  sourceIterationId: string;
-  testCaseId?: string;
-  caseKey: string;
-  title: string;
-  query: string;
-  failureSignature?: string;
-  failureStreak: number;
-  session: EvalRefinementSession | null;
 };
 
 export type EvalSuiteOverviewEntry = {

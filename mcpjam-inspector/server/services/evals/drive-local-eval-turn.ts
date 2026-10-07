@@ -1,6 +1,10 @@
+import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { cloneTraceValue } from "../../utils/live-chat-trace-stream";
 import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
-import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import {
+  liveChatTraceUsageFromAiSdk,
+  type LiveChatTraceRequestPayloadEntry,
+} from "@/shared/live-chat-trace";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
 import type { ModelMessage, Tool as AiTool, ToolChoice, ToolSet } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
@@ -34,7 +38,11 @@ import {
 import type { ToolPolicyGate } from "./tool-policy-gate.js";
 import { consumeFullStreamAsEvalEvents } from "./stream-adapter.js";
 import type { BrowserSessionContext } from "../browser-session-context.js";
-import type { UsageTotals } from "./types.js";
+import { addUsageTotals, type UsageTotals } from "./types.js";
+import {
+  providerCallEvidenceOf,
+  type InfraFailureEvidence,
+} from "../../utils/infra-failure-evidence.js";
 
 export type LocalEvalTurnAcc = {
   conversationMessages: ModelMessage[];
@@ -67,6 +75,13 @@ export type LocalEvalTurnAcc = {
    * attribution beats a wrong one.
    */
   stepErrorSource: "model" | undefined;
+  /**
+   * STRUCTURED evidence for a model-call failure: the AI SDK's own
+   * `APICallError` from the stream's error part or the thrown error. Read only
+   * by the eval infra-error classifier; unset whenever the failure carried no
+   * typed provider error.
+   */
+  stepErrorEvidence?: InfraFailureEvidence;
   pinnedSetupFailure: boolean;
 };
 
@@ -143,8 +158,8 @@ export type LocalModelCallSettled = {
   outcome: "ok" | "error" | "aborted";
   /** Machine code of an `error` (`turn_timeout`, `empty_response`, …). */
   code?: string;
-  /** This turn's token usage. */
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  /** This turn's token usage, with the reasoning / cached-input breakdown. */
+  usage?: UsageTotals;
   finishReason?: string;
   /** The model id the provider reported serving, when it reported one. */
   upstreamModel?: string;
@@ -213,7 +228,8 @@ export type DriveLocalEvalTurnParams = {
 
 async function consumeDirectChatTurnViaFullStream(
   handle: RunDirectChatTurnHandle,
-  sinks: LocalEvalTurnSinks | undefined
+  sinks: LocalEvalTurnSinks | undefined,
+  onStreamError: (error: unknown) => void
 ) {
   try {
     const maybeFullStream = handle.result.fullStream;
@@ -225,16 +241,20 @@ async function consumeDirectChatTurnViaFullStream(
       await consumeFullStreamAsEvalEvents(maybeFullStream, {
         emit: sinks?.emit ?? (() => {}),
         getStepIndex: sinks?.getStepIndex ?? (() => 0),
+        onError: onStreamError,
       });
     } else {
       await handle.result.consumeStream();
     }
     const response = await handle.result.response;
+    // Every step's messages. In AI SDK 7 `response` is the final step's, so
+    // `response.messages` would drop the earlier tool calls and results.
+    const responseMessages = await handle.result.responseMessages;
     const steps = await handle.result.steps;
     const totalUsage = await handle.result.totalUsage;
     const finishReason = await handle.result.finishReason;
-    const messages = Array.isArray(response?.messages)
-      ? (response.messages as ModelMessage[])
+    const messages = Array.isArray(responseMessages)
+      ? (responseMessages as ModelMessage[])
       : [];
     const upstreamModel =
       typeof (response as { modelId?: unknown } | undefined)?.modelId ===
@@ -268,11 +288,6 @@ export async function driveLocalEvalTurn(
     llmModel,
     test,
     runStartedAt,
-    runIndex,
-    iterationId,
-    suiteId,
-    runId,
-    testCaseId,
     abortSignal,
     turnTimeoutMs,
     turnRetries,
@@ -348,6 +363,7 @@ export async function driveLocalEvalTurn(
     );
   }
 
+  const appContext = browser.getModelContext?.();
   await browser.dismissCarriedWidget();
   acc.conversationMessages.push({ role: "user", content: promptTurn.prompt });
   acc.activePromptInputMessages = [...acc.conversationMessages];
@@ -384,7 +400,10 @@ export async function driveLocalEvalTurn(
   const handle = runDirectChatTurn({
     llmModel: admittedModel ?? llmModel,
     modelId: test.model,
-    messageHistory: acc.activePromptInputMessages,
+    messageHistory: appendPluginModelContext(
+      acc.activePromptInputMessages,
+      appContext
+    ),
     traceStartedAt: runStartedAt,
     // PR2 (flagged): append recorded model-visible widget interactions as a
     // per-turn system-prompt addendum so the model reasons over them — reusing
@@ -414,22 +433,14 @@ export async function driveLocalEvalTurn(
     ...(toolChoice
       ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
       : {}),
+    // No `metadata`: AI SDK 7's telemetry options dropped it. It only ever
+    // became attributes on the SDK's OpenTelemetry spans, and nothing here
+    // exports those (Sentry tracing is off, no AI SDK OTel integration).
     experimentalTelemetry: {
       isEnabled: true,
       functionId: "evals.streamText",
       recordInputs: false,
       recordOutputs: false,
-      metadata: {
-        source: "evals",
-        ...(suiteId ? { suiteId } : {}),
-        ...(runId ? { runId } : {}),
-        ...(testCaseId ? { testCaseId } : {}),
-        ...(iterationId ? { iterationId } : {}),
-        iterationNumber: runIndex + 1,
-        provider: test.provider,
-        model: test.model,
-        promptIndex,
-      },
     },
     traceEvents: {
       onRequestPayload: (request) => {
@@ -475,34 +486,39 @@ export async function driveLocalEvalTurn(
   // `firedClock` and `elapsedMs` close over their own state, and `dispose`
   // only stops the timer.
   let headless: Awaited<ReturnType<typeof consumeDirectChatTurnViaFullStream>>;
+  // The stream's own `error` part: the typed provider answer, kept even when
+  // the result promises then reject with a generic "no output" error.
+  let streamError: unknown;
   try {
-    headless = await consumeDirectChatTurnViaFullStream(handle, sinks).finally(
-      () => turnDeadline.dispose()
-    );
+    headless = await consumeDirectChatTurnViaFullStream(
+      handle,
+      sinks,
+      (error) => {
+        streamError = error;
+      }
+    ).finally(() => turnDeadline.dispose());
   } catch (error) {
     onModelCallSettled?.({
       outcome: localIsAborted() ? "aborted" : "error",
       ...(localIsAborted() ? {} : { code: "provider_error" }),
       at: Date.now(),
     });
+    // Typed evidence only (an AI SDK call error); the runner's catch reads it.
+    acc.stepErrorEvidence =
+      providerCallEvidenceOf(error) ?? providerCallEvidenceOf(streamError);
     throw error;
   }
   const turnTimedOut = turnDeadline.firedClock() === "turn";
   const turnElapsedMs = turnDeadline.elapsedMs();
   // How the model call ended, reported once (see `onModelCallSettled`).
+  const turnUsage = headless.totalUsage
+    ? (liveChatTraceUsageFromAiSdk(headless.totalUsage) ?? {})
+    : undefined;
   const settle = (outcome: "ok" | "error" | "aborted", code?: string) =>
     onModelCallSettled?.({
       outcome,
       ...(code ? { code } : {}),
-      ...(headless.totalUsage
-        ? {
-            usage: {
-              inputTokens: headless.totalUsage.inputTokens,
-              outputTokens: headless.totalUsage.outputTokens,
-              totalTokens: headless.totalUsage.totalTokens,
-            },
-          }
-        : {}),
+      ...(turnUsage ? { usage: turnUsage } : {}),
       ...(typeof headless.finishReason === "string"
         ? { finishReason: headless.finishReason }
         : {}),
@@ -591,15 +607,7 @@ export async function driveLocalEvalTurn(
     );
   }
 
-  acc.accumulatedUsage.inputTokens =
-    (acc.accumulatedUsage.inputTokens ?? 0) +
-    (headless.totalUsage?.inputTokens ?? 0);
-  acc.accumulatedUsage.outputTokens =
-    (acc.accumulatedUsage.outputTokens ?? 0) +
-    (headless.totalUsage?.outputTokens ?? 0);
-  acc.accumulatedUsage.totalTokens =
-    (acc.accumulatedUsage.totalTokens ?? 0) +
-    (headless.totalUsage?.totalTokens ?? 0);
+  addUsageTotals(acc.accumulatedUsage, turnUsage);
 
   if (promptResponseMessages.length === 0) {
     acc.iterationError =
@@ -608,6 +616,8 @@ export async function driveLocalEvalTurn(
     // The model stream itself returned nothing. Unambiguously the model-call
     // layer — there is no other layer this branch can be reached from.
     acc.stepErrorSource = "model";
+    // A stream that died before its first byte usually left a typed error.
+    acc.stepErrorEvidence = providerCallEvidenceOf(streamError);
     logger.error(
       "[evals] streamText returned no new messages this turn; treating as cycle failure"
     );
@@ -645,6 +655,11 @@ export async function driveLocalEvalTurn(
     acc.iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
     settle("error", "provider_error");
     acc.stepErrorSource = modelLayerForErrorSpan(stepErrorSpan);
+    // The stream's typed error, when the failed span is the MODEL's: a
+    // connection or discovery span says nothing about the provider.
+    if (acc.stepErrorSource === "model") {
+      acc.stepErrorEvidence = providerCallEvidenceOf(streamError);
+    }
     logger.error(
       `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`
     );

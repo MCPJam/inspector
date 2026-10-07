@@ -416,12 +416,7 @@ function describeComposeEvalSuiteRun(
   // read `suite smoke (host_a)` after a successful `listHosts`.
   const host = named(compose, "hostLabel") ?? named(compose, "host");
   const hostNote = host ? ` (${host})` : "";
-  const choices = expandComposeModelChoices({
-    model: named(compose, "model"),
-    models: readStringList(compose, "models"),
-    includeClientDefault: compose.includeClientDefault === true,
-  });
-  const n = choices.length;
+  const n = composeChoiceCount(compose);
   // `saveTargets` is the only attach the caller opted into. A single cell
   // against a backend that cannot launch ephemerally still ATTACHES (the
   // SDK compat fallback in `composeLaunchPolicy`). This copy must not
@@ -806,6 +801,48 @@ function describeClientImpact(input: Record<string, unknown>): string {
 }
 
 /** Read a string array off validated input, dropping non-strings. */
+type ComposeModelSelections = NonNullable<
+  Parameters<typeof expandComposeModelChoices>[0]["modelSelections"]
+>;
+
+/** `modelSelections` (+ the singular alias) as sent; malformed entries skipped. */
+function readComposeModelSelections(
+  compose: Record<string, unknown>,
+): ComposeModelSelections {
+  const raw = [
+    ...(Array.isArray(compose.modelSelections) ? compose.modelSelections : []),
+    ...(compose.modelSelection !== undefined ? [compose.modelSelection] : []),
+  ];
+  return raw.filter(
+    (entry): entry is ComposeModelSelections[number] =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { modelId?: unknown }).modelId === "string",
+  );
+}
+
+/**
+ * How many cells a composed run launches — the same expansion the op runs,
+ * selections included, so two efforts of one model are counted as two runs.
+ * A selection set the op will refuse is described by its models alone; the
+ * refusal itself comes from the op.
+ */
+function composeChoiceCount(compose: Record<string, unknown>): number {
+  const base = {
+    model: named(compose, "model"),
+    models: readStringList(compose, "models"),
+    includeClientDefault: compose.includeClientDefault === true,
+  };
+  try {
+    return expandComposeModelChoices({
+      ...base,
+      modelSelections: readComposeModelSelections(compose),
+    }).length;
+  } catch {
+    return expandComposeModelChoices(base).length;
+  }
+}
+
 function readStringList(input: Record<string, unknown>, key: string): string[] {
   const value = input[key];
   return Array.isArray(value)

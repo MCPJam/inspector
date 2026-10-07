@@ -69,6 +69,6 @@ export const MCPJAM_AGENT_MODEL_DEFINITION: ModelDefinition = {
   hosted: true,
 };
 
-/** The body field that ASKS the backend to bill MCPJam. Only honoured
- *  alongside `x-inspector-service-token` and this model. */
+/** The body field that ASKS the backend to bill MCPJam. Only honoured for a
+ *  signed-in user, on their own login, and only for this model. */
 export const MCPJAM_AGENT_BILLING_FEATURE = "mcpjam_agent";

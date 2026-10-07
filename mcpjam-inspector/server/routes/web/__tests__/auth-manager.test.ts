@@ -29,7 +29,12 @@ vi.mock("@mcpjam/sdk", async () => {
 });
 
 import type { Context } from "hono";
-import { createAuthorizedManager, callerContextFromHono } from "../auth.js";
+import {
+  createAuthorizedManager,
+  createManualHostedConnection,
+  projectServerSchema,
+  callerContextFromHono,
+} from "../auth.js";
 import { WebRouteError } from "../errors.js";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 
@@ -67,6 +72,71 @@ describe("web auth manager batching", () => {
       process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
   });
+
+  it.each([false, true])(
+    "keeps full authorization with optional lazy connection ownership: %s",
+    async (lazyConnect) => {
+      global.fetch = vi.fn(async () =>
+        Response.json({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthAccessToken: "wire-token-not-identity",
+              oauthCredentialId: "saved-credential",
+              oauthCredentialAuthorizedAt: 42,
+              serverConfig: {
+                transportType: "http",
+                url: "https://fixture.example/mcp",
+                useOAuth: true,
+                credentialConfigurationId: "a".repeat(64),
+              },
+            },
+          },
+        }),
+      ) as typeof fetch;
+      const c = {
+        ...mockContext,
+        req: {
+          url: "http://localhost:6274/api/web/plugin-instances/execute",
+          header: (name: string) =>
+            name.toLowerCase() === "authorization"
+              ? "Bearer fixture-bearer"
+              : undefined,
+        },
+      } as unknown as Context;
+      const result = await createManualHostedConnection(
+        c,
+        { projectId: "project-1", serverId: "server-1" },
+        projectServerSchema,
+        lazyConnect ? { lazyConnect: true } : undefined,
+      );
+      expect(global.fetch).toHaveBeenCalledOnce();
+      expect(String(vi.mocked(global.fetch).mock.calls[0][0])).toContain(
+        "/web/authorize-batch",
+      );
+      const [configs, options] = mcpClientManagerMock.mock.calls[0];
+      expect(options.lazyConnect).toBe(lazyConnect ? true : undefined);
+      if (lazyConnect) {
+        expect(result.authorizedServerConfigs).toBe(configs);
+        expect(result.authorizedServerIdentities?.["server-1"]).toMatchObject({
+          serverId: "server-1",
+          credentialId: "saved-credential",
+          credentialAuthorizedAt: 42,
+        });
+        expect(JSON.stringify(result.authorizedServerIdentities)).not.toContain(
+          "wire-token-not-identity",
+        );
+      } else {
+        expect(result.authorizedServerConfigs).toBeUndefined();
+        expect(result.authorizedServerIdentities).toBeUndefined();
+      }
+      expect(configs["server-1"].baseFetch).toBeTypeOf("function");
+      await result.manager.disconnectAllServers();
+    },
+  );
 
   it("wraps project HTTP connections before construction using backend-authenticated identity", async () => {
     const result = (accessLevel: string) => ({

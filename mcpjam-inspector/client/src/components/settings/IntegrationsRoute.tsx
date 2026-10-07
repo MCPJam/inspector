@@ -1,13 +1,8 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
-import {
-  ChevronRight,
-  Github,
-  MessageSquare,
-  Radio,
-  Slack,
-} from "lucide-react";
+import { ChevronRight, Hash, MessageSquare, Radio } from "lucide-react";
+import { GitHubIcon } from "@/components/ui/github-icon";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ErrorCard } from "@/components/ui/error-card";
@@ -155,7 +150,7 @@ function GithubChecksCard({
   return (
     <IntegrationCard
       testId="integration-card-github"
-      icon={<Github className="size-4 text-primary" aria-hidden />}
+      icon={<GitHubIcon className="size-4 text-primary" aria-hidden />}
       title="GitHub Checks"
       description="Run an eval suite on every pull request."
       status={status}
@@ -196,7 +191,7 @@ function SlackIntegrationCard({
   return (
     <IntegrationCard
       testId="integration-card-slack"
-      icon={<Slack className="size-4 text-primary" aria-hidden />}
+      icon={<Hash className="size-4 text-primary" aria-hidden />}
       title="Slack"
       description="Post eval failures and agent activity to Slack channels."
       status={status}

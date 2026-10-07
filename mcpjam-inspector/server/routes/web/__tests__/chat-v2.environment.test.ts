@@ -35,7 +35,12 @@ vi.mock("../../../utils/host-execution-context.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../../utils/harness/local/readiness.js", () => ({
+// These turns exercise the CLOUD harness path. With a published local pack
+// the route asks whether this member runs the harness locally; the answer here
+// is no, so the published packs do not reroute these tests.
+vi.mock("../../../utils/harness/local/readiness.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>()),
+  localHarnessAccountEnabled: vi.fn(async () => false),
   ensureLocalHarnessTarget: vi.fn(async () => ({ target: {
     kind: "local-native", actingUserId: "authkit:owner", workspaceGrantId: "ws",
     runtimeId: "runtime", machineId: "machine", grantToken: "grant",
@@ -317,6 +322,66 @@ describe("web chat-v2 — environment execution target", () => {
     );
     expect(response.status).toBe(400);
     expect(fetchHostRuntimeConfigMock).not.toHaveBeenCalled();
+  });
+
+  describe("reasoning effort", () => {
+    const HOST_SELECTION = {
+      modelId: BASE_BODY.model.id,
+      source: "hosted",
+      settings: { reasoningEffort: "medium" },
+      fallback: { provider: "openrouter", model: "none" },
+    };
+    const run = async (extra: Record<string, unknown>, hostConfig: Record<string, unknown> = {}) => {
+      fetchHostRuntimeConfigMock.mockResolvedValue({ ok: true, config: hostConfig });
+      const { app, token } = createWebTestApp();
+      return postJson(
+        app,
+        "/api/web/chat-v2",
+        { ...BASE_BODY, hostId: "host_legacy", ...extra },
+        token
+      );
+    };
+
+    it("the body's effort reaches prepare and the hosted engine", async () => {
+      const response = await run({ reasoningEffort: "high" });
+      expect(response.status).toBe(200);
+      expect(prepareChatV2Mock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" })
+      );
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "high" })
+      );
+    });
+
+    it("a host's saved effort applies to the same model and is pinned on the chat", async () => {
+      const response = await run({}, { modelSelection: HOST_SELECTION });
+      expect(response.status).toBe(200);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reasoningEffort: "medium" })
+      );
+      expect(
+        persistChatSessionToConvexMock.mock.calls[0][0].resumeConfig
+      ).toMatchObject({ reasoningEffort: "medium" });
+    });
+
+    it("a host's saved effort does not follow a different model", async () => {
+      const response = await run(
+        {},
+        { modelSelection: { ...HOST_SELECTION, modelId: "some/other-model" } }
+      );
+      expect(response.status).toBe(200);
+      const opts = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect("reasoningEffort" in opts).toBe(false);
+    });
+
+    it("a level that is not an effort is a 400 before any model call", async () => {
+      const response = await run({ reasoningEffort: "ultra" });
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(await response.json())).toMatch(
+        /reasoningEffort must be one of/
+      );
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
   });
 
   it("still honors a legacy hostId body (unchanged host-target path)", async () => {

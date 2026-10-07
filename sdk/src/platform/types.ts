@@ -24,6 +24,10 @@ import type {
 } from "./browser-agent-contract.js";
 import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 import type { ExecutionRecord } from "../host-config/execution-record.js";
+import type {
+  ModelReasoningEffort,
+  RequestedModelSelection,
+} from "../host-config/model-selection.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -345,6 +349,12 @@ export interface PlatformModel {
   id: string;
   name?: string;
   provider?: string;
+  /**
+   * The reasoning-effort levels this model accepts. Empty or absent means no
+   * effort is offered for it (it takes none, or the catalog does not know) —
+   * never guess a level for it.
+   */
+  supportedReasoningEfforts?: ModelReasoningEffort[];
   [field: string]: unknown;
 }
 
@@ -1080,6 +1090,18 @@ export interface PlatformEvalRun {
   };
   /** Shared by every per-target run from the same fan-out launch. */
   runGroupId?: string;
+  /**
+   * The run this one re-ran a subset of (see `rerunEvalRun`). Present only
+   * with `rerunScope`.
+   */
+  rerunOfRunId?: string;
+  /**
+   * `failed_cases`: this run re-ran only the cases of `rerunOfRunId` that did
+   * not pass. Its pass rate is biased by that selection, so it is never a
+   * suite's latest run, a trend point, or a baseline. Absent on every other
+   * run, and on deployments that predate reruns.
+   */
+  rerunScope?: PlatformEvalRunRerunScope;
   /** Model the run actually executed with. Absent on pre-attribution rows. */
   effectiveModelId?: string;
   /** `case` uses the sole snapshot model; the other values describe environment attribution. */
@@ -1554,6 +1576,60 @@ export interface PlatformEvalRunEnvironment {
   revision: number | null;
 }
 
+/**
+ * What a rerun narrows the source run to. `failed_cases`: every case with a
+ * trial that is not completed and passed (cancelled and skipped trials do not
+ * count). The platform selects the cases, never the caller.
+ */
+export type PlatformEvalRunRerunScope = "failed_cases";
+
+/** `200` response of `GET /projects/{p}/eval-runs/{r}/rerun-preview`. */
+export interface PlatformEvalRunRerunPreview {
+  runId: string;
+  suiteId: string;
+  scope: PlatformEvalRunRerunScope;
+  sourceStatus: string;
+  /** `false` while the source run is still executing or grading. */
+  sourceTerminal: boolean;
+  totalCaseCount: number;
+  selectedCaseCount: number;
+  selectedCaseIds: string[];
+  /**
+   * Qualifying TRIALS by the most specific reason: `failed`,
+   * `evaluator_error`, `timed_out`, `execution_failed`, `setup_failed`,
+   * `pending`.
+   */
+  reasons: Record<string, number>;
+  /** Trials that did not qualify: `passed`, `cancelled`, `skipped`. */
+  excluded: Record<string, number>;
+  /** The source finished and at least one case qualifies. */
+  rerunnable: boolean;
+}
+
+/** `POST /projects/{p}/eval-runs/{r}/rerun` body. */
+export interface PlatformEvalRunRerunBody {
+  scope: PlatformEvalRunRerunScope;
+  notes?: string;
+  idempotencyKey?: string;
+}
+
+/**
+ * `202` response of `POST /projects/{p}/eval-runs/{r}/rerun`. The new run is a
+ * SUBSET of its source, so its pass rate is never the suite's latest run, a
+ * trend point, or a baseline.
+ */
+export interface PlatformEvalRunRerunCreated {
+  runId: string;
+  suiteId: string;
+  status: string;
+  /** An idempotent retry returned the run it already started. */
+  deduped?: boolean;
+  rerunOfRunId: string;
+  rerunScope: PlatformEvalRunRerunScope;
+  servers?: Array<{ id: string; name?: string }>;
+  environment?: PlatformEvalRunEnvironment | null;
+}
+
 /** `202` response of `POST /projects/{p}/eval-runs`. */
 export interface PlatformEvalRunCreated {
   runId: string;
@@ -1736,7 +1812,16 @@ export interface PlatformExpectedToolCall {
 export type PlatformEvalSuiteGoalCompletionJudge = {
   /** Judge is available on the suite. Does NOT by itself grade anything. */
   enabled: boolean;
+  /** COMPUTED: `judgeSelection.modelId`, else the stored `judgeModel`. */
   model: string | null;
+  /**
+   * The judge's saved model choice (source, connection, effort), when the
+   * suite stores one. May be a STORED legacy selection: "own key only".
+   * Absent on an unlabelled suite and on older API deployments.
+   */
+  judgeSelection?: RequestedModelSelection;
+  /** `"backfill"` when a conversion (not a person) chose `judgeSelection`. */
+  judgeSelectionOrigin?: "backfill";
   /**
    * The flag that makes grading HAPPEN — fires the judge as each run
    * completes. Absent on older API deployments.
@@ -2056,9 +2141,21 @@ export interface PlatformEvalSuiteDetailBase {
   environmentIds?: string[];
   /** Suite-level execution config; null when none is pinned. */
   executionConfig: {
+    /**
+     * COMPUTED: the selection's `modelId`, else the stored bare id. Also
+     * accepted on writes as a shorthand (the platform converts it).
+     */
     model: string;
     systemPrompt: string;
     temperature: number;
+    /**
+     * The saved model choice behind `model`, including its effort. May be a
+     * STORED legacy selection (`{ source: "legacy", modelId }`), which means
+     * "own key only" — never MCPJam credits.
+     */
+    modelSelection?: RequestedModelSelection;
+    /** `"backfill"` when a conversion (not a person) chose `modelSelection`. */
+    modelSelectionOrigin?: "backfill";
   } | null;
   /** Host attachments (multi-host). */
   hosts: PlatformEvalSuiteHost[];
@@ -2148,8 +2245,33 @@ export interface PlatformFileOwnedEvalSuiteSynced {
 }
 
 export interface PlatformEvalCaseModel {
+  /** COMPUTED: `selection.modelId`, else the stored bare id. */
   model: string;
   provider?: string;
+  /**
+   * The saved model choice behind `model` (source, connection,
+   * `settings.reasoningEffort`). Absent when the case stores only a bare id
+   * (an unlabelled row). May be a STORED legacy selection
+   * (`{ source: "legacy", modelId, provider? }`): "own key only", never MCPJam
+   * credits. On a `models` PATCH an entry that omits it keeps the existing
+   * selection for that model; `null` (see {@link PlatformEvalCaseModelInput})
+   * drops it.
+   */
+  selection?: RequestedModelSelection;
+  /** `"backfill"` when a conversion (not a person) chose `selection`. */
+  selectionOrigin?: "backfill";
+}
+
+/** A `models[]` entry on a case write. */
+export interface PlatformEvalCaseModelInput {
+  /** A bare id is accepted as a shorthand; the platform converts it. */
+  model: string;
+  provider?: string;
+  /**
+   * Must be FOR `model`. `null` drops the saved selection (PATCH only). A
+   * stored legacy selection read back from a case may be sent back verbatim.
+   */
+  selection?: RequestedModelSelection | null;
 }
 
 /**
@@ -2859,6 +2981,16 @@ export interface PlatformEnvironment {
    * environment and read `effectiveModelId`.
    */
   modelId?: string;
+  /**
+   * The saved selection behind `modelId` (whose credentials run it, and
+   * `settings.reasoningEffort`). Absent for an unlabelled bare id or an
+   * inheriting environment. May be a STORED legacy selection
+   * (`{ source: "legacy", modelId }`): "own key only", never MCPJam credits.
+   * When present, `modelId` is computed from it.
+   */
+  modelSelection?: RequestedModelSelection;
+  /** `"backfill"` when a conversion (not a person) chose `modelSelection`. */
+  modelSelectionOrigin?: "backfill";
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   /**
@@ -2904,6 +3036,10 @@ export interface PlatformAdhocEnvironment {
   serverAttachmentId?: string;
   /** See `PlatformEnvironment.modelId` — absent means "inherit the host's". */
   modelId?: string;
+  /** See `PlatformEnvironment.modelSelection`. */
+  modelSelection?: RequestedModelSelection;
+  /** See `PlatformEnvironment.modelSelectionOrigin`. */
+  modelSelectionOrigin?: "backfill";
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2938,6 +3074,8 @@ export interface PlatformAdhocEnvironmentBody {
   hostId: string;
   serverAttachmentId?: string;
   modelId?: string;
+  /** Saved selection behind `modelId`; needs `modelSelections` capability. */
+  modelSelection?: RequestedModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2972,6 +3110,12 @@ export interface PlatformEnvironmentCreateBody {
   serverAttachmentId?: string;
   /** Model to run instead of the host's; omit to inherit the host's. */
   modelId?: string;
+  /**
+   * Saved selection behind `modelId` (source, connection, effort). Must be FOR
+   * `modelId`; sent alone it pins its own model. Needs the `modelSelections`
+   * capability.
+   */
+  modelSelection?: RequestedModelSelection;
   skillSelection?: PlatformEnvironmentSkillSelection;
   secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
@@ -2998,6 +3142,8 @@ export interface PlatformEnvironmentUpdateBody {
    * way to clear.
    */
   modelId?: string | null;
+  /** New saved selection, or `null` to clear it (the bare `modelId` stays). */
+  modelSelection?: RequestedModelSelection | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
   /**
    * New credential grant, or `null` to REVOKE it entirely. Omit to leave
@@ -3024,6 +3170,13 @@ export interface PlatformEnvironmentCapabilities {
   modelOverrides: boolean;
   /** Environment cells may vary by model on one host (the compare grid). */
   modelMatrix: boolean;
+  /**
+   * `modelSelection` is accepted on create / update / ad-hoc, so an
+   * environment can carry a saved selection (source, connection, effort).
+   * Absent/false on older backends, which reject the unknown field — probe
+   * this before sending one.
+   */
+  modelSelections?: boolean;
   /**
    * `startTestSuiteRun` accepts `ephemeralEnvironment` — a project-scoped
    * env may launch without suite membership. Absent/false on older backends.
@@ -3355,6 +3508,24 @@ export interface PlatformEvalIterationUsage {
   [key: string]: unknown;
 }
 
+/** Why MCPJam's infrastructure, not the server under test, failed a trial. */
+export interface PlatformEvalInfraError {
+  /**
+   * `provider_unavailable`, `rate_limited`, `capacity`, `auth`,
+   * `account_limit`, `configuration` or `sandbox`. Typed as a
+   * string so a class added later still reads.
+   */
+  class: string;
+  /** `model`, `sandbox` or `platform`. */
+  layer: string;
+  /** Whether the failure looked transient. Advisory. */
+  retryable: boolean;
+  /** The producer's structured code, when it sent one. */
+  code?: string;
+  /** The upstream HTTP status, when there was one. */
+  httpStatus?: number;
+}
+
 export interface PlatformEvalIteration {
   id: string;
   /**
@@ -3419,6 +3590,15 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+  /**
+   * PRESENT when MCPJam's own infrastructure failed this trial — the model
+   * provider (`layer: "model"`), the sandbox, or the platform (an account or
+   * admission limit). Such a trial is `status: "failed"`, measured nothing
+   * about the server, is EXCLUDED from every pass rate and verdict, and its
+   * eval fee is refunded. ABSENT on every other trial, including ones that
+   * failed on the server or the agent.
+   */
+  infraError?: PlatformEvalInfraError;
   /**
    * Per-scorer verdicts for this iteration, in the evaluation contract's
    * shape. `null` when the run predates scoring, or when the stored payload
@@ -3964,6 +4144,10 @@ export interface PlatformGoalRun {
    * — so check this before showing a run as a failure.
    */
   canceled: boolean;
+  /** A durable Stop request exists, including while status is still running. */
+  cancelRequested?: boolean;
+  /** Background cancellation cleanup is pending. Absent means false. */
+  cleanupPending?: boolean;
   /** True when the runner went silent and the watchdog settled the run. */
   stale: boolean;
   /** Raw marker behind `canceled` / `stale`, when present. */
@@ -4073,11 +4257,13 @@ export interface PlatformGoalRunLaunched {
 
 export interface PlatformGoalRunCanceled {
   id: string;
-  /** The run's terminal status after the cancel settled it. */
+  /** Current status; may still be running while cancellation cleanup is pending. */
   status: PlatformGoalRun["status"];
   canceled: true;
   /** True when the run was ALREADY canceled and this call did nothing. */
   alreadyCanceled: boolean;
+  /** Stop accepted; cleanup continues in the background. Absent means false on older servers. */
+  cleanupPending?: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }
@@ -4152,6 +4338,10 @@ export interface PlatformJourneyRun {
    * — so check this before showing a run as a failure.
    */
   canceled: boolean;
+  /** A durable Stop request exists, including while status is still running. */
+  cancelRequested?: boolean;
+  /** Background cancellation cleanup is pending. Absent means false. */
+  cleanupPending?: boolean;
   /** True when the runner went silent and the watchdog settled the run. */
   stale: boolean;
   /** Raw marker behind `canceled` / `stale`, when present. */
@@ -4321,11 +4511,13 @@ export interface PlatformJourneyRunLaunched {
 /** @deprecated Use {@link PlatformGoalRunCanceled}. */
 export interface PlatformJourneyRunCanceled {
   id: string;
-  /** The run's terminal status after the cancel settled it. */
+  /** Current status; may still be running while cancellation cleanup is pending. */
   status: PlatformJourneyRun["status"];
   canceled: true;
   /** True when the run was ALREADY canceled and this call did nothing. */
   alreadyCanceled: boolean;
+  /** Stop accepted; cleanup continues in the background. Absent means false on older servers. */
+  cleanupPending?: boolean;
   /** Attempts this call moved to terminal. Zero on an idempotent replay. */
   finalized: number;
 }

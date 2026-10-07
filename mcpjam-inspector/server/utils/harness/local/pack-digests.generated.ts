@@ -1,58 +1,68 @@
 /**
- * GENERATED FILE — do not edit by hand.
+ * The pinned pack tables, DERIVED from `runtime-compat.generated.json`.
  *
- * Written by `scripts/write-pack-digests.mjs` from the pack build's own output
- * and checked in, so the digest a release verifies against is reviewed in a
- * diff rather than fetched at runtime. `pack-digests.test.ts` asserts the shape
- * and that no platform is called native without a digest to admit it.
+ * This file used to be the generated source of truth, written by
+ * `scripts/write-pack-digests.mjs` and parsed back out of TypeScript by every
+ * release script. The record moved to JSON (see `runtime-compat.ts`) so that
+ * a build can pin a desired pack AND a permitted previous one, and so scripts
+ * read it without a TypeScript parser. These exports keep their names and
+ * shapes because the installer, the release gate and the UI read them; they
+ * describe the DESIRED pack only. `PERMITTED_PACK_RECORDS` is the previous one.
  *
  * Keyed by pack TARGET — `darwin-arm64`, not `darwin` — because a pack carries
  * `bin/node` and the vendor CLI, which are machine code. An absent target means
  * no pack has been built for it, which resolves `bundle-absent` exactly as a
  * missing directory would: there is nothing to verify against.
  */
+import { RUNTIME_COMPAT, type RuntimePackRef } from "./runtime-compat.js";
 import type { LocalPackTarget, SupportedLocalHarnessId } from "./targets.js";
 
-export interface PackDigestRecord {
-  /** Version of the pack the digest belongs to. */
-  packVersion: string;
-  /** Canonical tree digest, `sha256:<hex>`. */
-  treeDigest: string;
+export type PackDigestRecord = RuntimePackRef;
+
+type PerTarget<T> = Readonly<Partial<Record<LocalPackTarget, T>>>;
+
+function perHarness<T>(
+  pick: (slot: {
+    desired: RuntimePackRef;
+    permitted?: RuntimePackRef;
+  }) => T | undefined,
+): Readonly<Record<SupportedLocalHarnessId, PerTarget<T>>> {
+  const out: Record<string, Partial<Record<LocalPackTarget, T>>> = {};
+  for (const [harnessId, entry] of Object.entries(RUNTIME_COMPAT.harnesses)) {
+    const targets: Partial<Record<LocalPackTarget, T>> = {};
+    for (const [target, slot] of Object.entries(entry.targets)) {
+      const value = slot === undefined ? undefined : pick(slot);
+      if (value !== undefined) targets[target as LocalPackTarget] = value;
+    }
+    out[harnessId] = targets;
+  }
+  return out as Record<SupportedLocalHarnessId, PerTarget<T>>;
 }
 
-/**
- * Tree digests of the built packs, per harness and pack target.
- *
- * Empty for every harness until the pack build runs. That is deliberate: an
- * all-zero placeholder digest would be a value that can never match, whereas
- * an absent entry is a state the resolver already names.
- */
+/** Desired tree digest per harness and pack target. */
 export const PACK_TREE_DIGESTS: Readonly<
-  Record<SupportedLocalHarnessId, Readonly<Partial<Record<LocalPackTarget, string>>>>
-> = {
-  "claude-code": {},
-  codex: {},
-};
+  Record<SupportedLocalHarnessId, PerTarget<string>>
+> = perHarness((slot) => slot.desired.treeDigest);
 
-/**
- * Full pack records, for the installer (which needs the version to build a
- * download URL and a target directory) and for the UI (which shows it).
- */
+/** Desired pack records, for the installer and the UI. */
 export const PACK_RECORDS: Readonly<
-  Record<
-    SupportedLocalHarnessId,
-    Readonly<Partial<Record<LocalPackTarget, PackDigestRecord>>>
-  >
-> = {
-  "claude-code": {},
-  codex: {},
-};
+  Record<SupportedLocalHarnessId, PerTarget<PackDigestRecord>>
+> = perHarness((slot) => ({ ...slot.desired }));
+
+/** The permitted previous pack per harness and target, where one is pinned. */
+export const PERMITTED_PACK_RECORDS: Readonly<
+  Record<SupportedLocalHarnessId, PerTarget<PackDigestRecord>>
+> = perHarness((slot) => (slot.permitted ? { ...slot.permitted } : undefined));
 
 /**
- * The pack version this Inspector build expects.
- *
- * One version across targets: a pack build produces every target from the same
- * adapter pin and the same Node version, so a split would mean two different
- * recipes shipped under one release.
+ * The desired pack version per harness ("" when none is pinned). One version
+ * across targets: `parseRuntimeCompatRecord` refuses a record that desires two.
  */
-export const EXPECTED_PACK_VERSION = "";
+export const EXPECTED_PACK_VERSIONS: Readonly<
+  Record<SupportedLocalHarnessId, string>
+> = Object.fromEntries(
+  Object.entries(RUNTIME_COMPAT.harnesses).map(([harnessId, entry]) => [
+    harnessId,
+    Object.values(entry.targets)[0]?.desired.packVersion ?? "",
+  ]),
+) as Record<SupportedLocalHarnessId, string>;

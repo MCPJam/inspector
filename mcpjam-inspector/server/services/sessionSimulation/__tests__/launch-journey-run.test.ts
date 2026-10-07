@@ -38,7 +38,17 @@ vi.mock("../../../utils/computers/browser-rollout.js", () => ({
   rolloutEnabled: rolloutMock,
 }));
 
-vi.mock("../../../utils/harness/local/run-resources.js", () => ({ shouldUseLocalHarness: localMock }));
+// Per harness, as the real helper decides it: `localMock(harness)` stands in
+// for "this harness is eligible for unattended local work here".
+vi.mock("../../../utils/harness/local/run-resources.js", () => ({
+  eligibleUnattendedLocalHarnesses: async (bearer: string, projectId: string, harnesses: Array<string | undefined> = []) => {
+    const eligible: string[] = [];
+    for (const harness of new Set(harnesses)) {
+      if ((harness === "claude-code" || harness === "codex") && await localMock(harness, bearer, projectId)) eligible.push(harness);
+    }
+    return eligible;
+  },
+}));
 vi.mock("../../../utils/harness/local/readiness.js", () => ({ ensureLocalHarnessTarget: ensureMock }));
 vi.mock("../../../utils/harness/local/acting-user.js", () => ({ resolveLocalHarnessActor: async () => ({ userId: "user-1" }) }));
 
@@ -305,6 +315,57 @@ describe("launchJourneyRun", () => {
     });
   });
 
+  describe("a hosted harness target whose pinned image cannot boot", () => {
+    // The backend refuses the whole launch (BB-56) through the same
+    // `invalid_request` 400 wrapper as every other ConvexError.
+    const refusal = (message: string) =>
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+            message,
+            details: {
+              environmentId: "env-1",
+              hostName: "Claude Code",
+              reason: "The selected computer environment is a personal draft.",
+            },
+          },
+        }),
+        "nope"
+      );
+
+    it("shows the backend's sentence, which names the target and the fix", async () => {
+      const message =
+        'Client "Claude Code" can\'t launch: The selected computer environment is a personal draft. Fix that computer image or remove this target, then launch again.';
+      createRunMock.mockRejectedValue(refusal(message));
+      await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message,
+        details: {
+          code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+          environmentId: "env-1",
+        },
+      });
+      expect(startRunMock).not.toHaveBeenCalled();
+    });
+
+    it("still names the fix when a long name pushes the sentence past the bound", async () => {
+      createRunMock.mockRejectedValue(
+        refusal(`Client "${"x".repeat(400)}" can't launch: draft.`)
+      );
+      const err = (await launchJourneyRun(DEPS, INPUT).catch((e) => e)) as {
+        message: string;
+      };
+      expect(err.message).not.toBe("This journey can't be launched.");
+      expect(err.message).toMatch(/computer image that can't boot/);
+      expect(err.message).toMatch(/remove the target/);
+    });
+  });
+
   it("preserves structured backend details without trusting them as the message", async () => {
     createRunMock.mockRejectedValue(
       new SwarmAgentError(
@@ -545,8 +606,25 @@ it.each([undefined, "codex", "claude-code"].flatMap(harness => [false, true].map
   queryMock.mockImplementation(async (name: string, ...args: any[]) => name === "hosts:getHost" ? { config: { harness } } : original(name, ...args));
   createRunMock.mockResolvedValue(created());
   await launchJourneyRun(DEPS, { ...INPUT, waveId: "wave-1", ...(environment ? { environmentIds: ["env_1"] } : {}) });
-  expect(localMock).toHaveBeenCalledTimes(harness === "claude-code" ? 1 : 0);
-  expect(ensureMock).toHaveBeenCalledTimes(harness === "claude-code" ? 1 : 0);
-  expect(createRunMock.mock.calls[0][2].runtimeVenue).toBe(harness === "claude-code" ? "local" : "hosted");
+  const local = harness === "claude-code" || harness === "codex";
+  expect(localMock).toHaveBeenCalledTimes(local ? 1 : 0);
+  expect(ensureMock).toHaveBeenCalledTimes(local ? 1 : 0);
+  if (local) expect(ensureMock).toHaveBeenCalledWith(expect.objectContaining({ harnessId: harness }));
+  expect(createRunMock.mock.calls[0][2].runtimeVenue).toBe(local ? "local" : "hosted");
+  // The launch declares exactly the harnesses it will run locally.
+  expect(createRunMock.mock.calls[0][2].localHarnessIds).toEqual(local ? [harness] : undefined);
+  await settle();
+});
+
+it("keeps a harness this runner cannot run unattended out of the local set", async () => {
+  const original = queryMock.getMockImplementation()!;
+  let call = 0;
+  queryMock.mockImplementation(async (name: string, ...args: any[]) =>
+    name === "hosts:getHost" ? { config: { harness: call++ === 0 ? "claude-code" : "codex" } } : original(name, ...args));
+  localMock.mockImplementation(async (harness: string) => harness === "claude-code");
+  createRunMock.mockResolvedValue(created());
+  await launchJourneyRun(DEPS, { ...INPUT, waveId: "wave-1", environmentIds: ["env_1", "env_2"] });
+  expect(createRunMock.mock.calls[0][2]).toMatchObject({ runtimeVenue: "local", localHarnessIds: ["claude-code"] });
+  localMock.mockResolvedValue(true);
   await settle();
 });

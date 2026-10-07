@@ -33,6 +33,7 @@ import { backendFailureText } from "./backend-failure-text.js";
 import type {
   MrtrElicitationResponse,
   MrtrOperationMethod,
+  MrtrResumePayload,
 } from "@/shared/mrtr-continuation";
 
 // ── Wire contract (mirrors mcpjam-backend PR3a — keep in sync by hand) ────────
@@ -63,6 +64,8 @@ export interface CreateContinuationBody {
   bindingFingerprint: string;
   /** Opaque encoded {@link MrtrOperationState}. */
   resumeState: string;
+  /** Explicit private storage adapter opt-in; ordinary inline caps stay unchanged. */
+  privateResumeState?: true;
   round?: number;
   maxRounds?: number;
   ttlMs?: number;
@@ -158,7 +161,13 @@ async function postContinuation(
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization },
+      headers: {
+        "content-type": "application/json",
+        authorization,
+        ...(body.privateResumeState === true
+          ? { "x-mcpjam-private-mrtr-state": "1" }
+          : {}),
+      },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -203,6 +212,16 @@ async function postContinuation(
   } finally {
     clearDeadline();
   }
+  // The existing scrub mutation reports a pending parent as a typed refusal in
+  // a 200 envelope. Preserve that refusal instead of misclassifying it as 502.
+  if (
+    pathSuffix === "scrub" &&
+    response.ok &&
+    payload?.ok === false &&
+    typeof payload.reason === "string" &&
+    payload.reason.startsWith("not_terminal:")
+  )
+    return { ok: false, status: 409, error: "Continuation is still pending" };
   if (!response.ok || payload?.ok !== true) {
     return {
       ok: false,
@@ -370,16 +389,21 @@ export async function createContinuation(
 
 export async function submitContinuationResponse(
   bearer: string,
-  args: {
-    continuationId: string;
-    round: number;
-    responses: Record<string, MrtrElicitationResponse>;
-  },
+  args: MrtrResumePayload & { leaseId?: string },
   signal?: AbortSignal,
 ): Promise<
-  ContinuationCallResult<{ idempotent: boolean; stateVersion?: number; reason?: string }>
+  ContinuationCallResult<{
+    idempotent: boolean;
+    stateVersion?: number;
+    reason?: string;
+  }>
 > {
-  const res = await postContinuation("submit-response", bearer, args, signal);
+  const res = await postContinuation(
+    "submit-response",
+    bearer,
+    { ...args },
+    signal,
+  );
   if (!res.ok) return res;
   const p = res.payload;
   return {
@@ -401,6 +425,7 @@ export async function claimContinuation(
     leasedBy?: string;
     leaseTtlMs?: number;
     expectedStateVersion?: number;
+    requireLivePreWireLease?: true;
   },
   signal?: AbortSignal,
 ): Promise<
@@ -461,6 +486,7 @@ export async function resuspendContinuation(
     expectedStateVersion: number;
     round: number;
     resumeState: string;
+    privateResumeState?: true;
     ttlMs?: number;
   },
   signal?: AbortSignal,
@@ -499,7 +525,12 @@ export async function finalizeContinuation(
     terminalReason?: string;
   },
   signal?: AbortSignal,
-): Promise<ContinuationCallResult<{ stateVersion: number; status: MrtrContinuationStatus }>> {
+): Promise<
+  ContinuationCallResult<{
+    stateVersion: number;
+    status: MrtrContinuationStatus;
+  }>
+> {
   const res = await postContinuation("finalize", bearer, args, signal);
   if (!res.ok) return res;
   const p = res.payload;
@@ -513,7 +544,9 @@ export async function finalizeContinuation(
 export async function releaseContinuation(
   bearer: string,
   args: { continuationId: string; leaseId: string },
-): Promise<ContinuationCallResult<{ status: MrtrContinuationStatus; reason?: string }>> {
+): Promise<
+  ContinuationCallResult<{ status: MrtrContinuationStatus; reason?: string }>
+> {
   const res = await postContinuation("release", bearer, args);
   if (!res.ok) {
     logger.warn("[mrtr-continuation] release failed", { error: res.error });
@@ -530,7 +563,9 @@ export async function releaseContinuation(
 export async function cancelContinuation(
   bearer: string,
   args: { continuationId: string; reason?: string },
-): Promise<ContinuationCallResult<{ status: MrtrContinuationStatus; reason?: string }>> {
+): Promise<
+  ContinuationCallResult<{ status: MrtrContinuationStatus; reason?: string }>
+> {
   const res = await postContinuation("cancel", bearer, args);
   if (!res.ok) return res;
   const p = res.payload;

@@ -1,6 +1,6 @@
 import { ensureLocalHarnessTarget } from "../../utils/harness/local/readiness.js";
 import { resolveLocalHarnessActor } from "../../utils/harness/local/acting-user.js";
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { eligibleUnattendedLocalHarnesses } from "../../utils/harness/local/run-resources.js";
 /**
  * Launching a journey run, with no HTTP in it.
  *
@@ -123,6 +123,9 @@ export interface LaunchJourneyRunResult {
 
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
 
+/** The backend's refusal for a hosted harness target with a broken image pin. */
+const JOURNEY_TARGET_IMAGE_UNAVAILABLE = "JOURNEY_TARGET_IMAGE_UNAVAILABLE";
+
 /**
  * Every character a renderer may break a line on — not just `\n`. `String.trim`
  * strips these at the ends but not in the middle, so a body carrying `\r` or a
@@ -156,11 +159,16 @@ const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
  * runs inside is already a failure and a parse error here would replace a
  * useful message with a 500.
  */
-export function launchFailureMessage(err: SwarmAgentError): string {
+export function launchFailureMessage(
+  err: SwarmAgentError,
+  /** Replaces the generic sentence when the caller knows the refusal's code. */
+  fallbackOverride?: string,
+): string {
   const fallback =
-    err.status === 402
+    fallbackOverride ??
+    (err.status === 402
       ? "This launch would exceed your organization's credit limit."
-      : "This journey can't be launched.";
+      : "This journey can't be launched.");
   const raw = err.bodyText?.trim();
   if (!raw) return fallback;
 
@@ -276,7 +284,9 @@ export async function launchJourneyRun(
   const convexHttpUrl = requireConvexHttpUrl();
   // Capture the signed-in identity before replacing its bearer with the
   // background credential. Membership and rollout are rechecked per session.
-  let hasClaudeTarget = false;
+  // The harnesses the wave's targets use, so the launch can declare which of
+  // them this runner will execute locally.
+  let waveHarnesses: Array<string | undefined> = [];
   if (input.waveId) {
     const client = createConvexClient(deps.bearerToken);
     const journey = await client.query("journeys:getJourney" as never, {
@@ -294,10 +304,17 @@ export async function launchJourneyRun(
     const hosts = await Promise.all(hostIds.map(async (hostId: string) =>
       client.query("hosts:getHost" as never, { hostId } as never) as any,
     ));
-    hasClaudeTarget = hosts.some(host => host?.config?.harness === "claude-code");
+    waveHarnesses = hosts.map(host => host?.config?.harness);
   }
-  const localEnabled = hasClaudeTarget && await shouldUseLocalHarness("claude-code", deps.bearerToken, input.projectId);
-  if (localEnabled) await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false });
+  // Per harness, unattended (a swarm runs with nobody to approve anything):
+  // machine, sandbox evidence, rollout and authorization. Declared to the
+  // backend below so it stamps exactly these targets local — and the runner
+  // executes exactly these locally.
+  const localHarnessIds = await eligibleUnattendedLocalHarnesses(deps.bearerToken, input.projectId, waveHarnesses);
+  const localEnabled = localHarnessIds.length > 0;
+  for (const harnessId of localHarnessIds) {
+    await ensureLocalHarnessTarget({ bearer: deps.bearerToken, projectId: input.projectId, scope: "attended", waitForInstall: false, harnessId });
+  }
   const localActorResult = localEnabled
     ? await resolveLocalHarnessActor({ authorizationHeader: `Bearer ${deps.bearerToken.replace(/^Bearer\s+/i, "")}`, contextCredential: null })
     : undefined;
@@ -310,6 +327,7 @@ export async function launchJourneyRun(
   try {
     created = await createJourneyRun(convexHttpUrl, deps.bearerToken, {
       runtimeVenue: localEnabled ? "local" : "hosted",
+      ...(localEnabled ? { localHarnessIds } : {}),
       projectId: input.projectId,
       journeyRefId: input.journeyRefId,
       launchKey: input.launchKey,
@@ -354,16 +372,27 @@ export async function launchJourneyRun(
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
       const details = launchFailureDetails(err);
+      // A hosted harness target whose pinned image cannot boot refuses the
+      // whole launch. The backend's sentence names the target, and passes
+      // through when it fits; a long client or environment name can push it
+      // past the passthrough bound, and the generic fallback would then drop
+      // the one thing the launcher needs to know: which fix applies.
+      const message = launchFailureMessage(
+        err,
+        details?.code === JOURNEY_TARGET_IMAGE_UNAVAILABLE
+          ? "A target in this launch pins a computer image that can't boot. " +
+              "Fix that image, or remove the target, then launch again."
+          : undefined,
+      );
       const modelError = environmentModelRequiredError({
         data: {
           code: details?.code,
-          message: launchFailureMessage(err),
+          message,
           details,
         },
       });
       const routeError =
-        modelError ??
-        new WebRouteError(err.status, code, launchFailureMessage(err), details);
+        modelError ?? new WebRouteError(err.status, code, message, details);
       // The wave fan-out and every generic client read `Retry-After` to decide
       // WHEN to come back; the 429 alone only says "not now". The backend's
       // daily launch cap sends the UTC roll and its burst brake sends the
@@ -447,6 +476,7 @@ export async function launchJourneyRun(
       convexHttpUrl,
       getBearer: deps.getRunBearer,
       localHarnessActor,
+      ...(localEnabled ? { localHarnessIds } : {}),
       // Host-aware: each host connects ONLY its own pinned required servers
       // (optionalServerIds stay off, matching a real no-opt-in visitor).
       managerFactory: async (host) => {

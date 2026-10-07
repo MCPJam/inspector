@@ -35,6 +35,10 @@ import type {
 
 /** One suspended round awaiting the user's answers. */
 export interface HostedMrtrRound {
+  pluginModelOperation?: import("@/shared/mrtr-continuation").MrtrOwnedModelOperation;
+  /** Trusted owned-plugin driver only; ordinary rounds keep their existing editor. */
+  pluginFormServiceScope?: { projectId: string; workspaceId: string };
+  pluginFormProfile?: import("@/shared/plugin-extensions/form-plan").PluginFormProfile;
   /** `${continuationId}:${round}` — the dedupe/collection key. */
   key: string;
   continuationId: string;
