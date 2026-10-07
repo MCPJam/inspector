@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-07
+
+#### Changed
+
+- **Creating a Cursor client now collects your API key in the same step** — when you create a Cursor client and your project has no personal `CURSOR_API_KEY`, the **New Client** dialog shows a password field for your key. Pasting it there stores it as your personal brokered secret and wires it to the client in one action, so there is no separate trip to Project Settings → Secrets. If you already have a personal key saved, the field is skipped. A key shared with the project cannot be used here — each teammate who runs a Cursor client adds their own.
+
+- **Cursor turns in the Playground now run under a hidden environment that carries your key** — previously, a Cursor turn in the Playground (client mode, no environment selected) had no way to grant the `CURSOR_API_KEY` to the sandbox. The turn now automatically resolves a hidden ad-hoc environment that selects your personal key before the sandbox is booted. If you have no usable key, the turn is refused up front with a message pointing to **Project Settings → Secrets** — no sandbox is provisioned and no credits are spent.
+
+- **Cursor clients are not available in User Testing studies** — a Cursor client's `CURSOR_API_KEY` is always personal (it reaches only the session its owner starts). Because study participants are not the study author, the key cannot reach their sessions. Attempting to compose a study with a Cursor client is refused with a missing-credential error. Use Claude Code or Codex for studies that need an agent harness.
+
 ### 2026-10-06
 
 #### Added
