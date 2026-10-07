@@ -185,8 +185,7 @@ import {
   isExternalAccountPlanWallTurn,
 } from "./external-account-plan-wall.js";
 import {
-  fetchBrokeredCredentialNames,
-  planExternalAccountCredentials,
+  resolveExternalAccountCredentialPlan,
   type ExternalAccountCredentialPlan,
 } from "./external-account-credentials.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
@@ -215,6 +214,7 @@ import {
   type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
 import {
+  buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
   type HarnessBackgroundTaskInfo,
   type HarnessResetReason,
@@ -1688,92 +1688,51 @@ export async function runHarnessTurn(
       // environment. The runtime process itself still receives it — it has to,
       // that is how the CLI authenticates. The BROKERED arm has no such
       // residue: the box never holds the value at any point.
+      // A NON-MEMBER PARTICIPANT never runs an external-account harness. Its
+      // credential is the project's own vendor key; brokered delivery keeps the
+      // raw value out of the box, but the box's agent still holds a shell and the
+      // egress proxy injects the key on the vendor's host, so a participant can
+      // have the CLI exchange it for a reusable vendor token (Cursor:
+      // `/auth/exchange_user_api_key`) and read it back. That crosses the
+      // project-to-guest boundary. Refused here, before any credential is
+      // planned or anything is provisioned, with copy that names neither the
+      // credential nor the project's settings.
+      if (
+        harnessAdapter.modelAccess === "external-account" &&
+        scenarioParticipant
+      ) {
+        throw new Error(
+          `${harnessAdapter.displayName} isn't available to participants of this study. ` +
+            "Ask the study owner to choose a different agent.",
+        );
+      }
       const externalAccountCredentialNames =
         harnessAdapter.modelAccess === "external-account"
           ? harnessAdapter.externalAccountCredentialEnv
           : undefined;
-      let externalAccountPlan: ExternalAccountCredentialPlan | undefined;
-      if (externalAccountCredentialNames) {
-        // Ask about brokered delivery ONLY for the names materialized delivery
-        // did not already satisfy. A project that materializes its key pays no
-        // round trip and cannot be refused by a secrets-service blip — the
-        // pre-existing behaviour, preserved exactly.
-        const brokerBinding = harnessAdapter.externalAccountBrokerBinding;
-        const unresolved = externalAccountCredentialNames.filter(
-          (name) => !secretEnv?.[name] && brokerBinding?.[name],
-        );
-        // The box kind is decided by the CALLER's binding (see step 3 below),
-        // and it is known here because `harnessSandboxBinding` arrives on the
-        // options. It matters: `projectSecretsEgress.listBrokeredSecretsForBox`
-        // answers `[]` for anything without a `sandboxRowId` — persistent
-        // computers receive no brokered secrets in v1 — so a chat turn on a
-        // project computer must never be told its credential is brokered.
-        //
-        // `environmentId` is the OTHER half of that question, and the reason it
-        // is threaded all the way down here rather than approximated: the
-        // backend composes a box's egress transform from the ENVIRONMENT's
-        // `secretSelection`, so a correctly bound brokered row the run's
-        // environment does not select is never delivered. Asking project-wide
-        // would report it available and start a turn that provisions a box and
-        // then fails vendor auth against a placeholder.
-        const brokered =
-          unresolved.length > 0 && brokerBinding
-            ? await fetchBrokeredCredentialNames({
-                ...(authHeader ? { bearer: authHeader } : {}),
-                ...(projectId ? { projectId } : {}),
-                ...(environmentId ? { environmentId } : {}),
-                // Copy only — an environment this process cannot name is one
-                // whose selection it cannot check, so the answer is the same
-                // either way and only the refusal wording changes.
-                ...(!environmentId && environmentUnresolvedReason
-                  ? { environmentUnresolvedReason }
-                  : {}),
-                boxKind: harnessSandboxBinding ? "sandbox" : "computer",
-                required: Object.fromEntries(
-                  unresolved.map((name) => [name, brokerBinding[name]!]),
-                ),
-              })
-            : {
-                available: new Set<string>(),
-                misboundHosts: {},
-                unselected: new Set<string>(),
-                environmentMissing: false,
-              };
-        // THROWS on an unsatisfiable credential, with copy that names the
-        // variable, BOTH deliveries, and where to set them. Never defaulted or
-        // silently skipped — starting the CLI with no credential produces an
-        // opaque failure from inside the box instead.
-        //
-        // KNOWN LIMITATION on the MATERIALIZED arm, and this is where it
-        // surfaces: callers that do NOT wire secrets deliver none (see the note
-        // on `runtimeSecrets` above — that is the documented contract, not an
-        // oversight). The SYNTHETIC path (`sessionSimulation/runner.ts`, which
-        // drives scenario/swarm/eval turns through `runUnifiedAssistantTurn`)
-        // is one of them. Those are exactly the surfaces that refuse
-        // materialized secrets anyway, so the answer for them is brokered
-        // delivery rather than wiring materialized secrets into a runner that
-        // has no scrubber to pair them with.
-        externalAccountPlan = planExternalAccountCredentials({
-          harnessDisplayName: harnessAdapter.displayName,
-          required: externalAccountCredentialNames,
+      // The reads and the decision live in `resolveExternalAccountCredentialPlan`
+      // so the Playground routes can run the SAME check before they boot a box
+      // for the turn (a refused credential must provision nothing). See it for
+      // why brokered availability depends on the box kind and the environment,
+      // and why it THROWS rather than starting the CLI with no credential.
+      const externalAccountPlan: ExternalAccountCredentialPlan | undefined =
+        await resolveExternalAccountCredentialPlan({
+          harness: harnessAdapter,
           secretEnv,
-          brokerBinding,
-          brokeredAvailable: brokered ? brokered.available : null,
-          ...(brokered
-            ? {
-                misboundHosts: brokered.misboundHosts,
-                unselected: brokered.unselected,
-                environmentMissing: brokered.environmentMissing,
-                ...(brokered.environmentUnresolvedReason
-                  ? {
-                      environmentUnresolvedReason:
-                        brokered.environmentUnresolvedReason,
-                    }
-                  : {}),
-              }
+          bearer: authHeader,
+          projectId,
+          ...(environmentId ? { environmentId } : {}),
+          ...(environmentUnresolvedReason
+            ? { environmentUnresolvedReason }
             : {}),
+          boxKind: harnessSandboxBinding ? "sandbox" : "computer",
+          // A box answers for itself: the member-only readers are the
+          // fallback for a persistent computer (and an older backend).
+          ...(harnessSandboxBinding
+            ? { sandboxRowId: harnessSandboxBinding.sandboxRowId }
+            : {}),
+          ...(abortSignal ? { signal: abortSignal } : {}),
         });
-      }
       const externalAccountAuth = externalAccountPlan?.auth;
       // What the BOX's session env carries: everything the project materialized
       // MINUS the credentials handed to the adapter directly (see above). An
@@ -2900,8 +2859,13 @@ export async function runHarnessTurn(
           // the cached path by project + host (it knows both); we only need the
           // path. Fires every turn (fresh or resumed) — always the current dir.
           writer.write({
-            type: "data-harness-session",
-            data: { workdir: sessionWorkDir },
+            // Where that path lives: the Playground's Shell rail opens a
+            // terminal on the PERSONAL computer, so a turn that ran on the
+            // conversation's disposable box must say so.
+            ...buildHarnessSessionDataPart({
+              workdir: sessionWorkDir,
+              disposable: Boolean(harnessSandboxBinding),
+            }),
             transient: true,
           } as unknown as UIMessageChunk);
         },
@@ -4069,7 +4033,9 @@ export async function runHarnessTurn(
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}${bootstrapLog.text}`,
-          bootstrapLog.context,
+          // `harnessId` rides both outcome lines so the feature-health monitor
+          // can compare failed against completed turns per harness.
+          { ...bootstrapLog.context, harnessId: harnessAdapter.id },
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
@@ -4286,7 +4252,7 @@ export async function runHarnessTurn(
         source: "chat.harness-turn",
         hop: "user_server_hop",
         transport: "http_stream",
-        context: { promptIndex },
+        context: { promptIndex, harnessId: harnessAdapter.id },
       });
       // A turn-time install that failed (the pnpm 11 / deny-all egress class)
       // never reaches the timing line, so the failure path reports the
@@ -4295,6 +4261,7 @@ export async function runHarnessTurn(
       void logHarnessBootstrapOnFailure(
         bakeObservedSandbox,
         harnessAdapter.pinnedRuntimeVersion,
+        harnessAdapter.id,
       );
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();

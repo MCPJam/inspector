@@ -148,6 +148,7 @@ import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
+  harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -198,6 +199,14 @@ import {
   canProvisionHarnessBoxes,
   type HarnessBox,
 } from "../../utils/harness/harness-box.js";
+import {
+  acquirePlaygroundHarnessBox,
+  describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
+  playgroundHarnessBoxReason,
+  playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+} from "../../utils/harness/playground-box.js";
 import {
   isSandboxNoticeReason,
   type SandboxNoticeReason,
@@ -1053,10 +1062,17 @@ chatV2.post("/", async (c) => {
         modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
       });
       if (hostModelRefusal) {
+        // 422, not 503: the request is well-formed and retrying it changes
+        // nothing. This client's harness cannot run this turn.
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: "model-unsupported",
+          },
         );
       }
     }
@@ -1224,10 +1240,22 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422 when this turn's settings are the problem (retrying changes
+        // nothing); 503 for an operator state — broker delivery off, or no
+        // computers data plane — which works once the server is fixed.
+        const status = harnessUnavailableHttpStatus(availability.kind);
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          status,
+          status === 503
+            ? ErrorCode.INTERNAL_ERROR
+            : ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            // Branch on the kind, never on the wording.
+            kind: availability.kind,
+          },
         );
       }
     }
@@ -2089,6 +2117,150 @@ chatV2.post("/", async (c) => {
         harness: resolvedExecution.harness!,
         accessKind: hostRuntimeConfig?.accessKind,
       });
+    }
+
+    // ── PLAYGROUND FALLBACK: a disposable computer for THIS conversation ──
+    //
+    // A Playground harness turn runs on the member's personal computer, which
+    // never holds a project's credentials and is one machine however many
+    // columns ask for it. A harness that signs in with the customer's own
+    // account (Cursor) and every compare column therefore take the
+    // conversation's disposable box instead — the same box holder a scenario
+    // uses, heartbeat and all. There is NO quiet fallback to the personal
+    // computer: that is exactly the machine these turns must not run on, so a
+    // box that cannot be had is a refusal that says why.
+    const playgroundBoxReason = playgroundHarnessBoxReason({
+      harnessId: resolvedExecution.harness,
+      localExecution: Boolean(harnessExecutionTarget),
+      isScenarioSession,
+      comparePane: hostedBody.comparePane === true,
+    });
+    // A guest has no project computer to protect and no project to hold a box
+    // for, so it keeps its existing path (and, on a scenario, its own box).
+    if (
+      playgroundBoxReason &&
+      resolvedExecution.harness &&
+      !c.get("guestId")
+    ) {
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        resolvedExecution.harness,
+        playgroundBoxReason,
+      );
+      if (unavailable) {
+        throw new WebRouteError(
+          503,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          unavailable,
+          { reason: "NOT_A_DATA_PLANE" },
+        );
+      }
+      if (!hostedBody.chatSessionId) {
+        // The conversation id is the isolation boundary (one box per
+        // conversation). Without one every such turn would share one box.
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `This turn runs the ${resolvedExecution.harness} harness on a disposable computer, which belongs to one conversation, and this turn named none.`,
+          { reason: "NO_CHAT_SESSION_ID" },
+        );
+      }
+      // The environment whose grant the box carries: the turn's own when it
+      // targets one; otherwise, for a client that signs in with the member's
+      // own account, a HIDDEN ad-hoc environment selecting the member's key
+      // (the environments UI is off, so a client turn is the normal case).
+      // Refused here, before any box, when the member has no usable key.
+      let playgroundEnvironmentId =
+        environmentSpec?.environmentRef.environmentId;
+      if (
+        playgroundBoxReason === "credential" &&
+        !playgroundEnvironmentId &&
+        executionTarget.kind === "host"
+      ) {
+        const hidden = await resolvePlaygroundCredentialEnvironment({
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          hostId: executionTarget.hostId,
+          harnessId: resolvedExecution.harness,
+        });
+        if (!hidden.ok) {
+          throw new WebRouteError(
+            hidden.status,
+            hidden.status === 409
+              ? ErrorCode.CONFLICT
+              : ErrorCode.INTERNAL_ERROR,
+            hidden.message,
+            { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+          );
+        }
+        playgroundEnvironmentId = hidden.environmentId;
+      }
+      // The credential check the harness turn would fail, run BEFORE the box
+      // is booted: a refused Cursor turn must not pay for a box first. Same
+      // function and inputs as `runHarnessTurn`'s own check.
+      if (playgroundBoxReason === "credential") {
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: resolvedExecution.harness,
+          secretEnv,
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          ...(playgroundEnvironmentId
+            ? { environmentId: playgroundEnvironmentId }
+            : {}),
+        });
+        if (credentialRefusal) {
+          throw new WebRouteError(409, ErrorCode.CONFLICT, credentialRefusal, {
+            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+          });
+        }
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: bearerToken,
+        projectId: hostedBody.projectId,
+        chatSessionId: hostedBody.chatSessionId,
+        ...(playgroundEnvironmentId
+          ? { projectEnvironmentId: playgroundEnvironmentId }
+          : {}),
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (!acquired.ok) {
+        logger.warn("[chat-v2] playground harness box provision failed", {
+          reason: playgroundBoxReason,
+          status: acquired.refusal.status,
+          error: acquired.refusal.error,
+        });
+        const described = describePlaygroundBoxRefusal(
+          resolvedExecution.harness,
+          playgroundBoxReason,
+          acquired.refusal,
+        );
+        throw new WebRouteError(
+          described.status,
+          described.status === 429
+            ? ErrorCode.RATE_LIMITED
+            : described.status === 403
+              ? ErrorCode.FORBIDDEN
+              : described.status === 409
+                ? ErrorCode.CONFLICT
+                : described.status === 503
+                  ? ErrorCode.RATE_LIMITED
+                  : ErrorCode.INTERNAL_ERROR,
+          described.message,
+          {
+            reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+            ...(described.code ? { code: described.code } : {}),
+          },
+        );
+      }
+      scenarioBox = acquired.box;
+      // The model's own `bash` rides the same machine as the harness's Shell:
+      // two filesystems in one turn is a bug nobody can see.
+      sandboxBinding = {
+        sandboxId: acquired.box.binding.sandboxId,
+        ...(acquired.box.binding.workdir
+          ? { workdir: acquired.box.binding.workdir }
+          : {}),
+        lifetime: "conversation",
+      };
     }
 
     // MATERIALIZED secrets resolved, and nowhere legitimate to put them.

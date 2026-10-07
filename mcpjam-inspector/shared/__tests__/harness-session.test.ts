@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
   isHarnessBackgroundTaskDataPart,
   isHarnessSessionDataPart,
@@ -145,5 +146,48 @@ describe("background-task parts (the Claude Code background drain)", () => {
     ]) {
       expect(isHarnessBackgroundTaskDataPart(part)).toBe(false);
     }
+  });
+});
+
+describe("which machine a harness turn ran on", () => {
+  it("is `personal` unless the turn ran on the conversation's box", () => {
+    expect(
+      buildHarnessSessionDataPart({
+        workdir: "/home/user/w",
+        disposable: false,
+      }).data.machine,
+    ).toBe("personal");
+    expect(
+      buildHarnessSessionDataPart({ workdir: "/home/user/w", disposable: true })
+        .data.machine,
+    ).toBe("disposable");
+  });
+
+  it("builds a part the client's own guard accepts", () => {
+    for (const disposable of [false, true]) {
+      expect(
+        isHarnessSessionDataPart(
+          buildHarnessSessionDataPart({ workdir: "/home/user/w", disposable }),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts a part with no machine (a server that predates the field)", () => {
+    expect(
+      isHarnessSessionDataPart({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/w" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a machine it does not know", () => {
+    expect(
+      isHarnessSessionDataPart({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/w", machine: "somewhere-else" },
+      }),
+    ).toBe(false);
   });
 });

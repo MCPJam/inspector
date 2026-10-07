@@ -55,7 +55,10 @@ import {
   useComputerEngine,
   type ComputerEngineState,
 } from "@/hooks/useComputerEngine";
-import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
+import {
+  useHarnessRanOnDisposable,
+  useHarnessWorkdir,
+} from "@/stores/harness-workdir-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
@@ -758,12 +761,22 @@ function CloudShellBody({
   // Read with the SAME key the chat stream writes (previewedHostId), not
   // hostConfig.id — those are different identifiers and would never match.
   const streamedWorkdir = useHarnessWorkdir(projectId, hostId);
+  // The latest turn of the conversation on screen ran on its DISPOSABLE
+  // computer (a harness that signs in with your own account), not the one this
+  // terminal opens. Per conversation: a compare column or another chat on the
+  // same host says nothing about this one.
+  const activeChatSessionId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const ranOnDisposable = useHarnessRanOnDisposable(activeChatSessionId);
   // COMP-16: open the terminal in the configured working directory. For a
   // harness host use the streamed per-session dir; for a plain computer host
   // fall back to the host-configured `computer.workdir` (the same dir the bash
   // tool runs in) so the Shell opens where the model works.
   const harnessCwd = isHarnessHost
-    ? streamedWorkdir
+    ? ranOnDisposable
+      ? undefined
+      : streamedWorkdir
     : hostConfig?.computer?.workdir;
   // Only offer "Open terminal" once the data-plane config has resolved to a
   // usable plane — opening while it's still loading mounts the terminal at the
@@ -815,6 +828,16 @@ function CloudShellBody({
           harness workdir streaming in mid-session doesn't yank the user's open
           terminal. Reopening the terminal already picks up the latest cwd
           (ComputerTerminal remounts when terminalOpen flips). */}
+      {isHarnessHost && ranOnDisposable ? (
+        <p
+          data-testid="shell-rail-disposable-notice"
+          className="mx-3 mb-2 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+        >
+          The last turn ran on a disposable computer for this conversation, not
+          your personal computer. This terminal is your personal computer, so
+          the turn's files aren't here.
+        </p>
+      ) : null}
       <ComputerTerminalPane
         key={reloadKey}
         controller={ct}
