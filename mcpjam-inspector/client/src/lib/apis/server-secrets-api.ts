@@ -5,9 +5,15 @@ export interface FetchServerSecretsRequest {
   serverId: string;
 }
 
-export interface FetchOAuthRecoveryHeadersRequest
-  extends FetchServerSecretsRequest {
+export interface FetchOAuthRecoveryHeadersRequest extends Partial<FetchServerSecretsRequest> {
+  serverName: string;
   serverUrl: string;
+}
+
+export interface StageOAuthRecoveryHeadersRequest {
+  serverName: string;
+  serverUrl: string;
+  headers: Record<string, string>;
 }
 
 export interface ServerSecretsResult {
@@ -29,7 +35,7 @@ function parseRecord(value: unknown): Record<string, string> | null {
     Object.entries(value).filter((entry): entry is [string, string] => {
       const [key, recordValue] = entry;
       return typeof key === "string" && typeof recordValue === "string";
-    })
+    }),
   );
 }
 
@@ -48,11 +54,11 @@ function parseKeys(value: unknown): string[] {
  * which a row's eye triggers.
  */
 export async function fetchServerSecretKeys(
-  request: FetchServerSecretsRequest
+  request: FetchServerSecretsRequest,
 ): Promise<ServerSecretKeysResult> {
   const body = await webPost<FetchServerSecretsRequest, unknown>(
     "/api/web/server/secret-keys",
-    request
+    request,
   );
   const result =
     body && typeof body === "object" ? (body as Record<string, unknown>) : null;
@@ -60,7 +66,7 @@ export async function fetchServerSecretKeys(
     throw new WebApiError(
       0,
       "INVALID_RESPONSE",
-      "Server secret keys response was invalid"
+      "Server secret keys response was invalid",
     );
   }
 
@@ -71,11 +77,11 @@ export async function fetchServerSecretKeys(
 }
 
 export async function fetchServerSecrets(
-  request: FetchServerSecretsRequest
+  request: FetchServerSecretsRequest,
 ): Promise<ServerSecretsResult> {
   const body = await webPost<FetchServerSecretsRequest, unknown>(
     "/api/web/server/reveal-secrets",
-    request
+    request,
   );
   const result =
     body && typeof body === "object" ? (body as Record<string, unknown>) : null;
@@ -83,7 +89,7 @@ export async function fetchServerSecrets(
     throw new WebApiError(
       0,
       "INVALID_RESPONSE",
-      "Server secrets response was invalid"
+      "Server secrets response was invalid",
     );
   }
 
@@ -94,11 +100,11 @@ export async function fetchServerSecrets(
 }
 
 export async function fetchOAuthRecoveryHeaders(
-  request: FetchOAuthRecoveryHeadersRequest
+  request: FetchOAuthRecoveryHeadersRequest,
 ): Promise<Record<string, string>> {
   const body = await webPost<FetchOAuthRecoveryHeadersRequest, unknown>(
     "/api/web/oauth/recovery-headers",
-    request
+    request,
   );
   const result =
     body && typeof body === "object" ? (body as Record<string, unknown>) : null;
@@ -106,8 +112,26 @@ export async function fetchOAuthRecoveryHeaders(
     throw new WebApiError(
       0,
       "INVALID_RESPONSE",
-      "OAuth recovery headers response was invalid"
+      "OAuth recovery headers response was invalid",
     );
   }
   return parseRecord(result.headers) ?? {};
+}
+
+export async function stageOAuthRecoveryHeaders(
+  request: StageOAuthRecoveryHeadersRequest,
+): Promise<void> {
+  const body = await webPost<StageOAuthRecoveryHeadersRequest, unknown>(
+    "/api/web/oauth/recovery-headers/stage",
+    request,
+  );
+  const result =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+  if (!result?.success) {
+    throw new WebApiError(
+      0,
+      "INVALID_RESPONSE",
+      "OAuth recovery header staging response was invalid",
+    );
+  }
 }

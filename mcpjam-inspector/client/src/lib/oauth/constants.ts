@@ -33,15 +33,22 @@ const INSPECTOR_PREVIEW_HOSTNAME_PATTERNS = [
   /^mcp-inspector-pr-(?:be-)?\d+\.up\.railway\.app$/i,
 ];
 
+function protectedPreviewOrigin(hostname: string): string | undefined {
+  const match = hostname.match(
+    /^mcp-inspector-(pr-(?:be-)?\d+)\.up\.railway\.app$/i,
+  );
+  return match ? `https://${match[1].toLowerCase()}.mcpjam.dev` : undefined;
+}
+
 function isInspectorPreviewHostname(hostname: string): boolean {
   return INSPECTOR_PREVIEW_HOSTNAME_PATTERNS.some((pattern) =>
-    pattern.test(hostname)
+    pattern.test(hostname),
   );
 }
 
 /** Ephemeral preview callbacks cannot be listed in the public CIMD document. */
 export function supportsMcpJamCimdRedirect(
-  locationLike: Pick<Location, "hostname">
+  locationLike: Pick<Location, "hostname">,
 ): boolean {
   return !isInspectorPreviewHostname(locationLike.hostname);
 }
@@ -58,7 +65,7 @@ export const MCPJAM_CLIENT_ID =
   "https://www.mcpjam.com/.well-known/oauth/client-metadata.json";
 
 export function resolveBrowserOAuthRedirectOrigin(
-  locationLike: Pick<Location, "protocol" | "origin" | "hostname">
+  locationLike: Pick<Location, "protocol" | "origin" | "hostname">,
 ): string {
   if (locationLike.protocol !== "http:" && locationLike.protocol !== "https:") {
     // Defensive fallback for non-browser-like locations. Electron exits earlier.
@@ -67,6 +74,14 @@ export function resolveBrowserOAuthRedirectOrigin(
 
   if (LOCALHOST_HOSTNAMES.has(locationLike.hostname)) {
     return locationLike.origin;
+  }
+
+  // Railway preview names are reclaimable after teardown. Never mint an OAuth
+  // callback for that raw origin; use the protected preview-router hostname,
+  // whose ownership remains with MCPJam, instead.
+  const previewOrigin = protectedPreviewOrigin(locationLike.hostname);
+  if (previewOrigin) {
+    return previewOrigin;
   }
 
   if (
@@ -83,7 +98,7 @@ export function resolveBrowserOAuthRedirectOrigin(
 export function getRedirectUri(): string {
   if (typeof window !== "undefined") {
     return `${resolveBrowserOAuthRedirectOrigin(
-      window.location
+      window.location,
     )}/oauth/callback`;
   }
 

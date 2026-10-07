@@ -133,7 +133,7 @@ describe("web routes — oauth requires bearer token", () => {
       finalUrl: "https://example.com/token",
     });
     expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
-      "https://example.com/token"
+      "https://example.com/token",
     );
   });
 
@@ -150,9 +150,10 @@ describe("web routes — oauth requires bearer token", () => {
       {
         projectId: "project-1",
         serverId: "server-1",
+        serverName: "example",
         serverUrl: "https://mcp.example.com/mcp",
       },
-      token
+      token,
     );
     const { status, data } = await expectJson(response);
 
@@ -168,6 +169,39 @@ describe("web routes — oauth requires bearer token", () => {
       expectedTargetUrl: "https://mcp.example.com/mcp",
       accessScope: "project_member",
     });
+  });
+
+  it("stages and consumes callback headers for an unsynced local server", async () => {
+    const binding = {
+      serverName: "local-example",
+      serverUrl: "http://127.0.0.1:3000/mcp",
+    };
+    const stageResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers/stage",
+      { ...binding, headers: { "X-Tenant": "local-tenant" } },
+      token,
+    );
+    expect((await expectJson(stageResponse)).status).toBe(200);
+
+    const recoverResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      binding,
+      token,
+    );
+    expect(await expectJson(recoverResponse)).toEqual({
+      status: 200,
+      data: { success: true, headers: { "X-Tenant": "local-tenant" } },
+    });
+
+    const replayResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      binding,
+      token,
+    );
+    expect((await expectJson(replayResponse)).status).toBe(404);
   });
 
   it("GET /metadata succeeds with bearer token", async () => {
@@ -186,7 +220,7 @@ describe("web routes — oauth requires bearer token", () => {
     expect(status).toBe(200);
     expect(data).toEqual({ issuer: "https://example.com" });
     expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
-      "https://example.com/.well-known/oauth"
+      "https://example.com/.well-known/oauth",
     );
   });
 });
@@ -298,10 +332,13 @@ describe("web routes — oauth session forwarding", () => {
 
   it("POST /session forwards the bearer-authenticated session bootstrap to Convex", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: true, sessionId: "session-123" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ success: true, sessionId: "session-123" }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -315,7 +352,12 @@ describe("web routes — oauth session forwarding", () => {
       },
     };
 
-    const response = await postJson(app, "/api/web/oauth/session", payload, token);
+    const response = await postJson(
+      app,
+      "/api/web/oauth/session",
+      payload,
+      token,
+    );
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);
@@ -358,7 +400,12 @@ describe("web routes — oauth session forwarding", () => {
       serverId: "srv_1",
     };
 
-    const response = await postJson(app, "/api/web/oauth/tokens", payload, token);
+    const response = await postJson(
+      app,
+      "/api/web/oauth/tokens",
+      payload,
+      token,
+    );
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);

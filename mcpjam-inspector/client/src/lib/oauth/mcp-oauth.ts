@@ -56,7 +56,10 @@ import {
   type ImportHostedOAuthTokensRequest,
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
-import { fetchOAuthRecoveryHeaders } from "@/lib/apis/server-secrets-api";
+import {
+  fetchOAuthRecoveryHeaders,
+  stageOAuthRecoveryHeaders,
+} from "@/lib/apis/server-secrets-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
@@ -1774,8 +1777,11 @@ function writeStoredOAuthConfig(
   } else {
     delete publicConfig.hasCustomHeaders;
   }
+  // Only the explicit public allowlist in serializeStoredOAuthConfig reaches
+  // this sink. Secrets are recovered from protected storage instead.
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
+    // codeql[js/clear-text-storage-of-sensitive-data]
     serializeStoredOAuthConfig(publicConfig)
   );
 }
@@ -2552,15 +2558,12 @@ async function recoverOAuthCustomHeaders(input: {
     registryServerId: input.oauthConfig.registryServerId,
     useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
   });
-  if (!binding) {
-    throw new Error(
-      "OAuth custom headers could not be recovered for this server. Save the server and try again."
-    );
-  }
   const headers = await fetchOAuthRecoveryHeaders({
-    projectId: binding.projectId,
-    serverId: binding.serverId,
+    serverName: input.serverName,
     serverUrl: input.serverUrl,
+    ...(binding
+      ? { projectId: binding.projectId, serverId: binding.serverId }
+      : {}),
   });
   if (Object.keys(headers).length === 0) {
     throw new Error(
@@ -2854,6 +2857,24 @@ export async function initiateOAuth(
       options.serverUrl
     );
 
+    if (
+      !HOSTED_MODE &&
+      options.customHeaders &&
+      Object.keys(options.customHeaders).length > 0 &&
+      !buildConvexBindingForServer({
+        serverName: options.serverName,
+        oauthResourceUrl: options.resourceUrl,
+        registryServerId: options.registryServerId,
+        useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      })
+    ) {
+      await stageOAuthRecoveryHeaders({
+        serverName: options.serverName,
+        serverUrl: options.serverUrl,
+        headers: options.customHeaders,
+      });
+    }
+
     // Store server URL for callback recovery
     localStorage.setItem(
       `mcp-serverUrl-${options.serverName}`,
@@ -2876,10 +2897,7 @@ export async function initiateOAuth(
     // This redirect-recovery record contains public OAuth metadata only.
     // Custom headers and client credentials may contain secrets and must be
     // recovered from their protected sources instead of browser storage.
-    localStorage.setItem(
-      `mcp-oauth-config-${options.serverName}`,
-      serializeStoredOAuthConfig(oauthConfig)
-    );
+    writeStoredOAuthConfig(options.serverName, oauthConfig);
 
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.

@@ -4299,6 +4299,8 @@ describe("useServerState authenticated fallback persistence", () => {
         type: "http",
         url: "https://example.com/mcp",
         useOAuth: true,
+        oauthProtocolMode: "2025-11-25",
+        oauthScopes: ["documents:read"],
       });
     });
 
@@ -4309,6 +4311,8 @@ describe("useServerState authenticated fallback persistence", () => {
     );
     expect(stored.hasCustomHeaders).toBe(true);
     expect(stored.customHeaders).toBeUndefined();
+    expect(stored.protocolMode).toBe("2025-11-25");
+    expect(stored.scopes).toEqual(["documents:read"]);
   });
 
   it("persists renamed servers into the local project in authenticated fallback mode", async () => {

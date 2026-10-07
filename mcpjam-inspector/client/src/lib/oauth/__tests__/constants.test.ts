@@ -9,56 +9,67 @@ import {
 describe("resolveBrowserOAuthRedirectOrigin", () => {
   it("keeps localhost origins for local development", () => {
     expect(
-      resolveBrowserOAuthRedirectOrigin(new URL("http://localhost:5173/#test"))
+      resolveBrowserOAuthRedirectOrigin(new URL("http://localhost:5173/#test")),
     ).toBe("http://localhost:5173");
   });
 
   it("keeps 127.0.0.1 origins for local development", () => {
     expect(
-      resolveBrowserOAuthRedirectOrigin(new URL("http://127.0.0.1:5173/#test"))
+      resolveBrowserOAuthRedirectOrigin(new URL("http://127.0.0.1:5173/#test")),
     ).toBe("http://127.0.0.1:5173");
   });
 
   it("keeps the current origin on the hosted app domain", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
-        new URL("https://app.mcpjam.com/#servers")
-      )
+        new URL("https://app.mcpjam.com/#servers"),
+      ),
     ).toBe("https://app.mcpjam.com");
   });
 
   it("keeps the current origin on hosted subdomains like staging", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
-        new URL("https://staging.mcpjam.com/#servers")
-      )
+        new URL("https://staging.mcpjam.com/#servers"),
+      ),
     ).toBe("https://staging.mcpjam.com");
   });
 
   it.each([
     "https://pr-5479.mcpjam.dev/home",
     "https://pr-be-1693.mcpjam.dev/home",
-    "https://mcp-inspector-pr-5479.up.railway.app/home",
-    "https://mcp-inspector-pr-be-1693.up.railway.app/home",
-  ])("keeps the callback on supported Inspector preview %s", (url) => {
+  ])("keeps the callback on protected Inspector preview %s", (url) => {
     expect(resolveBrowserOAuthRedirectOrigin(new URL(url))).toBe(
-      new URL(url).origin
+      new URL(url).origin,
     );
+  });
+
+  it.each([
+    [
+      "https://mcp-inspector-pr-5479.up.railway.app/home",
+      "https://pr-5479.mcpjam.dev",
+    ],
+    [
+      "https://mcp-inspector-pr-be-1693.up.railway.app/home",
+      "https://pr-be-1693.mcpjam.dev",
+    ],
+  ])("moves a reclaimable Railway callback from %s to %s", (url, expected) => {
+    expect(resolveBrowserOAuthRedirectOrigin(new URL(url))).toBe(expected);
   });
 
   it("does not treat an unrelated Railway app as an Inspector preview", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
-        new URL("https://unrelated-app.up.railway.app/home")
-      )
+        new URL("https://unrelated-app.up.railway.app/home"),
+      ),
     ).toBe(MCPJAM_HOSTED_APP_ORIGIN);
   });
 
   it("falls back to the hosted app origin from the marketing site", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
-        new URL("https://www.mcpjam.com/oauth/callback")
-      )
+        new URL("https://www.mcpjam.com/oauth/callback"),
+      ),
     ).toBe(MCPJAM_HOSTED_APP_ORIGIN);
   });
 
@@ -72,13 +83,13 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
   it("keeps the current origin on the score domain", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(
-        new URL("https://score.mcpjam.com/embed/score")
-      )
+        new URL("https://score.mcpjam.com/embed/score"),
+      ),
     ).toBe("https://score.mcpjam.com");
     expect(
       resolveBrowserOAuthRedirectOrigin(
-        new URL("https://www.score.mcpjam.com/embed/score")
-      )
+        new URL("https://www.score.mcpjam.com/embed/score"),
+      ),
     ).toBe("https://www.score.mcpjam.com");
   });
 });
@@ -95,7 +106,7 @@ describe("supportsMcpJamCimdRedirect", () => {
 
   it("permits CIMD on stable origins", () => {
     expect(supportsMcpJamCimdRedirect({ hostname: "app.mcpjam.com" })).toBe(
-      true
+      true,
     );
     expect(supportsMcpJamCimdRedirect({ hostname: "localhost" })).toBe(true);
   });

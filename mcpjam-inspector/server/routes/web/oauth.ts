@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { createHash } from "node:crypto";
 import { describeError } from "@mcpjam/sdk";
 import {
   executeOAuthProxy,
@@ -29,6 +30,44 @@ import { boundText } from "../../utils/hosted-upstream-projection.js";
 
 const oauthWeb = new Hono();
 const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
+const LOCAL_RECOVERY_TTL_MS = 15 * 60 * 1000;
+const localRecoveryHeaders = new Map<
+  string,
+  { expiresAt: number; headers: Record<string, string> }
+>();
+
+function localRecoveryKey(input: {
+  bearerToken: string;
+  serverName: string;
+  serverUrl: string;
+}): string {
+  return createHash("sha256")
+    .update(input.bearerToken)
+    .update("\0")
+    .update(input.serverName)
+    .update("\0")
+    .update(input.serverUrl)
+    .digest("hex");
+}
+
+function parseRecoveryHeaders(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.entries(value).filter(
+    ([key, headerValue]) =>
+      key.trim().length > 0 &&
+      key.length <= 256 &&
+      typeof headerValue === "string" &&
+      headerValue.length <= 8192,
+  );
+  if (entries.length > 64) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Too many OAuth recovery headers",
+    );
+  }
+  return Object.fromEntries(entries);
+}
 
 function safeHostname(url: string | undefined): string {
   if (!url) return "unknown";
@@ -138,7 +177,8 @@ async function proxyConvexOAuthPost(c: Context, path: string) {
   return new Response(bodyText, {
     status: response.status,
     headers: {
-      "Content-Type": response.headers.get("content-type") ?? "application/json",
+      "Content-Type":
+        response.headers.get("content-type") ?? "application/json",
     },
   });
 }
@@ -258,22 +298,63 @@ oauthWeb.post("/recovery-headers", async (c) => {
     const body = await c.req.json();
     const projectId = typeof body?.projectId === "string" ? body.projectId : "";
     const serverId = typeof body?.serverId === "string" ? body.serverId : "";
+    const serverName =
+      typeof body?.serverName === "string" ? body.serverName : "";
     const serverUrl = typeof body?.serverUrl === "string" ? body.serverUrl : "";
-    if (!projectId || !serverId || !serverUrl) {
+    if (!serverName || !serverUrl) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Missing OAuth recovery binding"
+        "Missing OAuth recovery binding",
       );
     }
-    const secrets = await fetchRuntimeServerSecrets({
-      bearerToken,
-      projectId,
-      serverId,
-      expectedTargetUrl: serverUrl,
-      accessScope: "project_member",
+    if (projectId && serverId) {
+      const secrets = await fetchRuntimeServerSecrets({
+        bearerToken,
+        projectId,
+        serverId,
+        expectedTargetUrl: serverUrl,
+        accessScope: "project_member",
+      });
+      return c.json({ success: true, headers: secrets.headers ?? {} });
+    }
+    const key = localRecoveryKey({ bearerToken, serverName, serverUrl });
+    const staged = localRecoveryHeaders.get(key);
+    localRecoveryHeaders.delete(key);
+    if (!staged || staged.expiresAt <= Date.now()) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "OAuth recovery headers are no longer available",
+      );
+    }
+    return c.json({ success: true, headers: staged.headers });
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
+
+oauthWeb.post("/recovery-headers/stage", async (c) => {
+  try {
+    const bearerToken = assertBearerToken(c);
+    const body = await c.req.json();
+    const serverName =
+      typeof body?.serverName === "string" ? body.serverName : "";
+    const serverUrl = typeof body?.serverUrl === "string" ? body.serverUrl : "";
+    const headers = parseRecoveryHeaders(body?.headers);
+    if (!serverName || !serverUrl || Object.keys(headers).length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Missing OAuth recovery headers",
+      );
+    }
+    const key = localRecoveryKey({ bearerToken, serverName, serverUrl });
+    localRecoveryHeaders.set(key, {
+      expiresAt: Date.now() + LOCAL_RECOVERY_TTL_MS,
+      headers,
     });
-    return c.json({ success: true, headers: secrets.headers ?? {} });
+    return c.json({ success: true });
   } catch (error) {
     return webErrorCompat(c, toRouteError(error));
   }

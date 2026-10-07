@@ -1150,6 +1150,19 @@ describe("mcp-oauth", () => {
     it("does not persist OAuth credentials or custom headers to localStorage", async () => {
       vi.resetModules();
 
+      const sessionToken = await import("@/lib/session-token");
+      const isolatedAuthFetch = sessionToken.authFetch as ReturnType<
+        typeof vi.fn
+      >;
+      isolatedAuthFetch.mockImplementation(async (input: RequestInfo | URL) => {
+        const url = getUrlString(input);
+        return createJsonResponse(
+          url.includes("/api/web/oauth/recovery-headers/stage")
+            ? { success: true }
+            : {}
+        );
+      });
+
       const oauthModule = await import("../mcp-oauth");
       vi.spyOn(
         oauthModule.MCPOAuthProvider.prototype,
@@ -2052,7 +2065,11 @@ describe("mcp-oauth", () => {
       });
       const { initiateOAuth } = await import("../mcp-oauth");
 
-      const initiateResult = await initiateOAuth({ serverName, serverUrl });
+      const initiateResult = await initiateOAuth({
+        serverName,
+        serverUrl,
+        scopes: ["documents:read"],
+      });
       expect(initiateResult.success).toBe(true);
 
       const storedFlow = JSON.parse(
@@ -2061,13 +2078,13 @@ describe("mcp-oauth", () => {
       expect(
         new URL(storedFlow.state.authorizationUrl).searchParams.get("resource")
       ).toBe(advertisedResource);
-      expect(
-        JSON.parse(
-          decodeURIComponent(
-            localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "%7B%7D"
-          )
-        ).resourceUrl
-      ).toBe(advertisedResource);
+      const storedConfig = JSON.parse(
+        decodeURIComponent(
+          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "%7B%7D"
+        )
+      );
+      expect(storedConfig.resourceUrl).toBe(advertisedResource);
+      expect(storedConfig.scopes).toEqual(["documents:read"]);
 
       // The callback half used to delete the flow session on purpose, to reach
       // the legacy direct exchange. That implementation is gone — the callback
@@ -2869,9 +2886,10 @@ describe("mcp-oauth", () => {
         "/api/web/oauth/recovery-headers",
         expect.objectContaining({
           body: JSON.stringify({
+            serverName: "asana",
+            serverUrl: "https://mcp.asana.com/v2/mcp",
             projectId: "proj_default",
             serverId: "srv_asana",
-            serverUrl: "https://mcp.asana.com/v2/mcp",
           }),
         })
       );
