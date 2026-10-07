@@ -28,6 +28,7 @@ let evalQuotaState:
       windowKind: "day" | "month";
     }
   | undefined;
+let allowanceState: { remaining: number; granted: number } | null = null;
 let billingStatusState:
   | {
       effectivePlan: "free" | "team" | "enterprise";
@@ -49,6 +50,10 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: false,
     isAtLimit: false,
   }),
+}));
+
+vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
+  useSwarmSponsorshipAllowance: () => allowanceState,
 }));
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
@@ -116,6 +121,7 @@ describe("SidebarCredits", () => {
     };
     isLoadingState = false;
     evalQuotaState = undefined;
+    allowanceState = null;
     billingStatusState = { effectivePlan: "free" };
   });
 
@@ -141,6 +147,23 @@ describe("SidebarCredits", () => {
       expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
     },
   );
+
+  it("shows the remaining sponsored swarm conversations when the user has an allowance", () => {
+    allowanceState = { remaining: 412, granted: 500 };
+    renderCredits();
+
+    const row = screen.getByTestId("sidebar-usage-swarm-sponsored");
+    expect(row).toHaveTextContent("Sponsored swarm conversations");
+    expect(row).toHaveTextContent("412 / 500 remaining");
+    expect(row).not.toHaveTextContent(/free|guarantee/i);
+  });
+
+  it("shows no sponsored row when sponsorship does not apply here", () => {
+    renderCredits();
+    expect(
+      screen.queryByTestId("sidebar-usage-swarm-sponsored"),
+    ).not.toBeInTheDocument();
+  });
 
   it("keeps the current plan visible in the collapsed hover trigger", () => {
     renderCredits();

@@ -2,6 +2,7 @@ import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import * as Sentry from "@sentry/react";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
 import { HOSTED_MODE } from "./config";
+import { desktopSentryFallback } from "./sentry-identity";
 import {
   isCredentialBearingPath,
   isErrorCaptureSurface,
@@ -48,9 +49,15 @@ export function resolveClientSentryConfig() {
  */
 export function initSentry() {
   const config = resolveClientSentryConfig();
+  const fallback = desktopSentryFallback();
   const processQueryEvent = createConvexQueryEventProcessor();
   Sentry.init({
     ...config,
+    initialScope: {
+      ...config.initialScope,
+      ...fallback,
+      tags: { ...config.initialScope.tags, ...fallback?.tags },
+    },
     beforeSend: (event, hint) => {
       const filtered = config.beforeSend(event);
       return filtered === null ? null : processQueryEvent(filtered, hint);

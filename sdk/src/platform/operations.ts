@@ -2002,7 +2002,17 @@ const startOpenAIReadinessInput = startReadinessInput.extend({
     ),
 });
 
+/**
+ * Muse's start: the server and the replay guard. No `includeLlmObservations`,
+ * because Muse has no observation catalogue and the platform refuses the
+ * opt-in — offering the field would invite a request that can only fail.
+ */
+const startMuseReadinessInput = serverScopedInput.extend({
+  idempotencyKey: startReadinessInput.shape.idempotencyKey,
+});
+
 export type StartClaudeReadinessInput = z.infer<typeof startReadinessInput>;
+export type StartMuseReadinessInput = z.infer<typeof startMuseReadinessInput>;
 export type StartOpenAIReadinessInput = z.infer<
   typeof startOpenAIReadinessInput
 >;
@@ -2110,6 +2120,50 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   },
 };
 
+export const startMuseReadinessRunOperation: PlatformOperation<
+  StartMuseReadinessInput,
+  StartReadinessResult
+> = {
+  name: "start_muse_readiness_run",
+  title: "Start a Muse directory readiness run",
+  description:
+    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
+  ),
+  inputSchema: startMuseReadinessInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const run = await client.startMuseReadinessRun(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      run,
+    };
+  },
+};
+
 export type GetReadinessRunResult = {
   project: SelectedProjectInfo;
   run: PlatformReadinessRun;
@@ -2150,9 +2204,9 @@ const listReadinessRunsInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   readinessKind: z
-    .enum(["claude", "openai"])
+    .enum(["claude", "openai", "muse"])
     .optional()
-    .describe("Narrow to one publisher. Omitted lists both, newest first."),
+    .describe("Narrow to one publisher. Omitted lists all, newest first."),
   server: z
     .string()
     .trim()
@@ -13282,6 +13336,14 @@ const launchGoalRunInput = z.object({
     .describe(
       "Fan out across these project environments instead of the goal's authored targets."
     ),
+  expectedSponsored: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of the organization's credits). If the actual split differs, the launch is refused with a 409 `swarm_funding_changed` and nothing is created. Omit it to accept whatever split applies."
+    ),
 });
 export type LaunchGoalRunInput = z.infer<typeof launchGoalRunInput>;
 
@@ -13321,6 +13383,9 @@ export const launchGoalRunOperation: PlatformOperation<
         ...(input.swarmRunId ? { swarmRunId: input.swarmRunId } : {}),
         ...(input.environmentIds?.length
           ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.expectedSponsored !== undefined
+          ? { expectedSponsored: input.expectedSponsored }
           : {}),
       },
       {
@@ -13918,6 +13983,14 @@ const launchJourneyRunInput = z.object({
     .describe(
       "Fan out across these project environments instead of the journey's authored targets."
     ),
+  expectedSponsored: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of the organization's credits). If the actual split differs, the launch is refused with a 409 `swarm_funding_changed` and nothing is created. Omit it to accept whatever split applies."
+    ),
 });
 export type LaunchJourneyRunInput = z.infer<typeof launchJourneyRunInput>;
 
@@ -13959,6 +14032,9 @@ export const launchJourneyRunOperation: PlatformOperation<
         ...(input.waveId ? { waveId: input.waveId } : {}),
         ...(input.environmentIds?.length
           ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.expectedSponsored !== undefined
+          ? { expectedSponsored: input.expectedSponsored }
           : {}),
       },
       {
@@ -19431,6 +19507,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,

@@ -52,6 +52,9 @@ import {
   type ReadinessPublisher,
 } from "./runner.js";
 import {
+  MUSE_READINESS_STAGES,
+  MUSE_STAGE_LANES,
+  isMuseReadinessResult,
   redactConformanceReportForSharing,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
@@ -90,22 +93,51 @@ export interface ExecuteHostedReadinessOptions {
   analyticsActor?: ServerAnalyticsActor;
 }
 
+function summarizeLanes(
+  result: DirectoryReadinessResult,
+): ReadinessFinalizeSummary["lanes"] {
+  return result.lanes.map((lane) => ({
+    lane: lane.lane,
+    status: lane.status,
+    evaluated: lane.coverage.evaluated,
+    notEvaluated: lane.coverage.notEvaluated,
+    notApplicable: lane.coverage.notApplicable,
+    missingInputs: lane.coverage.missingInputs,
+  }));
+}
+
 /** Project the SDK result onto the small summary the run row carries. */
 export function summarizeReadinessResult(
   result: DirectoryReadinessResult,
   sdkVersion?: string,
 ): ReadinessFinalizeSummary {
+  if (isMuseReadinessResult(result)) {
+    return {
+      overallStatus: result.status,
+      lanes: summarizeLanes(result),
+      // Muse reports its two rollups as fields rather than a stage list; the
+      // row stores them the way it stores OpenAI's, so one renderer reads both.
+      stages: MUSE_READINESS_STAGES.map((stage) => ({
+        stage,
+        status:
+          stage === "technical-preflight"
+            ? result.technicalStatus
+            : result.status,
+        lanes: [...MUSE_STAGE_LANES[stage]],
+      })),
+      // Muse grades without auth discovery, so there is no auth mode to
+      // report; `headless` is the honest one, as for a Claude run given none.
+      authMode: "headless",
+      capabilities: result.context.capabilities,
+      policySnapshotDate: result.policySnapshotDate,
+      engineVersion: result.engineVersion,
+      sdkVersion,
+    };
+  }
   const observations = result.llmObservations;
   return {
     overallStatus: result.status,
-    lanes: result.lanes.map((lane) => ({
-      lane: lane.lane,
-      status: lane.status,
-      evaluated: lane.coverage.evaluated,
-      notEvaluated: lane.coverage.notEvaluated,
-      notApplicable: lane.coverage.notApplicable,
-      missingInputs: lane.coverage.missingInputs,
-    })),
+    lanes: summarizeLanes(result),
     // Present only for a publisher that HAS staged rollups. Claude has one and
     // already reports it as `overallStatus`; sending an empty array would make
     // the row claim a stage inventory it does not have.
