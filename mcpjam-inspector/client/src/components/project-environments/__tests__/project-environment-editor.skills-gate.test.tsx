@@ -30,8 +30,8 @@ vi.mock("@/hooks/useSkillsEnabled", () => ({
 vi.mock("@/hooks/usePluginsEnabled", () => ({
   usePluginsEnabled: () => false,
 }));
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => false,
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => false,
 }));
 vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => undefined,

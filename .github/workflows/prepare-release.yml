@@ -16,6 +16,8 @@ name: Prepare release
 #
 # It also brings the local-harness runtime packs up to date, so nobody
 # publishes a pack by hand and `main` never sits unreleasable behind one.
+# Usually the work is already done: `local-harness-pack-prebuild.yml` builds a
+# moved pack in the background when the change lands, and this run adopts it.
 # `packs` runs `local-harness-pack-pipeline.yml` per harness: a harness whose
 # pack inputs did not move is "up to date" in a minute; one whose inputs moved
 # is built, signed, published (or found byte-identical and recorded as an
@@ -90,6 +92,12 @@ jobs:
       fail-fast: false
       matrix:
         harness: ${{ fromJSON(needs.harnesses.outputs.list) }}
+    # Shared with the background prebuild (local-harness-pack-prebuild.yml):
+    # one pipeline per harness at a time. A prebuild already running finishes
+    # first, and this run then adopts the pack it published.
+    concurrency:
+      group: local-harness-pack-${{ matrix.harness }}
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write

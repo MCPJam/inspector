@@ -1,8 +1,8 @@
 /**
  * ProjectEnvironmentEditor — the "Sandbox image" section.
  *
- * The load-bearing case is the OMISSION contract: when the `computers-enabled`
- * flag is off the picker never renders, so a save of an environment that
+ * The load-bearing case is the OMISSION contract: when the
+ * `sandbox-images-enabled` flag is off the picker never renders, so a save of an environment that
  * already carries a pin (set via API/CLI) must OMIT `computerEnvironmentId`
  * from the update payload entirely — sending `null` would silently clear it.
  * The rest covers the attach/clear wire shapes, create-mode inclusion, and the
@@ -26,12 +26,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockCreateEnvironment,
   mockUpdateEnvironment,
-  mockComputersEnabled,
+  mockSandboxImagesEnabled,
   mockSandboxImages,
 } = vi.hoisted(() => ({
   mockCreateEnvironment: vi.fn(),
   mockUpdateEnvironment: vi.fn(),
-  mockComputersEnabled: { value: true },
+  mockSandboxImagesEnabled: { value: true },
   mockSandboxImages: { value: [] as unknown[] | undefined },
 }));
 
@@ -43,8 +43,8 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 vi.mock("@/hooks/usePluginsEnabled", () => ({
   usePluginsEnabled: () => false,
 }));
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => mockComputersEnabled.value,
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => mockSandboxImagesEnabled.value,
 }));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => true,
@@ -131,7 +131,7 @@ function envRow(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockComputersEnabled.value = true;
+  mockSandboxImagesEnabled.value = true;
   mockSandboxImages.value = [IMAGE_READY, IMAGE_UNBUILT, IMAGE_DRAFT];
   mockCreateEnvironment.mockResolvedValue(envRow({ name: "created" }));
   mockUpdateEnvironment.mockResolvedValue(envRow({ revision: 4 }));
@@ -170,8 +170,8 @@ async function openOptions() {
 }
 
 describe("flag gating + the omission contract", () => {
-  it("hides the picker when computers-enabled is off", () => {
-    mockComputersEnabled.value = false;
+  it("hides the picker when sandbox-images-enabled is off", () => {
+    mockSandboxImagesEnabled.value = false;
     renderEditor(envRow());
     expect(
       screen.queryByTestId("project-environment-sandbox-image"),
@@ -179,7 +179,7 @@ describe("flag gating + the omission contract", () => {
   });
 
   it("flag-off save of a pinned env OMITS computerEnvironmentId (pin survives)", async () => {
-    mockComputersEnabled.value = false;
+    mockSandboxImagesEnabled.value = false;
     renderEditor(envRow({ computerEnvironmentId: "img-ready" }));
 
     // Name-only edit, then save.
@@ -220,7 +220,7 @@ describe("flag flips false AFTER an edit (review regression)", () => {
     // Admin clears the pin while the picker is visible…
     await pickImage("None (default image)");
     // …then PostHog re-evaluates the flag to false and the picker unmounts.
-    mockComputersEnabled.value = false;
+    mockSandboxImagesEnabled.value = false;
     rerender(
       <ProjectEnvironmentEditor
         projectId="proj-1"
@@ -254,7 +254,7 @@ describe("flag flips false AFTER an edit (review regression)", () => {
     fireEvent.click(screen.getByRole("button", { name: "pick-host" }));
     await pickImage("Node 20");
 
-    mockComputersEnabled.value = false;
+    mockSandboxImagesEnabled.value = false;
     rerender(
       <ProjectEnvironmentEditor
         projectId="proj-1"

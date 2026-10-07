@@ -370,6 +370,12 @@ export interface RunAssistantTurnResult {
    * the harness lease is never committed/released and the next turn 409s.
    */
   harnessSessionCommit?: HarnessSessionCommitPayload;
+  /**
+   * A harness turn whose wait for Claude Code background agents was ended by
+   * a Stop or the caller's deadline AFTER its answer was delivered. The turn
+   * finished; a caller that treats its abort as a timeout must not.
+   */
+  backgroundDrainEnded?: true;
 }
 
 function extractAssistantMessages(
@@ -770,6 +776,9 @@ export async function runAssistantTurn(
     // "none"; for "ui" it lands after the body drains, alongside the transcript).
     ...(capturedHarnessCommit
       ? { harnessSessionCommit: capturedHarnessCommit }
+      : {}),
+    ...(engineResult.backgroundDrainEnded
+      ? { backgroundDrainEnded: true as const }
       : {}),
   };
 
