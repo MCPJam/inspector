@@ -1,19 +1,15 @@
+import { useSelectedRun } from "./use-selected-run";
 import { useState, useMemo } from "react";
 import { GitBranch, GitCommit, Clock, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Badge } from "@mcpjam/design-system/badge";
 import type {
   CommitGroup,
-  EvalSuiteRun,
+  EvalSuiteRunListItem,
   EvalIteration,
   SuiteDetailsQueryResponse,
 } from "./types";
-import {
-  formatDuration,
-  formatRunId,
-  getRunMetricSource,
-  snapshotTestModels,
-} from "./helpers";
+import { formatDuration, formatRunId, getRunMetricSource } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { buildEvalsRunsPath, navigateApp } from "@/lib/app-navigation";
@@ -29,14 +25,14 @@ interface CommitDetailViewProps {
   route: EvalRoute;
 }
 
-function getRunDuration(run: EvalSuiteRun): number | null {
+function getRunDuration(run: EvalSuiteRunListItem): number | null {
   if (run.completedAt && run.createdAt) {
     return run.completedAt - run.createdAt;
   }
   return null;
 }
 
-function getTotalDuration(runs: EvalSuiteRun[]): number {
+function getTotalDuration(runs: EvalSuiteRunListItem[]): number {
   let total = 0;
   for (const run of runs) {
     const d = getRunDuration(run);
@@ -45,12 +41,11 @@ function getTotalDuration(runs: EvalSuiteRun[]): number {
   return total;
 }
 
-function getModelsUsed(runs: EvalSuiteRun[]): string[] {
+function getModelsUsed(runs: EvalSuiteRunListItem[]): string[] {
   const models = new Set<string>();
   for (const run of runs) {
-    for (const test of run.configSnapshot?.tests ?? []) {
-      for (const entry of snapshotTestModels(test)) models.add(entry.model);
-    }
+    if (run.effectiveModelId) models.add(run.effectiveModelId);
+    for (const model of run.metrics?.models ?? []) models.add(model.model);
   }
   return Array.from(models);
 }
@@ -195,7 +190,7 @@ export function CommitDetailView({
 // ========== Inline Run Detail for a Suite ==========
 
 function CommitSuiteRunDetail({
-  run,
+  run: summaryRun,
   suiteId,
   suiteName,
   selectedIterationId,
@@ -203,7 +198,7 @@ function CommitSuiteRunDetail({
   runDetailSortBy,
   onSortChange,
 }: {
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   suiteId: string;
   suiteName: string;
   selectedIterationId: string | null;
@@ -211,6 +206,8 @@ function CommitSuiteRunDetail({
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
 }) {
+  const selectedRun = useSelectedRun(suiteId, summaryRun._id);
+  const run = selectedRun.run;
   // Load iterations for this suite
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
@@ -223,7 +220,7 @@ function CommitSuiteRunDetail({
   );
 
   const { caseGroupsForSelectedRun } = useRunDetailData(
-    run._id,
+    summaryRun._id,
     allIterations,
     runDetailSortBy,
   );
@@ -238,6 +235,13 @@ function CommitSuiteRunDetail({
       </div>
     );
   }
+
+  if (!run)
+    return (
+      <p className="p-4">
+        {selectedRun.isLoading ? "Loading run…" : "Run unavailable"}
+      </p>
+    );
 
   const metricLabel = run.source === "sdk" ? "Pass Rate" : "Accuracy";
 

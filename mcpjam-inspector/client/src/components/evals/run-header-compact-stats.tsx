@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { formatDuration } from "./helpers";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRunListItem } from "./types";
 
 export type RunHeaderCompactStatsOverride = {
   passed: number;
@@ -23,7 +23,7 @@ function normalizePassRatePercent(passRate: number): number {
  * Returns null when there is no meaningful summary (matches compact-stats empty states).
  */
 export function getSidebarRunInsightsPassRateLabel(
-  run: EvalSuiteRun,
+  run: EvalSuiteRunListItem,
   statsOverride?: RunHeaderCompactStatsOverride,
 ): string | null {
   const summary = statsOverride ?? run.summary;
@@ -42,7 +42,7 @@ export function RunHeaderCompactStats({
   className,
   variant = "full",
 }: {
-  run: EvalSuiteRun;
+  run: EvalSuiteRunListItem;
   statsOverride?: RunHeaderCompactStatsOverride;
   className?: string;
   /**

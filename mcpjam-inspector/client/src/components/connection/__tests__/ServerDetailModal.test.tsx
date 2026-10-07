@@ -11,6 +11,9 @@ import userEvent from "@testing-library/user-event";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 
+const settingsFixture = vi.hoisted(() => ({ available: false, mounts: 0 }));
+vi.mock("../../host-workspace/use-server-settings", () => ({ useServerSettingsAvailability: (scope: unknown) => ({ available: !!scope && settingsFixture.available, failed: false, retry: vi.fn() }) }));
+vi.mock("../../host-workspace/ServerSettingsPanel", () => ({ ServerSettingsPanel: () => <div data-testid="settings-view">Shared settings view</div> }));
 const mockCapture = vi.fn();
 const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
 const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
@@ -165,6 +168,7 @@ describe("ServerDetailModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    settingsFixture.available = false;
     mockDbUserReady.value = true;
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReturnValue(undefined);
@@ -179,6 +183,21 @@ describe("ServerDetailModal", () => {
       tools: [],
       toolsMetadata: {},
     });
+  });
+
+  it("opens the shared settings inline and keeps it mounted while switching detail tabs", async () => {
+    settingsFixture.available = true;
+    const user = userEvent.setup();
+    render(<ServerDetailModal {...defaultProps} hostedServerId="server" extensionSettingsScope={{ projectId: "project", hostId: "host", threadId: "thread", pluginWorkspace: { version: 1, workspaceId: "workspace" } }} />);
+    expect(screen.queryByTestId("settings-view")).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    const panel = screen.getByTestId("settings-view");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(screen.getByTestId("settings-view")).toBe(panel);
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByTestId("settings-view")).toBe(panel);
+    expect(defaultProps.onSubmit).not.toHaveBeenCalled();
   });
 
   it("prevents browser translation from rewriting the portaled dialog", () => {

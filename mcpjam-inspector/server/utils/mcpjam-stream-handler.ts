@@ -352,6 +352,7 @@ import {
 } from "./model-request-payload";
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
+import { serviceCredentialHeaders } from "../services/service-credential.js";
 
 const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -1077,6 +1078,13 @@ export interface MCPJamHandlerOptions {
    * access + per-swarm host-funded caps. Absent ⇒ legacy member path.
    */
   executionScope?: ExecutionScope;
+  /**
+   * The actor is a NON-MEMBER participant of the scenario this `swarm` scope
+   * names (the runtime config's advisory `accessKind`). Copy only: a refusal
+   * they see never names the study's credits, budget, organization or
+   * environment (`participantSafeStudyError`). Members keep the detail.
+   */
+  scenarioParticipant?: boolean;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
@@ -1096,6 +1104,14 @@ export interface MCPJamHandlerOptions {
    * Absent ⇒ today's unpoliced bare-token path, byte-identical.
    */
   harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * HOST-EXECUTED harness delivery only (Codex): the same per-call executor an
+   * emulated Playground turn wraps its MCP tools with (OpenAI plugin forms on
+   * the composer card, owned model Apps). It runs innermost, after the tool
+   * policy gate and the harness's own approval, exactly where the emulated
+   * engine's wrapper sits. Absent ⇒ the projected tools are unchanged.
+   */
+  hostToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   /**
    * The eval ITERATION this harness turn is executing, when there is one.
    *
@@ -3690,10 +3706,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // Sponsored study inference must come through the trusted execution path
   // that resolves the study's model and tools. This proof is required even
   // when there is no client IP to forward. The viewer bearer remains intact.
-  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (scenarioId && scenarioServiceToken) {
-    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
-  }
+  if (scenarioId) Object.assign(convexHeaders, serviceCredentialHeaders());
   // A platform-billing claim rides the user's own sign-in: Convex authorizes
   // it on the bearer above, so a self-hosted install with no service token
   // sends it as is. When this deployment does have the token (hosted), it is
@@ -3701,10 +3714,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // it with an IP hash and other backend checks still read it.
   const billingFeature = extraBodyFields?.billingFeature;
   if (billingFeature !== undefined) {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-    if (serviceToken) {
-      convexHeaders["x-inspector-service-token"] = serviceToken;
-    }
+    Object.assign(convexHeaders, serviceCredentialHeaders());
   }
   // A claimed turn goes to the PLATFORM route and NEVER falls back to the
   // ordinary one. Falling back is the whole failure being fixed: the ordinary
@@ -4796,6 +4806,12 @@ export interface ChatEngineLoopResult {
   messageHistory: ModelMessage[];
   turnTrace?: PersistedTurnTrace;
   aborted: boolean;
+  /**
+   * Harness only: a Stop or the caller's deadline ended a Claude Code turn's
+   * wait for its background agents, after the answer was delivered. The turn
+   * finished and was kept; it was not cut short.
+   */
+  backgroundDrainEnded?: true;
 }
 
 /**
@@ -5647,6 +5663,20 @@ export async function runChatEngineLoop(
         } finally {
           await onFinishEngine(context.writer);
         }
+      },
+      // The engine's own catch writes a described error. Anything that
+      // escapes it would reach the chat as the SDK's bare "An error
+      // occurred.", which says nothing about what failed.
+      onError: (error) => {
+        logger.error(
+          "[mcpjam-stream-handler] Error escaped the chat stream",
+          error,
+        );
+        const detail =
+          error instanceof Error && error.message.trim()
+            ? ` (${error.message.trim().slice(0, 200)})`
+            : "";
+        return `MCPJam hit an unexpected error while writing this reply, so it stopped. Send your message again to retry.${detail}`;
       },
     });
     const response = createUIMessageStreamResponse({ stream });

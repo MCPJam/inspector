@@ -839,7 +839,6 @@ export function NewSwarmConfirmStep({
   iterationsByPersona,
   onIterationsChange,
   environmentCount,
-  environmentLabels,
   environmentIds,
   environmentRowsById,
   hostNameById,
@@ -861,12 +860,10 @@ export function NewSwarmConfirmStep({
   iterationsByPersona: Record<string, number>;
   onIterationsChange: (personaKey: string, value: number) => void;
   environmentCount: number;
-  /** Display names of the environments this launch will fan out across. */
-  environmentLabels: string[];
   /**
-   * The ids behind those labels, same order. The move notice compares ids —
-   * two environments can share a display name, which is half of why a reused
-   * goal ends up somewhere nobody chose.
+   * The environments this launch will fan out across. The move notice
+   * compares ids — two environments can share a display name, which is half
+   * of why a reused goal ends up somewhere nobody chose.
    */
   environmentIds: string[];
   /** Every environment this project can name, for the move notice. */
@@ -1247,24 +1244,6 @@ export function NewSwarmConfirmStep({
             {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
             total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
-          {/* Shown for ANY swarm that has a target, not just one with newly
-              authored goals. A reuse-only swarm used to name no environment at
-              all on this screen, while its launch quietly re-stamped every
-              reused goal onto the pre-filled selection. */}
-          {environmentLabels.length > 0 ? (
-            <p
-              className="text-sm leading-relaxed text-muted-foreground"
-              data-testid="new-swarm-confirm-clients"
-            >
-              {proposed.length > 0 ? "New goals run on" : "Runs on"}{" "}
-              <span className="font-medium text-foreground">
-                {environmentLabels.join(" · ")}
-              </span>
-              {environmentLabels.length === 1
-                ? " — pick more environments on Describe to compare clients."
-                : "."}
-            </p>
-          ) : null}
           {reusedMoves.length > 0 ? (
             <ul
               className="space-y-1 text-sm leading-relaxed text-muted-foreground"

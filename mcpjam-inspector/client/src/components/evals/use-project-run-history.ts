@@ -1,6 +1,10 @@
 import { useConvex } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "./types";
 import type { RunMetrics } from "./run-metrics";
 
 const ACTIVE_STATUSES = ["pending", "running", "grading"];
@@ -27,9 +31,12 @@ function rowCacheKey(row: {
   ]);
 }
 
-export interface ProjectRunHistoryDetail {
-  run: EvalSuiteRun;
+export interface ProjectRunHistoryDetail<
+  TRun extends EvalSuiteRunListItem = EvalSuiteRun,
+> {
+  run: TRun;
   iterations: EvalIteration[];
+  statusWhenRead?: string;
   /**
    * Set by the suite page, which reads per-run metrics instead of iterations
    * (`iterations` is then empty). `null` means the run's metrics are still
@@ -38,10 +45,13 @@ export interface ProjectRunHistoryDetail {
   metrics?: RunMetrics | null;
 }
 
-type ProjectHistoryEntry = { detail: ProjectRunHistoryDetail };
+type HistoryDetail = Omit<ProjectRunHistoryDetail, "run"> & {
+  run?: EvalSuiteRun;
+};
+type ProjectHistoryEntry = { detail: HistoryDetail };
 
 /** Read requested runs, with bounded concurrency and complete iteration pages. */
-export function useProjectRunHistory(
+export function useProjectRunHistory<TSnapshot extends boolean = true>(
   projectId: string,
   rows: readonly {
     _id: string;
@@ -51,8 +61,10 @@ export function useProjectRunHistory(
     summary?: unknown;
   }[],
   enabled: boolean,
+  options: { includeRunSnapshot?: TSnapshot } = {},
 ) {
   const convex = useConvex();
+  const includeRunSnapshot = options.includeRunSnapshot !== false;
   const [attempt, setAttempt] = useState(0);
   // Settled runs already read on an earlier page. Without it every added page
   // re-reads the whole history, because the effect below keys on all rows.
@@ -66,11 +78,11 @@ export function useProjectRunHistory(
       row.summary,
     ]),
   );
-  const identity = `${projectId}:${enabled}:${fingerprint}:${attempt}`;
+  const identity = `${projectId}:${enabled}:${includeRunSnapshot}:${fingerprint}:${attempt}`;
   const [state, setState] = useState<{
     identity: string;
     projectId: string;
-    details: Map<string, ProjectRunHistoryDetail>;
+    details: Map<string, HistoryDetail>;
     errors: Set<string>;
   }>({ identity: "", projectId: "", details: new Map(), errors: new Set() });
 
@@ -78,10 +90,11 @@ export function useProjectRunHistory(
     if (!enabled || rows.length === 0) return;
     let cancelled = false;
     let next = 0;
-    const details = new Map<string, ProjectRunHistoryDetail>();
+    const details = new Map<string, HistoryDetail>();
     const errors = new Set<string>();
     const pending = rows.filter((row) => {
-      const key = rowCacheKey(row);
+      const baseKey = rowCacheKey(row);
+      const key = baseKey ? `${includeRunSnapshot}:${baseKey}` : null;
       const cached = key ? settled.current.get(key) : undefined;
       if (!cached) return true;
       details.set(row._id, cached.detail);
@@ -92,10 +105,12 @@ export function useProjectRunHistory(
       while (!cancelled && next < pending.length) {
         const row = pending[next++];
         try {
-          const run = (await convex.query("testSuites:getTestSuiteRun" as any, {
-            runId: row._id,
-          })) as EvalSuiteRun | null;
-          if (!run) throw new Error("Run is unavailable");
+          const run = includeRunSnapshot
+            ? ((await convex.query("testSuites:getTestSuiteRun" as any, {
+                runId: row._id,
+              })) as EvalSuiteRun | null)
+            : undefined;
+          if (includeRunSnapshot && !run) throw new Error("Run is unavailable");
           const iterations = new Map<string, EvalIteration>();
           let cursor: string | null = null;
           let complete = false;
@@ -122,9 +137,14 @@ export function useProjectRunHistory(
           }
           // A partial population cannot supply totals or latency percentiles.
           if (!complete) throw new Error("Iteration history is incomplete");
-          const detail = { run, iterations: [...iterations.values()] };
+          const detail = {
+            run: run ?? undefined,
+            statusWhenRead: row.status,
+            iterations: [...iterations.values()],
+          };
           details.set(row._id, detail);
-          const key = rowCacheKey(row);
+          const baseKey = rowCacheKey(row);
+          const key = baseKey ? `${includeRunSnapshot}:${baseKey}` : null;
           if (key) settled.current.set(key, { detail });
         } catch {
           errors.add(row._id);
@@ -168,16 +188,19 @@ export function useProjectRunHistory(
   // this identity, and the filter below is O(details x rows).
   const details = useMemo(() => {
     if (!enabled || state.projectId !== projectId)
-      return new Map<string, ProjectRunHistoryDetail>();
+      return new Map<string, HistoryDetail>();
     const ids = new Set(rowIds ? rowIds.split(",") : []);
-    return new Map(
-      [...state.details].filter(([id]) => ids.has(id)),
-    );
+    return new Map([...state.details].filter(([id]) => ids.has(id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, projectId, state.projectId, state.details, rowIds]);
   const errors = current ? state.errors : new Set<string>();
   return {
-    details,
+    details: details as Map<
+      string,
+      TSnapshot extends false
+        ? Omit<ProjectRunHistoryDetail, "run">
+        : ProjectRunHistoryDetail
+    >,
     errorCount: errors.size,
     loading: enabled && rows.length > 0 && !current,
     retry: () => {

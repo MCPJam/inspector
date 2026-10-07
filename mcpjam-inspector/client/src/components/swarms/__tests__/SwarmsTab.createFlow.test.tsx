@@ -3083,9 +3083,7 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
     return screen.findByTestId("new-swarm-reused-personas");
   }
 
-  it("names the target for a swarm made only of reused personas", async () => {
-    // Confirm used to show the environment line ONLY when the swarm had newly
-    // authored goals, so a reuse-only swarm approved a target it never named.
+  it("flags no move when reused goals already run on the selection", async () => {
     await reuseAna([
       {
         _id: "j-1",
@@ -3095,9 +3093,6 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
       },
     ]);
 
-    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
-      "Runs on Prod-like",
-    );
     // Nothing moves — the stored fan-out already IS the seeded selection.
     expect(
       screen.queryByTestId("new-swarm-confirm-env-moves"),
@@ -3132,9 +3127,6 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
     // against — but there is no authored environment to move it off.
     await reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
 
-    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
-      "Runs on Prod-like",
-    );
     expect(
       screen.queryByTestId("new-swarm-confirm-env-moves"),
     ).not.toBeInTheDocument();
@@ -3294,9 +3286,6 @@ describe("SwarmsTab — Confirm discloses where reused goals run", () => {
       },
     ]);
 
-    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
-      "Runs on MCPJam #1",
-    );
     expect(
       await screen.findByTestId("new-swarm-confirm-env-moves"),
     ).toHaveTextContent("authored against MCPJam #2");
@@ -3358,25 +3347,6 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     openDescribe();
     pickExistingPersona(/include ana/i);
   }
-
-  it("names the client a reuse-only swarm will run on", async () => {
-    reuseAna([
-      {
-        _id: "j-1",
-        name: "Reconcile payouts",
-        goal: "Reconcile",
-        environmentIds: ["adhoc-host-1"],
-      },
-    ]);
-    fireEvent.click(screen.getByTestId("new-swarm-continue"));
-    await screen.findByTestId("new-swarm-reused-personas");
-
-    // The auto-seed picks the first client; the ad-hoc row minted for it has
-    // no name of its own and labels by that client.
-    expect(
-      await screen.findByTestId("new-swarm-confirm-clients"),
-    ).toHaveTextContent("Runs on Claude");
-  });
 
   it("says which reused goals are moving to a different client", async () => {
     reuseAna([
@@ -3449,8 +3419,5 @@ describe("SwarmsTab: Confirm with the environments flag off", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     await screen.findByTestId("new-swarm-reused-personas");
-    expect(
-      screen.queryByTestId("new-swarm-confirm-clients"),
-    ).not.toBeInTheDocument();
   });
 });

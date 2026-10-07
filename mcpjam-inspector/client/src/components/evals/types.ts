@@ -1570,7 +1570,7 @@ export type CommitGroup = {
    * and renders as "All runs passed".
    */
   status: "passed" | "failed" | "running" | "mixed" | "inconclusive";
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   suiteMap: Map<string, string>; // suiteId → suite name
   summary: {
     total: number;
@@ -1579,4 +1579,61 @@ export type CommitGroup = {
     running: number;
     inconclusive: number;
   };
+};
+
+/** A history row is deliberately not a full run: snapshots are fetched on selection. */
+export type EvalSuiteRunListItem = Pick<
+  EvalSuiteRun,
+  | "_id"
+  | "_creationTime"
+  | "suiteId"
+  | "createdBy"
+  | "projectId"
+  | "runNumber"
+  | "configRevision"
+  | "name"
+  | "tags"
+  | "runMetadata"
+  | "status"
+  | "result"
+  | "summary"
+  | "metrics"
+  | "passCriteria"
+  | "verdictPolicyVersion"
+  | "createdAt"
+  | "completedAt"
+  | "isActive"
+  | "stoppedAt"
+  | "stopReason"
+  | "expectedIterations"
+  | "runGroupId"
+  | "namedHostId"
+  | "client"
+  | "effectiveModelId"
+  | "targetKey"
+  | "modelSource"
+  | "source"
+  | "launcher"
+  | "attribution"
+  | "ciMetadata"
+  | "replayedFromRunId"
+  | "rerunOfRunId"
+  | "rerunScope"
+  | "hasServerReplayConfig"
+  | "framework"
+  | "externalRunId"
+  | "runInsightsStatus"
+  | "serverQualityStatus"
+  | "goalCompletionStatus"
+> & {
+  configSnapshot: Pick<
+    EvalSuiteRun["configSnapshot"],
+    "environmentRef" | "executionEngine" | "executionVenue"
+  >;
+  runInsightsJobId?: string | number;
+  runInsightsErrorCode?: string;
+  runInsights?: { summary: string; generatedAt: number };
+  judgeScore?: number | null;
+  judgeThreshold?: number;
+  judgeOffConfig?: boolean;
 };

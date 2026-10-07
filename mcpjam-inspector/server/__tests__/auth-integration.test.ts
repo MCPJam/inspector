@@ -233,6 +233,26 @@ describe("Auth Integration", () => {
       expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
     });
 
+    // This stack runs outside hosted mode, like a local or desktop run. A
+    // local run behind a TLS proxy is served on https://localhost, where HSTS
+    // would pin every localhost port to HTTPS, so a forwarded https scheme
+    // must not turn it on here. Hosted-mode HSTS is covered in
+    // security-headers.test.ts.
+    it("omits Strict-Transport-Security outside hosted mode even when x-forwarded-proto is https", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+          "x-forwarded-proto": "https",
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+    });
+
     it("sets X-Robots-Tag header", async () => {
       const res = await app.request("/api/mcp/resources/list", {
         method: "POST",

@@ -35,8 +35,12 @@ import {
   isComputersDataPlaneConfigured,
   markServiceTokenRejected,
 } from "./control-plane-client.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+} from "../../services/service-credential.js";
 
-export const INSPECTOR_SERVICE_TOKEN_HEADER = "x-inspector-service-token";
+export { INSPECTOR_SERVICE_TOKEN_HEADER };
 
 const FETCH_TIMEOUT_MS = 5_000;
 const RETRY_DELAYS_MS = [1_000, 3_000];
@@ -73,7 +77,7 @@ const runtimeConfigSchema = z.union([
 ]);
 
 export function getInspectorServiceToken(): string | null {
-  return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
+  return getServiceCredential();
 }
 
 /** The env keys bootstrap may fill. No data-plane secret here: the data plane

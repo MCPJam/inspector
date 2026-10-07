@@ -1,4 +1,27 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { PluginFormPreviewServices } from "./form-app-preview";
+import type { PluginFormPorts } from "../schema-form/PluginFormFields";
+import type { ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  useComposerFormRegistration,
+  useComposerFormStore,
+  useComposerSlot,
+} from "./composer-form-store";
+import { ComposerFormCard, type ComposerFormAction } from "./ComposerFormCard";
+import {
+  compileComposerForm,
+  logComposerFormDiagnostics,
+} from "./form-diagnostics";
+import type { PluginFormProfile } from "@/shared/plugin-extensions/form-plan";
+import { formResourcePreviewPorts } from "./form-resource-preview";
+import { useServerIconSources } from "../host-workspace/plugin-icon-directory";
 import { ElicitationDialog } from "../ElicitationDialog";
 import { UrlElicitationConsent } from "./UrlElicitationConsent";
 import {
@@ -9,7 +32,7 @@ import type { MrtrElicitationResponse } from "@/shared/mrtr-continuation";
 
 /** Stable empty answers reference so `answers` identity is steady across renders. */
 const EMPTY_ANSWERS: Record<string, MrtrElicitationResponse> = Object.freeze(
-  Object.create(null)
+  Object.create(null),
 );
 
 /* ------------------------------------------------------------------ *
@@ -62,7 +85,7 @@ function useIsPrimaryHostedMrtrHost(): boolean {
     () => primaryHostId() === id,
     // First paint, before the mount effect registers this id: assume primary so
     // a lone host is never hidden on its initial render.
-    () => true
+    () => true,
   );
 }
 
@@ -114,8 +137,20 @@ export function HostedMrtrHost() {
   const collection = useHostedMrtrStore((s) => s.collection);
   const setCollection = useHostedMrtrStore((s) => s.setCollection);
   const submit = useHostedMrtrStore((s) => s.submit);
+  // While any chat composer is mounted, an owned plugin round belongs to its
+  // own chat's composer card (and waits there while another chat is shown).
+  // Without a composer the existing modal rail keeps it answerable.
+  const composerMounted = useComposerFormStore((s) => s.slots.length > 0);
+  const composerRounds = useMemo(
+    () =>
+      composerMounted
+        ? rounds.filter((round) => isComposerPluginRound(round))
+        : [],
+    [composerMounted, rounds],
+  );
 
-  const activeRound: HostedMrtrRound | null = rounds[0] ?? null;
+  const activeRound: HostedMrtrRound | null =
+    rounds.find((round) => !composerRounds.includes(round)) ?? null;
 
   // A collection scoped to a different round is stale — a freshly active round
   // always starts at index 0 with no answers.
@@ -128,31 +163,36 @@ export function HostedMrtrHost() {
   const current = requests[index];
   const total = requests.length;
 
-  if (!isPrimary || !activeRound || !current) return null;
+  if (!isPrimary) return null;
+  const cards = composerRounds.map((round) => (
+    <ComposerMrtrRound key={round.key} round={round} />
+  ));
+  if (!activeRound || !current) return cards.length ? <>{cards}</> : null;
 
   const recordAnswer = async (
     key: string,
-    answer: MrtrElicitationResponse
+    answer: MrtrElicitationResponse,
   ): Promise<void> => {
     // Object.assign onto a fresh object: keys are server-chosen and untrusted.
     const next = Object.assign(
       Object.create(null) as Record<string, MrtrElicitationResponse>,
       answers,
-      { [key]: answer }
+      { [key]: answer },
     );
     if (index + 1 < total) {
       setCollection(activeRound.key, index + 1, next);
       return;
     }
     // Last key answered — submit the whole round together. A rejected submit
-    // KEEPS the round mounted so the user can retry; swallow here so the
-    // dialog's handler never rejects into an unhandled promise.
+    // KEEPS the round mounted so the user can retry. Owned plugin editors handle
+    // rejection themselves; ordinary dialogs keep their existing error path.
     try {
       await submit(activeRound.key, next);
     } catch (err) {
+      if (activeRound.pluginFormProfile) throw err;
       console.error(
         "[hosted-mrtr] Failed to submit round; dialog retained",
-        err
+        err,
       );
     }
   };
@@ -163,7 +203,7 @@ export function HostedMrtrHost() {
     : "";
 
   if (current.mode === "url") {
-    return (
+    const consent = (
       <UrlElicitationConsent
         // Remount per key so popup-blocked / copied state can't bleed across.
         key={`${activeRound.key}:${current.key}`}
@@ -185,9 +225,20 @@ export function HostedMrtrHost() {
         onResponse={(action) => recordAnswer(current.key, { action })}
       />
     );
+    return (
+      <>
+        {cards}
+        {consent}
+      </>
+    );
   }
 
-  return (
+  const renderForm = (services?: {
+    ports: PluginFormPorts;
+    presentation: ReactNode;
+    userResources?: boolean;
+    userResourceKinds?: ("file" | "directory")[];
+  }) => (
     <ElicitationDialog
       key={`${activeRound.key}:${current.key}`}
       elicitationRequest={{
@@ -204,12 +255,262 @@ export function HostedMrtrHost() {
           : {}),
       }}
       loading={responding}
+      pluginForm={
+        activeRound.pluginFormProfile
+          ? {
+              profile: {
+                ...activeRound.pluginFormProfile,
+                userResources: services?.userResources ?? false,
+                userResourceKinds: services?.userResourceKinds ?? [],
+                previews:
+                  activeRound.pluginFormProfile.previews &&
+                  !!activeRound.pluginFormServiceScope &&
+                  !!current.pluginFormSourceToken,
+              },
+              presentation: services?.presentation,
+              ports:
+                services?.ports ??
+                (activeRound.pluginFormServiceScope
+                  ? formResourcePreviewPorts(
+                      activeRound.pluginFormServiceScope,
+                      current.pluginFormSourceToken,
+                      {
+                        kind: "mrtr",
+                        id: activeRound.continuationId,
+                        round: activeRound.round,
+                        inputRequestKey: current.key,
+                      },
+                      activeRound.expiresAt,
+                      {
+                        serverId: activeRound.serverId,
+                        serverName: activeRound.serverName,
+                      },
+                    )
+                  : undefined),
+            }
+          : undefined
+      }
       onResponse={async (action, parameters) =>
         recordAnswer(current.key, {
           action,
           ...(action === "accept" && parameters ? { content: parameters } : {}),
         })
       }
+    />
+  );
+  const dialog =
+    activeRound.pluginFormServiceScope && current.pluginFormSourceToken ? (
+    <PluginFormPreviewServices
+      scope={activeRound.pluginFormServiceScope}
+      server={{
+        serverId: activeRound.serverId,
+        serverName: activeRound.serverName,
+      }}
+      sourceToken={current.pluginFormSourceToken}
+      parent={{
+        kind: "mrtr",
+        id: activeRound.continuationId,
+        round: activeRound.round,
+        inputRequestKey: current.key,
+      }}
+      expiresAt={activeRound.expiresAt}
+      schema={current.requestedSchema}
+      onCancel={() => recordAnswer(current.key, { action: "cancel" })}
+    >
+      {renderForm}
+    </PluginFormPreviewServices>
+  ) : (
+    renderForm()
+  );
+  return (
+    <>
+      {cards}
+      {dialog}
+    </>
+  );
+}
+
+/** Owned plugin rounds the composer can present: forms with a chat scope. */
+function isComposerPluginRound(round: HostedMrtrRound) {
+  return (
+    !!round.pluginFormProfile &&
+    !!round.pluginFormServiceScope &&
+    round.requests.length > 0 &&
+    round.requests.every((request) => request.mode === "form")
+  );
+}
+
+/**
+ * One owned plugin round in its chat's composer. Its keyed requests are
+ * collected one card at a time and submitted together; × answers `cancel` for
+ * the rest of the round.
+ */
+function ComposerMrtrRound({ round }: { round: HostedMrtrRound }) {
+  const scope = round.pluginFormServiceScope!;
+  const serverName = round.serverName?.trim() || round.serverId;
+  const [index, setIndex] = useState(0);
+  const [answers, setAnswers] = useState<
+    Record<string, MrtrElicitationResponse>
+  >(() => Object.create(null));
+  const queue = useComposerFormRegistration({
+    id: round.key,
+    workspaceId: scope.workspaceId,
+    serverName,
+    cancel: () => useHostedMrtrStore.getState().cancel(round.key),
+  });
+  const slot = useComposerSlot(scope.workspaceId);
+  const current = round.requests[Math.min(index, round.requests.length - 1)];
+  if (!queue.active || !slot || !current) return null;
+
+  const respond = async (
+    action: ComposerFormAction,
+    content?: Record<string, unknown>,
+  ) => {
+    const next = Object.assign(
+      Object.create(null) as Record<string, MrtrElicitationResponse>,
+      answers,
+    );
+    if (action === "cancel") {
+      for (const request of round.requests.slice(index))
+        next[request.key] = { action: "cancel" };
+    } else {
+      next[current.key] = {
+        action,
+        ...(action === "accept" && content ? { content } : {}),
+      };
+      if (index + 1 < round.requests.length) {
+        setAnswers(next);
+        setIndex(index + 1);
+        return;
+      }
+    }
+    // A rejected submit keeps the round (and the card) for a retry.
+    await useHostedMrtrStore.getState().submit(round.key, next);
+  };
+  const profile: PluginFormProfile = {
+    ...round.pluginFormProfile!,
+    previews:
+      round.pluginFormProfile!.previews && !!current.pluginFormSourceToken,
+  };
+  const parent = {
+    kind: "mrtr" as const,
+    id: round.continuationId,
+    round: round.round,
+    inputRequestKey: current.key,
+  };
+  const card = (services?: {
+    ports: PluginFormPorts;
+    presentation: ReactNode;
+    userResources?: boolean;
+    userResourceKinds?: ("file" | "directory")[];
+  }) => (
+    <MrtrComposerCard
+      key={`${round.key}:${current.key}`}
+      requestId={`${round.continuationId}:${current.key}`}
+      serverId={round.serverId}
+      serverName={serverName}
+      title={
+        current.message ||
+        (round.operationLabel
+          ? `This operation needs input for “${round.operationLabel}”.`
+          : "This operation needs input.")
+      }
+      schema={current.requestedSchema}
+      profile={{
+        ...profile,
+        userResources: services?.userResources ?? false,
+        userResourceKinds: services?.userResourceKinds ?? [],
+      }}
+      ports={
+        services?.ports ??
+        formResourcePreviewPorts(
+          scope,
+          current.pluginFormSourceToken,
+          parent,
+          round.expiresAt,
+          { serverId: round.serverId, serverName },
+        )
+      }
+      presentation={services?.presentation}
+      onRespond={respond}
+    />
+  );
+  return createPortal(
+    current.pluginFormSourceToken ? (
+      <PluginFormPreviewServices
+        key={`${round.key}:${current.key}`}
+        scope={scope}
+        server={{ serverId: round.serverId, serverName }}
+        sourceToken={current.pluginFormSourceToken}
+        parent={parent}
+        expiresAt={round.expiresAt}
+        schema={current.requestedSchema}
+        onCancel={() => respond("cancel")}
+      >
+        {card}
+      </PluginFormPreviewServices>
+    ) : (
+      card()
+    ),
+    slot,
+  );
+}
+
+function MrtrComposerCard({
+  requestId,
+  serverId,
+  serverName,
+  title,
+  schema,
+  profile,
+  ports,
+  presentation,
+  onRespond,
+}: {
+  requestId: string;
+  serverId: string;
+  serverName: string;
+  title: string;
+  schema: unknown;
+  profile: PluginFormProfile;
+  ports?: PluginFormPorts;
+  presentation?: ReactNode;
+  onRespond: (
+    action: ComposerFormAction,
+    content?: Record<string, unknown>,
+  ) => Promise<void>;
+}) {
+  const profileKey = JSON.stringify([
+    profile,
+    !!ports?.chooseResources,
+    !!ports?.preview,
+  ]);
+  const compiled = useMemo(
+    () =>
+      compileComposerForm(asSchemaObject(schema), {
+        ...profile,
+        userResources: profile.userResources && !!ports?.chooseResources,
+        previews: profile.previews && !!ports?.preview,
+      }),
+    // One keyed request is immutable; a different one remounts this card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [requestId, profileKey],
+  );
+  const icons = useServerIconSources(serverId);
+  useEffect(() => {
+    logComposerFormDiagnostics(compiled, { serverId, serverName });
+  }, [compiled, serverId, serverName]);
+  return (
+    <ComposerFormCard
+      requestId={requestId}
+      title={title}
+      serverName={serverName}
+      icons={icons}
+      plan={compiled.plan}
+      unsupported={compiled.unsupported}
+      ports={ports}
+      presentation={presentation}
+      onRespond={onRespond}
     />
   );
 }

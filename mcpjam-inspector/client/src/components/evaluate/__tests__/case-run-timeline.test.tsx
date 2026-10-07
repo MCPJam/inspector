@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { EvalIteration, EvalSuiteRun } from "@/components/evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "@/components/evals/types";
 import { CaseRunTimeline } from "../case-workspace/case-run-timeline";
 const iteration = (
   id: string,
@@ -237,7 +241,13 @@ describe("CaseRunTimeline", () => {
       <CaseRunTimeline
         caseTitle="Create a flowchart"
         iterations={[trial]}
-        suiteRuns={[{ _id: "suite-run", runNumber: 42 } as EvalSuiteRun]}
+        suiteRuns={[
+          {
+            _id: "suite-run",
+            runNumber: 42,
+            configSnapshot: {},
+          } as EvalSuiteRunListItem,
+        ]}
         selectedIterationId="trial"
         onSelect={vi.fn()}
         live

@@ -68,6 +68,7 @@ import {
   SLACK_LINK_STATE_TTL_MS,
   verifySlackLinkState,
 } from "./state.js";
+import { requireServiceCredentialRoute } from "../../middleware/require-service-credential.js";
 
 /** Slack's OIDC endpoints. Fixed — these are not per-workspace. */
 const SLACK_AUTHORIZE_URL = "https://slack.com/openid/connect/authorize";
@@ -347,6 +348,9 @@ async function fetchJsonWithDeadline<T>(
 // ── Routes ─────────────────────────────────────────────────────────────
 
 const slackLink = new Hono();
+// Every step below talks to the backend's service-token routes; a self-hosted
+// server (no credential) answers with the shared hosted-only response.
+slackLink.use("*", requireServiceCredentialRoute("Slack account linking"));
 
 /**
  * The bot asks for a connect URL. Authenticated with the bot's OWN `slk_`

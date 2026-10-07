@@ -1,3 +1,4 @@
+import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
 import { Hono } from "hono";
 import fixPath from "fix-path";
 import { cors } from "hono/cors";
@@ -6,6 +7,7 @@ import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
@@ -130,6 +132,7 @@ export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
+  if (!HOSTED_MODE) void startPluginFormFileJanitor();
   // One line, after the env is loaded: which grading-engine mode this process
   // could reach. An operator debugging "why are there no score rows" should
   // find the answer in the log, not in a flag dashboard.
@@ -177,6 +180,8 @@ export async function createHonoApp() {
   // `isComputersDataPlaneConfigured()`, which is only truthful once the
   // credential bootstrap has resolved — no requests before that.
   await initComputersStartup();
+  // Mirror of the call in server/index.ts: capability report + hosted check.
+  reportServiceCredentialAtBoot(HOSTED_MODE);
 
   const app = new Hono();
   // Computer terminal WebSocket support (Project Computers). Mirror of

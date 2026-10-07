@@ -22,6 +22,72 @@ describe("the layer digest helper", () => {
   });
 });
 
+describe("release critical path", () => {
+  it("publishes npm and the webapp without waiting for the desktop builds", () => {
+    // The desktop builds are mostly Apple's notary queue (10–25 min); they
+    // gate only the GitHub release. The local runtime contract still gates
+    // npm, which offers local execution too.
+    const { jobs } = workflow("release");
+    expect(jobs["artifact-gate"]).toBeUndefined();
+    const publish = jobs["publish-packages"];
+    expect(publish.needs).not.toContain("build-mac");
+    expect(publish.needs).not.toContain("build-windows");
+    expect(publish.needs).toContain("local-harness-contract");
+    const gate = String(publish.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.preflight.outputs.publish_inspector != 'true' || needs.local-harness-contract.result == 'success' )",
+    );
+    expect(gate).not.toContain("build-mac");
+  });
+
+  it("creates the immutable GitHub release only once every desktop asset exists, desktop-only included", () => {
+    const { jobs } = workflow("release");
+    const finalize = jobs.finalize;
+    expect(finalize.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    const gate = String(finalize.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.publish-packages.result == 'success' || needs.preflight.outputs.desktop_only == 'true' )",
+    );
+    expect(gate).toContain(
+      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' ) )",
+    );
+    // The plan comes from the tested script, and desktop-only is an output.
+    const preflight = jobs.preflight;
+    expect(preflight.outputs.desktop_only).toBe("${{ steps.plan.outputs.desktop_only }}");
+    const plan = preflight.steps.find((step: any) => step.id === "plan");
+    expect(plan.run).toContain("node .github/scripts/release-plan.mjs");
+    // A desktop-only run still proves the local runtime its desktop app offers.
+    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract"]) {
+      expect(String(jobs[job].if), job).toContain("build_inspector_artifacts");
+      expect(String(jobs[job].if), job).not.toContain("publish_inspector");
+    }
+  });
+
+  it("points production's hosted computers at the released commit's template only after the webapp deploys", () => {
+    const { jobs } = workflow("release");
+    const job = jobs["roll-out-hosted-template"];
+    expect(job.needs).toEqual(expect.arrayContaining(["preflight", "deploy-webapp"]));
+    expect(String(job.if)).toContain("needs.deploy-webapp.result == 'success'");
+    const script = job.steps.map((step: any) => step.with?.script ?? "").join("\n");
+    expect(script).toContain('event_type: "inspector_release_shipped"');
+    expect(script).toContain("sha: context.sha");
+    // And main's bake inputs reach the backend's staging build.
+    const notify = workflow("hosted-bake-notify");
+    expect(notify.on.push.branches).toEqual(["main"]);
+    expect(notify.on.push.paths).toContain("mcpjam-inspector/harness-bake.lock.json");
+    expect(JSON.stringify(notify.jobs)).toContain("inspector_bake_moved");
+  });
+
+  it("runs every Ubuntu release job on RELEASE_RUNNER when it is set", () => {
+    const { jobs } = workflow("release");
+    const ubuntu = Object.entries(jobs).filter(([, job]: [string, any]) => typeof job["runs-on"] === "string");
+    expect(ubuntu.length).toBeGreaterThan(0);
+    for (const [name, job] of ubuntu as Array<[string, any]>) {
+      expect(job["runs-on"], name).toBe("${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}");
+    }
+  });
+});
+
 describe("packs are part of starting a release", () => {
   it("brings every harness's pack up to date before the version PR opens", () => {
     const { jobs } = workflow("prepare-release");
@@ -222,9 +288,10 @@ describe("pack release boundaries", () => {
     expect(runs).toMatch(/check-local-harness-release\.mjs[\s\S]*--evidence[\s\S]*--contract/);
     expect(contract.steps.some((step: any) => String(step.uses).startsWith("actions/attest-build-provenance"))).toBe(true);
     expect(contract.permissions).toMatchObject({ "id-token": "write", attestations: "write" });
-    // No contract, no release: the artifact gate requires it, and the
-    // published release carries it.
-    expect(jobs["artifact-gate"].needs).toContain("local-harness-contract");
+    // No contract, no release: publishing requires it, and the published
+    // release carries it.
+    expect(jobs["publish-packages"].needs).toContain("local-harness-contract");
+    expect(jobs["publish-packages"].if).toMatch(/needs\.local-harness-contract\.result == 'success'/);
     const finalizeFiles = jobs.finalize.steps
       .filter((step: any) => step.with?.files)
       .map((step: any) => step.with.files)

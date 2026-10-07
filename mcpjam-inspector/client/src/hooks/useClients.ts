@@ -198,6 +198,11 @@ export function useHostMutations() {
     // Set here rather than with a follow-up setScenarioMode so a scenario is
     // never briefly readable by the wrong audience. Ignored for journeys hosts.
     scenarioMode?: ScenarioMode;
+    // The secrets the private environment behind a `'user_testing'` client
+    // grants (`externalCredentialSecretSelection` builds this for Cursor). The
+    // backend refuses it for any other owner: there is no environment to
+    // attach it to.
+    secretSelection?: { mode: "explicit"; secretIds: string[] };
   }) => Promise<{
     hostId: string;
     hostConfigId: string;

@@ -1,3 +1,4 @@
+import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
 import { writeInspectorRuntime } from "./services/inspector-runtime.js";
 import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
@@ -12,6 +13,7 @@ import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
@@ -328,6 +330,7 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
+if (!HOSTED_MODE) void startPluginFormFileJanitor();
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();
@@ -369,6 +372,10 @@ if (!HOSTED_MODE) {
 // `isComputersDataPlaneConfigured()`, which is only truthful once the
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
+// Which credential-backed capabilities this process has (names only), and the
+// hosted-mode refusal to run half-configured. Mirror of the call in
+// server/app.ts::createHonoApp.
+reportServiceCredentialAtBoot(HOSTED_MODE);
 const app = new Hono().onError((err, c) => {
   // Last-resort handler: an exception escaped every route and every router's
   // own `onError`. Declared `mcpjam_internal` — if our routers could not name

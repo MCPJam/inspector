@@ -21,8 +21,8 @@
  * the bake (`harness-bake-observer.ts`).
  *
  * WHAT A MISS MEANS. A box whose working directory is not `/home/user`, a
- * harness the template does not bake (Cursor), a custom environment image and
- * a template built from an older bake all miss the marker, and the framework
+ * custom environment image and a template built from an older bake all miss
+ * the marker, and the framework
  * falls back to installing — the turn still works, it is just slow. The
  * phase-timing log line says which of those it was (see
  * `harnessBootstrapLogFields`), so intentional fallback can be told apart
@@ -58,13 +58,15 @@ export const HARNESS_BAKE_MANIFEST_PATH = `${HARNESS_BAKE_HOME}/.harness-bootstr
 
 /**
  * Bootstrap directories (relative to the working directory) the template
- * bakes: the PATCHED Claude Code recipe and the Codex app-server recipe.
- * Cursor is not baked (its bootstrap installs whatever `cursor.com/install`
- * serves) and always installs.
+ * bakes: the PATCHED Claude Code recipe, the Codex app-server recipe and the
+ * Cursor recipe. Cursor became bakeable when its CLI install was PINNED to a
+ * checksummed build (`cursor-bootstrap.ts`); before that its bootstrap fetched
+ * whatever `cursor.com/install` served and could only ever install at turn time.
  */
 export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
   ".harness-bootstrap/claude-code",
   ".harness-bootstrap/codex-appserver",
+  ".harness-bootstrap/cursor",
 ];
 
 /**
@@ -100,9 +102,21 @@ export const HARNESS_TEMPLATE_PNPM_VERSION = "12.8.1";
  * without pnpm — a custom environment image, an old template — got whatever
  * pnpm was current, which is how pnpm 11 reached hosted turns. The baked
  * template already has this exact version, so on it this is `command -v` only.
+ *
+ * ROOT-OWNED PREFIX. An image that installs Node from the distro — the desktop
+ * template among them — leaves npm's global prefix to root while the box runs
+ * as `user`, so a plain global install is refused (npm exits 243) and the
+ * harness never starts. So the fallback tries the install with the user's own
+ * rights FIRST and reaches for `sudo -n` only when that fails. Trying beats
+ * predicting: a writable prefix whose `lib/node_modules` does not exist yet
+ * reads as unwritable to `[ -w ]`, yet npm creates it fine — and an image
+ * without passwordless sudo must keep installing there as it always has.
+ * `-n` never prompts: a box that needs sudo and lacks it fails with the
+ * install's own error instead of hanging the turn.
  */
 export function harnessPnpmGuardCommand(): string {
-  return `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`;
+  const install = `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`;
+  return `command -v pnpm || ${install} || sudo -n ${install}`;
 }
 
 /** The recipe shape the framework hashes (`HarnessV1Bootstrap`). */
