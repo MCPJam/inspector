@@ -44,14 +44,20 @@ export type PluginInstanceAdmissionRead = <T>(
 export interface PluginInstanceFence {
   readonly read: PluginInstanceAdmissionRead;
 }
-type FenceState = { reads: number; reading: boolean };
+/** One authorization's fenced reads. A resolution reads once before its
+ * catalog, and again after it only when it authorized or opened its
+ * connection cold, so an authorization makes one or two. `controlRead`: the
+ * durable control was read for this request just before the first read
+ * (`readFenced`), which then stands on it for its control leg. */
+type FenceState = { reads: number; reading: boolean; controlRead: boolean };
 const fences = new WeakMap<
   PluginInstanceFence,
   { token: string; identity: string; state: FenceState; used: boolean }
 >();
 export interface PluginInstanceInvocationPorts extends PluginInvocationPorts {
-  /** The runtime places these fences before target authorization and after its
-   * catalog wait. Other adapters retain the ordinary serial ownership checks. */
+  /** The runtime places a fence before target authorization, and another
+   * after its catalog wait when that wait authorized or opened the connection
+   * cold. Other adapters retain the ordinary serial ownership checks. */
   authorizeInstance?: (
     ...args: [
       ...Parameters<PluginInvocationPorts["authorize"]>,
@@ -704,28 +710,35 @@ export class PluginInstanceRegistry {
     return record.instance;
   }
 
-  /** One authorization's two reads, each the instance's durable control and
-   * the caller's admission query side by side. Both legs are observed,
-   * including late failure of either; neither permits the next step alone. */
+  /** One authorization's reads (one or two), each the instance's durable
+   * control and the caller's admission query side by side. Both legs are
+   * observed, including late failure of either; neither permits the next
+   * step alone. */
   private fencedReads(
     token: string,
     identity: PluginInstanceIdentity,
     requestSignal: AbortSignal,
+    controlRead = false,
   ) {
-    const state: FenceState = { reads: 0, reading: false };
+    const state: FenceState = { reads: 0, reading: false, controlRead };
     const read: PluginInstanceAdmissionRead = async (query) => {
       requestSignal.throwIfAborted();
       this.get(token, identity);
       if (state.reading || state.reads >= 2)
         throw new PluginInvocationError("INSTANCE_AUTHORIZATION_INVALID");
       state.reading = true;
+      // Only the first read may stand on the request's own control read.
+      const standOnControlRead = state.controlRead;
+      state.controlRead = false;
       try {
-        const [control, admission] = await Promise.allSettled([
-          this.getPersistent(token, identity, requestSignal),
+        const [durable, admission] = await Promise.allSettled([
+          standOnControlRead
+            ? Promise.resolve()
+            : this.getPersistent(token, identity, requestSignal),
           Promise.resolve().then(query),
         ]);
         requestSignal.throwIfAborted();
-        if (control.status === "rejected") throw control.reason;
+        if (durable.status === "rejected") throw durable.reason;
         if (admission.status === "rejected") throw admission.reason;
         this.get(token, identity);
         state.reads++;
@@ -743,16 +756,50 @@ export class PluginInstanceRegistry {
    * the call's origin and arguments). They are exactly the reads an invoker
    * authorization makes. Pass the fence to `invoke`: the invoker's first
    * authorization may then reuse that resolution instead of repeating the same
-   * two reads with nothing in between, but only when it completed both reads
-   * and no other authorization has used it.
+   * reads with nothing in between, but only when it completed its reads and
+   * no other authorization has used it.
    */
   fence(
     token: string,
     identity: PluginInstanceIdentity,
     signal: AbortSignal,
   ): PluginInstanceFence {
+    return this.createFence(token, identity, signal, false);
+  }
+
+  /**
+   * The request's durable control read and the fence for its first
+   * resolution, in one step. The route needs the control first (it names the
+   * host and server the resolution reads), and that resolution's first read
+   * is the next thing it awaits, so the fence's first read stands on this
+   * control read for its durable leg and adds only the admission query.
+   * Every later fenced read in the request makes both legs.
+   */
+  async readFenced(
+    token: string,
+    identity: PluginInstanceIdentity,
+    signal: AbortSignal,
+  ) {
+    const instance = await this.getPersistent(token, identity, signal);
+    return {
+      instance,
+      fence: this.createFence(token, identity, signal, true),
+    };
+  }
+
+  private createFence(
+    token: string,
+    identity: PluginInstanceIdentity,
+    signal: AbortSignal,
+    controlRead: boolean,
+  ): PluginInstanceFence {
     this.get(token, identity);
-    const { read, state } = this.fencedReads(token, identity, signal);
+    const { read, state } = this.fencedReads(
+      token,
+      identity,
+      signal,
+      controlRead,
+    );
     const fence: PluginInstanceFence = Object.freeze({ read });
     fences.set(fence, {
       token,
@@ -802,12 +849,12 @@ export class PluginInstanceRegistry {
         authorize: async (owner, callOrigin, next, requestSignal) => {
           if (ports.authorizeInstance) {
             // Only the first authorization may stand on the route's fence,
-            // and only when that fence made both of its reads.
+            // and only when that fence completed its reads.
             const prior =
               first &&
               !first.used &&
               !first.state.reading &&
-              first.state.reads === 2
+              first.state.reads >= 1
                 ? first
                 : undefined;
             first = undefined;
@@ -825,8 +872,10 @@ export class PluginInstanceRegistry {
             );
             if (state.reading)
               throw new PluginInvocationError("INSTANCE_AUTHORIZATION_INVALID");
-            if (state.reads !== 2) {
-              if (state.reads !== 0 || !prior || prior.used)
+            // Every authorization reads the durable control beside admission
+            // at least once, or stands on the route's first resolution.
+            if (state.reads === 0) {
+              if (!prior || prior.used)
                 throw new PluginInvocationError(
                   "INSTANCE_AUTHORIZATION_INVALID",
                 );

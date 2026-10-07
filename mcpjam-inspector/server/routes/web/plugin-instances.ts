@@ -97,16 +97,10 @@ import {
 import {
   admitPluginWorkspace,
   assertPluginWorkspaceRuntime,
-  pluginResolverIncludesAdmission,
   readPluginExecutionContext,
-  registerPluginAdmissionResolver,
   resolvePluginCleanupActor,
   PluginWorkspaceAdmissionError,
 } from "../../services/plugin-host/admission.js";
-import {
-  createAppCallYield,
-  runAppCall,
-} from "../../services/plugin-host/app-call-priority.js";
 import { pluginInstances } from "../../services/plugin-host/instances.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
 import {
@@ -1302,7 +1296,10 @@ async function invoke(
   origin: "entrypoint" | "app" | "quick-action",
 ) {
   const { admission, bearer, actor } = await admitted(c, body);
-  const instance = await pluginInstances.getPersistent(
+  // The instance's durable control, read once for this phase: the fence's
+  // first read (the route's first resolution, below) stands on it for its
+  // control leg and adds only the admission and host read.
+  const { instance, fence } = await pluginInstances.readFenced(
     body.instanceToken,
     actor,
     c.req.raw.signal,
@@ -1356,33 +1353,15 @@ async function invoke(
           return resolved;
         }
       : runtime.resolve;
-  // The host's activation call waits while the App's own calls run (see
-  // app-call-priority.ts); it still resolves everything itself afterwards.
-  const yieldToApp =
-    origin === "app" ? undefined : createAppCallYield(body.instanceToken);
-  let resolve = resolveActivation;
-  if (yieldToApp) {
-    resolve = async (name, signal, read) => {
-      await yieldToApp(signal);
-      return resolveActivation(name, signal, read);
-    };
-    if (pluginResolverIncludesAdmission(resolveActivation))
-      registerPluginAdmissionResolver(resolve);
-  }
-  // The first resolution makes the instance's fenced reads (durable control
+  // The first resolution makes the instance's fenced read (durable control
   // beside admission), so the invoker's first authorization can reuse it.
-  const fence = pluginInstances.fence(
-    body.instanceToken,
-    actor,
-    c.req.raw.signal,
-  );
   // Await the complete dispatch/delivery before releasing its request-owned manager.
   return await invokePluginRequest(c, {
     actor,
     owner: instance.owner,
     admission,
     runtime,
-    resolve,
+    resolve: resolveActivation,
     origin,
     invocationId,
     params,
@@ -1502,10 +1481,7 @@ instances.post("/activation/execute", (c) =>
   ),
 );
 instances.post("/call", (c) =>
-  route(c, async () => {
-    const body = callSchema.parse(await c.req.json());
-    return runAppCall(body.instanceToken, () => invoke(c, body, "app"));
-  }),
+  route(c, async () => invoke(c, callSchema.parse(await c.req.json()), "app")),
 );
 /** Resolve a plugin link clicked or pasted in chat to the installed plugin
  * (or plain server) it names, among this chat's servers. The client then

@@ -35,9 +35,18 @@ const f = vi.hoisted(() => ({
   anchors: new Map<string, string>(),
   /** Every backend and MCP boundary crossed, in the order it started. */
   log: [] as string[],
+  /** The backend calls that started while no other backend call was in
+   * flight: the request's one-after-another round trips. */
+  serial: [] as string[],
+  flight: 0,
   latency: undefined as Record<string, number> | undefined,
   /** The deployment predates the Inspector-service functions. */
   fastMissing: false,
+  /** The deployment predates the combined claim and dispatch. */
+  combinedMissing: false,
+  /** Holds every completion record until released (it must never gate the
+   * answer). */
+  holdCompleted: undefined as Promise<void> | undefined,
   fastRequests: [] as { headers: Headers; args: Record<string, unknown> }[],
 }));
 const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -46,6 +55,22 @@ const latency = (name: keyof typeof LATENCY) =>
 const count = (name: string) => {
   f.counts[name] = (f.counts[name] ?? 0) + 1;
 };
+/** One backend round trip: logged when it starts, overlapping or not. */
+async function trip<T>(
+  entry: string,
+  name: keyof typeof LATENCY,
+  answer: () => T,
+) {
+  f.log.push(entry);
+  if (f.flight === 0) f.serial.push(entry);
+  f.flight++;
+  try {
+    await latency(name);
+    return answer();
+  } finally {
+    f.flight--;
+  }
+}
 const hostConfig = {
   hostId: "host",
   modelId: "model",
@@ -60,7 +85,7 @@ const tool = {
   inputSchema: { type: "object", properties: {} },
   _meta: {
     ui: { resourceUri: "ui://fixture/app" },
-    "openai/ui": { entrypoints: [{ type: "thread" }] },
+    "openai/ui": { entrypoints: [{ type: "thread" }, { type: "global" }] },
   },
 };
 /** A tool the App itself calls once it loads (Bits & Bolts: cad.listParts). */
@@ -72,16 +97,16 @@ vi.mock("../../../services/evals/route-helpers.js", () => ({
   createConvexClient: () => ({
     query: async (_ref: unknown, args: Record<string, unknown>) => {
       count("convex-admission-read");
-      f.log.push("admission");
-      await latency("convex");
-      return {
+      return trip("admission", "convex", () => ({
+        // users:getCurrentUser (cleanup identity) reads `_id`.
+        _id: "actor",
         actorId: "actor",
         projectId: "project",
         ...(args.hostId ? { hostConfig } : {}),
         serverBindings: ((args.serverIds as string[]) ?? []).map(
           (serverId) => ({ kind: "standalone", serverId }),
         ),
-      };
+      }));
     },
   }),
 }));
@@ -175,7 +200,13 @@ vi.mock("../../../utils/analytics.js", () => ({
 
 const CONVEX_CLOUD = "https://fixture.convex.cloud";
 const storeLabel = (kind: string, body: Record<string, unknown>) =>
-  `${kind}.${body.action}${body.state ? `:${body.state}` : ""}`;
+  `${kind}.${body.action}${body.dispatch ? "+dispatch" : ""}${
+    body.state ? `:${body.state}` : ""
+  }`;
+/** An older store refuses the combined claim's unknown field before its
+ * handler runs, with the route's default refusal. */
+const refusesCombined = (kind: string, command: Record<string, unknown>) =>
+  f.combinedMissing && kind === "receipt" && command.dispatch === true;
 /** The same store behind the backend's Inspector-service query and mutation,
  * in Convex's wire format (as the Convex client sends and reads it). */
 async function convexApi(url: string, init: RequestInit) {
@@ -200,23 +231,43 @@ async function convexApi(url: string, init: RequestInit) {
     ? "receipt"
     : "control";
   count(`${kind}-fast:${command.action}`);
-  f.log.push(storeLabel(kind, command));
-  await latency(url.endsWith("/api/query") ? "storeQuery" : "storeMutation");
-  return reply({
-    status: "success",
-    value: answer(kind, command),
-    logLines: [],
-  });
+  if (command.state === "completed") await f.holdCompleted;
+  const refused = refusesCombined(kind, command);
+  return trip(
+    `${storeLabel(kind, command)}${refused ? ":refused" : ""}`,
+    url.endsWith("/api/query") ? "storeQuery" : "storeMutation",
+    () =>
+      refused
+        ? reply({
+            status: "error",
+            errorMessage: "Server Error",
+            errorData: { code: "INVALID_RECEIPT_REQUEST" },
+          })
+        : reply({
+            status: "success",
+            value: answer(kind, command),
+            logLines: [],
+          }),
+  );
 }
 
-/** Minimal durable control and receipt service. */
+/** Minimal durable control and receipt service (the HTTP actions). */
 async function service(url: string, init: RequestInit) {
   const body = JSON.parse(String(init.body));
   const kind = url.includes("plugin-invocations") ? "receipt" : "control";
   count(`${kind}-store:${body.action}`);
-  f.log.push(storeLabel(kind, body));
-  await latency("store");
-  return new Response(JSON.stringify(answer(kind, body)), { status: 200 });
+  if (body.state === "completed") await f.holdCompleted;
+  const refused = refusesCombined(kind, body);
+  return trip(
+    `${storeLabel(kind, body)}${refused ? ":refused" : ""}`,
+    "store",
+    () =>
+      refused
+        ? new Response(JSON.stringify({ code: "INVALID_RECEIPT_REQUEST" }), {
+            status: 409,
+          })
+        : new Response(JSON.stringify(answer(kind, body)), { status: 200 }),
+  );
 }
 function answer(kind: string, body: Record<string, any>): unknown {
   const json = (value: unknown) => value;
@@ -228,7 +279,13 @@ function answer(kind: string, body: Record<string, any>): unknown {
           fingerprint: body.fingerprint,
           revision: body.revision,
           expiresAt: Date.now() + 60_000,
-          legs: [],
+          legs: [
+            {
+              round: 0,
+              fingerprint: body.legFingerprint,
+              state: body.dispatch ? "dispatched" : "reserved",
+            },
+          ],
         },
       });
     if (body.action === "read") return json({ receipt: null });
@@ -255,6 +312,10 @@ function answer(kind: string, body: Record<string, any>): unknown {
   if (body.action === "read") {
     const token = [...f.controls.keys()][0];
     return json({ control: f.controls.get(token) ?? null });
+  }
+  if (body.action === "close") {
+    f.controls.clear();
+    return json({ closed: true });
   }
   return json({});
 }
@@ -340,53 +401,6 @@ describe("cold App activation cost", () => {
     expect(execute.counts["mcp-tool-call"]).toBe(1);
     expect(open.serverTiming).toContain("tools-list;dur=");
   });
-
-  it("runs the App's first call ahead of the entrypoint call it races", async () => {
-    // Opening an App draws it and runs its entrypoint at once; the App's own
-    // first call (with a 15 s deadline in the App) must not share every
-    // round trip with that entrypoint call.
-    f.controls.clear();
-    f.anchors.clear();
-    f.toolCalls = [];
-    const { default: routes } = await import("../plugin-instances");
-    const app = new Hono().route("/instances", routes);
-    const post = (path: string, data: unknown) =>
-      app.request(`/instances/${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: "Bearer fixture",
-        },
-        body: JSON.stringify(data),
-      });
-    const scope = {
-      projectId: "project",
-      pluginWorkspace: { version: 1, workspaceId: "workspace" },
-    };
-    const open = await post("activation/open", {
-      ...scope,
-      hostId: "host",
-      serverId: "server",
-      toolName: tool.name,
-      threadId: "thread-race",
-      kind: "thread",
-    });
-    expect(open.status).toBe(200);
-    const { instanceToken } = (await open.json()) as { instanceToken: string };
-    const execute = post("activation/execute", { ...scope, instanceToken });
-    // The entrypoint call is already under way when the App asks.
-    await wait(LATENCY.convex + LATENCY.store);
-    const call = post("call", {
-      ...scope,
-      instanceToken,
-      invocationId: crypto.randomUUID(),
-      params: { name: appTool.name, arguments: {} },
-    });
-    const [executed, called] = await Promise.all([execute, call]);
-    expect(called.status).toBe(200);
-    expect(executed.status).toBe(200);
-    expect(f.toolCalls).toEqual([appTool.name, tool.name]);
-  });
 });
 
 describe("App call backend trips", () => {
@@ -407,7 +421,10 @@ describe("App call backend trips", () => {
         body: JSON.stringify(data),
       });
   };
-  const open = async (threadId: string) => {
+  const open = async (
+    threadId: string,
+    kind: "thread" | "global" = "thread",
+  ) => {
     f.controls.clear();
     f.anchors.clear();
     const opened = await post("activation/open", {
@@ -416,7 +433,7 @@ describe("App call backend trips", () => {
       serverId: "server",
       toolName: tool.name,
       threadId,
-      kind: "thread",
+      kind,
     });
     expect(opened.status).toBe(200);
     return ((await opened.json()) as { instanceToken: string }).instanceToken;
@@ -432,65 +449,93 @@ describe("App call backend trips", () => {
     post("activation/execute", { ...scope, instanceToken });
   const reset = () => {
     f.log = [];
+    f.serial = [];
     f.counts = {};
     f.fastRequests = [];
+    f.toolCalls = [];
   };
+  /** The completion record is written after the answer; wait for it. */
+  const settled = () =>
+    vi.waitFor(() => expect(f.log).toContain("receipt.write:completed"));
   beforeEach(async () => {
     const { resetPluginFastStoreDetection } =
       await import("../../../services/plugin-host/service-store");
+    const { resetPluginCombinedClaimDetection } =
+      await import("../../../services/plugin-host/receipt-store");
+    const { pluginConnectionPool } =
+      await import("../../../services/plugin-host/connection-pool");
     resetPluginFastStoreDetection();
+    resetPluginCombinedClaimDetection();
+    await pluginConnectionPool.clear();
     f.fastMissing = false;
+    f.combinedMissing = false;
+    f.holdCompleted = undefined;
     f.latency = undefined;
     process.env.CONVEX_URL = CONVEX_CLOUD;
   });
   afterEach(() => {
     delete process.env.CONVEX_URL;
     f.latency = undefined;
+    vi.restoreAllMocks();
   });
 
-  // One authorization: the App's durable control beside the member's
-  // admission, before and after the catalog wait.
+  /** One authorization's read: the App's durable control beside the
+   * member's admission and current host, side by side. */
   const FENCE = ["control.read", "admission"];
-  const AUTHORIZE = [...FENCE, "tools/list", ...FENCE];
-  // An App tools/call, in order. Every effect (claim, dispatch, the call, the
-  // result) is bracketed by its own authorization; the route's first
-  // resolution is also the invoker's first authorization.
+  /**
+   * An App tools/call (and the entrypoint call), in order, as each guarantee
+   * needs it and no more:
+   * - admit: the member's admission names the actor; the App's durable
+   *   control is read once;
+   * - resolve: the admission and host read beside that control read (the
+   *   capability and launcher toggles and the master switch, current), then
+   *   the catalog; the route's resolution is the invoker's first
+   *   authorization;
+   * - claim: claimed and marked dispatched in one write, which the store
+   *   refuses for a closed, expired or revoked App;
+   * - before the effect: control and admission read again (a write ran);
+   * - after the effect: control and admission read again; delivery stands on
+   *   it (nothing runs in between).
+   * The completion record follows the answer (AFTER_ANSWER).
+   */
   const APP_CALL = [
     "admission",
     "control.read",
-    ...AUTHORIZE,
-    "receipt.claim",
-    ...AUTHORIZE,
-    "receipt.write:dispatched",
-    ...AUTHORIZE,
-    "tools/call",
-    ...AUTHORIZE,
-    "receipt.write:completed",
-    // Delivery: admission and catalog again before the result leaves.
     "admission",
     "tools/list",
-    "admission",
+    "receipt.claim+dispatch",
+    ...FENCE,
+    "tools/call",
+    ...FENCE,
   ];
+  const AFTER_ANSWER = ["receipt.write:completed"];
   const backendTrips = (log: string[]) =>
     log.filter((entry) => !entry.startsWith("tools/")).length;
-  /** Backend round trips one after another: a fence's two reads overlap. */
-  const sequentialTrips = (log: string[]) =>
-    log.filter(
-      (entry, index) =>
-        !entry.startsWith("tools/") &&
-        !(entry === "admission" && log[index - 1] === "control.read"),
-    ).length;
+  /** Before this change, for the report: 23 backend calls, 15 one after
+   * another, all before the answer (5 tools/list). */
+  const BEFORE = { backend: 23, sequential: 15, toolsList: 5 };
 
   it("an App tools/call makes its backend trips in this order, all through the Convex client", async () => {
     const instanceToken = await open("thread-trips");
     reset();
     const response = await call(instanceToken);
     expect(response.status).toBe(200);
-    expect(f.log).toEqual(APP_CALL);
-    // 23 backend calls, 15 one after another (was 25 and 17, with 12 of the
-    // 17 on HTTP actions).
-    expect(backendTrips(f.log)).toBe(23);
-    expect(sequentialTrips(f.log)).toBe(15);
+    await settled();
+    expect(f.log).toEqual([...APP_CALL, ...AFTER_ANSWER]);
+    // 9 backend calls (was 23): 8 before the answer, 6 of them one after
+    // another (was 15), and one tools/list (was 5).
+    expect(backendTrips(APP_CALL)).toBe(8);
+    expect(f.serial).toEqual([
+      "admission",
+      "control.read",
+      "admission",
+      "receipt.claim+dispatch",
+      "control.read",
+      "control.read",
+      "receipt.write:completed",
+    ]);
+    expect(f.counts["mcp-tools-list"]).toBe(1);
+    expect(f.toolCalls).toEqual([appTool.name]);
     // No durable trip went to an HTTP action.
     expect(Object.keys(f.counts).filter((k) => k.includes("-store:"))).toEqual(
       [],
@@ -509,12 +554,65 @@ describe("App call backend trips", () => {
     );
   });
 
-  it("activation/execute makes the same trips", async () => {
-    const instanceToken = await open("thread-execute");
+  it.each(["thread", "global"] as const)(
+    "a %s activation/execute makes the same trips",
+    async (kind) => {
+      const instanceToken = await open(`${kind}-execute`, kind);
+      reset();
+      const response = await execute(instanceToken);
+      expect(response.status).toBe(200);
+      await settled();
+      expect(f.log).toEqual([...APP_CALL, ...AFTER_ANSWER]);
+      expect(f.toolCalls).toEqual([tool.name]);
+    },
+  );
+
+  it("answers without waiting for the completion record", async () => {
+    const instanceToken = await open("thread-hold");
+    let release!: () => void;
+    f.holdCompleted = new Promise((done) => {
+      release = done;
+    });
     reset();
-    const response = await execute(instanceToken);
+    const response = await call(instanceToken);
     expect(response.status).toBe(200);
+    expect(((await response.json()) as { status: string }).status).toBe(
+      "completed",
+    );
     expect(f.log).toEqual(APP_CALL);
+    release();
+    await settled();
+  });
+
+  it("claims, then marks dispatched, on a backend without the combined claim", async () => {
+    f.combinedMissing = true;
+    const instanceToken = await open("thread-old-claim");
+    reset();
+    const first = await call(instanceToken);
+    expect(first.status).toBe(200);
+    await settled();
+    const OLDER = [
+      "admission",
+      "control.read",
+      "admission",
+      "tools/list",
+      "receipt.claim+dispatch:refused",
+      "receipt.claim",
+      ...FENCE,
+      "receipt.write:dispatched",
+      ...FENCE,
+      "tools/call",
+      ...FENCE,
+    ];
+    expect(f.log).toEqual([...OLDER, ...AFTER_ANSWER]);
+    // Asked once, then remembered: the next call claims the plain way.
+    reset();
+    expect((await call(instanceToken)).status).toBe(200);
+    await settled();
+    expect(f.log).toEqual([
+      ...OLDER.filter((entry) => !entry.endsWith(":refused")),
+      ...AFTER_ANSWER,
+    ]);
   });
 
   it("falls back to the HTTP routes, unseen, on a backend without the fast functions", async () => {
@@ -524,81 +622,157 @@ describe("App call backend trips", () => {
     const first = await call(instanceToken);
     expect(first.status).toBe(200);
     expect((await first.json()).status).toBe("completed");
+    await settled();
     // Each missing function is asked once, then remembered.
     expect(f.log.filter((entry) => entry.startsWith("missing "))).toEqual([
       "missing pluginInstanceControls:serviceRead",
       "missing pluginInvocationReceipts:serviceApply",
     ]);
-    expect(f.log.filter((entry) => !entry.startsWith("missing "))).toEqual(
-      APP_CALL,
-    );
+    expect(f.log.filter((entry) => !entry.startsWith("missing "))).toEqual([
+      ...APP_CALL,
+      ...AFTER_ANSWER,
+    ]);
     reset();
     const second = await call(instanceToken);
     expect(second.status).toBe(200);
-    expect(f.log).toEqual(APP_CALL);
+    await settled();
+    expect(f.log).toEqual([...APP_CALL, ...AFTER_ANSWER]);
     expect(f.counts["fast-missing"]).toBeUndefined();
-    expect(f.counts["control-store:read"]).toBe(9);
+    expect(f.counts["control-store:read"]).toBe(3);
     expect(f.counts["receipt-store:claim"]).toBe(1);
-    expect(f.counts["receipt-store:write"]).toBe(2);
+    expect(f.counts["receipt-store:write"]).toBe(1);
   });
 
-  it("stays under 2 s of server time at realistic backend latencies", async () => {
-    // Measured from a laptop against the dev deployment: an HTTP action is
-    // about 500 ms (even a 404), a Convex query or mutation about 80-90 ms.
-    // Run at a fifth of real time; reported in real milliseconds.
-    const SCALE = 5;
-    const real = {
-      convex: 80,
-      authorize: 60,
-      initialize: 100,
-      toolsList: 20,
-      resourcesRead: 20,
-      store: 500,
-      toolCall: 5,
-      storeQuery: 80,
-      storeMutation: 90,
-    };
+  it.each(["here", "in another process"])(
+    "refuses an App closed %s before its call, before any claim or effect",
+    async (where) => {
+      const instanceToken = await open(`thread-closed-${where}`);
+      if (where === "here")
+        expect((await post("close", { ...scope, instanceToken })).status).toBe(
+          200,
+        );
+      // Another process closed it: only the durable control knows.
+      else f.controls.clear();
+      reset();
+      const response = await call(instanceToken);
+      expect([
+        response.status,
+        ((await response.json()) as { code: string }).code,
+      ]).toEqual([403, "INSTANCE_UNAVAILABLE"]);
+      expect(f.log.filter((entry) => entry.startsWith("receipt."))).toEqual([]);
+      expect(f.toolCalls).toEqual([]);
+    },
+  );
+
+  /**
+   * Measured from a laptop against the dev deployment: a Convex query about
+   * 90 ms, a mutation about 100 ms, an HTTP action about 500 ms, and a full
+   * target authorization 500-900 ms. Run at a fifth of real time; reported in
+   * real milliseconds.
+   */
+  const SCALE = 5;
+  const REAL = {
+    convex: 90,
+    authorize: 500,
+    initialize: 100,
+    toolsList: 6,
+    resourcesRead: 20,
+    store: 500,
+    toolCall: 5,
+    storeQuery: 90,
+    storeMutation: 100,
+  };
+  const realistic = () => {
     f.latency = Object.fromEntries(
-      Object.entries(real).map(([name, ms]) => [name, ms / SCALE]),
+      Object.entries(REAL).map(([name, ms]) => [name, ms / SCALE]),
     );
-    const timed = async (run: () => Promise<Response>) => {
-      const started = performance.now();
-      const response = await run();
-      expect(response.status).toBe(200);
-      return Math.round((performance.now() - started) * SCALE);
+  };
+  const timed = async (run: () => Promise<Response>) => {
+    const started = performance.now();
+    const response = await run();
+    const body = await response.json();
+    expect([response.status, body]).toEqual([200, expect.anything()]);
+    return Math.round((performance.now() - started) * SCALE);
+  };
+
+  it("an App call and an activation each answer in about 600 ms at realistic latencies, racing or not", async () => {
+    realistic();
+    // Each step settles (its completion record lands) before the next.
+    const measure = async (run: () => Promise<Response>) => {
+      reset();
+      const ms = await timed(run);
+      await settled();
+      return ms;
     };
-    const fast = await open("thread-latency-fast");
-    const fastCall = await timed(() => call(fast));
-    const fastExecute = await timed(() => execute(fast));
+    const thread = await open("thread-latency");
+    const threadExecute = await measure(() => execute(thread));
+    await measure(() => call(thread));
+    const steady = await measure(() => call(thread));
+    const global = await open("global-latency", "global");
+    const globalExecute = await measure(() => execute(global));
+    // The App's first call while its entrypoint call runs: the App asks
+    // right after it loads. Each request leases its own connection, so the
+    // second pays one connection authorization.
     const raced = await open("thread-latency-race");
+    f.toolCalls = [];
     const race = await Promise.all([
       timed(() => execute(raced)),
       (async () => {
-        // The App asks right after it loads, while its entrypoint call runs.
-        await wait(real.convex / SCALE);
+        await wait(REAL.convex / SCALE);
         return timed(() => call(raced));
       })(),
     ]);
-    f.fastMissing = true;
-    const http = await open("thread-latency-http");
-    await call(http);
-    const httpCall = await timed(() => call(http));
-    const httpExecute = await timed(() => execute(http));
+    // Each tool ran once, and the App's first call is nowhere near the
+    // 15 s an OpenAI SDK App waits for an answer.
+    expect(f.toolCalls.sort()).toEqual([appTool.name, tool.name].sort());
+    expect(Math.max(...race)).toBeLessThan(3_000);
     console.info(
       "[app-call-latency]",
       JSON.stringify({
+        latency: REAL,
         trips: {
-          backend: backendTrips(APP_CALL),
-          sequential: sequentialTrips(APP_CALL),
+          before: BEFORE,
+          after: {
+            backend: backendTrips(APP_CALL) + AFTER_ANSWER.length,
+            beforeAnswer: backendTrips(APP_CALL),
+            sequential: 6,
+            toolsList: 1,
+          },
         },
-        fast: { call: fastCall, execute: fastExecute },
-        fastRaced: { execute: race[0], call: race[1] },
-        httpRoutes: { call: httpCall, execute: httpExecute },
+        threadExecute,
+        globalExecute,
+        steadyCall: steady,
+        race: { execute: race[0], firstCall: race[1] },
       }),
     );
-    expect(fastCall).toBeLessThan(2_000);
-    expect(fastExecute).toBeLessThan(2_000);
-    expect(race[1]).toBeLessThan(2_000);
-    expect(httpCall).toBeGreaterThan(fastCall * 2);
+    // Six round trips (90-100 ms) and the catalog: about 600 ms.
+    for (const ms of [threadExecute, globalExecute, steady, race[0]])
+      expect(ms).toBeLessThan(750);
+  });
+
+  it("re-authorizes an App's connection ahead of its window, so a call past 60 s stays fast", async () => {
+    realistic();
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+    const app = await open("thread-latency-window");
+    await timed(() => call(app));
+    // 35 s later the App calls again: this call answers on the current
+    // authorization while a full one runs beside it.
+    clock.mockReturnValue(start + 35_000);
+    reset();
+    const refreshing = await timed(() => call(app));
+    await vi.waitFor(() => expect(f.counts["target-authorization"]).toBe(1));
+    await wait((REAL.authorize * 2) / SCALE);
+    // 64 s after the connection was first authorized.
+    clock.mockReturnValue(start + 64_000);
+    reset();
+    const pastWindow = await timed(() => call(app));
+    expect(f.counts["target-authorization"]).toBeUndefined();
+    console.info(
+      "[app-call-window]",
+      JSON.stringify({ refreshing, pastWindow }),
+    );
+    expect(refreshing).toBeLessThan(750);
+    expect(pastWindow).toBeLessThan(750);
   });
 });
