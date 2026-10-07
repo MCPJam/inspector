@@ -61,6 +61,7 @@ import {
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
 import { HarnessAgentActivity } from "../harness-agent-activity";
+import { HarnessLiveOutput } from "../harness-live-output";
 import {
   describeHarnessToolStep,
   harnessToolTarget,
@@ -1117,6 +1118,10 @@ export function ToolPart({
       </div>
 
       <ToolResourceAttachments result={rawResultData} serverId={serverId} />
+      {harnessStep &&
+        (state === "input-streaming" || state === "input-available") && (
+          <HarnessLiveOutput toolCallId={toolCallId} />
+        )}
       <HarnessAgentActivity
         toolCallId={toolCallId}
         toolState={state}

@@ -3,7 +3,6 @@ import {
   describeHarnessToolStep,
   harnessToolTarget,
   isHarnessActivityToolName,
-  summarizeHarnessActivity,
 } from "../harness-tool-steps";
 
 describe("describeHarnessToolStep", () => {
@@ -107,7 +106,7 @@ describe("Codex steps", () => {
 });
 
 describe("activity", () => {
-  it("built-ins fold; MCP tools, the Agent card and questions do not", () => {
+  it("built-ins get a step label; MCP tools, the Agent card and questions do not", () => {
     for (const name of [
       "bash",
       "Read",
@@ -128,44 +127,6 @@ describe("activity", () => {
     ]) {
       expect(isHarnessActivityToolName(name)).toBe(false);
     }
-  });
-
-  it("summarizes a run in the order each kind first appears", () => {
-    expect(
-      summarizeHarnessActivity([
-        { toolName: "bash", input: { command: "ls" } },
-        { toolName: "read", input: { file_path: "/a" } },
-        { toolName: "bash", input: { command: "npm test" } },
-        { toolName: "read", input: { file_path: "/b" } },
-        { toolName: "read", input: { file_path: "/c" } },
-      ]),
-    ).toBe("Ran 2 commands, read 3 files");
-    expect(
-      summarizeHarnessActivity([
-        { toolName: "edit", input: { file_path: "/a" } },
-        { toolName: "edit", input: { file_path: "/a" } },
-        {
-          toolName: "fileChange",
-          input: { changes: [{ path: "/b" }, { path: "/c" }] },
-        },
-      ]),
-    ).toBe("Edited 3 files");
-    expect(
-      summarizeHarnessActivity([
-        { toolName: "grep", input: { pattern: "x" } },
-        { toolName: "webSearch", input: { query: "y" } },
-        { toolName: "WebFetch", input: { url: "z" } },
-      ]),
-    ).toBe("Searched once, searched the web, fetched a page");
-    // A Codex command that only read counts as a read.
-    expect(
-      summarizeHarnessActivity([
-        {
-          toolName: "bash",
-          input: { commandActions: [{ type: "read", name: "a", path: "/a" }] },
-        },
-      ]),
-    ).toBe("Read a file");
   });
 });
 

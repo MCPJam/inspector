@@ -91,6 +91,7 @@ vi.mock("../text-part", () => ({
 }));
 
 import { ToolPart } from "../tool-part";
+import { useHarnessLiveOutputStore } from "@/stores/harness-live-output-store";
 
 const part = (
   input: Record<string, unknown>,
@@ -154,5 +155,22 @@ describe("ToolPart harness step label", () => {
       "rm -rf build && npm test",
     );
     expect(screen.queryByText("Run the tests")).toBeNull();
+  });
+
+  it("a running command shows its live output on its card, until it settles", () => {
+    toolNameState.name = "bash";
+    useHarnessLiveOutputStore.setState({
+      outputs: { "call-1": "one\ntwo\nthree\nfour\nfive\nsix\nseven\n" },
+    });
+    const { rerender } = render(
+      <ToolPart
+        part={part({ command: "npm test" }, { state: "input-available" })}
+      />,
+    );
+    expect(screen.getByTestId("harness-live-output").textContent).toBe(
+      "two\nthree\nfour\nfive\nsix\nseven",
+    );
+    rerender(<ToolPart part={part({ command: "npm test" })} />);
+    expect(screen.queryByTestId("harness-live-output")).toBeNull();
   });
 });

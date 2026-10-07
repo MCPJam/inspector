@@ -877,58 +877,6 @@ describe("MessageView", () => {
     });
   });
 
-  describe("a harness's built-in calls", () => {
-    it("fold into one activity row; text and MCP tools keep their place", () => {
-      const message = createMessage({
-        role: "assistant",
-        parts: [
-          { type: "text", text: "Looking." },
-          {
-            type: "tool-bash",
-            toolCallId: "call_1",
-            state: "output-available",
-            input: { command: "ls" },
-            output: "a.ts",
-          },
-          {
-            type: "tool-read",
-            toolCallId: "call_2",
-            state: "output-available",
-            input: { file_path: "/w/a.ts" },
-            output: "x",
-          },
-          {
-            type: "tool-create_issue",
-            toolCallId: "call_3",
-            state: "output-available",
-            input: {},
-            output: {},
-          },
-        ] as UIMessage["parts"],
-      });
-
-      renderMessageView(
-        <MessageView
-          {...defaultProps}
-          toolServerMap={{ create_issue: "linear" } as never}
-          message={message}
-        />,
-      );
-
-      expect(screen.getAllByTestId("harness-activity-group")).toHaveLength(1);
-      expect(
-        screen.getByText("Ran a command, read a file"),
-      ).toBeInTheDocument();
-      expect(screen.getByTestId("part-text")).toHaveTextContent("Looking.");
-      expect(screen.getByTestId("part-tool-create_issue")).toBeInTheDocument();
-      // The folded calls' own cards render only when opened.
-      expect(screen.queryByTestId("part-tool-bash")).toBeNull();
-      fireEvent.click(screen.getByText("Ran a command, read a file"));
-      expect(screen.getByTestId("part-tool-bash")).toBeInTheDocument();
-      expect(screen.getByTestId("part-tool-read")).toBeInTheDocument();
-    });
-  });
-
   describe("callbacks", () => {
     it("passes onSendFollowUp to PartSwitch", () => {
       const onSendFollowUp = vi.fn();

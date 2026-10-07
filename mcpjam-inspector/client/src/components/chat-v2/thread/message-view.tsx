@@ -12,11 +12,6 @@ import { UserMessageBubble } from "./user-message-bubble";
 import { UserContextCard } from "./user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { PartSwitch } from "./part-switch";
-import {
-  HarnessActivityGroup,
-  isHarnessActivityPart,
-  segmentHarnessActivity,
-} from "./harness-activity-group";
 import type { RecorderProps } from "./recorder-types";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -599,48 +594,6 @@ function MessageViewImpl({
   }
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
-  // A harness's built-in calls (commands, reads, edits, searches) fold into
-  // activity rows; every other part keeps its own place and its own key.
-  const isActivityPart = (part: MessagePart) =>
-    isHarnessActivityPart(
-      part,
-      toolServerMap,
-      (toolCallId) => toolRenderOverrides?.[toolCallId] !== undefined,
-    );
-  const renderPart = (part: MessagePart, sIdx: number, pIdx: number) => (
-    <PartSwitch
-      key={getPartKey(part, sIdx, pIdx)}
-      part={part}
-      role={role}
-      chatSessionId={chatSessionId}
-      onSendFollowUp={onSendFollowUp}
-      toolsMetadata={toolsMetadata}
-      toolServerMap={toolServerMap}
-      onWidgetStateChange={onWidgetStateChange}
-      onModelContextUpdate={onModelContextUpdate}
-      onAppToolInvocationChange={onAppToolInvocationChange}
-      pipWidgetId={pipWidgetId}
-      fullscreenWidgetId={fullscreenWidgetId}
-      onRequestPip={onRequestPip}
-      onExitPip={onExitPip}
-      onRequestFullscreen={onRequestFullscreen}
-      onExitFullscreen={onExitFullscreen}
-      onRequestTeardown={onRequestTeardown}
-      tornDownWidgetIds={tornDownWidgetIds}
-      displayMode={displayMode}
-      onDisplayModeChange={onDisplayModeChange}
-      onToolApprovalResponse={onToolApprovalResponse}
-      messageParts={message.parts}
-      toolRenderOverrides={toolRenderOverrides}
-      showInlineEdit={showInlineEdit}
-      minimalMode={minimalMode}
-      interactive={interactive}
-      widgetPolicy={widgetPolicy}
-      reasoningDisplayMode={reasoningDisplayMode}
-      mcpToolResultImageRendering={mcpToolResultImageRendering}
-      {...recorder}
-    />
-  );
   const showClaudeFooter = claudeFooterMode !== "none";
   // Only offer copy when there is text to copy — a tool-call-only turn would
   // put an empty string on the clipboard.
@@ -693,24 +646,40 @@ function MessageViewImpl({
         <div className="space-y-6 text-sm leading-6">
           {steps.map((stepParts, sIdx) => (
             <div key={getStepKey(stepParts, sIdx)} className="space-y-3">
-              {segmentHarnessActivity(stepParts, isActivityPart).map(
-                (segment) =>
-                  segment.kind === "activity" ? (
-                    <HarnessActivityGroup
-                      key={`activity-${segment.key}`}
-                      parts={segment.parts as never}
-                      renderPart={(part) =>
-                        renderPart(
-                          part as MessagePart,
-                          sIdx,
-                          stepParts.indexOf(part as MessagePart),
-                        )
-                      }
-                    />
-                  ) : (
-                    renderPart(segment.part, sIdx, segment.index)
-                  ),
-              )}
+              {stepParts.map((part, pIdx) => (
+                <PartSwitch
+                  key={getPartKey(part, sIdx, pIdx)}
+                  part={part}
+                  role={role}
+                  chatSessionId={chatSessionId}
+                  onSendFollowUp={onSendFollowUp}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
+                  onWidgetStateChange={onWidgetStateChange}
+                  onModelContextUpdate={onModelContextUpdate}
+                  onAppToolInvocationChange={onAppToolInvocationChange}
+                  pipWidgetId={pipWidgetId}
+                  fullscreenWidgetId={fullscreenWidgetId}
+                  onRequestPip={onRequestPip}
+                  onExitPip={onExitPip}
+                  onRequestFullscreen={onRequestFullscreen}
+                  onExitFullscreen={onExitFullscreen}
+                  onRequestTeardown={onRequestTeardown}
+                  tornDownWidgetIds={tornDownWidgetIds}
+                  displayMode={displayMode}
+                  onDisplayModeChange={onDisplayModeChange}
+                  onToolApprovalResponse={onToolApprovalResponse}
+                  messageParts={message.parts}
+                  toolRenderOverrides={toolRenderOverrides}
+                  showInlineEdit={showInlineEdit}
+                  minimalMode={minimalMode}
+                  interactive={interactive}
+                  widgetPolicy={widgetPolicy}
+                  reasoningDisplayMode={reasoningDisplayMode}
+                  mcpToolResultImageRendering={mcpToolResultImageRendering}
+                  {...recorder}
+                />
+              ))}
             </div>
           ))}
         </div>

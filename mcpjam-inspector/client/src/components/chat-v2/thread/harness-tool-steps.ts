@@ -153,39 +153,32 @@ function codexCommandAction(
     : undefined;
 }
 
-type ActivityKind =
-  "command" | "read" | "edit" | "search" | "webSearch" | "fetch" | "todo";
-
 /**
  * Harness built-ins whose calls are the agent's own legwork (commands, reads,
- * edits, searches) rather than the thing under test. Runs of these fold into
- * one activity row. MCP tools, the Agent card, questions and plan-mode exits
- * are not here: each keeps its own card.
+ * edits, searches) rather than the thing under test. Their cards say what each
+ * call did. MCP tools, the Agent card, questions and plan-mode exits are not
+ * here.
  */
-const ACTIVITY_KINDS: Record<string, ActivityKind> = {
-  bash: "command",
-  bashoutput: "command",
-  killshell: "command",
-  killbash: "command",
-  read: "read",
-  write: "edit",
-  edit: "edit",
-  multiedit: "edit",
-  notebookedit: "edit",
-  filechange: "edit",
-  grep: "search",
-  glob: "search",
-  websearch: "webSearch",
-  webfetch: "fetch",
-  todowrite: "todo",
-};
+const HARNESS_BUILT_IN_TOOL_NAMES = new Set([
+  "bash",
+  "bashoutput",
+  "killshell",
+  "killbash",
+  "read",
+  "write",
+  "edit",
+  "multiedit",
+  "notebookedit",
+  "filechange",
+  "grep",
+  "glob",
+  "websearch",
+  "webfetch",
+  "todowrite",
+]);
 
 export function isHarnessActivityToolName(toolName: string): boolean {
-  return toolName.toLowerCase() in ACTIVITY_KINDS;
-}
-
-function plural(n: number, one: string, many: string): string {
-  return n === 1 ? one : many.replace("#", String(n));
+  return HARNESS_BUILT_IN_TOOL_NAMES.has(toolName.toLowerCase());
 }
 
 function editedPaths(input: StepInput): string[] {
@@ -197,70 +190,6 @@ function editedPaths(input: StepInput): string[] {
   }
   const path = stringField(input, "file_path", "notebook_path", "path");
   return path ? [path] : [];
-}
-
-/**
- * "Ran 2 commands, read 3 files": what a run of activity calls did, in the
- * order each kind first appears.
- */
-export function summarizeHarnessActivity(
-  calls: Array<{ toolName: string; input?: Record<string, unknown> }>,
-): string {
-  const counts = new Map<ActivityKind | "other", number>();
-  const edited = new Set<string>();
-  let editsWithoutPath = 0;
-  for (const call of calls) {
-    let kind = ACTIVITY_KINDS[call.toolName.toLowerCase()] ?? "other";
-    if (kind === "command") {
-      const action = codexCommandAction(call.input);
-      if (action?.type === "read") kind = "read";
-      else if (action?.type === "listFiles" || action?.type === "search") {
-        kind = "search";
-      }
-    }
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
-    if (kind === "edit") {
-      const paths = editedPaths(call.input);
-      if (paths.length === 0) editsWithoutPath++;
-      for (const path of paths) edited.add(path);
-    }
-  }
-  const phrases: string[] = [];
-  for (const [kind, n] of counts) {
-    switch (kind) {
-      case "command":
-        phrases.push(plural(n, "ran a command", "ran # commands"));
-        break;
-      case "read":
-        phrases.push(plural(n, "read a file", "read # files"));
-        break;
-      case "edit":
-        phrases.push(
-          plural(
-            edited.size + editsWithoutPath,
-            "edited a file",
-            "edited # files",
-          ),
-        );
-        break;
-      case "search":
-        phrases.push(plural(n, "searched once", "searched # times"));
-        break;
-      case "webSearch":
-        phrases.push(plural(n, "searched the web", "searched the web # times"));
-        break;
-      case "fetch":
-        phrases.push(plural(n, "fetched a page", "fetched # pages"));
-        break;
-      case "todo":
-        phrases.push("updated the todos");
-        break;
-      default:
-        phrases.push(plural(n, "used a tool", "used # tools"));
-    }
-  }
-  const text = phrases.join(", ");
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /**
