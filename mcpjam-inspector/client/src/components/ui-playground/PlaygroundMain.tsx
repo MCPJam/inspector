@@ -4581,7 +4581,12 @@ export function PlaygroundMain({
   // Refresh launch credentials without changing durable user authorization.
   const ensureLocalHarnessReadyForSend =
     useCallback(async (setup = false): Promise<boolean> => {
-      if (!localHarnessRequested) return true;
+      // A send only needs readiness when this machine is the requested target.
+      // An explicit Set up does regardless: "requested" means a durable
+      // authorization already exists (`preferredVenue === "local"`), and setup
+      // is what creates it — so on a machine that never set this harness up,
+      // returning here made the button do nothing at all.
+      if (!setup && !localHarnessRequested) return true;
       // A ready target sends without a readiness round trip (the turn's own
       // route re-checks it); only Off still confirms consent first.
       if (!setup && localHarness.phase === "ready") {
