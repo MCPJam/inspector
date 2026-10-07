@@ -18,6 +18,7 @@ const LATENCY = {
 };
 const f = vi.hoisted(() => ({
   counts: {} as Record<string, number>,
+  toolCalls: [] as string[],
   controls: new Map<string, { snapshotJson: string; expiresAt: number }>(),
   anchors: new Map<string, string>(),
 }));
@@ -41,6 +42,11 @@ const tool = {
     ui: { resourceUri: "ui://fixture/app" },
     "openai/ui": { entrypoints: [{ type: "thread" }] },
   },
+};
+/** A tool the App itself calls once it loads (Bits & Bolts: cad.listParts). */
+const appTool = {
+  name: "list-parts",
+  inputSchema: { type: "object", properties: {} },
 };
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   createConvexClient: () => ({
@@ -101,7 +107,7 @@ vi.mock("../auth.js", async () => ({
         listTools: async () => {
           count("mcp-tools-list");
           await wait(LATENCY.toolsList);
-          return { tools: [tool] };
+          return { tools: [tool, appTool] };
         },
         readResource: async () => {
           count("mcp-resources-read");
@@ -117,8 +123,9 @@ vi.mock("../auth.js", async () => ({
             ],
           };
         },
-        executeTool: async () => {
+        executeTool: async (_serverId: string, name: string) => {
           count("mcp-tool-call");
+          f.toolCalls.push(name);
           await wait(LATENCY.toolCall);
           return { content: [] };
         },
@@ -263,5 +270,52 @@ describe("cold App activation cost", () => {
     expect(execute.counts["mcp-initialize"]).toBeUndefined();
     expect(execute.counts["mcp-tool-call"]).toBe(1);
     expect(open.serverTiming).toContain("tools-list;dur=");
+  });
+
+  it("runs the App's first call ahead of the entrypoint call it races", async () => {
+    // Opening an App draws it and runs its entrypoint at once; the App's own
+    // first call (with a 15 s deadline in the App) must not share every
+    // round trip with that entrypoint call.
+    f.controls.clear();
+    f.anchors.clear();
+    f.toolCalls = [];
+    const { default: routes } = await import("../plugin-instances");
+    const app = new Hono().route("/instances", routes);
+    const post = (path: string, data: unknown) =>
+      app.request(`/instances/${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer fixture",
+        },
+        body: JSON.stringify(data),
+      });
+    const scope = {
+      projectId: "project",
+      pluginWorkspace: { version: 1, workspaceId: "workspace" },
+    };
+    const open = await post("activation/open", {
+      ...scope,
+      hostId: "host",
+      serverId: "server",
+      toolName: tool.name,
+      threadId: "thread-race",
+      kind: "thread",
+    });
+    expect(open.status).toBe(200);
+    const { instanceToken } = (await open.json()) as { instanceToken: string };
+    const execute = post("activation/execute", { ...scope, instanceToken });
+    // The entrypoint call is already under way when the App asks.
+    await wait(LATENCY.convex + LATENCY.store);
+    const call = post("call", {
+      ...scope,
+      instanceToken,
+      invocationId: crypto.randomUUID(),
+      params: { name: appTool.name, arguments: {} },
+    });
+    const [executed, called] = await Promise.all([execute, call]);
+    expect(called.status).toBe(200);
+    expect(executed.status).toBe(200);
+    expect(f.toolCalls).toEqual([appTool.name, tool.name]);
   });
 });
