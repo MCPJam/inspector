@@ -2786,14 +2786,24 @@ export async function initiateOAuth(
 
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig({
-      ...options,
+      scopes: options.scopes,
+      registryServerId: options.registryServerId,
+      useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      customHeaders: options.customHeaders,
+      resourceUrl: options.resourceUrl,
       protocolMode: requestedProtocolMode,
       protocolVersion,
       registrationMode: requestedRegistrationMode,
       registrationStrategy,
     });
+    // This redirect-recovery record is intentionally built from a strict
+    // allowlist above. Client credentials are persisted separately: public
+    // client ids in an issuer-keyed record and secrets only in the encrypted
+    // backend secret store. Keep this suppression adjacent to the audited sink
+    // so future additions to the record receive security review.
     localStorage.setItem(
       `mcp-oauth-config-${options.serverName}`,
+      // codeql[js/clear-text-storage-of-sensitive-data]
       JSON.stringify(oauthConfig)
     );
 
