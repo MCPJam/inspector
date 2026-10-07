@@ -9,6 +9,22 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-06
+
+#### Added
+
+- **Rerun a finished eval run's failed cases** — from the run detail page, the CLI (`mcpjam cloud eval rerun <run-id> --failed`), or the SDK (`rerunEvalRun`, `getEvalRunRerunPreview`), you can now start a new run that covers only the cases that did not pass. Add `--dry-run` to the CLI command to preview which cases would rerun and why without spending anything. The new run records `rerunOfRunId` and `rerunScope`; because it ran only a subset, it is never used as the suite's latest run, a trend point, or a comparison baseline.
+
+- **`isFeatureUnavailable(error)` in `@mcpjam/sdk`** — a new helper that tells a feature-gated `403 FORBIDDEN` apart from an ordinary permission denial. When a feature is not enabled for your organization, the error's `details` now carries `code: "FEATURE_UNAVAILABLE"` and the gated `feature` name. Use `isFeatureUnavailable(error)` to branch on that case instead of string-matching the message.
+
+#### Changed
+
+- **`@mcpjam/sdk` 9.0 — AI SDK 7 and Node.js 22** — the SDK now requires Node.js 22 or later and depends on `ai@7`. Model-visible MCP tool images are emitted as AI SDK 7 `file` parts; read them with the new `readModelOutputImage` helper, which also accepts the older `media` and `image-data` shapes. `@mcpjam/chat-ui` now peers on `ai@^7` and `@ai-sdk/react@^4`. See the [SDK 9.0 migration guide](/sdk/migrating-to-v9) for upgrade steps.
+
+- **Claude directory readiness requires `annotations.title` on every tool** — the `claude.tools.title-present` check now requires `annotations.title` on every tool. A top-level `title` field alone no longer passes, because Claude's directory listing reads only the annotation and flags tools without one as "Missing title annotation". Update your MCP server to set `annotations.title` on every tool alongside any top-level `title`.
+
+- **Reasoning effort per case** — a test case can now be run at several reasoning efforts of one model (Low, Medium, High) from its Setup Run panel; each effort level runs as its own run.
+
 ### 2026-10-05
 
 #### Changed

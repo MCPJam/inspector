@@ -40,6 +40,7 @@ import {
   PluginServerSetupEditor,
   hasPluginServerSetupEntries,
 } from "./PluginServerSetup";
+import { PluginIcon } from "./PluginIcon";
 import {
   describePluginHealth,
   describePluginPlacement,
@@ -149,8 +150,18 @@ export function PluginGroupCard({
             )}
             aria-hidden
           />
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
-            <Package className="h-4 w-4 text-muted-foreground" aria-hidden />
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+            <PluginIcon
+              icons={plugin.icons}
+              kind="directory"
+              className="h-8 w-8 object-contain"
+              fallback={
+                <Package
+                  className="h-4 w-4 text-muted-foreground"
+                  aria-hidden
+                />
+              }
+            />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

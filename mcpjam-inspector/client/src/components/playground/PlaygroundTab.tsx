@@ -23,6 +23,12 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
+import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import {
+  ExtensionRailBridge,
+  readRightRailSize,
+  writeRightRailSize,
+} from "./extension-rail-bridge";
 import {
   browserPanelAvailable,
   PlaygroundBrowserPanel,
@@ -104,6 +110,8 @@ interface PlaygroundTabProps {
   onFirstRunPromptConsumed?: () => void;
   /** Pauses route-local reconnect work while first-run onboarding owns it. */
   suspendAutoConnect?: boolean;
+  /** Signals that Playground has cleared its initial skeleton render gate. */
+  onReady?: () => void;
 }
 
 /**
@@ -235,6 +243,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
       props.playgroundServerSelectorProps?.selectedMultipleServers,
   });
 
+  useEffect(() => {
+    if (playgroundState.loadingState.kind !== "skeleton") props.onReady?.();
+  }, [playgroundState.loadingState.kind, props.onReady]);
+
   // Rail collapse state — local to the workspace; not persisted per view.
   // Defaults match the previous flag-on behavior (left rail showing tools,
   // right rail collapsed).
@@ -350,6 +362,40 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
   const pendingRailReveal = useRef(false);
+  // The right rail stays MOUNTED and collapses to zero width: plugin Apps live
+  // in it, and unmounting would reload every App. Its width is remembered.
+  const [rightRailSize, setRightRailSize] = useState(readRightRailSize);
+  const openRightRail = useCallback(() => {
+    setIsRightRailVisible(true);
+    const panel = rightPanelRef.current;
+    if (panel?.isCollapsed?.()) panel.resize(rightRailSize);
+  }, [rightRailSize]);
+  // In a narrow window a selected App expands the rail over the chat, the
+  // same way the browser panel expands, without moving the App.
+  const [panelGroupElement, setPanelGroupElement] =
+    useState<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [railAppActive, setRailAppActive] = useState(false);
+  useEffect(() => {
+    if (!panelGroupElement || typeof ResizeObserver === "undefined") return;
+    const measure = () =>
+      setNarrow(panelGroupElement.getBoundingClientRect().width < 768);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(panelGroupElement);
+    return () => observer.disconnect();
+  }, [panelGroupElement]);
+  const railOverlay = narrow && isRightRailVisible && railAppActive;
+  const collapseRightRail = useCallback(() => {
+    setIsRightRailVisible(false);
+    rightPanelRef.current?.collapse?.();
+  }, []);
+  // Hidden means collapsed to zero width, never unmounted.
+  useEffect(() => {
+    if (isRightRailVisible) return;
+    const panel = rightPanelRef.current;
+    if (panel && panel.isCollapsed?.() === false) panel.collapse?.();
+  }, [isRightRailVisible]);
 
   // The rail starts collapsed. A tab switch inside an unmounted rail is how
   // "open the browser when they navigate" silently did nothing.
@@ -370,8 +416,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   useEffect(() => {
     if (!isRightRailVisible || !pendingRailReveal.current) return;
     pendingRailReveal.current = false;
-    rightPanelRef.current?.expand();
-  }, [isRightRailVisible]);
+    const panel = rightPanelRef.current;
+    if (panel?.isCollapsed?.()) panel.resize(rightRailSize);
+    else panel?.expand();
+  }, [isRightRailVisible, rightRailSize]);
 
   if (playgroundState.loadingState.kind === "skeleton") {
     return (
@@ -409,6 +457,19 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         <PlaygroundPreviewedClientSync
           projectId={props.sharedProjectId ?? props.activeProjectId ?? null}
         />
+        {/* Extension state (global and per-chat App owners) is shared by the
+            left rail, the center and the right rail, so it lives here. */}
+        <ExtensionWorkspaceProvider>
+        <ExtensionRailBridge
+          onReveal={openRightRail}
+          onAppActiveChange={setRailAppActive}
+          visible={isRightRailVisible}
+          narrow={narrow}
+          overlay={railOverlay}
+          onCollapse={collapseRightRail}
+          composerRoot={panelGroupElement}
+        />
+        <div ref={setPanelGroupElement} className="relative flex min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
           {isLeftRailVisible ? (
             <>
@@ -525,45 +586,62 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
               </ResizablePanel>
             </>
           ) : null}
-          {isRightRailVisible ? (
-            <>
-              <ResizableHandle withHandle />
-              <ResizablePanel
-                ref={rightPanelRef}
-                id="playground-right"
-                order={4}
-                defaultSize={30}
-                minSize={4}
-                maxSize={50}
-                collapsible
-                collapsedSize={0}
-                onCollapse={() => setIsRightRailVisible(false)}
-                className="min-h-0 overflow-hidden"
-              >
-                <div className="h-full min-h-0 overflow-hidden">
-                  <PlaygroundRightRail
-                    onClose={() => setIsRightRailVisible(false)}
-                    hostConfig={effectiveHostConfig}
-                    hostId={previewedHostId ?? null}
-                    projectId={
-                      props.sharedProjectId ?? props.activeProjectId ?? null
-                    }
-                    isAuthenticated={isConvexAuthenticated}
-                  />
-                </div>
-              </ResizablePanel>
-            </>
-          ) : (
+          {isRightRailVisible ? <ResizableHandle withHandle /> : null}
+          <ResizablePanel
+            ref={rightPanelRef}
+            id="playground-right"
+            order={4}
+            defaultSize={isRightRailVisible ? rightRailSize : 0}
+            minSize={4}
+            maxSize={50}
+            collapsible
+            collapsedSize={0}
+            onCollapse={() => setIsRightRailVisible(false)}
+            onExpand={() => setIsRightRailVisible(true)}
+            onResize={(size) => {
+              if (size <= 0) return;
+              setRightRailSize(size);
+              writeRightRailSize(size);
+            }}
+            className="min-h-0 overflow-hidden"
+          >
+            <div
+              data-right-rail-overlay={railOverlay || undefined}
+              className={cn(
+                "h-full min-h-0 overflow-hidden",
+                // Positioned against the panel group, not the panel: the
+                // App keeps its DOM parent while it covers the chat.
+                railOverlay && "absolute inset-0 z-40 bg-background",
+              )}
+            >
+              <PlaygroundRightRail
+                onClose={collapseRightRail}
+                hostConfig={effectiveHostConfig}
+                hostId={previewedHostId ?? null}
+                projectId={
+                  props.sharedProjectId ?? props.activeProjectId ?? null
+                }
+                isAuthenticated={isConvexAuthenticated}
+              />
+            </div>
+          </ResizablePanel>
+          {isRightRailVisible ? null : (
             <CollapsedPanelStrip
               side="right"
               onOpen={() => {
                 setIsRightRailVisible(true);
-                requestAnimationFrame(() => rightPanelRef.current?.expand());
+                requestAnimationFrame(() => {
+                  const panel = rightPanelRef.current;
+                  if (panel?.isCollapsed?.()) panel.resize(rightRailSize);
+                  else panel?.expand();
+                });
               }}
-              tooltipText="Show logs"
+              tooltipText="Show side panel"
             />
           )}
         </ResizablePanelGroup>
+        </div>
+        </ExtensionWorkspaceProvider>
       </HostStyledShell>
     </PlaygroundStateProvider>
   );

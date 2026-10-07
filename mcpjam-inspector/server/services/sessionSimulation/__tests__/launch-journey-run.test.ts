@@ -315,6 +315,57 @@ describe("launchJourneyRun", () => {
     });
   });
 
+  describe("a hosted harness target whose pinned image cannot boot", () => {
+    // The backend refuses the whole launch (BB-56) through the same
+    // `invalid_request` 400 wrapper as every other ConvexError.
+    const refusal = (message: string) =>
+      new SwarmAgentError(
+        400,
+        JSON.stringify({
+          ok: false,
+          code: "invalid_request",
+          error: {
+            code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+            message,
+            details: {
+              environmentId: "env-1",
+              hostName: "Claude Code",
+              reason: "The selected computer environment is a personal draft.",
+            },
+          },
+        }),
+        "nope"
+      );
+
+    it("shows the backend's sentence, which names the target and the fix", async () => {
+      const message =
+        'Client "Claude Code" can\'t launch: The selected computer environment is a personal draft. Fix that computer image or remove this target, then launch again.';
+      createRunMock.mockRejectedValue(refusal(message));
+      await expect(launchJourneyRun(DEPS, INPUT)).rejects.toMatchObject({
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message,
+        details: {
+          code: "JOURNEY_TARGET_IMAGE_UNAVAILABLE",
+          environmentId: "env-1",
+        },
+      });
+      expect(startRunMock).not.toHaveBeenCalled();
+    });
+
+    it("still names the fix when a long name pushes the sentence past the bound", async () => {
+      createRunMock.mockRejectedValue(
+        refusal(`Client "${"x".repeat(400)}" can't launch: draft.`)
+      );
+      const err = (await launchJourneyRun(DEPS, INPUT).catch((e) => e)) as {
+        message: string;
+      };
+      expect(err.message).not.toBe("This journey can't be launched.");
+      expect(err.message).toMatch(/computer image that can't boot/);
+      expect(err.message).toMatch(/remove the target/);
+    });
+  });
+
   it("preserves structured backend details without trusting them as the message", async () => {
     createRunMock.mockRejectedValue(
       new SwarmAgentError(

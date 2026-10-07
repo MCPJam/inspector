@@ -1,3 +1,4 @@
+import { messagePartPlainText } from "@/shared/plugin-message";
 import { looksLikeErrorPage } from "@/shared/error-page";
 import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
 import { generateId, type UIMessage } from "ai";
@@ -797,14 +798,9 @@ export function cloneUiMessages(messages: UIMessage[]): UIMessage[] {
 
 /** First text part of a user message, used to seed prompt previews. */
 export function extractUserMessageText(message: UIMessage): string {
-  const parts = (message.parts ?? []) as Array<{
-    type?: string;
-    text?: unknown;
-  }>;
-  for (const part of parts) {
-    if (part?.type === "text" && typeof part.text === "string") {
-      return part.text;
-    }
+  for (const part of message.parts ?? []) {
+    const text = messagePartPlainText(part);
+    if (text !== undefined) return text;
   }
   return "";
 }

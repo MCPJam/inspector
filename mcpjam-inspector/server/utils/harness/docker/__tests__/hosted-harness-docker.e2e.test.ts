@@ -67,6 +67,9 @@ const mocks = vi.hoisted(() => ({
   mcpUrl: "",
   revoke: vi.fn(async () => {}),
   start: vi.fn(),
+  // The sidecar a chat turn resumes from: the previous turn's commit, when a
+  // test carries one over (see `turn`'s `chat`).
+  claimState: null as unknown,
 }));
 
 vi.mock("../../harness-model-broker.js", () => ({
@@ -98,7 +101,7 @@ vi.mock("../../harness-session-state.js", async (importOriginal) => ({
     ok: true,
     leaseId: "lease-e2e",
     stateVersion: 1,
-    state: null,
+    state: mocks.claimState,
     fingerprintChanged: false,
   })),
   commitHarnessSessionState: vi.fn(async () => true),
@@ -502,6 +505,8 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
         prompt: string,
         control: {
           onChunk?: (chunk: Chunk, all: Chunk[], abort: () => void) => void;
+          /** A chat turn: continuity is claimed, and the turn's commit kept. */
+          chat?: { id: string };
         } = {},
       ) {
         const controller = new AbortController();
@@ -509,6 +514,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
         const toolResults: unknown[] = [];
         const engineErrors: Array<{ phase?: string; message?: string }> = [];
         let history: ModelMessage[] | undefined;
+        let commit: unknown;
         mocks.revoke.mockClear();
         mocks.start.mockClear();
         const messages = [
@@ -533,7 +539,8 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
                   },
             selectedServers: [spec.mcpServerId],
             requireToolApproval: false,
-            sourceType: "eval",
+            sourceType: control.chat ? "direct" : "eval",
+            ...(control.chat ? { chatSessionId: control.chat.id } : {}),
             harness,
             harnessSandboxBinding: {
               sandboxRowId: "sbxrow-e2e",
@@ -552,8 +559,13 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             },
             onEngineError: (event: { phase?: string; message?: string }) =>
               engineErrors.push(event),
-            onConversationComplete: (full: ModelMessage[]) => {
+            onConversationComplete: (
+              full: ModelMessage[],
+              _trace: unknown,
+              sessionCommit: unknown,
+            ) => {
               history = full;
+              commit = sessionCommit;
             },
           } as never,
           "ui",
@@ -566,7 +578,22 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             control.onChunk?.(chunk, all, () => controller.abort());
           },
         );
-        return { chunks, toolCalls, toolResults, engineErrors, history };
+        return {
+          chunks,
+          toolCalls,
+          toolResults,
+          engineErrors,
+          history,
+          commit,
+        };
+      }
+
+      /** The visible assistant text of a turn's stream. */
+      function streamedText(chunks: Chunk[]): string {
+        return chunks
+          .filter((c) => c.type === "text-delta")
+          .map((c) => String((c as { delta?: unknown }).delta ?? ""))
+          .join("");
       }
 
       function terminalParts(chunks: Chunk[]) {
@@ -772,6 +799,103 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           expect(await leftovers({ allowOrphanedTools: "sleep 45" })).toEqual(
             [],
           );
+        },
+        TURN_TIMEOUT_MS,
+      );
+
+      // Background work (Claude Code only): an `allow-all` turn runs it, and
+      // the bridge's drain holds the turn open until a background agent
+      // reports back (`claude-code-background-drain.ts`).
+      (harness === "claude-code" ? it : it.skip)(
+        "a background agent reports back inside the same turn",
+        async () => {
+          const result = await turn("BGAGENT");
+          const terminals = terminalParts(result.chunks);
+          expect(terminals, JSON.stringify(result.chunks).slice(-3000)).toEqual(
+            [expect.objectContaining({ type: "finish" })],
+          );
+          expect(result.engineErrors).toEqual([]);
+          // The first answer, then the follow-up after the agent's report,
+          // both before the one finish.
+          const text = streamedText(result.chunks);
+          expect(text).toContain("TOOL RESULT RECEIVED");
+          expect(text).toContain("BGREPORT");
+          expect(text.indexOf("BGREPORT")).toBeGreaterThan(
+            text.indexOf("TOOL RESULT RECEIVED"),
+          );
+          // The wait was narrated, and the agent's status reached the client.
+          const statuses = result.chunks
+            .filter((c) => c.type === "data-harness-background-task")
+            .map(
+              (c) => (c as { data?: { kind?: string; status?: string } }).data,
+            );
+          expect(statuses).toContainEqual(
+            expect.objectContaining({ kind: "task", status: "running" }),
+          );
+          expect(statuses).toContainEqual(
+            expect.objectContaining({ kind: "task", status: "completed" }),
+          );
+          expect(mocks.revoke).toHaveBeenCalledTimes(1);
+          // The tests above leave their orphaned `sleep 45` tool shell behind.
+          expect(await leftovers({ allowOrphanedTools: "sleep 45" })).toEqual(
+            [],
+          );
+        },
+        TURN_TIMEOUT_MS,
+      );
+
+      (harness === "claude-code" ? it : it.skip)(
+        "a background shell never holds the turn, and the next turn still answers",
+        async () => {
+          const chat = { id: `chat-e2e-${randomUUID()}` };
+          // A chat turn DETACHES and leaves its bridge running. On E2B each
+          // bridge binds its own port and the next spawn reaps the idle one
+          // (`bridge-reaper.ts`); this Docker provider binds one fixed port
+          // and has no reaper, so the test stops the idle bridge itself.
+          const stopIdleBridge = () =>
+            docker(
+              ["exec", "-u", "user", container, "pkill", "-f", "bridge.mjs"],
+              { allowFail: true },
+            );
+          try {
+            const started = Date.now();
+            const first = await turn("BGSHELL sleep 300", { chat });
+            expect(terminalParts(first.chunks)).toEqual([
+              expect.objectContaining({ type: "finish" }),
+            ]);
+            // Shells are never waited for: the turn ends at its answer.
+            expect(Date.now() - started).toBeLessThan(60_000);
+            expect(first.commit).toBeDefined();
+            stopIdleBridge();
+
+            // The killed shell is reported by the resumed CLI ahead of the
+            // next prompt, as an empty result. That must not end the turn.
+            const commit = first.commit as {
+              harnessSessionId: string;
+              resumeState: unknown;
+              computerId: string;
+            };
+            mocks.claimState = {
+              harnessSessionId: commit.harnessSessionId,
+              resumeState: commit.resumeState,
+              computerId: commit.computerId,
+            };
+            const second = await turn("COUNT", { chat });
+            expect(terminalParts(second.chunks)).toEqual([
+              expect.objectContaining({ type: "finish" }),
+            ]);
+            // Answered, and from the resumed conversation (turn 1 is in it).
+            const answer = /USER_TURNS=(\d+)/.exec(streamedText(second.chunks));
+            expect(answer, streamedText(second.chunks)).not.toBeNull();
+            expect(Number(answer![1])).toBeGreaterThanOrEqual(2);
+            stopIdleBridge();
+            expect(await leftovers({ allowOrphanedTools: "sleep 45" })).toEqual(
+              [],
+            );
+          } finally {
+            mocks.claimState = null;
+            stopIdleBridge();
+          }
         },
         TURN_TIMEOUT_MS,
       );

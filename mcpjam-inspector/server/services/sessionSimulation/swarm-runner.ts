@@ -53,7 +53,6 @@ import { collectHostedRecordingBeforeRelease } from "../browserd/hosted-recordin
 import {
   canProvisionSwarmSandboxes,
   provisionAttemptSandbox,
-  releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
   targetWantsBrowser,
@@ -966,12 +965,14 @@ async function runJourneyFanOut(
                 ? "This target runs the " +
                   target.harness +
                   " harness, which needs a disposable sandbox per session. " +
-                  // An intent with no reason is a pre-B-isolation run snapshot: the
-                  // backend never resolved an image because it did not know how to.
-                  // Silent is right for bash (it simply goes missing); a harness
-                  // cannot run at all, so the session must say something true.
+                  // Only an UNAVAILABLE pin lands here, and only on a run
+                  // created before the backend began refusing such a target at
+                  // launch: a harness target that pinned nothing boots the
+                  // default template instead (`sandboxIntentFor`). The reason
+                  // names the broken pin, and the target is refused before any
+                  // box is booted for it.
                   (harnessTargetIntent.reason ??
-                    "This run pinned no computer image, so one cannot be created.")
+                    "The computer image this target pinned is unavailable, so one cannot be created.")
                 : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,
@@ -1176,7 +1177,11 @@ async function runJourneyFanOut(
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target, hostedBrowserAvailable);
+          const intent = sandboxIntentFor(
+            target,
+            hostedBrowserAvailable,
+            localHarness,
+          );
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits
@@ -1422,12 +1427,7 @@ async function runJourneyFanOut(
               // `runHarnessTurn` does not use the tool resolver at all. Only
               // for a harness target: the emulated engine has no use for it.
               ...(target.harness && attemptSandbox
-                ? {
-                    harnessSandboxBinding: {
-                      sandboxRowId: attemptSandbox.sandboxRowId,
-                      ...attemptSandbox.binding,
-                    },
-                  }
+                ? { harnessSandboxBinding: attemptSandbox.harnessBinding }
                 : {}),
               // F4: refuse the harness turn rather than let it reserve the
               // launcher's shared personal computer.
@@ -1796,7 +1796,8 @@ async function runJourneyFanOut(
                 error: err instanceof Error ? err.message : String(err),
               });
             }
-            await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
+            // Stops the turn heartbeat, then releases the box.
+            await attemptSandbox.release();
           }
         }
         } finally { releaseLocalSlot?.(); }

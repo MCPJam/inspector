@@ -104,10 +104,13 @@ export interface PinnedHostExecutionSpec {
    * Why this target has NO image, when it wanted one. Forms an explicit
    * tri-state with the field above:
    *   `computerEnvironment` ⇒ a sandbox is obtainable,
-   *   `computerUnavailableReason` ⇒ known-unavailable, say so in the run,
-   *   BOTH absent ⇒ a pre-B-isolation run (or a target that never wanted bash),
-   *     which must keep today's behaviour rather than being treated as
-   *     "unavailable".
+   *   `computerUnavailableReason` ⇒ known-unavailable, say so in the run (a
+   *     hosted harness target with a broken pin is now refused at launch, so
+   *     only older runs carry it for one),
+   *   BOTH absent ⇒ for a HARNESS target with a computer, boot the default
+   *     template; otherwise a pre-B-isolation run (or a target that never
+   *     wanted bash), which must keep today's behaviour rather than being
+   *     treated as "unavailable".
    */
   computerUnavailableReason?: string;
   harness?: Harness;

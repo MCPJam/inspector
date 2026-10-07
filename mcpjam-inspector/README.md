@@ -113,6 +113,14 @@ update `@mcpjam/cli` alongside the Inspector.
 Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and
 `MCPJAM_LOCAL_BROWSER_ENABLED=false` to disable the local computer/browser tools.
 
+Plugin Apps can open and save files on this machine only inside folders you
+allow. Set `MCPJAM_PLUGIN_LOCAL_FILE_ROOTS` to a JSON list of
+`{"actorId", "projectId", "serverId", "root"}` entries (`root` is an absolute
+folder), then list the files in the client's
+`mcpProfile.extensions["mcpjam/plugin-file-targets"]`. When it is unset, opening
+local files is refused with a message in the Logs panel, and files open
+read-only.
+
 # Key features
 
 | Capability            | Description                                                                                                                                                                                                                                                                                        |

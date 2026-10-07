@@ -392,6 +392,18 @@ export type RequestEventMap = {
     cspMode?: "permissive" | "widget-declared";
     errorCode: string;
   };
+  /**
+   * Per-step timings of one plugin App request (activation open/execute, App
+   * tool calls). `spans` aggregates each step: backend admission reads, target
+   * authorization, MCP connect/initialize, tools/list, resources/read, durable
+   * control and receipt writes, and the tool call. Durations only; no content.
+   */
+  "plugin.instance.request.timing": {
+    action: string;
+    statusCode: number;
+    totalMs: number;
+    spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
+  };
   "mcp.tool.execution.failed": {
     toolName: string;
     serverId?: string;

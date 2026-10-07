@@ -6,8 +6,8 @@
  * and the build badge beside it is the live status. `SandboxImagePicker` carries
  * all three on the app's own Select primitive, so the slot reads as a pill like
  * its neighbours instead of a native dropdown. Callers render this only when
- * `computers-enabled` is on; the query lives here so the hook is never fired on
- * a surface without it.
+ * `sandbox-images-enabled` is on; the query lives here so the hook is never
+ * fired on a surface without it.
  */
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
 import { SandboxImagePicker } from "@/components/computer/SandboxImagePicker";

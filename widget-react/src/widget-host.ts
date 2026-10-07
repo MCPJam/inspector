@@ -21,6 +21,7 @@ import type {
 
 import type { ComponentType, ReactNode } from "react";
 import type {
+  AppBridge,
   McpUiHostCapabilities,
   McpUiHostContext,
   McpUiResourceCsp,
@@ -683,6 +684,7 @@ export interface FetchWidgetContentRequest {
 }
 
 export interface FetchWidgetContentResponse {
+  resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
   html: string;
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
@@ -728,6 +730,13 @@ export type ListResourcesResult = {
  * HOSTED_MODE / web-managed guard before calling the raw api.
  */
 export interface WidgetHostServices {
+  /** Host-admitted plugin navigation, never arbitrary external navigation. */
+  openAppLink?: (url: string) => Promise<void>;
+  sendMessage?: (params: unknown) => Promise<Record<string, unknown>>;
+  updateModelContext?: (
+    params: unknown
+  ) => Promise<{ _meta?: Record<string, unknown> }>;
+
   fetchWidgetContent: (
     req: FetchWidgetContentRequest
   ) => Promise<FetchWidgetContentResponse>;
@@ -738,6 +747,13 @@ export interface WidgetHostServices {
     uri: string,
     opts?: { forceHosted?: boolean }
   ) => Promise<any>;
+  /** Complete instance-bound resource callback; legacy services remain compatible. */
+  readResourceV2?: import("@mcpjam/sdk/widget-runtime").HostBridgeCallbacks["onReadResourceV2"];
+  /** Trusted fixed-lifetime extensions, installed before connect and released on close. */
+  configureAppBridge?: (
+    bridge: AppBridge,
+    capabilities: ConstructorParameters<typeof AppBridge>[2]
+  ) => void | (() => void);
   listResources: (
     serverId: string,
     cursor?: string,

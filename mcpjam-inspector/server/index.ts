@@ -1,3 +1,4 @@
+import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
 import { writeInspectorRuntime } from "./services/inspector-runtime.js";
 import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
@@ -328,6 +329,7 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
+if (!HOSTED_MODE) void startPluginFormFileJanitor();
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();

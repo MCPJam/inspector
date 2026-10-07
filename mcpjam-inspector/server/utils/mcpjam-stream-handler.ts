@@ -1077,6 +1077,13 @@ export interface MCPJamHandlerOptions {
    * access + per-swarm host-funded caps. Absent ⇒ legacy member path.
    */
   executionScope?: ExecutionScope;
+  /**
+   * The actor is a NON-MEMBER participant of the scenario this `swarm` scope
+   * names (the runtime config's advisory `accessKind`). Copy only: a refusal
+   * they see never names the study's credits, budget, organization or
+   * environment (`participantSafeStudyError`). Members keep the detail.
+   */
+  scenarioParticipant?: boolean;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
@@ -1096,6 +1103,14 @@ export interface MCPJamHandlerOptions {
    * Absent ⇒ today's unpoliced bare-token path, byte-identical.
    */
   harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * HOST-EXECUTED harness delivery only (Codex): the same per-call executor an
+   * emulated Playground turn wraps its MCP tools with (OpenAI plugin forms on
+   * the composer card, owned model Apps). It runs innermost, after the tool
+   * policy gate and the harness's own approval, exactly where the emulated
+   * engine's wrapper sits. Absent ⇒ the projected tools are unchanged.
+   */
+  hostToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   /**
    * The eval ITERATION this harness turn is executing, when there is one.
    *
@@ -4796,6 +4811,12 @@ export interface ChatEngineLoopResult {
   messageHistory: ModelMessage[];
   turnTrace?: PersistedTurnTrace;
   aborted: boolean;
+  /**
+   * Harness only: a Stop or the caller's deadline ended a Claude Code turn's
+   * wait for its background agents, after the answer was delivered. The turn
+   * finished and was kept; it was not cut short.
+   */
+  backgroundDrainEnded?: true;
 }
 
 /**

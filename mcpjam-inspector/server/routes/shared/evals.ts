@@ -1,6 +1,8 @@
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
+import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
+import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { listBaseServers } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
@@ -3671,12 +3673,12 @@ export async function prepareSingleCaseExecution(
   }
 
   // The same honesty gate the suite path applies, with the surface named: a
-  // single-case run passes `runId: null`, and both sandbox-provisioning sites
-  // require `runId !== null`, so no box is ever booted for it. A host granting
-  // a computer-backed built-in would therefore execute with the tool silently
-  // skipped by `resolveHostTools`. Refused instead — and the message points at
-  // running the case inside a suite rather than at pinning an image, which
-  // would change nothing here. Before the commit, so a refusal writes nothing.
+  // single-case run passes `runId: null` and boots a box only for a HARNESS
+  // (keyed to the iteration). A non-harness host granting a computer-backed
+  // built-in would therefore execute with the tool silently skipped by
+  // `resolveHostTools`. Refused instead — and the message points at running
+  // the case inside a suite rather than at pinning an image, which would
+  // change nothing here. Before the commit, so a refusal writes nothing.
   const singleCaseAdmission = checkEvalExecutionAdmission({
     localExecution: harnessRuntimeVenue === "local",
     hostConfig: effectiveHostConfig ?? null,
@@ -3714,6 +3716,55 @@ export async function prepareSingleCaseExecution(
     matchOptionsOverride,
     hostConfigOverride: legacyHostConfigOverride,
   });
+
+  // A HOSTED harness single-case run boots its own disposable box now, so it
+  // owes every rule an unattended harness run obeys — the SAME shared gate the
+  // suite path applies (model eligibility, approval, enterprise policy, and a
+  // project to provision and bill against). Before the commit, so a refusal
+  // writes nothing. The local venue keeps its own readiness checks.
+  if (harnessRuntimeVenue === "hosted") {
+    const harnessAdmission = checkEvalHarnessAdmission({
+      hostConfig: effectiveHostConfig ?? null,
+      serverIds: resolvedServerIds,
+      cases: [test as { title?: string; model?: string; provider?: string }],
+      widgetAssertingCaseTitles: casesAssertingWidgetRender([test]),
+      projectId:
+        (typeof testCase.projectId === "string" ? testCase.projectId : null) ??
+        projectId ??
+        null,
+    });
+    if (!harnessAdmission.ok) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        harnessAdmission.reason,
+        { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness },
+      );
+    }
+    // That box is a terminal keyed to the iteration: it cannot carry a browser
+    // or the case's attachments, so a harness host or case needing either is
+    // refused here rather than run without it.
+    const builtInToolIds = effectiveHostConfig?.builtInToolIds;
+    const boxRefusal = harnessOfHostConfig(effectiveHostConfig)
+      ? singleCaseHarnessBoxRefusal({
+          builtInToolIds: Array.isArray(builtInToolIds)
+            ? builtInToolIds.filter(
+                (id): id is string => typeof id === "string",
+              )
+            : undefined,
+          browserToolPolicy: effectiveHostConfig?.browserToolPolicy,
+          hostedBrowserAvailable: hostedBrowserAdvertisable(),
+          hasAttachments:
+            Array.isArray(testCase.attachments) &&
+            testCase.attachments.length > 0,
+        })
+      : undefined;
+    if (boxRefusal) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, boxRefusal, {
+        reason: "EVAL_EXECUTION_UNAVAILABLE",
+      });
+    }
+  }
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys".

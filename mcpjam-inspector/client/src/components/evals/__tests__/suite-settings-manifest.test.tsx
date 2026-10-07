@@ -412,6 +412,53 @@ describe("eval suite settings manifest — render parity", () => {
     ).toBeTruthy();
   });
 
+  /**
+   * The image row rides `sandbox-images`, split from `computers` so the
+   * personal computer can widen without exposing custom images. A backend that
+   * predates the split has no `sandbox-images` key and still gates images on
+   * `computers`, so that is the fallback.
+   */
+  describe("the image row reads sandbox-images, not computers", () => {
+    const allFeatures = readyCapabilities().capabilities.features;
+    function imageRowReason(features: Record<string, unknown>) {
+      mocks.capabilities.mockReturnValue(readyCapabilities({ features }));
+      const { container } = renderSettingsSheet();
+      showSettingsKey(container, "computerEnvironment");
+      return container
+        .querySelector('[data-setting-key="computerEnvironment"]')
+        ?.getAttribute("data-disabled-reason");
+    }
+
+    it("disables the row when sandbox images are off, even with computers on", () => {
+      expect(
+        imageRowReason({
+          ...allFeatures,
+          computers: { enabled: true },
+          "sandbox-images": { enabled: false, reason: "flag_false" },
+        }),
+      ).toBe("Not enabled for this organization");
+    });
+
+    it("enables the row when sandbox images are on, even with computers off", () => {
+      expect(
+        imageRowReason({
+          ...allFeatures,
+          computers: { enabled: false, reason: "flag_false" },
+          "sandbox-images": { enabled: true },
+        }),
+      ).toBeNull();
+    });
+
+    it("falls back to computers on a backend without the sandbox-images key", () => {
+      expect(
+        imageRowReason({
+          ...allFeatures,
+          computers: { enabled: false, reason: "flag_false" },
+        }),
+      ).toBe("Not enabled for this organization");
+    });
+  });
+
   it("keeps triggers hidden without schedule permission", () => {
     mocks.capabilities.mockReturnValue(
       readyCapabilities({

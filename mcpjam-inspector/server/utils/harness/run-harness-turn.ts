@@ -120,6 +120,7 @@ import {
   selectDeliverableServerIds,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
+import { participantSafeStudyError } from "../scenario-runtime-config.js";
 import {
   createUiChunkProvenanceSigner,
   historyProvenanceContextFor,
@@ -141,6 +142,7 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
+import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-config.js";
 import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
@@ -183,8 +185,7 @@ import {
   isExternalAccountPlanWallTurn,
 } from "./external-account-plan-wall.js";
 import {
-  fetchBrokeredCredentialNames,
-  planExternalAccountCredentials,
+  resolveExternalAccountCredentialPlan,
   type ExternalAccountCredentialPlan,
 } from "./external-account-credentials.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
@@ -212,7 +213,12 @@ import {
   type HarnessOwnerRef,
   type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
-import type { HarnessResetReason } from "@/shared/harness-session";
+import {
+  buildHarnessSessionDataPart,
+  harnessBackgroundTaskInfoFromRaw,
+  type HarnessBackgroundTaskInfo,
+  type HarnessResetReason,
+} from "@/shared/harness-session";
 import {
   buildHarnessProxyMcpJson,
   harnessServerKeyToName,
@@ -695,6 +701,8 @@ export function harnessRuntimeFingerprint(parts: {
  * `sessionSimulation/swarm-sandbox.ts` — one idiom for bounded cleanup.
  */
 const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
+/** How often a turn waiting on background agents writes a keepalive chunk. */
+const HARNESS_DRAIN_KEEPALIVE_MS = 20_000;
 
 /** Sealed-policy envelope lifetime when the caller doesn't set one. Long enough
  *  for a real harness turn, short enough to bound a leaked seal (§3's
@@ -738,6 +746,7 @@ export async function runHarnessTurn(
     harness,
     harnessMcpProxy,
     harnessToolPolicy,
+    hostToolExecutor,
     evalIterationId,
     onHarnessEvidenceDecision,
     onHarnessPolicyBlocks,
@@ -746,6 +755,7 @@ export async function runHarnessTurn(
     harnessSandboxBinding,
     harnessExecutionTarget,
     executionScope,
+    scenarioParticipant,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
@@ -778,19 +788,25 @@ export async function runHarnessTurn(
   if (!harness) {
     throw new Error("runHarnessTurn: harness id is required");
   }
-  // An ephemeral box is launcher-owned and billed to its run's project; an
-  // execution scope is the host-funded GUEST path, which resolves a scenario's
-  // own personal computer and bills the host org. The two authorize and bill
-  // differently, so a turn asking for both is a wiring bug. The backend rejects
-  // the combination outright — surface it HERE, before the box is bound and a
-  // credential is minted, rather than as an opaque 400 mid-turn.
-  if (harnessSandboxBinding && executionScope) {
-    throw new Error(
-      "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
-        "an execution scope (the guest/host-funded path runs on the scenario's " +
-        "own computer)",
-    );
+  // A SCENARIO-scoped harness (`executionScope.kind === "swarm"`) runs on the
+  // conversation's disposable box and nowhere else. With no binding the only
+  // machine left to resolve is a persistent computer — the member's personal
+  // one or the host's — which User Testing never uses, and which the backend
+  // now refuses the broker lease for. The chat routes refuse this before the
+  // turn starts, with copy for the asker; this is the last resort, before
+  // anything is reserved or woken, and typed (a 409) so it never reads as a
+  // 500. It cannot tell a member from a participant, so it says what is safe
+  // for both.
+  if (executionScope?.kind === "swarm" && !harnessSandboxBinding && !harnessExecutionTarget) {
+    throw new ScenarioHarnessRepublishRequiredError();
   }
+  // An ephemeral binding and an execution scope MAY travel together: a
+  // scenario conversation's harness runs on its disposable box while the scope
+  // still resolves its session lane and its skills. They never meet at the
+  // broker, where the two authorize and bill differently and the backend
+  // rejects the pair: the scope rides only the `computer` arm of the broker's
+  // box (`HarnessBrokerBox`), so a sandbox lease cannot carry it.
+
   // Venue-aware, and decided ONCE: the fingerprint's `transport`, the
   // approval mode and the tool catalog all come from this adapter, so a local
   // Codex turn must see the app-server arm here exactly as its preflight did.
@@ -901,6 +917,10 @@ export async function runHarnessTurn(
   // `onSandboxSession` and `runtimeVersionCommand` in the registry.
   let installedRuntimeVersion: string | undefined;
   let capturedTurnTrace: PersistedTurnTrace | undefined;
+  // A Stop or the caller's deadline ended a Claude Code background drain: the
+  // answer was delivered, so the turn is committed as finished (see
+  // `backgroundDrainActive` below). Reported on the result for the `/v1` route.
+  let drainEndedByAbort = false;
   // §3 atomic commit: built in executeEngine's finally (after session.detach()),
   // consumed by onFinishEngine's onConversationComplete so the resume state
   // rides /ingest-chat with the transcript. `releaseHarnessLease` lets either
@@ -1197,6 +1217,60 @@ export async function runHarnessTurn(
     let emittedAnyText = false;
     let emittedAnyVisiblePart = false;
     const seenHarnessPartTypes = new Set<string>();
+    // BACKGROUND DRAIN (Claude Code, `claude-code-background-drain.ts`): the
+    // bridge holds the turn open after its first answer until the background
+    // agents report back, and narrates that as `raw` parts.
+    //  - `splitNextText`: a background task's status landed between two texts,
+    //    so the next text is a new part (UI block AND transcript entry) rather
+    //    than a continuation of the answer before it. Only ever set by those
+    //    parts, so an ordinary turn's text is untouched.
+    //  - `backgroundDrainActive`: the bridge said it is WAITING ("draining"),
+    //    and "follow-up" once a background agent's report starts streaming.
+    //    The bridge re-announces the phase when an approval resumes the turn
+    //    in a new request. While waiting with no tool call in flight, the
+    //    answer is already delivered, so a Stop or the caller's deadline ENDS
+    //    the drain and keeps the turn (`drainEndedByAbort`) instead of failing
+    //    it. During a follow-up a Stop is an ordinary abort, as is losing the
+    //    lease.
+    //  - `drainStepUsage`: usage summed from `finish-step` parts. A drain
+    //    ended by a Stop leaves before the bridge's `finish`, the only part
+    //    that carries the turn total.
+    let splitNextText = false;
+    let backgroundDrainActive = false;
+    const drainOpenToolCalls = new Set<string>();
+    let drainStepUsage:
+      | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+      | undefined;
+    let drainKeepalive: ReturnType<typeof setInterval> | undefined;
+    const writeBackgroundTaskChunk = (data: HarnessBackgroundTaskInfo) => {
+      writer.write({
+        type: "data-harness-background-task",
+        data,
+        transient: true,
+      } as unknown as UIMessageChunk);
+    };
+    const stopDrainKeepalive = () => {
+      if (drainKeepalive) clearInterval(drainKeepalive);
+      drainKeepalive = undefined;
+    };
+    const drainCanEndOnAbort = () =>
+      backgroundDrainActive &&
+      drainOpenToolCalls.size === 0 &&
+      !livenessAbort.signal.aborted;
+    // A Stop can also surface as the harness stream THROWING (the bridge
+    // socket closes mid-iteration) rather than as a part or a clean end.
+    // During a waiting drain that ends the wait, like the other two.
+    async function* drainAwareParts<T>(parts: AsyncIterable<T>) {
+      try {
+        yield* parts;
+      } catch (err) {
+        if (effectiveAbortSignal.aborted && drainCanEndOnAbort()) {
+          drainEndedByAbort = true;
+          return;
+        }
+        throw err;
+      }
+    }
     // Open reasoning block id (separate UI part from text). The harness emits
     // reasoning-* as a distinct block; we close it before any text/tool/finish.
     let reasoningId: string | undefined;
@@ -1480,6 +1554,10 @@ export async function runHarnessTurn(
               // IN-PROCESS instead of by a sealed proxy token — same decision
               // function, same block envelope.
               ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
+              // The plugin executor an emulated turn wraps its tools with:
+              // a server's OpenAI form reaches the composer card, and an App
+              // result becomes an owned model App with its own context.
+              ...(hostToolExecutor ? { executor: hostToolExecutor } : {}),
               // …and, for the same reason, no proxy to extract a SEP-2350
               // challenge either. Publish straight into the turn's step-up
               // intake so a hosted-OAuth server pauses this turn instead of
@@ -1610,92 +1688,51 @@ export async function runHarnessTurn(
       // environment. The runtime process itself still receives it — it has to,
       // that is how the CLI authenticates. The BROKERED arm has no such
       // residue: the box never holds the value at any point.
+      // A NON-MEMBER PARTICIPANT never runs an external-account harness. Its
+      // credential is the project's own vendor key; brokered delivery keeps the
+      // raw value out of the box, but the box's agent still holds a shell and the
+      // egress proxy injects the key on the vendor's host, so a participant can
+      // have the CLI exchange it for a reusable vendor token (Cursor:
+      // `/auth/exchange_user_api_key`) and read it back. That crosses the
+      // project-to-guest boundary. Refused here, before any credential is
+      // planned or anything is provisioned, with copy that names neither the
+      // credential nor the project's settings.
+      if (
+        harnessAdapter.modelAccess === "external-account" &&
+        scenarioParticipant
+      ) {
+        throw new Error(
+          `${harnessAdapter.displayName} isn't available to participants of this study. ` +
+            "Ask the study owner to choose a different agent.",
+        );
+      }
       const externalAccountCredentialNames =
         harnessAdapter.modelAccess === "external-account"
           ? harnessAdapter.externalAccountCredentialEnv
           : undefined;
-      let externalAccountPlan: ExternalAccountCredentialPlan | undefined;
-      if (externalAccountCredentialNames) {
-        // Ask about brokered delivery ONLY for the names materialized delivery
-        // did not already satisfy. A project that materializes its key pays no
-        // round trip and cannot be refused by a secrets-service blip — the
-        // pre-existing behaviour, preserved exactly.
-        const brokerBinding = harnessAdapter.externalAccountBrokerBinding;
-        const unresolved = externalAccountCredentialNames.filter(
-          (name) => !secretEnv?.[name] && brokerBinding?.[name],
-        );
-        // The box kind is decided by the CALLER's binding (see step 3 below),
-        // and it is known here because `harnessSandboxBinding` arrives on the
-        // options. It matters: `projectSecretsEgress.listBrokeredSecretsForBox`
-        // answers `[]` for anything without a `sandboxRowId` — persistent
-        // computers receive no brokered secrets in v1 — so a chat turn on a
-        // project computer must never be told its credential is brokered.
-        //
-        // `environmentId` is the OTHER half of that question, and the reason it
-        // is threaded all the way down here rather than approximated: the
-        // backend composes a box's egress transform from the ENVIRONMENT's
-        // `secretSelection`, so a correctly bound brokered row the run's
-        // environment does not select is never delivered. Asking project-wide
-        // would report it available and start a turn that provisions a box and
-        // then fails vendor auth against a placeholder.
-        const brokered =
-          unresolved.length > 0 && brokerBinding
-            ? await fetchBrokeredCredentialNames({
-                ...(authHeader ? { bearer: authHeader } : {}),
-                ...(projectId ? { projectId } : {}),
-                ...(environmentId ? { environmentId } : {}),
-                // Copy only — an environment this process cannot name is one
-                // whose selection it cannot check, so the answer is the same
-                // either way and only the refusal wording changes.
-                ...(!environmentId && environmentUnresolvedReason
-                  ? { environmentUnresolvedReason }
-                  : {}),
-                boxKind: harnessSandboxBinding ? "sandbox" : "computer",
-                required: Object.fromEntries(
-                  unresolved.map((name) => [name, brokerBinding[name]!]),
-                ),
-              })
-            : {
-                available: new Set<string>(),
-                misboundHosts: {},
-                unselected: new Set<string>(),
-                environmentMissing: false,
-              };
-        // THROWS on an unsatisfiable credential, with copy that names the
-        // variable, BOTH deliveries, and where to set them. Never defaulted or
-        // silently skipped — starting the CLI with no credential produces an
-        // opaque failure from inside the box instead.
-        //
-        // KNOWN LIMITATION on the MATERIALIZED arm, and this is where it
-        // surfaces: callers that do NOT wire secrets deliver none (see the note
-        // on `runtimeSecrets` above — that is the documented contract, not an
-        // oversight). The SYNTHETIC path (`sessionSimulation/runner.ts`, which
-        // drives scenario/swarm/eval turns through `runUnifiedAssistantTurn`)
-        // is one of them. Those are exactly the surfaces that refuse
-        // materialized secrets anyway, so the answer for them is brokered
-        // delivery rather than wiring materialized secrets into a runner that
-        // has no scrubber to pair them with.
-        externalAccountPlan = planExternalAccountCredentials({
-          harnessDisplayName: harnessAdapter.displayName,
-          required: externalAccountCredentialNames,
+      // The reads and the decision live in `resolveExternalAccountCredentialPlan`
+      // so the Playground routes can run the SAME check before they boot a box
+      // for the turn (a refused credential must provision nothing). See it for
+      // why brokered availability depends on the box kind and the environment,
+      // and why it THROWS rather than starting the CLI with no credential.
+      const externalAccountPlan: ExternalAccountCredentialPlan | undefined =
+        await resolveExternalAccountCredentialPlan({
+          harness: harnessAdapter,
           secretEnv,
-          brokerBinding,
-          brokeredAvailable: brokered ? brokered.available : null,
-          ...(brokered
-            ? {
-                misboundHosts: brokered.misboundHosts,
-                unselected: brokered.unselected,
-                environmentMissing: brokered.environmentMissing,
-                ...(brokered.environmentUnresolvedReason
-                  ? {
-                      environmentUnresolvedReason:
-                        brokered.environmentUnresolvedReason,
-                    }
-                  : {}),
-              }
+          bearer: authHeader,
+          projectId,
+          ...(environmentId ? { environmentId } : {}),
+          ...(environmentUnresolvedReason
+            ? { environmentUnresolvedReason }
             : {}),
+          boxKind: harnessSandboxBinding ? "sandbox" : "computer",
+          // A box answers for itself: the member-only readers are the
+          // fallback for a persistent computer (and an older backend).
+          ...(harnessSandboxBinding
+            ? { sandboxRowId: harnessSandboxBinding.sandboxRowId }
+            : {}),
+          ...(abortSignal ? { signal: abortSignal } : {}),
         });
-      }
       const externalAccountAuth = externalAccountPlan?.auth;
       // What the BOX's session env carries: everything the project materialized
       // MINUS the credentials handed to the adapter directly (see above). An
@@ -2397,11 +2434,19 @@ export async function runHarnessTurn(
           // Typed: lease installation is OUR platform layer, not the model.
           // The backend's own code rides along when it sent one (a billing
           // refusal, a box that is gone), so it is classified as what it is.
-          throw new HarnessInfraSetupError(broker.error, {
-            source: "platform_setup",
-            code: broker.code ?? "harness_broker_unavailable",
-            httpStatus: broker.status,
-          });
+          // A scenario's non-member participant never sees the owner-facing
+          // detail ("add credits", "Organization → Budget", "share link");
+          // the code and status still classify the failure.
+          throw new HarnessInfraSetupError(
+            scenarioParticipant && executionScope?.kind === "swarm"
+              ? participantSafeStudyError(broker)
+              : broker.error,
+            {
+              source: "platform_setup",
+              code: broker.code ?? "harness_broker_unavailable",
+              httpStatus: broker.status,
+            },
+          );
         }
         // The lease is recorded, which consumed this turn's claim on the box; the
         // lease's own per-box fence covers the rest of the turn. Releasing now
@@ -2442,6 +2487,7 @@ export async function runHarnessTurn(
               modelId,
               auth,
               mcpJson,
+              permissionMode,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2449,6 +2495,7 @@ export async function runHarnessTurn(
           : harnessAdapter.createHarness({
               modelId,
               auth,
+              permissionMode,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2812,8 +2859,13 @@ export async function runHarnessTurn(
           // the cached path by project + host (it knows both); we only need the
           // path. Fires every turn (fresh or resumed) — always the current dir.
           writer.write({
-            type: "data-harness-session",
-            data: { workdir: sessionWorkDir },
+            // Where that path lives: the Playground's Shell rail opens a
+            // terminal on the PERSONAL computer, so a turn that ran on the
+            // conversation's disposable box must say so.
+            ...buildHarnessSessionDataPart({
+              workdir: sessionWorkDir,
+              disposable: Boolean(harnessSandboxBinding),
+            }),
             transient: true,
           } as unknown as UIMessageChunk);
         },
@@ -2874,7 +2926,16 @@ export async function runHarnessTurn(
       const resumeFromApproval =
         isApprovalResume && resumable?.awaitingApproval === true;
       if (isApprovalResume && !resumeFromApproval) {
-        throw new Error("The session for this approval is no longer available; the pending action will not run. Start a new turn.");
+        // A scenario conversation's box stops heartbeating when a turn pauses
+        // for approval, and idles out if the answer comes late; this turn was
+        // handed its replacement. Say what happened and what to do.
+        throw new Error(
+          sourceType === "scenario" &&
+          harnessSandboxBinding &&
+          eligibility.reason === "sandbox-replaced"
+            ? "This conversation's computer was recycled while waiting for your approval. Send your message again."
+            : "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
+        );
       }
       for (const continuation of approvalContinuations) {
         logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalId, approvalDecision: "user" });
@@ -3239,11 +3300,17 @@ export async function runHarnessTurn(
         driver = activeDriver;
         activeDriver.emitTurnStart(writer);
         stepStartedAt = traceBaseMs;
-        harnessStream: for await (const part of res.fullStream as AsyncIterable<
-          Record<string, unknown> & { type?: string }
-        >) {
+        harnessStream: for await (const part of drainAwareParts(
+          res.fullStream as AsyncIterable<
+            Record<string, unknown> & { type?: string }
+          >,
+        )) {
           if (effectiveAbortSignal.aborted) {
-            aborted = true;
+            if (drainCanEndOnAbort()) {
+              drainEndedByAbort = true;
+            } else {
+              aborted = true;
+            }
             break;
           }
           if (scopeStepUpCreation && suspendedHarnessToolCallId) {
@@ -3252,6 +3319,14 @@ export async function runHarnessTurn(
           }
           const type = part.type;
           if (typeof type === "string") seenHarnessPartTypes.add(type);
+          // A failed call ends with `tool-error` (a non-zero Bash exit, a
+          // missing file, a failed Edit), not `tool-result`: it is no longer
+          // in flight either way.
+          if (type === "tool-error" || type === "tool-output-error") {
+            drainOpenToolCalls.delete(
+              String((part as { toolCallId?: unknown }).toolCallId ?? ""),
+            );
+          }
           if (
             type === "reasoning-start" ||
             type === "reasoning-delta" ||
@@ -3295,13 +3370,15 @@ export async function runHarnessTurn(
               emitTextStart(writer, textId);
             }
             // Append to the open trailing text part, or start a new one, so
-            // text keeps its order relative to tool-calls.
+            // text keeps its order relative to tool-calls. A background
+            // agent's follow-up is its own part (see `splitNextText`).
             const lastPart = assistantParts[assistantParts.length - 1];
-            if (lastPart && lastPart.type === "text") {
+            if (lastPart && lastPart.type === "text" && !splitNextText) {
               lastPart.text += delta;
             } else {
               assistantParts.push({ type: "text", text: delta });
             }
+            splitNextText = false;
             emitTextDelta(writer, textId, delta);
             emittedAnyText = true;
             // See the whitespace-only note on projectAssistantText above.
@@ -3368,6 +3445,7 @@ export async function runHarnessTurn(
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
             toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
             toolStartMs.set(toolCallId, Date.now());
+            drainOpenToolCalls.add(toolCallId);
             // providerExecuted:true — the harness runs ALL tools in-sandbox
             // (Claude Code executes them itself). Without it the client treats
             // these as client-side tools to fulfill and `sendAutomaticallyWhen`
@@ -3416,6 +3494,7 @@ export async function runHarnessTurn(
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
+            drainOpenToolCalls.delete(toolCallId);
             // HOST-EXECUTED delivery: prefer the raw result captured at
             // `execute()` time over the runtime's echo, which is the model-facing
             // projection we handed it. `has` rather than a truthiness check —
@@ -3698,12 +3777,63 @@ export async function runHarnessTurn(
             pausedForApproval = true;
             break;
           } else if (type === "raw") {
-            // Passthrough of the runtime's own protocol message. Only a typed,
-            // terminal model-call failure is kept.
-            const evidence = codexProviderEvidenceFromNotification(
-              (part as { rawValue?: unknown }).rawValue,
-            );
+            const rawValue = (part as { rawValue?: unknown }).rawValue;
+            // The Claude Code bridge's background drain: progress becomes a
+            // transient chunk; notices are logged too, because the bridge's
+            // own warnings only ever reach its stderr.
+            const drainInfo = harnessBackgroundTaskInfoFromRaw(rawValue);
+            if (drainInfo) {
+              writeBackgroundTaskChunk(drainInfo);
+              if (drainInfo.kind === "task") {
+                closeReasoning();
+                if (textId !== undefined) {
+                  emitTextEnd(writer, textId);
+                  textId = undefined;
+                }
+                splitNextText = true;
+              } else if (drainInfo.kind === "notice") {
+                logger.info(`[harness][background-drain] ${drainInfo.reason}`, {
+                  harness: harnessAdapter.id,
+                });
+                if (drainInfo.reason === "follow-up") {
+                  backgroundDrainActive = false;
+                  // The follow-up streams on its own; the keepalive is only
+                  // for the silent wait.
+                  stopDrainKeepalive();
+                } else if (drainInfo.reason === "draining") {
+                  backgroundDrainActive = true;
+                  if (!drainKeepalive) {
+                    drainKeepalive = setInterval(
+                      () => writeBackgroundTaskChunk({ kind: "keepalive" }),
+                      HARNESS_DRAIN_KEEPALIVE_MS,
+                    );
+                    drainKeepalive.unref?.();
+                  }
+                }
+              }
+              continue;
+            }
+            // Otherwise a passthrough of the runtime's own protocol message.
+            // Only a typed, terminal model-call failure is kept.
+            const evidence = codexProviderEvidenceFromNotification(rawValue);
             if (evidence) rawProviderEvidence = evidence;
+          } else if (type === "finish-step") {
+            const u = (part as { usage?: unknown }).usage;
+            if (u && typeof u === "object") {
+              const ur = u as Record<string, unknown>;
+              const next = { ...drainStepUsage };
+              for (const key of [
+                "inputTokens",
+                "outputTokens",
+                "totalTokens",
+              ] as const) {
+                const value = ur[key];
+                if (typeof value === "number") {
+                  next[key] = (next[key] ?? 0) + value;
+                }
+              }
+              drainStepUsage = next;
+            }
           } else if (type === "finish") {
             const fr = (part as { finishReason?: unknown }).finishReason;
             if (typeof fr === "string" && fr)
@@ -3731,6 +3861,26 @@ export async function runHarnessTurn(
         // paths leave a balanced UI stream.
         closeReasoning();
         if (textId !== undefined) emitTextEnd(writer, textId);
+        textId = undefined;
+        stopDrainKeepalive();
+        // The stream can also end on its own when a Stop lands (the agent
+        // settles the turn as aborted). During a drain that is the end of the
+        // wait, not of the turn: the answer is already here.
+        if (
+          !aborted &&
+          !drainEndedByAbort &&
+          effectiveAbortSignal.aborted &&
+          drainCanEndOnAbort()
+        ) {
+          drainEndedByAbort = true;
+        }
+        if (drainEndedByAbort) {
+          logger.info(
+            "[harness][background-drain] ended by a stop or deadline; keeping the delivered answer",
+            { harness: harnessAdapter.id },
+          );
+          usage ??= drainStepUsage;
+        }
 
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
         // full harness run finishes). The finally below destroys the harness
@@ -3778,7 +3928,14 @@ export async function runHarnessTurn(
         // answer + usage. `res.text` settles the complete answer even when the
         // bridge delivered it as a final result rather than streamed
         // `text-delta` parts. Drain it before building the persisted transcript.
-        const finalText = await res.text;
+        // Not after a drain ended by a stop: the agent settled the turn as
+        // aborted, so `res.text` rejects. What streamed is the answer.
+        let finalText: string | undefined;
+        if (drainEndedByAbort) {
+          Promise.resolve(res.text).catch(() => {});
+        } else {
+          finalText = await res.text;
+        }
         closeReasoning();
 
         // ENTITLEMENT WALL (external-account harnesses only). Cursor answers a
@@ -3876,7 +4033,9 @@ export async function runHarnessTurn(
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}${bootstrapLog.text}`,
-          bootstrapLog.context,
+          // `harnessId` rides both outcome lines so the feature-health monitor
+          // can compare failed against completed turns per harness.
+          { ...bootstrapLog.context, harnessId: harnessAdapter.id },
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
@@ -3907,6 +4066,7 @@ export async function runHarnessTurn(
         }
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
+        stopDrainKeepalive();
         try {
           // Turn-end adoption: sync filesystem-installed skills up into Convex
           // while the session is still LIVE (before detach/destroy below). Only on
@@ -4092,7 +4252,7 @@ export async function runHarnessTurn(
         source: "chat.harness-turn",
         hop: "user_server_hop",
         transport: "http_stream",
-        context: { promptIndex },
+        context: { promptIndex, harnessId: harnessAdapter.id },
       });
       // A turn-time install that failed (the pnpm 11 / deny-all egress class)
       // never reaches the timing line, so the failure path reports the
@@ -4101,6 +4261,7 @@ export async function runHarnessTurn(
       void logHarnessBootstrapOnFailure(
         bakeObservedSandbox,
         harnessAdapter.pinnedRuntimeVersion,
+        harnessAdapter.id,
       );
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
@@ -4348,6 +4509,9 @@ export async function runHarnessTurn(
     messageHistory,
     aborted,
     ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
+    ...(capturedTurnTrace && drainEndedByAbort
+      ? { backgroundDrainEnded: true }
+      : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import { projectWorkspaceTranscript, workspacePresentationHostConfig } from "../../shared/unattended-workspace";
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
 import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
@@ -45,7 +46,10 @@ import {
 } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
-import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
+import {
+  needsEphemeralEvalSandbox,
+  singleCaseHarnessBoxRefusal,
+} from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -95,10 +99,14 @@ import {
   EVAL_BASH_TOOL_NAME,
 } from "../utils/built-in-tools/sandbox-bash.js";
 import {
-  isComputersDataPlaneConfigured,
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import {
+  acquireHarnessBox,
+  harnessBoxUnavailableReason,
+  type HarnessBox,
+} from "../utils/harness/harness-box.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import {
   collectHostedRecordingThenRelease,
@@ -1947,8 +1955,16 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
+    /**
+     * A hosted HARNESS iteration keys its disposable computer to this row, and
+     * a harness with no box falls back to the member's personal computer. So a
+     * failed record refuses the run, carrying the backend's reason, instead of
+     * being swallowed.
+     */
+    requireRecord?: boolean;
   },
 ): Promise<string | undefined> {
+  let iterationId: string | undefined;
   try {
     // ACTION, not the mutation — same starter-pool contention as the suite
     // path above, retried server-side.
@@ -1978,13 +1994,38 @@ async function createIterationDirectly(
       },
     );
 
-    return result?.iterationId as string | undefined;
+    iterationId = result?.iterationId as string | undefined;
   } catch (error) {
     logger.error("[evals] Failed to create iteration:", error);
     if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
+    if (params.requireRecord) {
+      throw new HarnessIterationRecordError(
+        `${HARNESS_ITERATION_RECORD_REQUIRED}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
     return undefined;
   }
+  if (!iterationId && params.requireRecord) {
+    throw new HarnessIterationRecordError(
+      `${HARNESS_ITERATION_RECORD_REQUIRED}: the backend returned no iteration id`,
+    );
+  }
+  return iterationId;
 }
+
+const HARNESS_ITERATION_RECORD_REQUIRED =
+  "Could not record this eval iteration, which a hosted harness run needs " +
+  "to provision its own computer, so the run was refused";
+
+/**
+ * Typed so the quick-run settle loop rethrows it: a run refused before it took
+ * a row has nothing of its own to answer with, and the route would otherwise
+ * report the case's latest iteration, another run's, as this one's result.
+ */
+class HarnessIterationRecordError extends Error {}
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -4561,6 +4602,12 @@ export const runEvalSuiteWithAiSdk = async ({
           quickRunOutcomes.push(...outcomes);
         }
       } else {
+        if (
+          runId === null &&
+          result.reason instanceof HarnessIterationRecordError
+        ) {
+          throw result.reason;
+        }
         // Test failed entirely - log error but continue
         logger.error("[evals] Test case failed:", result.reason);
         // Count as one failed test
@@ -5069,6 +5116,7 @@ const runLocalIteration = async ({
   // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
   const browser = await createBrowserSessionContext({
+    getWorkspacePresentation: () => projectWorkspaceTranscript(acc.conversationMessages, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)),
     // Model-free (pinned-only) iterations pass no model: no Computer Use, but
     // the harness still renders pinned widgets and records observations.
     ...(caseNeedsModel ? { model: test.model } : {}),
@@ -5213,11 +5261,10 @@ const runLocalIteration = async ({
         // and RELEASE needs a server-to-server credential — without them
         // releaseEvalSandbox silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
-        if (!isComputersDataPlaneConfigured()) {
-          throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-          );
-        }
+        const unavailable = harnessBoxUnavailableReason(
+          "This eval pins a reproducible computer environment",
+        );
+        if (unavailable) throw new Error(unavailable);
         const capacityBudgetMs = Math.min(
           EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
           Math.max(0, iterationDeadlineAt - Date.now()),
@@ -6314,6 +6361,7 @@ const runHostedIterationWithBrowser = async (
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
+  browser.setWorkspacePresentation?.(() => projectWorkspaceTranscript(messageHistory, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)));
   /**
    * The TRACE transcript — `messageHistory`'s evidence-enriched twin (see the
    * acc contract on `DriveHostedEvalTurnParams`). Persisted and gate-read in
@@ -6365,7 +6413,13 @@ const runHostedIterationWithBrowser = async (
     ? precreatedIterationId
     : recorder
       ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+      : await createIterationDirectly(convexClient, {
+          ...iterationParams,
+          // A hosted harness box is keyed to this row (see the param).
+          ...(resolvedExecution.harness && !harnessExecutionTarget
+            ? { requireRecord: true }
+            : {}),
+        });
   if (iterationId) onIterationStarted?.(iterationId);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
@@ -6430,6 +6484,7 @@ const runHostedIterationWithBrowser = async (
     sandboxId: string;
     sandboxRowId: string;
     runtimeKind: "terminal" | "desktop-browser";
+    workdir?: string;
   }) => {
     // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
     // provisioned, never the project computer: an unattended run drives a
@@ -6577,8 +6632,7 @@ const runHostedIterationWithBrowser = async (
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
-  let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
-    null;
+  let evalBox: HarnessBox | null = null;
   /**
    * The video the hosted browser recorded, if this iteration used one.
    *
@@ -6588,22 +6642,24 @@ const runHostedIterationWithBrowser = async (
    * fires first — after the release there is nothing left to read.
    */
   let hostedRecording: HostedRecording | null = null;
+  const releaseEvalBox = async (sandboxRowId: string): Promise<void> => {
+    // Collect BEFORE the release — after it there is nothing left to read —
+    // and release REGARDLESS of how the collect went. Both facts live in the
+    // helper, which is where they are tested: a collector that throws or
+    // hangs past its bound yields no video and the box is released on the
+    // same schedule, because a box that outlives its iteration costs money
+    // until the GC cron reaps it and no video is worth that.
+    const collected = await collectHostedRecordingThenRelease({
+      sandboxRowId,
+      release: () => releaseEvalSandbox({ sandboxRowId }),
+    });
+    hostedRecording = hostedRecording ?? collected;
+  };
   const releaseEvalSandboxIfAny = async (): Promise<void> => {
-    if (evalSandbox?.ok) {
-      const { sandboxRowId } = evalSandbox.value;
-      evalSandbox = null;
-      // Collect BEFORE the release — after it there is nothing left to read —
-      // and release REGARDLESS of how the collect went. Both facts live in the
-      // helper, which is where they are tested: a collector that throws or
-      // hangs past its bound yields no video and the box is released on the
-      // same schedule, because a box that outlives its iteration costs money
-      // until the GC cron reaps it and no video is worth that.
-      const collected = await collectHostedRecordingThenRelease({
-        sandboxRowId,
-        release: () => releaseEvalSandbox({ sandboxRowId }),
-      });
-      hostedRecording = hostedRecording ?? collected;
-    }
+    const box = evalBox;
+    evalBox = null;
+    // Stops the turn heartbeat, then runs `releaseEvalBox` above.
+    await box?.release();
   };
   let prepared: PrepareChatV2Result;
   try {
@@ -6644,35 +6700,88 @@ const runHostedIterationWithBrowser = async (
       }
     }
     if (sandboxNeed.needed && !harnessExecutionTarget) {
-      if (!isComputersDataPlaneConfigured()) {
-        throw new Error(
-          sandboxNeed.runtimeKind === "desktop-browser"
-            ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : pinnedEnvironmentId
-              ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-              : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-        );
+      const unavailable = harnessBoxUnavailableReason(
+        sandboxNeed.runtimeKind === "desktop-browser"
+          ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration"
+          : pinnedEnvironmentId && runId
+            ? "This eval pins a reproducible computer environment"
+            : "This eval runs on a harness, which boots a disposable computer per iteration",
+      );
+      if (unavailable) throw new Error(unavailable);
+      if (!runId) {
+        // SINGLE-CASE: the box is keyed to the iteration row and is only ever
+        // a terminal, so refuse what it cannot carry before booting anything.
+        if (!iterationId) {
+          throw new Error(
+            "This single-case harness run has no iteration record to key its " +
+              "computer to, so it was refused rather than run on a personal " +
+              "computer.",
+          );
+        }
+        const singleCaseRefusal = singleCaseHarnessBoxRefusal({
+          builtInToolIds: resolvedExecution.builtInToolIds,
+          browserToolPolicy: resolvedExecution.browserToolPolicy,
+          hostedBrowserAvailable: hostedBrowserAdvertisable(),
+        });
+        if (singleCaseRefusal) throw new Error(singleCaseRefusal);
       }
       const capacityBudgetMs = Math.min(
         EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
         Math.max(0, iterationDeadlineAt - Date.now()),
       );
       const capacityStartedAt = Date.now();
-      evalSandbox = await provisionEvalSandbox({
-        timeoutMs: capacityBudgetMs,
-        bearer: convexAuthToken,
-        runId: String(runId),
-        ...(iterationId ? { iterationId: String(iterationId) } : {}),
-        // Absent for a terminal box, so every request that predates desktops
-        // is byte-identical on the wire.
-        ...(sandboxNeed.runtimeKind === "desktop-browser"
-          ? { runtimeKind: "desktop-browser" as const }
-          : {}),
+      // The shared box holder: it keeps the box's idle clock running while the
+      // iteration's turns do, so a long harness turn cannot outlive its box.
+      const acquired = await acquireHarnessBox({
+        // A single-case run has no suite run; its box is keyed to the
+        // iteration, which `needsEphemeralEvalSandbox` only books for a
+        // harness (so terminal).
+        surface: runId ? "eval" : "single-case",
+        provision: async () => {
+          const result = await provisionEvalSandbox({
+            timeoutMs: capacityBudgetMs,
+            bearer: convexAuthToken,
+            ...(runId
+              ? {
+                  runId: String(runId),
+                  ...(iterationId ? { iterationId: String(iterationId) } : {}),
+                  // Absent for a terminal box, so every request that predates
+                  // desktops is byte-identical on the wire.
+                  ...(sandboxNeed.runtimeKind === "desktop-browser"
+                    ? { runtimeKind: "desktop-browser" as const }
+                    : {}),
+                }
+              : { iterationId: String(iterationId) }),
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
+          return result.ok
+            ? {
+                ok: true as const,
+                box: {
+                  sandboxRowId: result.value.sandboxRowId,
+                  sandboxId: result.value.sandboxId,
+                  // What ACTUALLY booted, read off the response rather than
+                  // off the request: a reuse answers with the row's own kind.
+                  ...(result.value.runtimeKind
+                    ? { runtimeKind: result.value.runtimeKind }
+                    : {}),
+                  ...(result.value.workdir
+                    ? { workdir: result.value.workdir }
+                    : {}),
+                },
+              }
+            : { ok: false as const, refusal: result };
+        },
+        release: releaseEvalBox,
+        // The ITERATION signal. Past its budget grace the iteration is
+        // abandoned and may never reach a release; the abort still stops the
+        // heartbeat, so the box goes idle and the reaper takes it.
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
-      if (!evalSandbox.ok) {
-        const error = new Error(describeEvalSandboxRefusal(evalSandbox));
-        if (evalSandbox.status === 503 && evalSandbox.code === "at_capacity") {
+      if (!acquired.ok) {
+        const refusal = acquired.refusal;
+        const error = new Error(describeEvalSandboxRefusal(refusal));
+        if (refusal.status === 503 && refusal.code === "at_capacity") {
           iterationMetadataBase.timeout = {
             clock: "sandboxCapacity",
             budgetMs: capacityBudgetMs,
@@ -6685,15 +6794,30 @@ const runHostedIterationWithBrowser = async (
         }
         throw error;
       }
+      evalBox = acquired.box;
+    }
+    // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
+    // falls through to `resolveHarnessSandbox`, the acting member's computer.
+    // Every path above boots one or throws; this is the last check before the
+    // first turn, so a future gap fails here instead of running there.
+    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+      throw new Error(
+        "This eval runs on a harness but no disposable computer was " +
+          "provisioned for it, so it was refused rather than run on a " +
+          "personal computer.",
+      );
     }
     const sandboxBinding =
-      evalSandbox?.ok && sandboxNeed.needed
+      evalBox && sandboxNeed.needed
         ? {
-            sandboxId: evalSandbox.value.sandboxId,
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            // What ACTUALLY booted, read off the response rather than off the
-            // request: a reuse answers with the row's own kind.
-            runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
+            sandboxId: evalBox.binding.sandboxId,
+            sandboxRowId: evalBox.binding.sandboxRowId,
+            runtimeKind: evalBox.binding.runtimeKind,
+            // `bash` roots at the box's workdir exactly as the harness does;
+            // dropping it ran the two in different directories.
+            ...(evalBox.binding.workdir
+              ? { workdir: evalBox.binding.workdir }
+              : {}),
           }
         : undefined;
     // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
@@ -6774,6 +6898,9 @@ const runHostedIterationWithBrowser = async (
     // `sandboxBinding` does.
     if (
       sandboxBinding &&
+      // Attachments resolve through the RUN (`/evals/sandbox/attachments`); a
+      // single-case run has none to resolve them through.
+      runId &&
       evalBoxFilesystemIsReachable({
         runtimeKind: sandboxBinding.runtimeKind,
         harness: resolvedExecution.harness,
@@ -7039,13 +7166,11 @@ const runHostedIterationWithBrowser = async (
     // harness as well: one box per iteration, never two. It rides the handler
     // options rather than the host config because the run's config snapshot is
     // member-readable, so a binding writable there would be forgeable.
-    ...(resolvedExecution.harness && evalSandbox?.ok
-      ? {
-          harnessSandboxBinding: {
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            sandboxId: evalSandbox.value.sandboxId,
-          },
-        }
+    //
+    // The whole binding, `workdir` included: dropping it rooted every eval
+    // harness Shell at whatever the turn fell back to instead of the box's.
+    ...(resolvedExecution.harness && evalBox
+      ? { harnessSandboxBinding: evalBox.binding }
       : {}),
     // How the sandbox reaches this inspector's MCP proxy. An eval run builds
     // an ephemeral authorized manager exactly as the hosted chat routes do, so

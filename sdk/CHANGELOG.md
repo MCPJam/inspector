@@ -1,5 +1,39 @@
 # `@mcpjam/sdk` changelog
 
+## 9.0.0
+
+### Major Changes
+
+- [#5912](https://github.com/MCPJam/inspector/pull/5912) [`ce59e1a`](https://github.com/MCPJam/inspector/commit/ce59e1acd2a89c3d8f1b3828fb39b7bc51977144) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Move to AI SDK 7 (`ai@7`) and the v7 line of every model provider package.
+  
+  `@mcpjam/sdk` now requires Node.js 22 or later, depends on `ai@7`, and emits model-visible MCP tool images as AI SDK 7 `file` parts (`{ type: "file", mediaType, data: { type: "data", data } }`) instead of `media` parts, which AI SDK 7 rejects. Read image parts with the new `readModelOutputImage`, which also accepts the older `media` and `image-data` shapes. Model-visible MCP tool images now reach the model in runs driven by the SDK, which its older provider packages had been dropping.
+  
+  `@mcpjam/chat-ui` now peers on `ai@^7` and `@ai-sdk/react@^4`.
+
+### Minor Changes
+
+- [#5890](https://github.com/MCPJam/inspector/pull/5890) [`d27c3aa`](https://github.com/MCPJam/inspector/commit/d27c3aab7f10cac025e121533e02c439193d3879) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Rerun a finished eval run's failed cases as a new run with `mcpjam cloud eval rerun <run-id> --failed` (add `--dry-run` to see which cases would rerun and why), `POST /api/v1/projects/{projectId}/eval-runs/{runId}/rerun`, or the SDK's `rerunEvalRun` and `getEvalRunRerunPreview`. The platform picks the cases. The new run records `rerunOfRunId` and `rerunScope`, and because it ran only what failed, it no longer counts toward the suite's latest run, trends, totals or comparison baselines.
+
+- [#5923](https://github.com/MCPJam/inspector/pull/5923) [`8d36d95`](https://github.com/MCPJam/inspector/commit/8d36d95c3d0af04fcb20adaf8f8c237db04847a5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - A request refused because a feature is not enabled for your organization now says so in a machine-readable way. The answer stays `403 FORBIDDEN`, and `details` now carries `code: "FEATURE_UNAVAILABLE"` and the gated `feature` when the platform names it. The hosted browser answers the same way instead of `422 BROWSER_NOT_AVAILABLE`. The SDK adds `isFeatureUnavailable(error)` to tell that refusal apart from a permission denial.
+
+### Patch Changes
+
+- [#5941](https://github.com/MCPJam/inspector/pull/5941) [`c858114`](https://github.com/MCPJam/inspector/commit/c8581142c299ba071061b39cec7e000098b74490) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Claude directory readiness now requires `annotations.title` on every tool. A top-level `title` alone no longer passes `claude.tools.title-present`, because Claude's directory listing reads only the annotation and flags every tool without one as "Missing title annotation". MCPJam's own MCP server now sets `annotations.title` on every tool too.
+
+- [#5950](https://github.com/MCPJam/inspector/pull/5950) [`0480237`](https://github.com/MCPJam/inspector/commit/04802370345d780d2b3c897f870e141f824df903) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Platform operation descriptions state facts instead of instructions. They no longer tell an agent where to start, what to check first, or to fetch a skill, and they no longer name tools or CLI commands an MCP client cannot reach. Several descriptions are corrected: `publish_study` creates a new study on every call (it is not idempotent), `get_capabilities` reports only the Swarms feature flag among betas, `update_project` can remove access when it makes a project private, and the judge and insight requests overwrite stored results when forced. `create_project_server`, `update_project_server`, `connect_project_server` and `call_server_tool` now link the API or MCP specification they follow.
+
+- [#5873](https://github.com/MCPJam/inspector/pull/5873) [`c98c559`](https://github.com/MCPJam/inspector/commit/c98c559372ae41d8dcb930ff06f1b0d708026cb9) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+  
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5946](https://github.com/MCPJam/inspector/pull/5946) [`65a9328`](https://github.com/MCPJam/inspector/commit/65a932884e17ca0bb62c506c8506f310580a5f1b) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+  
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5969](https://github.com/MCPJam/inspector/pull/5969) [`e08ed12`](https://github.com/MCPJam/inspector/commit/e08ed12f8f66e100cf99913241bd8f543c06f710) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest changes on main for inspector, CLI, and SDK together so the CLI uses the updated SDK.
+
+- [#5922](https://github.com/MCPJam/inspector/pull/5922) [`cf2a57e`](https://github.com/MCPJam/inspector/commit/cf2a57e9241d531bc36225dbf3235893c90cd30e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Support durable swarm Stop requests. Runners poll every five seconds and abort active work when cancellation is reported. Show Stop requested during background cleanup and Stopped after settlement, including after refresh. Expose optional cancellation and cleanup fields through goal and legacy journey APIs and SDK types.
+
 ## 8.21.0
 
 ### Minor Changes

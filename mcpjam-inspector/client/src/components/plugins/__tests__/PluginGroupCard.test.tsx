@@ -466,3 +466,30 @@ describe("PluginGroupCard — inline component setup", () => {
     expect(screen.queryByTestId("plugin-component-configure")).toBeNull();
   });
 });
+
+describe("PluginGroupCard icon", () => {
+  it("shows the plugin's directory icon when it has one", () => {
+    render(
+      <PluginGroupCard
+        plugin={{
+          ...plugin,
+          icons: {
+            logo: {
+              url: "https://site.example/web/artifact?t=logo",
+              contentType: "image/png",
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("plugin-icon")).toHaveAttribute(
+      "src",
+      "https://site.example/web/artifact?t=logo",
+    );
+  });
+
+  it("falls back to the generic icon without one", () => {
+    render(<PluginGroupCard plugin={plugin} />);
+    expect(screen.queryByTestId("plugin-icon")).toBeNull();
+  });
+});
