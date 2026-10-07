@@ -2,9 +2,8 @@ name: PR MCP Preview
 
 # Per-PR preview URLs for the MCP Cloudflare Worker.
 #
-# Every push to a PR that touches mcp/, or a workspace package it builds
-# against, deploys a dedicated per-PR worker named `mcpjam-mcp-pr-<n>`,
-# served at
+# Every push to a PR that touches mcp/ deploys a dedicated per-PR worker
+# named `mcpjam-mcp-pr-<n>`, served at
 # `https://mcpjam-mcp-pr-<n>.<subdomain>.workers.dev`. The URL is stable
 # per PR — each push overwrites the same worker — so reviewers can
 # bookmark it for the life of the PR. The worker is stateless, so a
@@ -27,10 +26,9 @@ on:
       - closed
     paths:
       - "mcp/**"
-      # Workspace packages mcp builds against (mcp -> design-system, sdk; sdk -> evaluators)
-      - "design-system/**"
-      - "sdk/**"
-      - "evaluators/**"
+      # Deliberately not the workspaces mcp bundles (sdk/, design-system/,
+      # evaluators/): every PR already typechecks and tests the worker, and
+      # deploy-mcp-staging.yml redeploys it when they change on main.
       - ".github/workflows/pr-mcp-preview.yml"
 
 permissions:
