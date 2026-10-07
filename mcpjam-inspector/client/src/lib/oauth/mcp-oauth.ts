@@ -1760,26 +1760,20 @@ function writeStoredOAuthConfig(
   updates: Partial<StoredOAuthConfig>
 ): void {
   const existing = readStoredOAuthConfig(serverName);
+  const publicConfig: StoredOAuthConfig = {
+    ...existing,
+    ...updates,
+  };
   const hasCustomHeaders =
     updates.hasCustomHeaders ??
     existing.hasCustomHeaders ??
     Boolean(existing.customHeaders);
-
-  // Persist only an explicit allowlist of non-sensitive fields.
-  // Avoid spreading `existing`/`updates` to prevent accidental clear-text
-  // storage of secrets inside OAuth config.
-  const publicConfig: StoredOAuthConfig = {};
-
-  if (typeof updates.configuredResourceUrl === "string") {
-    publicConfig.configuredResourceUrl = updates.configuredResourceUrl;
-  } else if (typeof existing.configuredResourceUrl === "string") {
-    publicConfig.configuredResourceUrl = existing.configuredResourceUrl;
-  }
-
+  delete publicConfig.customHeaders;
   if (hasCustomHeaders) {
     publicConfig.hasCustomHeaders = true;
+  } else {
+    delete publicConfig.hasCustomHeaders;
   }
-
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
     serializeStoredOAuthConfig(publicConfig)
@@ -2872,8 +2866,7 @@ export async function initiateOAuth(
       scopes: options.scopes,
       registryServerId: options.registryServerId,
       useRegistryOAuthProxy: options.useRegistryOAuthProxy,
-      // Never persist custom headers in localStorage; they may contain secrets.
-      customHeaders: undefined,
+      customHeaders: options.customHeaders,
       resourceUrl: options.resourceUrl,
       protocolMode: requestedProtocolMode,
       protocolVersion,
