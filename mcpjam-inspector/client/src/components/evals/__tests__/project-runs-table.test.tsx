@@ -192,6 +192,109 @@ describe("ProjectRunsTable", () => {
     expect(loadMore).toHaveBeenCalledWith(20);
   });
 
+  it("loads the entire launch before confirming deletion across a page boundary", async () => {
+    const user = userEvent.setup();
+    const visible = summaryRow(makeRow({ _id: "visible", runNumber: 5 }), {
+      runGroupId: "split",
+      metrics: runMetricsFromIterations([]),
+    });
+    const hidden = summaryRow(makeRow({ _id: "older-member", runNumber: 4 }), {
+      runGroupId: "split",
+    });
+    setRows([visible], "CanLoadMore");
+    mocks.query.mockImplementation(async (_name, args) =>
+      args.paginationOpts.cursor === null
+        ? { page: [visible.runSummary], isDone: false, continueCursor: "older" }
+        : { page: [hidden.runSummary], isDone: true, continueCursor: "" },
+    );
+    const onDeleteRun = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ProjectRunsTable
+        projectId="p"
+        onSelectRun={vi.fn()}
+        onDeleteRun={onDeleteRun}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete run #5" }));
+    expect(await screen.findByText(/all 2 runs in this launch/)).toBeVisible();
+    expect(onDeleteRun).not.toHaveBeenCalled();
+    expect(mocks.query).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRunSummaries",
+      {
+        suiteId: visible.suiteId,
+        runGroupId: "split",
+        paginationOpts: { numItems: 20, cursor: "older" },
+      },
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete", exact: true }),
+    );
+    await waitFor(() => expect(onDeleteRun).toHaveBeenCalledTimes(2));
+    expect(onDeleteRun.mock.calls.map(([id]) => id)).toEqual([
+      "visible",
+      "older-member",
+    ]);
+  });
+
+  it("does not delete a partial launch when group pagination fails", async () => {
+    const user = userEvent.setup();
+    const row = summaryRow(makeRow(), {
+      runGroupId: "split",
+      metrics: runMetricsFromIterations([]),
+    });
+    setRows([row], "CanLoadMore");
+    mocks.query.mockRejectedValue(new Error("offline"));
+    const onDeleteRun = vi.fn();
+    render(
+      <ProjectRunsTable
+        projectId="p"
+        onSelectRun={vi.fn()}
+        onDeleteRun={onDeleteRun}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete run #1" }));
+    await waitFor(() => expect(mocks.query).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onDeleteRun).not.toHaveBeenCalled();
+  });
+
+  it("checks permission for group members outside the loaded page", async () => {
+    const user = userEvent.setup();
+    const row = summaryRow(makeRow(), {
+      runGroupId: "split",
+      metrics: runMetricsFromIterations([]),
+    });
+    const hidden = summaryRow(
+      makeRow({ _id: "hidden", createdBy: "other-user" }),
+      { runGroupId: "split" },
+    );
+    setRows([row]);
+    mocks.query.mockResolvedValue({
+      page: [row.runSummary, hidden.runSummary],
+      isDone: true,
+      continueCursor: "",
+    });
+    const onDeleteRun = vi.fn();
+    render(
+      <ProjectRunsTable
+        projectId="p"
+        onSelectRun={vi.fn()}
+        onDeleteRun={onDeleteRun}
+        canDeleteRun={(run) => run.createdBy === row.createdBy}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete run #1" }));
+    await waitFor(() => expect(mocks.query).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onDeleteRun).not.toHaveBeenCalled();
+  });
+
   it("filters embedded history and keeps pagination available for more matches", async () => {
     const user = userEvent.setup();
     mocks.backendFiltersOrigins = true;

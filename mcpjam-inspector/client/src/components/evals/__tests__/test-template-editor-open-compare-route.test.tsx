@@ -1031,6 +1031,20 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+  it("keeps every summary run's client label in the case editor Runs tab", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const user = userEvent.setup();
+    const summaryRuns = ["ChatGPT", "Claude"].map((name, index) => ({
+      _id: `summary-run-${index}`, suiteId: "suite-1", createdBy: "u1", runNumber: index + 1,
+      configRevision: "rev", configSnapshot: {}, status: "completed", createdAt: Date.now(),
+      client: { name, hostStyle: name.toLowerCase(), source: "attached" },
+    }));
+    renderGoldenCase({ simpleCaseEditor: false, suiteRuns: summaryRuns, suiteIterations: summaryRuns.map((run, index) => ({ ...baseIteration, _id: `summary-it-${index}`, suiteRunId: run._id, trigger: "suite" })) });
+    await user.click(await screen.findByRole("tab", { name: /Runs/ }));
+    expect(await screen.findByText("ChatGPT")).toBeVisible();
+    expect(screen.getByText("Claude")).toBeVisible();
+  });
+
   it("shows code-owned cases in the workspace without authoring controls", async () => {
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
     renderGoldenCase({readOnly: true});

@@ -1285,10 +1285,9 @@ export function TestTemplateEditor({
   const detailRunId = replayIteration?.suiteRunId ?? routeCompareAnchorIteration?.suiteRunId ?? recentIterations[0]?.suiteRunId ?? lastSavedIteration?.suiteRunId ?? null;
   const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
   const suiteRuns = useMemo(
-    () => {
-      const fullRuns = listedSuiteRuns.filter((run): run is EvalSuiteRun => "tests" in run.configSnapshot);
-      return detailRun ? [detailRun, ...fullRuns.filter((run) => run._id !== detailRun._id)] : fullRuns;
-    },
+    () => detailRun
+      ? [detailRun, ...listedSuiteRuns.filter((run) => run._id !== detailRun._id)]
+      : listedSuiteRuns,
     [detailRun, listedSuiteRuns],
   );
 
@@ -4128,9 +4127,9 @@ export function TestTemplateEditor({
   const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
     ?.suiteRunId
     ? (suiteRuns.find(
-        (run) =>
-          run._id ===
-          selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId,
+        (run): run is EvalSuiteRun =>
+          run._id === selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId &&
+          "tests" in run.configSnapshot,
       ) ?? null)
     : null;
 

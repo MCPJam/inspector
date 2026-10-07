@@ -67,7 +67,9 @@ import {
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useConvex, usePaginatedQuery, useQuery } from "convex/react";
+import { toast } from "sonner";
+import { readRunGroupSummaries } from "./use-run-group-summaries";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -122,6 +124,7 @@ export const PROJECT_RUNS_PAGE_SIZE = 20;
  */
 export interface ProjectRunRow {
   runSummary?: EvalSuiteRunListItem;
+  runGroupId?: string | null;
   serverNames?: string[];
   client?: EvalSuiteRun["client"] | null;
   namedHostId?: string | null;
@@ -283,6 +286,44 @@ export function ProjectRunsTable({
   );
   const showDeleteColumn = evaluateLayout && onDeleteRun != null;
   const deleteLaunch = useDeleteRunLaunch(onDeleteRun);
+  const convex = useConvex();
+  const requestDeleteLaunch = async (loaded: ProjectRunRow[]) => {
+    const representative = loaded[0];
+    const groupId =
+      representative.runSummary?.runGroupId ?? representative.runGroupId;
+    try {
+      const members = groupId
+        ? (
+            await readRunGroupSummaries(
+              convex.query.bind(convex),
+              representative.suiteId,
+              groupId,
+            )
+          ).map((run): ProjectRunRow => ({
+            ...representative,
+            ...run,
+            runSummary: run,
+            summary: run.summary ?? null,
+            source: run.source ?? null,
+            ciMetadata: run.ciMetadata ?? null,
+            completedAt: run.completedAt ?? null,
+          }))
+        : loaded;
+      if (members.some((row) => !(canDeleteRun?.(row) ?? true))) {
+        toast.error(
+          "You do not have permission to delete every run in this launch",
+        );
+        return;
+      }
+      deleteLaunch.request({
+        runIds: members.map((row) => row._id),
+        runNumber: Math.min(...members.map((row) => row.runNumber)),
+        suiteName: representative.suiteName,
+      });
+    } catch {
+      toast.error("Unable to load the full launch. Try again.");
+    }
+  };
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [suiteFilter, setSuiteFilter] = useState<string>(ALL_SUITES);
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
@@ -360,6 +401,7 @@ export function ProjectRunsTable({
             source: row.source ?? undefined,
             client: row.client ?? undefined,
             namedHostId: row.namedHostId ?? undefined,
+            runGroupId: row.runGroupId ?? undefined,
           },
       ),
     [rows],
@@ -1275,12 +1317,7 @@ export function ProjectRunsTable({
                         showDeleteColumn &&
                         representative.suiteName !== null &&
                         launch.runs.every((row) => canDeleteRun?.(row) ?? true)
-                          ? () =>
-                              deleteLaunch.request({
-                                runIds: launch.runs.map((row) => row._id),
-                                runNumber: representative.runNumber,
-                                suiteName: representative.suiteName,
-                              })
+                          ? () => void requestDeleteLaunch(launch.runs)
                           : undefined
                       }
                       onOpen={
