@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
+  harnessSubagentStepFromRaw,
   isHarnessBackgroundTaskDataPart,
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
+  isHarnessSubagentStepDataPart,
 } from "../harness-session";
 
 describe("isHarnessSessionDataPart", () => {
@@ -145,6 +147,114 @@ describe("background-task parts (the Claude Code background drain)", () => {
       { type: "data-harness-background-task", data: { kind: "other" } },
     ]) {
       expect(isHarnessBackgroundTaskDataPart(part)).toBe(false);
+    }
+  });
+});
+
+describe("subagent-step parts (a Claude Code subagent's work)", () => {
+  const ids = {
+    rootToolUseId: "toolu_agent",
+    parentToolUseId: "toolu_nested",
+    toolUseId: "toolu_read",
+  };
+
+  it("reads the bridge's tool-call and tool-result raws", () => {
+    expect(
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-call",
+        ...ids,
+        toolName: "Read",
+        input: { file_path: "/work/a.ts", limit: 20 },
+      }),
+    ).toEqual({
+      kind: "tool-call",
+      ...ids,
+      toolName: "Read",
+      input: { file_path: "/work/a.ts", limit: 20 },
+    });
+    expect(
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-result",
+        ...ids,
+        isError: true,
+        error: "File does not exist.",
+      }),
+    ).toEqual({
+      kind: "tool-result",
+      ...ids,
+      isError: true,
+      error: "File does not exist.",
+    });
+  });
+
+  it("re-bounds what crossed the process boundary", () => {
+    const step = harnessSubagentStepFromRaw({
+      mcpjam: "subagent-step",
+      kind: "tool-call",
+      ...ids,
+      toolName: "Write",
+      input: {
+        file_path: "/work/a.ts",
+        content: "x".repeat(10_000),
+        nested: { deep: true },
+        ...Object.fromEntries(
+          Array.from({ length: 20 }, (_, i) => [`k${i}`, i]),
+        ),
+      },
+    });
+    expect(step?.kind).toBe("tool-call");
+    const input = (step as { input: Record<string, unknown> }).input;
+    expect(Object.keys(input)).toHaveLength(8);
+    expect(input).not.toHaveProperty("nested");
+    expect(String(input.content).length).toBeLessThanOrEqual(301);
+  });
+
+  it("rejects incomplete or foreign raws", () => {
+    for (const raw of [
+      undefined,
+      { mcpjam: "subagent-step", kind: "tool-call", ...ids },
+      { mcpjam: "subagent-step", kind: "text", ...ids, text: "hi" },
+      { mcpjam: "subagent-step", kind: "tool-result", toolUseId: "t" },
+      { mcpjam: "background-task", taskId: "a", status: "running" },
+      { method: "item/started" },
+    ]) {
+      expect(harnessSubagentStepFromRaw(raw)).toBeUndefined();
+    }
+  });
+
+  it("every part the server writes passes the client's guard, and nothing else does", () => {
+    for (const data of [
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-call",
+        ...ids,
+        toolName: "Glob",
+      }),
+      harnessSubagentStepFromRaw({
+        mcpjam: "subagent-step",
+        kind: "tool-result",
+        ...ids,
+      }),
+    ]) {
+      expect(
+        isHarnessSubagentStepDataPart({
+          type: "data-harness-subagent-step",
+          data,
+        }),
+      ).toBe(true);
+    }
+    for (const part of [
+      { type: "data-harness-background-task", data: { kind: "keepalive" } },
+      { type: "data-harness-subagent-step" },
+      {
+        type: "data-harness-subagent-step",
+        data: { kind: "tool-call", ...ids },
+      },
+      { type: "data-harness-subagent-step", data: { kind: "other", ...ids } },
+    ]) {
+      expect(isHarnessSubagentStepDataPart(part)).toBe(false);
     }
   });
 });

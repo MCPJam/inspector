@@ -1369,6 +1369,13 @@ async function invoke(
     if (pluginResolverIncludesAdmission(resolveActivation))
       registerPluginAdmissionResolver(resolve);
   }
+  // The first resolution makes the instance's fenced reads (durable control
+  // beside admission), so the invoker's first authorization can reuse it.
+  const fence = pluginInstances.fence(
+    body.instanceToken,
+    actor,
+    c.req.raw.signal,
+  );
   // Await the complete dispatch/delivery before releasing its request-owned manager.
   return await invokePluginRequest(c, {
     actor,
@@ -1381,6 +1388,7 @@ async function invoke(
     params,
     approval: body.approval,
     resume: body.resume,
+    firstRead: fence.read,
     assertLive: () => {
       pluginInstances.get(body.instanceToken, actor);
     },
@@ -1484,6 +1492,7 @@ async function invoke(
           pluginInstances.signal(body.instanceToken, actor),
         ]),
         origin,
+        fence,
       ),
   });
 }

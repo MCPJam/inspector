@@ -1,0 +1,48 @@
+name: Muse policy drift
+
+# Meta's Muse connector guidelines (muse.ai/platform/docs) and the Connector
+# Platform Terms they incorporate are the source the Muse readiness checks
+# grade against. They live on Meta's site and can change on a day nobody
+# touched this repository — and this platform is new enough that they will —
+# so drift runs on a schedule rather than gating unrelated pull requests on an
+# external site being reachable.
+#
+# A separate workflow from the Claude and OpenAI ones so one publisher's change
+# can never mask another's.
+#
+# A red run means a pinned page's hash moved, or the corpus was never
+# snapshotted. Re-read the sections the Muse checks cite (every finding names
+# one, e.g. "§3.2"), adjust any check whose wording changed, then run
+# `npm run muse-policy:sync` to re-pin. Do NOT re-pin first — the point of the
+# manifest is that a grade can name the revision it was made against.
+on:
+  schedule:
+    # Mondays, 14:00 UTC: after the Claude (13:00) and OpenAI (13:30) jobs, so
+    # the three never contend for the same runner minute.
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+# Reads a checkout and fetches public documentation; writes nothing back.
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    name: Compare pinned policy revisions against the live pages
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Node builtins only, so no install step can break it.
+      - name: Check pinned policy revisions
+        run: npm run muse-policy:check

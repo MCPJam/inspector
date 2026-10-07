@@ -243,8 +243,10 @@ import {
   type HostedMrtrRound,
 } from "@/stores/hosted-mrtr-store";
 import {
+  isHarnessBackgroundTaskDataPart,
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
+  isHarnessSubagentStepDataPart,
   type HarnessResetReason,
 } from "@/shared/harness-session";
 import {
@@ -263,6 +265,7 @@ import {
 } from "@/shared/hosted-task-created";
 import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
+import { useHarnessAgentActivityStore } from "@/stores/harness-agent-activity-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -2647,6 +2650,15 @@ export function useChatSession(
               part.data.machine,
               chatSessionIdRef.current,
             );
+        } else if (isHarnessSubagentStepDataPart(part)) {
+          // A subagent's step, shown live on its Agent call's card.
+          useHarnessAgentActivityStore.getState().applyStep(part.data);
+        } else if (isHarnessBackgroundTaskDataPart(part)) {
+          // A background agent's status, on the same card. Notices and
+          // keepalives carry no tool call and are dropped by the store.
+          useHarnessAgentActivityStore
+            .getState()
+            .applyBackgroundTask(part.data);
         } else if (isHistoryNoticeDataPart(part)) {
           // Earlier replies in this chat are not in the model's context this
           // turn; the thread says so, once, inline. Recorded for the chat the

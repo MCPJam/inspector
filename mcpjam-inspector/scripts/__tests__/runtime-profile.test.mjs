@@ -138,7 +138,7 @@ test("staging never inherits the standard profile, and uses the staging WorkOS c
     assert.equal(profile.explicit, true);
     assert.equal(
       profile.values.WORKOS_CLIENT_ID,
-      "client_01K4C1TVA6CMQ3G32F1P301A9G",
+      "client_01KTN2EWHHJCKRB8RSR307X4SG",
     );
     assert.equal(profile.values.MCPJAM_GUEST_AUTHORITY, "hosted");
     assert.equal(
@@ -446,7 +446,7 @@ test("preview alone uses the staging WorkOS client and the hosted guest authorit
     assert.equal(profile.values.VITE_CONVEX_URL, PREVIEW_URLS[0]);
     assert.equal(
       profile.values.WORKOS_CLIENT_ID,
-      "client_01K4C1TVA6CMQ3G32F1P301A9G",
+      "client_01KTN2EWHHJCKRB8RSR307X4SG",
     );
     assert.equal(profile.values.MCPJAM_GUEST_AUTHORITY, "hosted");
     assert.equal(
@@ -488,7 +488,7 @@ test("preview with --env-file keeps the preview URLs and takes the file's guest 
     assert.equal(profile.values.OPENAI_API_KEY, "sk-x");
     assert.equal(
       profile.values.WORKOS_CLIENT_ID,
-      "client_01K4C1TVA6CMQ3G32F1P301A9G",
+      "client_01KTN2EWHHJCKRB8RSR307X4SG",
     );
 
     // A file that names another backend would pair its secret with the

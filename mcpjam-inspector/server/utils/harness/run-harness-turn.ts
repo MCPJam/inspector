@@ -216,6 +216,7 @@ import {
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
+  harnessSubagentStepFromRaw,
   type HarnessBackgroundTaskInfo,
   type HarnessResetReason,
 } from "@/shared/harness-session";
@@ -3811,6 +3812,17 @@ export async function runHarnessTurn(
                   }
                 }
               }
+              continue;
+            }
+            // A Claude Code subagent's step: shown on its Agent call's card,
+            // never part of the transcript, the spans or the text.
+            const subagentStep = harnessSubagentStepFromRaw(rawValue);
+            if (subagentStep) {
+              writer.write({
+                type: "data-harness-subagent-step",
+                data: subagentStep,
+                transient: true,
+              } as unknown as UIMessageChunk);
               continue;
             }
             // Otherwise a passthrough of the runtime's own protocol message.

@@ -307,26 +307,90 @@ describe("the toolchain pins", () => {
 
   it("pin the providers' pnpm fallback too", () => {
     const installs = harnessPnpmGuardCommand().match(/npm install -g pnpm@[\d.]+/g);
-    // Both arms (own rights, then sudo) install the same pinned version.
+    // Both attempts (own rights, then sudo) install the same pinned version.
     expect(installs).toEqual([
       `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
       `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
     ]);
   });
 
-  it("fall back to sudo when npm's global prefix is root's", () => {
-    // The desktop template's Node comes from the distro: its global prefix is
-    // root-owned and the box runs as `user`, so a plain `npm install -g`
-    // exits 243. Own rights first, `sudo -n` (never prompting) otherwise.
-    const command = harnessPnpmGuardCommand();
-    expect(command.startsWith("command -v pnpm || ")).toBe(true);
-    expect(command).toContain(
-      '[ -w "$(npm config get prefix)/lib/node_modules" ]',
-    );
-    expect(command).toContain(
-      `else sudo -n npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}; fi`,
-    );
-  });
+  describe.skipIf(process.platform === "win32")(
+    "the pnpm guard, executed",
+    () => {
+      // The guard is shell, so it is RUN here against fake `npm` / `sudo` on a
+      // PATH that holds nothing else. The fake npm succeeds only when the
+      // prefix is writable (NPM_SHIM_WRITABLE=1, which the fake sudo grants);
+      // the fake sudo succeeds only when SUDO_SHIM_ALLOWED=1.
+      let shimDir: string;
+      beforeAll(() => {
+        shimDir = mkdtempSync(join(tmpdir(), "pnpm-guard-"));
+        writeFileSync(
+          join(shimDir, "npm"),
+          '#!/bin/sh\necho "npm $*" >> "$SHIM_LOG"\n[ "$NPM_SHIM_WRITABLE" = 1 ] || exit 243\n',
+          { mode: 0o755 },
+        );
+        writeFileSync(
+          join(shimDir, "sudo"),
+          '#!/bin/sh\necho "sudo $*" >> "$SHIM_LOG"\n[ "$SUDO_SHIM_ALLOWED" = 1 ] || exit 1\n[ "$1" = -n ] && shift\nNPM_SHIM_WRITABLE=1 exec "$@"\n',
+          { mode: 0o755 },
+        );
+      });
+      afterAll(() => rmSync(shimDir, { recursive: true, force: true }));
+
+      const runGuard = (env: Record<string, string>) => {
+        const log = join(shimDir, `log-${Math.random().toString(36).slice(2)}`);
+        writeFileSync(log, "");
+        const result = spawnSync("/bin/sh", ["-c", harnessPnpmGuardCommand()], {
+          env: { PATH: shimDir, SHIM_LOG: log, ...env },
+          encoding: "utf8",
+        });
+        const calls = readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
+        return { status: result.status, calls };
+      };
+      const install = `install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`;
+
+      it("installs with the user's own rights when the prefix is writable — even one npm still has to create — and never touches sudo", () => {
+        // A custom image with an empty user-owned prefix: `lib/node_modules`
+        // does not exist yet, which `[ -w ]` would have read as unwritable.
+        const { status, calls } = runGuard({ NPM_SHIM_WRITABLE: "1" });
+        expect(status).toBe(0);
+        expect(calls).toEqual([`npm ${install}`]);
+      });
+
+      it("falls back to sudo when the prefix is root's (the desktop template)", () => {
+        const { status, calls } = runGuard({
+          NPM_SHIM_WRITABLE: "0",
+          SUDO_SHIM_ALLOWED: "1",
+        });
+        expect(status).toBe(0);
+        expect(calls).toEqual([
+          `npm ${install}`,
+          `sudo -n npm ${install}`,
+          `npm ${install}`,
+        ]);
+      });
+
+      it("fails, without prompting, when the prefix is root's and sudo needs a password", () => {
+        const { status, calls } = runGuard({
+          NPM_SHIM_WRITABLE: "0",
+          SUDO_SHIM_ALLOWED: "0",
+        });
+        expect(status).not.toBe(0);
+        expect(calls).toEqual([`npm ${install}`, `sudo -n npm ${install}`]);
+      });
+
+      it("does nothing when pnpm is already there", () => {
+        writeFileSync(join(shimDir, "pnpm"), "#!/bin/sh\n", { mode: 0o755 });
+        try {
+          const { status, calls } = runGuard({});
+          expect(status).toBe(0);
+          expect(calls).toEqual([]);
+        } finally {
+          rmSync(join(shimDir, "pnpm"));
+        }
+      });
+    },
+  );
 
   it("match the hosted-harness CI test image", () => {
     const dockerfile = readFileSync(
