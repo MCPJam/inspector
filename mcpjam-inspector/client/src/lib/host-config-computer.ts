@@ -159,6 +159,18 @@ export function shouldShowComputerToggle(opts: {
 }
 
 /**
+ * Whether a client needs a signed-in account: a harness (Claude Code, Codex,
+ * Cursor) or an attached computer runs on a cloud computer tied to an account,
+ * and the backend refuses a guest's save of either. Callers ask a guest to sign
+ * in instead of offering that save.
+ */
+export function hostConfigNeedsAccount(
+  input: Pick<HostConfigInputV2, "harness" | "computer"> | undefined,
+): boolean {
+  return Boolean(input?.harness || input?.computer);
+}
+
+/**
  * Patch that detaches the computer AND drops any computer-backed tool ids, so
  * the resulting draft can't fail the backend's requiresComputer invariant on
  * save (detaching the resource must take its dependent capabilities with it).
