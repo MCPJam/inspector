@@ -1513,6 +1513,28 @@ describe("mcp-oauth", () => {
       expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
     });
 
+    it("rejects automatic preview fallback when DCR is not advertised", async () => {
+      const discoveryState = createCimdDiscoveryState();
+      delete discoveryState.authorizationServerMetadata.registration_endpoint;
+      mockDiscoverOAuthServerInfo.mockResolvedValue(discoveryState);
+      const constants = await import("../constants");
+      vi.spyOn(constants, "supportsMcpJamCimdRedirect").mockReturnValue(false);
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+        registrationMode: "auto",
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error:
+          "CIMD is unavailable on this preview host, and the authorization server did not advertise DCR as a fallback.",
+      });
+      expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
+    });
+
     it("returns safe defaults when stored OAuth config is missing or malformed", async () => {
       const { readStoredOAuthConfig } = await import("../mcp-oauth");
 

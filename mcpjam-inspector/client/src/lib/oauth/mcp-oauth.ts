@@ -2742,6 +2742,13 @@ export async function initiateOAuth(
             "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
         };
       }
+      if (!authorizationPlan.capabilities.supportsDcr) {
+        return {
+          success: false,
+          error:
+            "CIMD is unavailable on this preview host, and the authorization server did not advertise DCR as a fallback.",
+        };
+      }
       automaticRegistrationOverrideReason =
         "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.";
       // Discovery already established that this automatic plan can use DCR.
