@@ -147,6 +147,8 @@ describe("isOperationAvailable", () => {
       "get_study",
       "unpublish_study",
       "unpublish_scenario",
+      "update_study",
+      "update_user_testing_scenario",
       "remove_study_member",
       "rotate_study_link",
       "set_study_guest_execution",

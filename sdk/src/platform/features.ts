@@ -186,7 +186,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_swarm_run_insights: "sandboxes",
   request_swarm_run_insights: "sandboxes",
   publish_study: "sandboxes",
-  update_study: "sandboxes",
   list_study_sessions: "sandboxes",
   get_study_session: "sandboxes",
   get_study_metrics: "sandboxes",
@@ -221,6 +220,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   cancel_goal_run: null,
   list_studies: null,
   get_study: null,
+  // Renames a study or sets who may open its link. The backend does not gate
+  // it at all, so it narrows access after the feature is gone.
+  update_study: null,
   unpublish_study: null,
   remove_study_member: null,
   rotate_study_link: null,
@@ -363,7 +365,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   request_wave_insights: "sandboxes",
   undismiss_user_testing_finding: "sandboxes",
   update_journey: "sandboxes",
-  update_user_testing_scenario: "sandboxes",
   upsert_user_testing_member: "sandboxes",
   // The deprecated aliases of the operations kept available above.
   archive_journey: null,
@@ -380,6 +381,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   remove_user_testing_member: null,
   rotate_user_testing_link: null,
   set_user_testing_guest_execution: null,
+  update_user_testing_scenario: null,
   unpublish_scenario: null,
   create_host: null,
   delete_host: null,
