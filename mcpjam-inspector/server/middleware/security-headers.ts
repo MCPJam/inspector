@@ -6,6 +6,7 @@
  * - X-Frame-Options: Prevents clickjacking
  * - X-XSS-Protection: Enables XSS filter
  * - Referrer-Policy: Controls referrer information
+ * - Strict-Transport-Security: hosted HTTPS requests only, see below
  *
  * HTML documents also get a Permissions-Policy denying hardware and sensor
  * features nothing here uses, and a Content-Security-Policy (MJ-016):
@@ -273,6 +274,23 @@ function setResponsePolicies(
   }
 }
 
+const ONE_YEAR_SECONDS = 31_536_000;
+
+/**
+ * Whether the client reached the hosted deployment over HTTPS. TLS terminates
+ * at the proxy, so `c.req.url` is `http://` internally and `x-forwarded-proto`
+ * carries the scheme; across more than one hop it is a comma-separated list
+ * whose first entry is the client-facing scheme. Hosted mode only: a local run
+ * has no proxy, so there the header is whatever the client chose to send.
+ */
+function isHttpsRequest(c: Context): boolean {
+  const forwardedProto = c.req.header("x-forwarded-proto");
+  if (forwardedProto) {
+    return forwardedProto.split(",")[0]?.trim().toLowerCase() === "https";
+  }
+  return new URL(c.req.url).protocol === "https:";
+}
+
 /**
  * Security headers middleware.
  * Adds standard security headers to all responses, the document policies
@@ -288,6 +306,19 @@ export async function securityHeadersMiddleware(
   c.header("X-Frame-Options", "SAMEORIGIN");
   c.header("X-XSS-Protection", "1; mode=block");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+
+  // Hosted mode only. Browsers ignore STS received over plain HTTP (RFC 6797
+  // §8.1), so http://localhost is unaffected either way. https://localhost is
+  // not: a local run behind a TLS proxy would pin every service on localhost,
+  // on any port, to HTTPS for the whole max-age.
+  //
+  // `includeSubDomains` is left off on purpose: it would cover every
+  // *.mcpjam.com host, including the tunnel and sandbox subdomains, and one of
+  // those not serving HTTPS becomes unreachable for the whole max-age. Widening
+  // this, and preload, belong with the edge configuration rather than here.
+  if (HOSTED_MODE && isHttpsRequest(c)) {
+    c.header("Strict-Transport-Security", `max-age=${ONE_YEAR_SECONDS}`);
+  }
 
   await next();
 

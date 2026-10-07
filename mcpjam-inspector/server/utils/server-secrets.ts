@@ -7,6 +7,13 @@ import {
 import { boundOriginsFromReveal } from "./credential-header-binding.js";
 import { logger } from "./logger.js";
 import { backendFailureText } from "./backend-failure-text.js";
+import {
+  getServiceCredential,
+  INSPECTOR_SERVICE_TOKEN_HEADER,
+  requireServiceCredential,
+  ServiceCredentialUnavailableError,
+  WORKOS_API_KEY_FEATURE,
+} from "../services/service-credential.js";
 
 // One-shot guard so a misconfigured deployment logs once, not per request.
 let warnedMissingServiceTokenForIp = false;
@@ -141,15 +148,11 @@ export async function postToConvexAuthorized(args: {
   );
 
   // Only forward the client IP when we can also prove Inspector provenance
-  // (INSPECTOR_SERVICE_TOKEN); the backend ignores an unauthenticated IP.
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  // (the service credential); the backend ignores an unauthenticated IP.
+  const inspectorServiceToken = getServiceCredential();
   if (args.requireInspectorServiceToken && !inspectorServiceToken) {
     clearTimeout(timeoutId);
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing INSPECTOR_SERVICE_TOKEN for XAA DCR persistence"
-    );
+    throw new ServiceCredentialUnavailableError("XAA client registration");
   }
   const forwardIp = Boolean(args.clientIp && inspectorServiceToken);
   const sendServiceToken = Boolean(
@@ -179,7 +182,7 @@ export async function postToConvexAuthorized(args: {
         Authorization: `Bearer ${args.bearerToken}`,
         ...(sendServiceToken
           ? {
-              "x-inspector-service-token": inspectorServiceToken as string,
+              [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken as string,
               ...(forwardIp
                 ? { "x-mcpjam-client-ip": args.clientIp as string }
                 : {}),
@@ -267,15 +270,13 @@ export async function fetchRuntimeServerSecrets(args: {
   // credentials. Convex requires infrastructure authentication in addition
   // to the viewer's bearer before delivering scenario secrets to this process.
   const scenarioServiceToken = args.scenarioId
-    ? process.env.INSPECTOR_SERVICE_TOKEN
+    ? requireServiceCredential("Shared scenario secrets")
     : undefined;
-  if (args.scenarioId && !scenarioServiceToken) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing INSPECTOR_SERVICE_TOKEN for scenario secret delivery",
-    );
-  }
+  // Resolved BEFORE the request's try: a missing credential is the
+  // hosted-only answer, not a failure to reach the reveal service (502).
+  const actingAsServiceToken = args.workosApiKeyActingAs
+    ? requireServiceCredential(WORKOS_API_KEY_FEATURE)
+    : undefined;
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -287,19 +288,11 @@ export async function fetchRuntimeServerSecrets(args: {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...(scenarioServiceToken
-        ? { "x-inspector-service-token": scenarioServiceToken }
+        ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: scenarioServiceToken }
         : {}),
     };
-    if (args.workosApiKeyActingAs) {
-      const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-      if (!serviceToken) {
-        throw new WebRouteError(
-          500,
-          ErrorCode.INTERNAL_ERROR,
-          "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
-        );
-      }
-      headers["Authorization"] = `Bearer ${serviceToken}`;
+    if (args.workosApiKeyActingAs && actingAsServiceToken) {
+      headers["Authorization"] = `Bearer ${actingAsServiceToken}`;
       headers["x-mcpjam-acting-as"] = args.workosApiKeyActingAs.workosUserId;
       headers["x-mcpjam-acting-in-org"] =
         args.workosApiKeyActingAs.mcpjamOrganizationId;

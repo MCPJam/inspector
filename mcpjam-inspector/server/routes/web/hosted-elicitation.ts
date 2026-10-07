@@ -70,6 +70,7 @@ import {
   SCOPE_STEP_UP_DATA_PART_TYPE,
   type ScopeStepUpRequiredEvent,
 } from "@/shared/scope-step-up";
+import { hasServiceCredential, requireServiceCredential } from "../../services/service-credential.js";
 
 export type ElicitationChunkWriter = {
   write: (chunk: UIMessageChunk) => void;
@@ -217,9 +218,7 @@ function requireConvexHttpUrl(): string {
 }
 
 function serviceToken(): string {
-  const token = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!token) throw new Error("INSPECTOR_SERVICE_TOKEN is not configured");
-  return token;
+  return requireServiceCredential("Hosted elicitation");
 }
 
 const CANCEL: ElicitResult = { action: "cancel" };
@@ -828,6 +827,14 @@ export function resolveElicitationGate(args: {
   bodyClientCapabilities: unknown;
   /** `hostedElicitationVersion` from the request body. */
   clientVersion: number | undefined;
+  /**
+   * Whether this server holds the service credential the rendezvous routes
+   * need. Hosted-only feature: without it the callback is never registered,
+   * so the SDK does not advertise `elicitation` and a server that elicits
+   * fails fast — instead of the bridge throwing mid-prompt. Defaults to this
+   * process's credential.
+   */
+  serviceCredentialAvailable?: boolean;
 }): {
   effectiveClientCapabilities: Record<string, unknown> | undefined;
   enabled: boolean;
@@ -841,6 +848,7 @@ export function resolveElicitationGate(args: {
   return {
     effectiveClientCapabilities: effectiveClientCapabilities ?? undefined,
     enabled:
+      (args.serviceCredentialAvailable ?? hasServiceCredential()) &&
       hostDeclaresElicitation(effectiveClientCapabilities) &&
       args.clientVersion === HOSTED_ELICITATION_VERSION,
   };

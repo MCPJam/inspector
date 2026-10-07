@@ -352,6 +352,7 @@ import {
 } from "./model-request-payload";
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
+import { serviceCredentialHeaders } from "../services/service-credential.js";
 
 const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -3705,10 +3706,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // Sponsored study inference must come through the trusted execution path
   // that resolves the study's model and tools. This proof is required even
   // when there is no client IP to forward. The viewer bearer remains intact.
-  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (scenarioId && scenarioServiceToken) {
-    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
-  }
+  if (scenarioId) Object.assign(convexHeaders, serviceCredentialHeaders());
   // A platform-billing claim rides the user's own sign-in: Convex authorizes
   // it on the bearer above, so a self-hosted install with no service token
   // sends it as is. When this deployment does have the token (hosted), it is
@@ -3716,10 +3714,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // it with an IP hash and other backend checks still read it.
   const billingFeature = extraBodyFields?.billingFeature;
   if (billingFeature !== undefined) {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-    if (serviceToken) {
-      convexHeaders["x-inspector-service-token"] = serviceToken;
-    }
+    Object.assign(convexHeaders, serviceCredentialHeaders());
   }
   // A claimed turn goes to the PLATFORM route and NEVER falls back to the
   // ordinary one. Falling back is the whole failure being fixed: the ordinary
