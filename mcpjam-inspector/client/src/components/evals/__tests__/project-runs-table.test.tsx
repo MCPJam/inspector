@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ProjectRunRow } from "../project-runs-table";
 
@@ -237,6 +237,58 @@ describe("ProjectRunsTable", () => {
       "older-member",
     ]);
   });
+
+  it.each(["success", "failure"])(
+    "blocks overlapping launch reads and allows retry after %s",
+    async (outcome) => {
+      const user = userEvent.setup();
+      const row = summaryRow(makeRow(), {
+        runGroupId: "split",
+        metrics: runMetricsFromIterations([]),
+      });
+      const page = { page: [row.runSummary], isDone: true, continueCursor: "" };
+      let resolve!: (page: unknown) => void;
+      let reject!: (error: Error) => void;
+      const pending = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      mocks.query.mockReturnValueOnce(pending).mockResolvedValue(page);
+      setRows([row]);
+      const onDeleteRun = vi.fn();
+      render(
+        <ProjectRunsTable
+          projectId="p"
+          onSelectRun={vi.fn()}
+          onDeleteRun={onDeleteRun}
+          historyMetricsEnabled
+          evaluateLayout
+        />,
+      );
+      const deleteButton = screen.getByRole("button", {
+        name: "Delete run #1",
+      });
+      act(() => {
+        fireEvent.click(deleteButton);
+        fireEvent.click(deleteButton);
+      });
+      expect(mocks.query).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        if (outcome === "success") resolve(page);
+        else reject(new Error("offline"));
+        await pending.catch(() => undefined);
+      });
+      if (outcome === "success") {
+        await user.click(screen.getByRole("button", { name: "Cancel" }));
+      } else {
+        expect(screen.queryByRole("dialog")).toBeNull();
+      }
+      await user.click(deleteButton);
+      expect(await screen.findByRole("dialog")).toBeVisible();
+      expect(mocks.query).toHaveBeenCalledTimes(2);
+      expect(onDeleteRun).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not delete a partial launch when group pagination fails", async () => {
     const user = userEvent.setup();

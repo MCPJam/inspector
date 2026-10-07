@@ -1282,7 +1282,16 @@ export function TestTemplateEditor({
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
 
-  const detailRunId = replayIteration?.suiteRunId ?? routeCompareAnchorIteration?.suiteRunId ?? recentIterations[0]?.suiteRunId ?? lastSavedIteration?.suiteRunId ?? null;
+  const tracedRunId = [
+    replayIteration,
+    routeCompareAnchorIteration,
+    ...recentIterations,
+    lastSavedIteration,
+  ].find(
+    (iteration): iteration is EvalIteration =>
+      !!iteration && !!(iteration.blob || iteration.chatSessionId),
+  )?.suiteRunId;
+  const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
   const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
   const suiteRuns = useMemo(
     () => detailRun
@@ -1551,24 +1560,9 @@ export function TestTemplateEditor({
    * traced iteration the drill-in would fall back to.
    */
   const openTrialRun = useMemo(() => {
-    const runId =
-      replayIteration?.suiteRunId ??
-      [
-        routeCompareAnchorIteration,
-        ...recentIterations,
-        lastSavedIteration,
-      ].find(
-        (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
-      )?.suiteRunId;
-    if (!runId) return null;
-    return suiteRuns.find((run) => run._id === runId) ?? null;
-  }, [
-    replayIteration,
-    routeCompareAnchorIteration,
-    recentIterations,
-    lastSavedIteration,
-    suiteRuns,
-  ]);
+    if (!tracedRunId) return null;
+    return suiteRuns.find((run) => run._id === tracedRunId) ?? null;
+  }, [tracedRunId, suiteRuns]);
 
   const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({

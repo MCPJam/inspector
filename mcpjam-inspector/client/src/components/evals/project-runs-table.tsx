@@ -66,7 +66,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useConvex, usePaginatedQuery, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { readRunGroupSummaries } from "./use-run-group-summaries";
@@ -287,11 +287,14 @@ export function ProjectRunsTable({
   const showDeleteColumn = evaluateLayout && onDeleteRun != null;
   const deleteLaunch = useDeleteRunLaunch(onDeleteRun);
   const convex = useConvex();
+  const launchReadInFlight = useRef(false);
   const requestDeleteLaunch = async (loaded: ProjectRunRow[]) => {
-    const representative = loaded[0];
-    const groupId =
-      representative.runSummary?.runGroupId ?? representative.runGroupId;
+    if (launchReadInFlight.current) return;
+    launchReadInFlight.current = true;
     try {
+      const representative = loaded[0];
+      const groupId =
+        representative.runSummary?.runGroupId ?? representative.runGroupId;
       const members = groupId
         ? (
             await readRunGroupSummaries(
@@ -322,6 +325,8 @@ export function ProjectRunsTable({
       });
     } catch {
       toast.error("Unable to load the full launch. Try again.");
+    } finally {
+      launchReadInFlight.current = false;
     }
   };
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
