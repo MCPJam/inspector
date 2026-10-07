@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
+  harnessPlanFromRaw,
   harnessSubagentStepFromRaw,
+  harnessToolOutputFromRaw,
   isHarnessBackgroundTaskDataPart,
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
+  isHarnessPlanDataPart,
   isHarnessSubagentStepDataPart,
+  isHarnessToolOutputDataPart,
 } from "../harness-session";
 
 describe("isHarnessSessionDataPart", () => {
@@ -256,6 +260,113 @@ describe("subagent-step parts (a Claude Code subagent's work)", () => {
     ]) {
       expect(isHarnessSubagentStepDataPart(part)).toBe(false);
     }
+  });
+});
+
+describe("Codex plan and live output parts", () => {
+  const planRaw = (plan: unknown, extra: Record<string, unknown> = {}) => ({
+    method: "turn/plan/updated",
+    params: { threadId: "t", turnId: "turn-1", plan, ...extra },
+  });
+
+  it("reads Codex's whole plan, keeping only steps it understands", () => {
+    expect(
+      harnessPlanFromRaw(
+        planRaw(
+          [
+            { step: "Read", status: "completed" },
+            { step: "Fix", status: "inProgress" },
+            { step: "Test", status: "pending" },
+            { step: "Odd", status: "skipped" },
+            { status: "pending" },
+          ],
+          { explanation: "why" },
+        ),
+      ),
+    ).toEqual({
+      turnId: "turn-1",
+      plan: {
+        explanation: "why",
+        steps: [
+          { step: "Read", status: "completed" },
+          { step: "Fix", status: "inProgress" },
+          { step: "Test", status: "pending" },
+        ],
+      },
+    });
+    const long = harnessPlanFromRaw(
+      planRaw(
+        Array.from({ length: 80 }, (_, i) => ({
+          step: `${i}`.repeat(400),
+          status: "pending",
+        })),
+      ),
+    );
+    expect(long?.plan.steps).toHaveLength(50);
+    expect(long?.plan.steps[1]!.step.length).toBe(300);
+  });
+
+  it("rejects what is not a plan", () => {
+    for (const raw of [
+      undefined,
+      { method: "turn/plan/updated", params: {} },
+      { method: "item/plan/delta", params: { delta: "x" } },
+      { mcpjam: "background-task" },
+    ]) {
+      expect(harnessPlanFromRaw(raw)).toBeUndefined();
+    }
+  });
+
+  it("reads a command's output delta, cut to a bounded chunk", () => {
+    expect(
+      harnessToolOutputFromRaw({
+        method: "item/commandExecution/outputDelta",
+        params: { itemId: "call_1", delta: "one\n", threadId: "t" },
+      }),
+    ).toEqual({ toolCallId: "call_1", delta: "one\n" });
+    expect(
+      harnessToolOutputFromRaw({
+        method: "item/commandExecution/outputDelta",
+        params: { itemId: "call_1", delta: "x".repeat(10_000) },
+      })?.delta,
+    ).toHaveLength(4096);
+    expect(
+      harnessToolOutputFromRaw({
+        method: "item/commandExecution/outputDelta",
+        params: { delta: "x" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("the client's guards accept what the server writes, and nothing else", () => {
+    const parsed = harnessPlanFromRaw(
+      planRaw([{ step: "Read", status: "completed" }]),
+    )!;
+    expect(
+      isHarnessPlanDataPart({
+        type: "data-harness-plan",
+        id: "harness-plan-turn-1",
+        data: parsed.plan,
+      }),
+    ).toBe(true);
+    expect(
+      isHarnessPlanDataPart({
+        type: "data-harness-plan",
+        data: { steps: [{ step: "x", status: "done" }] },
+      }),
+    ).toBe(false);
+    expect(
+      isHarnessToolOutputDataPart({
+        type: "data-harness-tool-output",
+        data: { toolCallId: "call_1", delta: "x" },
+      }),
+    ).toBe(true);
+    expect(
+      isHarnessToolOutputDataPart({
+        type: "data-harness-tool-output",
+        data: { toolCallId: "call_1" },
+      }),
+    ).toBe(false);
   });
 });
 

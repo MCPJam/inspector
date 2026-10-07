@@ -3,6 +3,7 @@
 //   "SHELL <cmd>"  -> function_call exec_command {cmd}       (Codex's shell tool)
 //   "MCPPROBE"     -> function_call mcp__mcpjam / probe__echo (MCPJam's relay)
 //   "COUNT"        -> text: number of user turns in this request (continuity)
+//   "PLAN"         -> function_call update_plan (Codex's own checklist)
 //   anything else  -> text echo
 // After a tool output arrives, answers with `TOOL RESULT RECEIVED: <output>`.
 // Verifies the gateway's proof-of-possession header and upstream key, like
@@ -118,7 +119,7 @@ function userText(item) {
     .join("\n");
 }
 
-const SCENARIO = /^(SHELL|MCPPROBE|COUNT)\b\s*(.*)$/s;
+const SCENARIO = /^(SHELL|MCPPROBE|COUNT|PLAN)\b\s*(.*)$/s;
 
 const server = http.createServer((req, res) => {
   requestCount += 1;
@@ -174,6 +175,21 @@ const server = http.createServer((req, res) => {
       if (kind === "SHELL") return respond(res, { calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
       if (kind === "MCPPROBE") return respond(res, { calls: [{ namespace: RELAY_NAMESPACE, name: PROBE_TOOL, arguments: { message: "conformance" } }] });
       if (kind === "COUNT") return respond(res, { text: `USER_TURNS=${userTurns}` });
+      if (kind === "PLAN") {
+        return respond(res, {
+          calls: [{
+            name: "update_plan",
+            arguments: {
+              explanation: "conformance plan",
+              plan: [
+                { step: "Read the code", status: "completed" },
+                { step: "Write the fix", status: "in_progress" },
+                { step: "Run the tests", status: "pending" },
+              ],
+            },
+          }],
+        });
+      }
     }
     return respond(res, { text: `ECHO: ${latest.slice(0, 80)}` });
   });

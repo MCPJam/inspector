@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { describeHarnessToolStep } from "../harness-tool-steps";
+import {
+  describeHarnessToolStep,
+  isHarnessActivityToolName,
+  summarizeHarnessActivity,
+} from "../harness-tool-steps";
 
 describe("describeHarnessToolStep", () => {
   it.each([
@@ -51,5 +55,115 @@ describe("describeHarnessToolStep", () => {
     expect(describeHarnessToolStep("TodoWrite", { todos: "x" })).toEqual({
       verb: "Update todos",
     });
+  });
+});
+
+describe("Codex steps", () => {
+  it("a command Codex parsed reads as what it does", () => {
+    const action = (a: Record<string, unknown>) => ({
+      command: "x",
+      commandActions: [a],
+    });
+    expect(
+      describeHarnessToolStep(
+        "bash",
+        action({ type: "read", name: "app.ts", path: "/w/src/app.ts" }),
+      ),
+    ).toMatchObject({ verb: "Read", detail: "app.ts", title: "/w/src/app.ts" });
+    expect(
+      describeHarnessToolStep(
+        "bash",
+        action({ type: "listFiles", path: "src" }),
+      ),
+    ).toMatchObject({ verb: "List files", detail: "src" });
+    expect(
+      describeHarnessToolStep(
+        "bash",
+        action({ type: "search", query: "TODO", command: "rg TODO" }),
+      ),
+    ).toMatchObject({ verb: "Search", detail: "TODO" });
+    // Unknown, or more than one action: the shell line.
+    expect(
+      describeHarnessToolStep("bash", {
+        command: "make",
+        commandActions: [{ type: "unknown", command: "make" }],
+      }),
+    ).toMatchObject({ verb: "Run", detail: "make" });
+  });
+
+  it("a file change names its file, or how many", () => {
+    expect(
+      describeHarnessToolStep("fileChange", {
+        changes: [{ path: "/w/a.ts", kind: "update" }],
+      }),
+    ).toMatchObject({ verb: "Edit", detail: "a.ts" });
+    expect(
+      describeHarnessToolStep("fileChange", {
+        changes: [{ path: "/w/a.ts" }, { path: "/w/b.ts" }],
+      }),
+    ).toMatchObject({ verb: "Edit", detail: "2 files" });
+  });
+});
+
+describe("activity", () => {
+  it("built-ins fold; MCP tools, the Agent card and questions do not", () => {
+    for (const name of [
+      "bash",
+      "Read",
+      "edit",
+      "fileChange",
+      "webSearch",
+      "Grep",
+      "TodoWrite",
+    ]) {
+      expect(isHarnessActivityToolName(name)).toBe(true);
+    }
+    for (const name of [
+      "Agent",
+      "AskUserQuestion",
+      "ExitPlanMode",
+      "create_issue",
+      "mcp__x__y",
+    ]) {
+      expect(isHarnessActivityToolName(name)).toBe(false);
+    }
+  });
+
+  it("summarizes a run in the order each kind first appears", () => {
+    expect(
+      summarizeHarnessActivity([
+        { toolName: "bash", input: { command: "ls" } },
+        { toolName: "read", input: { file_path: "/a" } },
+        { toolName: "bash", input: { command: "npm test" } },
+        { toolName: "read", input: { file_path: "/b" } },
+        { toolName: "read", input: { file_path: "/c" } },
+      ]),
+    ).toBe("Ran 2 commands, read 3 files");
+    expect(
+      summarizeHarnessActivity([
+        { toolName: "edit", input: { file_path: "/a" } },
+        { toolName: "edit", input: { file_path: "/a" } },
+        {
+          toolName: "fileChange",
+          input: { changes: [{ path: "/b" }, { path: "/c" }] },
+        },
+      ]),
+    ).toBe("Edited 3 files");
+    expect(
+      summarizeHarnessActivity([
+        { toolName: "grep", input: { pattern: "x" } },
+        { toolName: "webSearch", input: { query: "y" } },
+        { toolName: "WebFetch", input: { url: "z" } },
+      ]),
+    ).toBe("Searched once, searched the web, fetched a page");
+    // A Codex command that only read counts as a read.
+    expect(
+      summarizeHarnessActivity([
+        {
+          toolName: "bash",
+          input: { commandActions: [{ type: "read", name: "a", path: "/a" }] },
+        },
+      ]),
+    ).toBe("Read a file");
   });
 });

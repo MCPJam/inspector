@@ -103,6 +103,7 @@ import {
   emitToolInput,
   emitToolOutput,
   emitToolOutputDenied,
+  emitToolOutputError,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
@@ -216,7 +217,9 @@ import {
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
+  harnessPlanFromRaw,
   harnessSubagentStepFromRaw,
+  harnessToolOutputFromRaw,
   type HarnessBackgroundTaskInfo,
   type HarnessResetReason,
 } from "@/shared/harness-session";
@@ -704,6 +707,45 @@ export function harnessRuntimeFingerprint(parts: {
 const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
 /** How often a turn waiting on background agents writes a keepalive chunk. */
 const HARNESS_DRAIN_KEEPALIVE_MS = 20_000;
+/** Live output forwarded per command; the result carries the rest. */
+const HARNESS_LIVE_OUTPUT_MAX_CHARS = 64 * 1024;
+
+/**
+ * A failed harness tool call's error, as the text its card shows. A failed
+ * command's error is its result (`{ status, exitCode, output }` from Codex),
+ * so its output, under its exit code, is the readable part.
+ */
+function harnessToolErrorText(part: unknown): string {
+  const error =
+    (part as { error?: unknown }).error ??
+    (part as { errorText?: unknown }).errorText;
+  let text: string;
+  if (typeof error === "string") text = error;
+  else if (error instanceof Error) text = error.message;
+  else if (
+    error &&
+    typeof error === "object" &&
+    typeof (error as { output?: unknown }).output === "string"
+  ) {
+    const { output, exitCode } = error as {
+      output: string;
+      exitCode?: unknown;
+    };
+    text = [
+      typeof exitCode === "number" ? `Exit code ${exitCode}` : "",
+      output.trim(),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  } else {
+    try {
+      text = JSON.stringify(error) ?? "";
+    } catch {
+      text = "";
+    }
+  }
+  return (text.trim() || "Tool call failed").slice(0, 4000);
+}
 
 /** Sealed-policy envelope lifetime when the caller doesn't set one. Long enough
  *  for a real harness turn, short enough to bound a leaked seal (§3's
@@ -1243,6 +1285,10 @@ export async function runHarnessTurn(
       | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
       | undefined;
     let drainKeepalive: ReturnType<typeof setInterval> | undefined;
+    // Live command output already sent, per tool call (Codex).
+    const liveOutputChars = new Map<string, number>();
+    // A plan whose notification names no turn still gets one part per turn.
+    const harnessPlanFallbackId = crypto.randomUUID();
     const writeBackgroundTaskChunk = (data: HarnessBackgroundTaskInfo) => {
       writer.write({
         type: "data-harness-background-task",
@@ -3269,6 +3315,7 @@ export async function runHarnessTurn(
           { serverId?: string; toolName: string }
         >();
         const toolStartMs = new Map<string, number>();
+        const failedToolCallIds = new Set<string>();
         const finishStep = () => {
           // Usage is only known at the harness `finish`, so intermediate steps
           // carry what's settled (driver reads its cumulative `usage`).
@@ -3324,9 +3371,24 @@ export async function runHarnessTurn(
           // missing file, a failed Edit), not `tool-result`: it is no longer
           // in flight either way.
           if (type === "tool-error" || type === "tool-output-error") {
-            drainOpenToolCalls.delete(
-              String((part as { toolCallId?: unknown }).toolCallId ?? ""),
+            const failedToolCallId = String(
+              (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
+            drainOpenToolCalls.delete(failedToolCallId);
+            // ...and its card settles as failed. The UI only: the transcript,
+            // spans and evals keep recording a failed built-in as before.
+            // Without it the card stayed "running" for good.
+            if (
+              toolMeta.has(failedToolCallId) &&
+              !failedToolCallIds.has(failedToolCallId)
+            ) {
+              failedToolCallIds.add(failedToolCallId);
+              emitToolOutputError(writer, {
+                toolCallId: failedToolCallId,
+                errorText: harnessToolErrorText(part),
+                providerExecuted: true,
+              });
+            }
           }
           if (
             type === "reasoning-start" ||
@@ -3823,6 +3885,36 @@ export async function runHarnessTurn(
                 data: subagentStep,
                 transient: true,
               } as unknown as UIMessageChunk);
+              continue;
+            }
+            // Codex's plan for the turn: one checklist part, replaced in
+            // place on every update (the notification carries the whole plan).
+            const plan = harnessPlanFromRaw(rawValue);
+            if (plan) {
+              writer.write({
+                type: "data-harness-plan",
+                id: `harness-plan-${plan.turnId ?? harnessPlanFallbackId}`,
+                data: plan.plan,
+              } as unknown as UIMessageChunk);
+              continue;
+            }
+            // A running Codex command's output, live. Bounded per command:
+            // the full output still arrives as the tool call's result.
+            const toolOutput = harnessToolOutputFromRaw(rawValue);
+            if (toolOutput) {
+              const sent = liveOutputChars.get(toolOutput.toolCallId) ?? 0;
+              if (sent < HARNESS_LIVE_OUTPUT_MAX_CHARS) {
+                const delta = toolOutput.delta.slice(
+                  0,
+                  HARNESS_LIVE_OUTPUT_MAX_CHARS - sent,
+                );
+                liveOutputChars.set(toolOutput.toolCallId, sent + delta.length);
+                writer.write({
+                  type: "data-harness-tool-output",
+                  data: { toolCallId: toolOutput.toolCallId, delta },
+                  transient: true,
+                } as unknown as UIMessageChunk);
+              }
               continue;
             }
             // Otherwise a passthrough of the runtime's own protocol message.
