@@ -27,7 +27,14 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
   "x-mcpjam-harness-lease",
 ];
 
-const ALLOWLISTED_KEYS = new Set(["emaildomain"]);
+// Exact-match exemptions from the substring rule above. The two `process.vitals`
+// counters are character counts from the tokenizer, not credentials; "token"
+// in their names redacted them in every Axiom row from the day they shipped.
+const ALLOWLISTED_KEYS = new Set([
+  "emaildomain",
+  "tokenizerpeakchars",
+  "tokenizeroversizeskips",
+]);
 
 // Credential patterns live in `shared/secret-shape-redaction.ts`, shared with
 // the model path. They are factories: each regex has `g`, and a shared
