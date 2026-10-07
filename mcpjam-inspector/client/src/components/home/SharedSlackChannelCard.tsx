@@ -105,9 +105,9 @@ function errorCopy(
     case "invite_declined":
       return "The Slack Connect invite was declined. Free Slack workspaces need to upgrade or start a trial to accept it. Contact support if your Slack is already on a paid plan.";
     case "invite_expired":
-      return retrying
-        ? "The Slack Connect invite expired. We'll send a new one automatically."
-        : "The Slack Connect invite expired. Request a new one.";
+      // Automation never resends an expired invite (the backend counts it as
+      // done), so this always asks for a new one.
+      return "The Slack Connect invite expired. Request a new one.";
     case "provision_outcome_unknown":
       return "We couldn't confirm the shared channel was created. Contact support to finish setting it up.";
     case "invite_outcome_unknown":

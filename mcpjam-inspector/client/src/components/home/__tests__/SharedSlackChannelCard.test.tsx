@@ -175,11 +175,6 @@ describe("SharedSlackChannelCard", () => {
     ],
     ["rate_limited", /busy. We'll retry automatically/, /Try again in a minute/],
     [
-      "invite_expired",
-      /We'll send a new one automatically/,
-      /Request a new one/,
-    ],
-    [
       "unrecognized_code",
       /shared Slack channel. We'll retry automatically/,
       /shared Slack channel. Try again/,
@@ -394,6 +389,23 @@ describe("SharedSlackChannelCard", () => {
       );
     }
   );
+
+  it("never promises an automatic resend for an expired invite", () => {
+    for (const automaticInvitePending of [true, false]) {
+      mockUseQuery.mockReturnValue(
+        dto({
+          automaticInvitePending,
+          channel: { status: "invite_expired", openUrl: null },
+        })
+      );
+      const { unmount } = render(
+        <SharedSlackChannelCard organizationId="org_1" />
+      );
+      expect(screen.getByText(/Request a new one/)).toBeInTheDocument();
+      expect(screen.queryByText(/automatically/)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
 
   it("explains a declined invite: free Slack needs an upgrade or trial, not that it can never accept", () => {
     mockUseQuery.mockReturnValue(
