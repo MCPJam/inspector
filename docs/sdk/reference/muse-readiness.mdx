@@ -129,6 +129,24 @@ gradeMuseReadiness(input: MuseReadinessInput): MuseReadinessResult
 
 ---
 
+## isMuseReadinessResult()
+
+Type guard that narrows an unknown value to `MuseReadinessResult` by checking the `readinessKind` discriminator. Available from both `@mcpjam/sdk` and `@mcpjam/sdk/browser`.
+
+```typescript
+isMuseReadinessResult(value: unknown): value is MuseReadinessResult
+```
+
+```typescript
+import { isMuseReadinessResult } from "@mcpjam/sdk/browser";
+
+if (isMuseReadinessResult(result)) {
+  console.log(result.technicalStatus); // TypeScript knows the type
+}
+```
+
+---
+
 ## Lanes
 
 Muse readiness runs four lanes. Each answers a different question.
