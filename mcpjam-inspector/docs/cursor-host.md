@@ -57,4 +57,4 @@ chosen an environment, a hidden one carries just your Cursor key.
 | Only a project-shared key | Refused, asking you to add your own. |
 | A User Testing participant | Refused with copy that names no project settings; no box starts. |
 | Require tool approval with selected MCP servers | Pre-flight error: the Cursor adapter does not yet gate MCP calls. |
-| Harness unavailable for this turn | `422 FEATURE_NOT_SUPPORTED` from the chat routes (`details.reason: "HARNESS_UNAVAILABLE"` with the `kind`); a server-side operator state (broker delivery off, no computers data plane) stays `503`. |
+| Harness unavailable for this turn | `422 FEATURE_NOT_SUPPORTED` from the web and MCP chat routes (`details.reason: "HARNESS_UNAVAILABLE"` with the `kind`); a server-side operator state (broker delivery off, no computers data plane) stays `503`. The v1 host-target route is different: it answers `422` for a server with no computers data plane configured. |
