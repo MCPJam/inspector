@@ -10,6 +10,8 @@ import {
   MUSE_POLICY_SNAPSHOT_DATE,
 } from "../../src/muse-readiness/manifest.js";
 import { gradeMuseReadiness } from "../../src/muse-readiness/runner.js";
+import { isMuseReadinessResult } from "../../src/muse-readiness/types.js";
+import { toConformanceReport } from "../../src/conformance-reporting.js";
 import { COMPLETE_PROFILE } from "./fixtures.js";
 
 const TARGET = "https://cedar.example/mcp";
@@ -99,6 +101,27 @@ describe("a wire-only run", () => {
       ["search_rooms", "read"],
       ["book_room", "sensitive-write"],
     ]);
+  });
+
+  it("carries its own discriminator and reports under Muse's name", async () => {
+    // Without the kind, the shared reporter would recognise this shape as
+    // nobody's — or, worse, as Claude's — and publish it under that name.
+    const result = gradeMuseReadiness(
+      await gatherMuseReadinessEvidence({
+        enteredUrl: TARGET,
+        fetchFn: wireFetch(),
+        now: clock,
+      })
+    );
+    expect(result.readinessKind).toBe("muse-directory-readiness");
+    expect(isMuseReadinessResult(result)).toBe(true);
+
+    const report = toConformanceReport(result);
+    expect(report.kind).toBe("muse-directory-readiness");
+    expect(report.name).toBe("Muse Directory Readiness");
+    expect(report.outcome).toBe("incomplete");
+    // Readiness is policy, not protocol: never a pooled score.
+    expect(report).not.toHaveProperty("score");
   });
 
   it("survives a JSON round trip, so gather and grade can run on different machines", async () => {

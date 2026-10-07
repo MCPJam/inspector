@@ -319,6 +319,7 @@ export {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
   isDispositiveMuseFinding,
+  isMuseReadinessResult,
   rollUpMuseStage,
 } from "./muse-readiness/types.js";
 export type {
