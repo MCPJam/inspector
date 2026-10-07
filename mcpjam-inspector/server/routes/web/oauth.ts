@@ -8,11 +8,13 @@ import {
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
 import {
+  assertBearerToken,
   ErrorCode,
   WebRouteError,
   mapRuntimeError,
   webErrorFromRoute,
 } from "./errors.js";
+import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
@@ -243,6 +245,39 @@ for (const path of CONVEX_OAUTH_PROXY_PATHS) {
     }
   });
 }
+
+/**
+ * Recover callback-only OAuth headers from the encrypted server-secret store.
+ * Values are returned to the initiating browser for this exchange only and are
+ * never written to browser storage. The backend verifies that the credential
+ * binding permits the requested server URL.
+ */
+oauthWeb.post("/recovery-headers", async (c) => {
+  try {
+    const bearerToken = assertBearerToken(c);
+    const body = await c.req.json();
+    const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+    const serverId = typeof body?.serverId === "string" ? body.serverId : "";
+    const serverUrl = typeof body?.serverUrl === "string" ? body.serverUrl : "";
+    if (!projectId || !serverId || !serverUrl) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Missing OAuth recovery binding"
+      );
+    }
+    const secrets = await fetchRuntimeServerSecrets({
+      bearerToken,
+      projectId,
+      serverId,
+      expectedTargetUrl: serverUrl,
+      accessScope: "project_member",
+    });
+    return c.json({ success: true, headers: secrets.headers ?? {} });
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
 
 // Local-mode token import — see backend `/web/oauth/import-tokens` for shape.
 // The local CLI's `MCPOAuthProvider` uses this to push browser-side

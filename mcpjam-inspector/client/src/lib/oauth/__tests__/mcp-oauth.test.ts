@@ -1178,6 +1178,13 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
         "hosted-client-secret"
       );
+      expect(
+        JSON.parse(
+          decodeURIComponent(
+            localStorage.getItem("mcp-oauth-config-hosted") ?? "%7B%7D"
+          )
+        )
+      ).toMatchObject({ hasCustomHeaders: true });
       for (let i = 0; i < localStorage.length; i += 1) {
         const key = localStorage.key(i);
         expect(key ? localStorage.getItem(key) : "").not.toContain(
@@ -2187,19 +2194,21 @@ describe("mcp-oauth", () => {
         true
       );
 
-      expect(localStorage.getItem("mcp-oauth-config-asana")).toBe(
-        encodeURIComponent(
-          JSON.stringify({
-            registryServerId: "registry-asana",
-            useRegistryOAuthProxy: true,
-            resourceUrl: "https://mcp.asana.com/v2/mcp",
-            protocolMode: "auto",
-            protocolVersion: "2025-11-25",
-            registrationMode: "preregistered",
-            registrationStrategy: "preregistered",
-          })
+      expect(
+        JSON.parse(
+          decodeURIComponent(
+            localStorage.getItem("mcp-oauth-config-asana") ?? "%7B%7D"
+          )
         )
-      );
+      ).toEqual({
+          registryServerId: "registry-asana",
+          useRegistryOAuthProxy: true,
+          resourceUrl: "https://mcp.asana.com/v2/mcp",
+          protocolMode: "auto",
+          protocolVersion: "2025-11-25",
+          registrationMode: "preregistered",
+          registrationStrategy: "preregistered",
+        });
     });
 
     it("reuses the stored OAuth client information when a fresh OAuth flow starts", async () => {
@@ -2799,6 +2808,80 @@ describe("mcp-oauth", () => {
             },
           }),
         })
+      );
+    });
+
+    it("recovers custom headers from the protected server-secret store for callback exchange", async () => {
+      await seedPendingOAuth(undefined);
+      localStorage.setItem(
+        "mcp-oauth-config-asana",
+        JSON.stringify({ hasCustomHeaders: true })
+      );
+      localStorage.setItem(
+        "mcp-oauth-binding-asana",
+        JSON.stringify({
+          projectId: "project-1",
+          serverId: "server-1",
+          kind: "generic",
+        })
+      );
+      authFetch
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            success: true,
+            headers: { "X-Tenant": "protected-tenant" },
+          })
+        )
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            status: 200,
+            statusText: "OK",
+            headers: { "Content-Type": "application/json" },
+            body: { access_token: "token", token_type: "Bearer" },
+          })
+        );
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authServerUrl, options) => {
+          const response = await options!.fetchFn!(
+            "https://app.asana.com/-/oauth_token",
+            {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: options!.authorizationCode!,
+                code_verifier: options!.codeVerifier,
+                redirect_uri: String(options!.redirectUri),
+              }),
+            }
+          );
+          return await response.json();
+        }
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
+
+      expect(callbackResult.success).toBe(true);
+      expect(authFetch).toHaveBeenNthCalledWith(
+        1,
+        "/api/web/oauth/recovery-headers",
+        expect.objectContaining({
+          body: JSON.stringify({
+            projectId: "proj_default",
+            serverId: "srv_asana",
+            serverUrl: "https://mcp.asana.com/v2/mcp",
+          }),
+        })
+      );
+      expect(mockRunOAuthStateMachine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customHeaders: { "X-Tenant": "protected-tenant" },
+        })
+      );
+      expect(localStorage.getItem("mcp-oauth-config-asana")).not.toContain(
+        "protected-tenant"
       );
     });
 

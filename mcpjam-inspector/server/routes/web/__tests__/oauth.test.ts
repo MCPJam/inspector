@@ -6,9 +6,14 @@ import {
   postJson,
 } from "./helpers/test-app.js";
 
-const { executeOAuthProxyMock, fetchOAuthMetadataMock } = vi.hoisted(() => ({
+const {
+  executeOAuthProxyMock,
+  fetchOAuthMetadataMock,
+  fetchRuntimeServerSecretsMock,
+} = vi.hoisted(() => ({
   executeOAuthProxyMock: vi.fn(),
   fetchOAuthMetadataMock: vi.fn(),
+  fetchRuntimeServerSecretsMock: vi.fn(),
 }));
 
 vi.mock("../../../utils/oauth-proxy.js", () => ({
@@ -23,6 +28,16 @@ vi.mock("../../../utils/oauth-proxy.js", () => ({
     }
   },
 }));
+
+vi.mock("../../../utils/server-secrets.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/server-secrets.js")
+  >("../../../utils/server-secrets.js");
+  return {
+    ...actual,
+    fetchRuntimeServerSecrets: fetchRuntimeServerSecretsMock,
+  };
+});
 
 import { OAuthProxyError } from "../../../utils/oauth-proxy.js";
 import { initGuestTokenSecret } from "../../../services/guest-token.js";
@@ -62,6 +77,7 @@ describe("web routes — oauth requires bearer token", () => {
   beforeEach(() => {
     executeOAuthProxyMock.mockReset();
     fetchOAuthMetadataMock.mockReset();
+    fetchRuntimeServerSecretsMock.mockReset();
   });
 
   it("POST /proxy returns 401 without bearer token", async () => {
@@ -119,6 +135,39 @@ describe("web routes — oauth requires bearer token", () => {
     expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
       "https://example.com/token"
     );
+  });
+
+  it("POST /recovery-headers returns only protected headers for the bound server", async () => {
+    fetchRuntimeServerSecretsMock.mockResolvedValueOnce({
+      env: { PRIVATE_ENV: "not-returned" },
+      headers: { "X-Tenant": "protected-tenant" },
+      boundOrigins: ["https://mcp.example.com"],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      {
+        projectId: "project-1",
+        serverId: "server-1",
+        serverUrl: "https://mcp.example.com/mcp",
+      },
+      token
+    );
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      headers: { "X-Tenant": "protected-tenant" },
+    });
+    expect(fetchRuntimeServerSecretsMock).toHaveBeenCalledWith({
+      bearerToken: token,
+      projectId: "project-1",
+      serverId: "server-1",
+      expectedTargetUrl: "https://mcp.example.com/mcp",
+      accessScope: "project_member",
+    });
   });
 
   it("GET /metadata succeeds with bearer token", async () => {

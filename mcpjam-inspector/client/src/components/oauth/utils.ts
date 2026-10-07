@@ -4,7 +4,10 @@ import {
   EMPTY_OAUTH_TEST_PROFILE,
   type OAuthTestProfile,
 } from "@/lib/oauth/profile";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import {
+  getStoredTokens,
+  readStoredOAuthConfig,
+} from "@/lib/oauth/mcp-oauth";
 
 // The Connect editor (use-server-form) surfaces a server's clientId/scopes
 // from browser storage — a DCR-registered client id, the scopes the last
@@ -21,9 +24,7 @@ const readStoredOAuthCredentials = (
     const clientInfo = JSON.parse(
       localStorage.getItem(`mcp-client-${serverName}`) || "{}",
     );
-    const oauthConfig = JSON.parse(
-      localStorage.getItem(`mcp-oauth-config-${serverName}`) || "{}",
-    );
+    const oauthConfig = readStoredOAuthConfig(serverName);
     const clientId =
       (typeof storedTokens?.client_id === "string" && storedTokens.client_id) ||
       (typeof clientInfo?.client_id === "string" && clientInfo.client_id) ||

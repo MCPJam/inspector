@@ -5,6 +5,11 @@ export interface FetchServerSecretsRequest {
   serverId: string;
 }
 
+export interface FetchOAuthRecoveryHeadersRequest
+  extends FetchServerSecretsRequest {
+  serverUrl: string;
+}
+
 export interface ServerSecretsResult {
   env: Record<string, string> | null;
   headers: Record<string, string> | null;
@@ -86,4 +91,23 @@ export async function fetchServerSecrets(
     env: parseRecord(result.env),
     headers: parseRecord(result.headers),
   };
+}
+
+export async function fetchOAuthRecoveryHeaders(
+  request: FetchOAuthRecoveryHeadersRequest
+): Promise<Record<string, string>> {
+  const body = await webPost<FetchOAuthRecoveryHeadersRequest, unknown>(
+    "/api/web/oauth/recovery-headers",
+    request
+  );
+  const result =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+  if (!result?.success) {
+    throw new WebApiError(
+      0,
+      "INVALID_RESPONSE",
+      "OAuth recovery headers response was invalid"
+    );
+  }
+  return parseRecord(result.headers) ?? {};
 }

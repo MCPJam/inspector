@@ -4083,7 +4083,7 @@ describe("useServerState auth mode regressions", () => {
         }),
       }),
     );
-    expect(JSON.parse(localStorage.getItem("mcp-oauth-config-auto-server") ?? "{}")).toMatchObject({
+    expect(JSON.parse(decodeURIComponent(localStorage.getItem("mcp-oauth-config-auto-server") ?? "%7B%7D"))).toMatchObject({
       protocolMode: "2025-06-18",
       registrationMode: "preregistered",
       scopes: ["read", "write"],
@@ -4280,7 +4280,7 @@ describe("useServerState authenticated fallback persistence", () => {
     );
   });
 
-  it("preserves cached OAuth custom headers when no header patch is sent", async () => {
+  it("preserves the OAuth custom-header marker without persisting values", async () => {
     readStoredOAuthConfigMock.mockReturnValue({
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -4303,9 +4303,12 @@ describe("useServerState authenticated fallback persistence", () => {
     });
 
     const stored = JSON.parse(
-      localStorage.getItem("mcp-oauth-config-demo-server") ?? "{}"
+      decodeURIComponent(
+        localStorage.getItem("mcp-oauth-config-demo-server") ?? "%7B%7D"
+      )
     );
-    expect(stored.customHeaders).toEqual({ "X-MCPJam": "yes" });
+    expect(stored.hasCustomHeaders).toBe(true);
+    expect(stored.customHeaders).toBeUndefined();
   });
 
   it("persists renamed servers into the local project in authenticated fallback mode", async () => {

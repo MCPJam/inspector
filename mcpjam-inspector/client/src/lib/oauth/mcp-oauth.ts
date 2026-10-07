@@ -56,6 +56,7 @@ import {
   type ImportHostedOAuthTokensRequest,
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { fetchOAuthRecoveryHeaders } from "@/lib/apis/server-secrets-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
@@ -168,7 +169,9 @@ type OAuthRegistrationStrategy =
 
 export interface StoredOAuthConfig {
   scopes?: string[];
+  /** Legacy records may contain values; new records persist only this marker. */
   customHeaders?: Record<string, string>;
+  hasCustomHeaders?: boolean;
   resourceUrl?: string;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
@@ -178,18 +181,22 @@ export interface StoredOAuthConfig {
   registrationStrategy?: OAuthRegistrationStrategy;
 }
 
-function encodePublicOAuthRecoveryConfig(config: StoredOAuthConfig): string {
-  return encodeURIComponent(JSON.stringify(config));
-}
-
-function decodeOAuthRecoveryConfig(raw: string): Record<string, unknown> {
-  const serialized = raw.trimStart().startsWith("{")
-    ? raw
-    : decodeURIComponent(raw);
-  const parsed: unknown = JSON.parse(serialized);
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : {};
+export function serializeStoredOAuthConfig(config: StoredOAuthConfig): string {
+  const publicConfig: StoredOAuthConfig = {
+    scopes: config.scopes,
+    hasCustomHeaders: config.hasCustomHeaders === true ? true : undefined,
+    resourceUrl: config.resourceUrl,
+    registryServerId: config.registryServerId,
+    useRegistryOAuthProxy: config.useRegistryOAuthProxy,
+    protocolMode: config.protocolMode,
+    protocolVersion: config.protocolVersion,
+    registrationMode: config.registrationMode,
+    registrationStrategy: config.registrationStrategy,
+  };
+  // Encoding gives CodeQL an explicit protection boundary after the allowlist
+  // above. It is not relied on to protect secret values: those are excluded
+  // structurally and recovered from the encrypted secret store.
+  return encodeURIComponent(JSON.stringify(publicConfig));
 }
 
 interface OAuthRoutingConfig {
@@ -1056,7 +1063,9 @@ export function readStoredOAuthConfig(
       };
     }
 
-    const parsed = decodeOAuthRecoveryConfig(raw);
+    const parsed = JSON.parse(
+      raw.trimStart().startsWith("{") ? raw : decodeURIComponent(raw)
+    );
     const config: StoredOAuthConfig = {
       registryServerId:
         typeof parsed?.registryServerId === "string"
@@ -1097,6 +1106,10 @@ export function readStoredOAuthConfig(
           ? parsed.registrationStrategy
           : undefined,
     };
+
+    if (parsed?.hasCustomHeaders === true) {
+      config.hasCustomHeaders = true;
+    }
 
     if (
       Array.isArray(parsed?.scopes) &&
@@ -1155,7 +1168,7 @@ export function buildStoredOAuthConfig(
   }
 
   if (options.customHeaders && Object.keys(options.customHeaders).length > 0) {
-    config.customHeaders = options.customHeaders;
+    config.hasCustomHeaders = true;
   }
 
   if (options.resourceUrl?.trim()) {
@@ -1751,10 +1764,19 @@ function writeStoredOAuthConfig(
     ...existing,
     ...updates,
   };
+  const hasCustomHeaders =
+    updates.hasCustomHeaders ??
+    existing.hasCustomHeaders ??
+    Boolean(existing.customHeaders);
   delete publicConfig.customHeaders;
+  if (hasCustomHeaders) {
+    publicConfig.hasCustomHeaders = true;
+  } else {
+    delete publicConfig.hasCustomHeaders;
+  }
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
-    encodePublicOAuthRecoveryConfig(publicConfig)
+    serializeStoredOAuthConfig(publicConfig)
   );
 }
 
@@ -2509,6 +2531,45 @@ function buildConvexBindingForServer(input: {
   return previousBinding;
 }
 
+async function recoverOAuthCustomHeaders(input: {
+  serverName: string;
+  serverUrl: string;
+  oauthConfig: StoredOAuthConfig;
+}): Promise<Record<string, string> | undefined> {
+  // Let an authorization started by an older build complete once. New writes
+  // remove the values and retain only `hasCustomHeaders`.
+  if (
+    input.oauthConfig.customHeaders &&
+    Object.keys(input.oauthConfig.customHeaders).length > 0
+  ) {
+    return input.oauthConfig.customHeaders;
+  }
+  if (!input.oauthConfig.hasCustomHeaders) return undefined;
+
+  const binding = buildConvexBindingForServer({
+    serverName: input.serverName,
+    oauthResourceUrl: input.oauthConfig.resourceUrl,
+    registryServerId: input.oauthConfig.registryServerId,
+    useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
+  });
+  if (!binding) {
+    throw new Error(
+      "OAuth custom headers could not be recovered for this server. Save the server and try again."
+    );
+  }
+  const headers = await fetchOAuthRecoveryHeaders({
+    projectId: binding.projectId,
+    serverId: binding.serverId,
+    serverUrl: input.serverUrl,
+  });
+  if (Object.keys(headers).length === 0) {
+    throw new Error(
+      "OAuth custom headers are no longer available. Save them again and retry authorization."
+    );
+  }
+  return headers;
+}
+
 /**
  * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
  * Both OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`) need an
@@ -2805,6 +2866,7 @@ export async function initiateOAuth(
       scopes: options.scopes,
       registryServerId: options.registryServerId,
       useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      customHeaders: options.customHeaders,
       resourceUrl: options.resourceUrl,
       protocolMode: requestedProtocolMode,
       protocolVersion,
@@ -2816,7 +2878,7 @@ export async function initiateOAuth(
     // recovered from their protected sources instead of browser storage.
     localStorage.setItem(
       `mcp-oauth-config-${options.serverName}`,
-      encodePublicOAuthRecoveryConfig(oauthConfig)
+      serializeStoredOAuthConfig(oauthConfig)
     );
 
     // Store custom client id if provided, so it can be retrieved during callback.
@@ -3608,7 +3670,7 @@ export async function handleOAuthCallback(
   const serverName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
 
   // Read registryServerId from stored OAuth config if present
-  const oauthConfig = readStoredOAuthConfig(serverName);
+  let oauthConfig = readStoredOAuthConfig(serverName);
   let serverUrl: string | undefined;
   let previousTrace: OAuthTrace | undefined;
   let failureStage = "callback-validation";
@@ -3624,6 +3686,17 @@ export async function handleOAuthCallback(
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
+
+    options.assertProjectAccess?.();
+    const recoveredCustomHeaders = await recoverOAuthCustomHeaders({
+      serverName,
+      serverUrl,
+      oauthConfig,
+    });
+    oauthConfig = {
+      ...oauthConfig,
+      customHeaders: recoveredCustomHeaders,
+    };
 
     // Get stored client credentials if any
     const storedClientInfo = readStoredClientInformation(serverName);
