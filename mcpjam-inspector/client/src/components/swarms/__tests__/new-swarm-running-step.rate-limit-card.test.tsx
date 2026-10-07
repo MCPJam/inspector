@@ -356,6 +356,142 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does NOT name a provider for a busy reservation", async () => {
+    // A busy reservation is MCPJam's own wait: the model was never called, so no
+    // provider throttled anything, and neither a purchase nor another model
+    // helps. The sessions it stops are stored `rate_limited` under its own code.
+    const busy =
+      "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+    attempt.errorCode = "spending_reservation_busy";
+    attempt.errorMessage = busy;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = busy;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("does NOT name a provider for a busy reservation known only by its sentence", async () => {
+    // The terminal event can reach the browser before the attempt row does, or
+    // the report can fail: the live message is then all there is, and the
+    // humanizer has already dropped the code from it. Rows stored before the
+    // runner kept the busy code carry the same sentence under the generic one.
+    const humanized =
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.";
+    attempt.errorCode = "rate_limited";
+    attempt.errorMessage = humanized;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = humanized;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("does NOT name a provider while only the live stream has said a session was busy", async () => {
+    // No attempt row has landed yet: its status is still the lifecycle's, and it
+    // carries no code or message of its own.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const humanized =
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.";
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = humanized;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("does NOT name a provider for the generic busy wording the live stream carries", async () => {
+    // What a backend that has not been redeployed wrote for the same refusal,
+    // after the runner's humanizer dropped the code from it.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = "MCPJam is temporarily busy. Please retry.";
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("reads a busy reservation by the code the live event carries, whatever its wording", async () => {
+    // The terminal event now brings the code the attempt is stored under, so
+    // the pane does not have to recognise a sentence while the row is still on
+    // its way.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const live = streamState.sessions[CHAT_SESSION_ID] as {
+      errorMessage: string;
+      errorCode?: string;
+    };
+    live.errorMessage = "Too many requests. Retry in a moment.";
+    live.errorCode = "spending_reservation_busy";
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    // The failure card reads the same code: MCPJam's own busy sentence, not the
+    // raw wording the event happened to carry.
+    const card = screen.getByTestId("swarm-live-pane-failure");
+    expect(card).toHaveTextContent(
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
+    );
+    expect(card).not.toHaveTextContent("rate-limited this key");
+    expect(card).not.toHaveTextContent("Raise the rate limit");
+    expect(card).not.toHaveTextContent("Out of MCPJam credits");
+  });
+
+  it("still names the provider when the live event's code is the generic one", async () => {
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const live = streamState.sessions[CHAT_SESSION_ID] as {
+      errorMessage: string;
+      errorCode?: string;
+    };
+    live.errorMessage = "429 Too Many Requests";
+    live.errorCode = "rate_limited";
+    renderStep();
+    await openTheSession();
+
+    const card = await screen.findByTestId("swarm-live-pane-rate-limit");
+    expect(card).toHaveTextContent("Your provider hit its limit");
+  });
+
   it("explains an account limit above the table when other sessions succeeded", async () => {
     // With a success in the wave the run banner stays silent, so without this
     // the stopped sessions would be amber chips with no reason given.
