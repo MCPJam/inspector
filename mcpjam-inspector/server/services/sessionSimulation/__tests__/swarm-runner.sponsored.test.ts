@@ -54,6 +54,7 @@ vi.mock("../runner.js", async () => {
 
 import { startJourneyRun } from "../swarm-runner.js";
 import { SwarmSetupError } from "../swarm-setup-turn.js";
+import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
 import {
   SPONSORED_CAPACITY_MESSAGE,
   SPONSORSHIP_REJECTED_MESSAGE,
@@ -414,6 +415,116 @@ describe("sponsored swarm conversations: a provider rate limit still stops the t
       errorCode: "rate_limited",
       fundingScope: "sponsored",
       targetId: "target-a",
+    });
+  });
+
+  // A wait is not a provider throttle: the sessions it stops are stored under
+  // its own code, and `user_rate_limit` beside a busy sentence reads as an empty
+  // wallet (the run opens the credits dialog for a wallet that was never empty).
+  // The sponsored remainder is closed by another call than the sessions the
+  // runner walks itself, and it must store the same pair they do.
+  describe("a wait stops the target", () => {
+    const BUSY =
+      'swarm-agent https://example.test/turn failed (503): {"code":"spending_reservation_busy","isRetryable":true,"retryAfter":2000,"error":"MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry."}';
+    const HOLD =
+      'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","error":"MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits."}';
+
+    it("closes the sponsored remainder under a busy reservation's own code", async () => {
+      runSyntheticHostSessionMock.mockResolvedValue({
+        outcome: "failed",
+        errorMessage: BUSY,
+        errorRefusal: { code: "spending_reservation_busy", httpStatus: 503 },
+      });
+
+      await startJourneyRun(
+        opts({
+          sessionsPerTarget: 3,
+          sessionFunding: funding(A.targetId, "starter", "starter", "starter"),
+        }) as never,
+      );
+
+      expect(claimed()).toHaveLength(1);
+      expect(terminals()).toHaveLength(1);
+      expect(terminals()[0]).toMatchObject({
+        sessionIdx: 0,
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+      });
+      expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+      const closed = finalizePendingAttemptsMock.mock.calls[0]![2];
+      expect(closed).toMatchObject({
+        terminalStatus: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+        fundingScope: "sponsored",
+        targetId: "target-a",
+      });
+      // How the run reads the stored pair: not an empty wallet.
+      expect(
+        isCreditExhaustion({
+          code: closed.errorCode,
+          message: closed.errorMessage,
+        }),
+      ).toBe(false);
+    });
+
+    it("stores the same code on the credit-funded and the sponsored remainder of a mixed target", async () => {
+      runSyntheticHostSessionMock.mockResolvedValue({
+        outcome: "failed",
+        errorMessage: BUSY,
+        errorRefusal: { code: "spending_reservation_busy", httpStatus: 503 },
+      });
+
+      // Index 0 (credit-funded) hits the wait. Index 2 is the credit-funded
+      // remainder, which the runner walks itself; 1 and 3 are sponsored and are
+      // left to the scoped close.
+      await startJourneyRun(
+        opts({
+          sessionsPerTarget: 4,
+          sessionFunding: funding(
+            A.targetId,
+            "credits",
+            "starter",
+            "credits",
+            "starter",
+          ),
+        }) as never,
+      );
+
+      expect(terminals().map((t) => `${t.sessionIdx}:${t.errorCode}`)).toEqual([
+        "0:spending_reservation_busy",
+        "2:spending_reservation_busy",
+      ]);
+      expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+        terminalStatus: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        fundingScope: "sponsored",
+        targetId: "target-a",
+      });
+    });
+
+    it("keeps a hold's credit denial on the sponsored remainder", async () => {
+      runSyntheticHostSessionMock.mockResolvedValue({
+        outcome: "rate_limited",
+        errorMessage: HOLD,
+      });
+
+      await startJourneyRun(
+        opts({
+          sessionsPerTarget: 3,
+          sessionFunding: funding(A.targetId, "starter", "starter", "starter"),
+        }) as never,
+      );
+
+      expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+        terminalStatus: "rate_limited",
+        errorCode: "user_rate_limit",
+        errorMessage: expect.stringContaining("in-flight"),
+        fundingScope: "sponsored",
+        targetId: "target-a",
+      });
     });
   });
 
