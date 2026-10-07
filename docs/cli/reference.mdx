@@ -1143,6 +1143,42 @@ With `--format json`, a single machine-readable startup object (public URL, serv
 
 ---
 
+## `readiness check` commands
+
+Grade a server locally — from your machine, against the URL you supply. No account required. Results are printed to stdout and never uploaded.
+
+### `readiness check claude`
+
+Grade a server against Anthropic's connector-directory rules. Uses shared connection flags (see [`server` commands](#server-commands)) plus:
+
+| Flag | Description |
+|------|-------------|
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+### `readiness check openai`
+
+Grade a server against OpenAI's app-directory rules. `--submission-mode` is required and never inferred.
+
+| Flag | Description |
+|------|-------------|
+| `--submission-mode <mode>` | Declared submission shape: `mcp-only`, `mcp-imported-skills`, `mcp-package`, or `mcp-imported-skills-package` |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags.
+
+### `readiness check muse`
+
+Grade a server against Meta's Muse connector guidelines. Free — no AI observations.
+
+| Flag | Description |
+|------|-------------|
+| `--submission-profile <path>` | JSON submission profile (overview, contacts, docs, credentials, tool classes). Without it the submission verdict stays `incomplete`. |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags (see [`server` commands](#server-commands)).
+
+---
+
 ## `readiness` hosted commands
 
 Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
@@ -1180,6 +1216,16 @@ Start a hosted readiness run that grades a saved server against OpenAI's app-dir
 | `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
 | `--idempotency-key <key>` | No | Replay guard |
 
+### `readiness start muse`
+
+Start a hosted readiness run that grades a saved server against Meta's Muse connector guidelines. Free — Muse has no AI observations. Returns immediately with a run id; poll with `readiness status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+
 ### `readiness status`
 
 Read one hosted readiness run. The response carries three independent axes: `status` (whether the run finished), `overallStatus` (the grade — a `completed` run can be `not-ready`), and `llmObservations` (whether the optional model pass ran).
@@ -1196,7 +1242,7 @@ List hosted readiness runs, newest first.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID |
-| `--kind <publisher>` | No | Narrow to `claude` or `openai` |
+| `--kind <publisher>` | No | Narrow to `claude`, `openai`, or `muse` |
 | `--server <idOrName>` | No | Narrow to one saved server |
 | `--limit <n>` | No | Rows to return (1–100) |
 
