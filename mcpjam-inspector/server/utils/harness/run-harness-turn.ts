@@ -1726,6 +1726,7 @@ export async function runHarnessTurn(
           ...(harnessSandboxBinding
             ? { sandboxRowId: harnessSandboxBinding.sandboxRowId }
             : {}),
+          ...(abortSignal ? { signal: abortSignal } : {}),
         });
       const externalAccountAuth = externalAccountPlan?.auth;
       // What the BOX's session env carries: everything the project materialized

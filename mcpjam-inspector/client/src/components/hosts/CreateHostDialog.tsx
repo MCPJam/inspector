@@ -409,8 +409,9 @@ export function CreateHostDialog({
             />
             <p className="text-xs text-muted-foreground">
               Stored as your personal secret and delivered to your runs by the
-              egress proxy, so it never enters a computer. Each teammate who
-              runs this client adds their own key.
+              egress proxy, so it never enters a computer. Keep it personal: a
+              key shared with the project can't be used here, and each
+              teammate who runs this client adds their own.
             </p>
           </div>
         )}
