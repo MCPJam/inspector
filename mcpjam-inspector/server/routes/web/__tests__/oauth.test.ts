@@ -204,6 +204,72 @@ describe("web routes — oauth requires bearer token", () => {
     expect((await expectJson(replayResponse)).status).toBe(404);
   });
 
+  it("bounds pending local recovery records and evicts them after expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      for (let index = 0; index < 128; index += 1) {
+        const response = await postJson(
+          app,
+          "/api/web/oauth/recovery-headers/stage",
+          {
+            serverName: `bounded-${index}`,
+            serverUrl: `http://127.0.0.1:${3000 + index}/mcp`,
+            headers: { "X-Tenant": `tenant-${index}` },
+          },
+          token,
+        );
+        expect((await expectJson(response)).status).toBe(200);
+      }
+
+      const rejected = await postJson(
+        app,
+        "/api/web/oauth/recovery-headers/stage",
+        {
+          serverName: "over-capacity",
+          serverUrl: "http://127.0.0.1:4000/mcp",
+          headers: { "X-Tenant": "tenant" },
+        },
+        token,
+      );
+      expect((await expectJson(rejected)).status).toBe(429);
+
+      vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+      const afterExpiry = await postJson(
+        app,
+        "/api/web/oauth/recovery-headers/stage",
+        {
+          serverName: "after-expiry",
+          serverUrl: "http://127.0.0.1:4001/mcp",
+          headers: { "X-Tenant": "tenant" },
+        },
+        token,
+      );
+      expect((await expectJson(afterExpiry)).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects an oversized local recovery record", async () => {
+    const headers = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [
+        `X-Large-${index}`,
+        "x".repeat(8192),
+      ]),
+    );
+    const response = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers/stage",
+      {
+        serverName: "oversized",
+        serverUrl: "http://127.0.0.1:4002/mcp",
+        headers,
+      },
+      token,
+    );
+    expect((await expectJson(response)).status).toBe(400);
+  });
+
   it("GET /metadata succeeds with bearer token", async () => {
     fetchOAuthMetadataMock.mockResolvedValueOnce({
       metadata: { issuer: "https://example.com" },

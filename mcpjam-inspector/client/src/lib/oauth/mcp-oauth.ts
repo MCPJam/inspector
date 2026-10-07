@@ -69,7 +69,11 @@ import {
   writeHostedOAuthPendingMarker,
   type HostedOAuthCallbackContext,
 } from "@/lib/hosted-oauth-callback";
-import { getRedirectUri, supportsMcpJamCimdRedirect } from "./constants";
+import {
+  getRedirectUri,
+  resolveProtectedPreviewAppUrl,
+  supportsMcpJamCimdRedirect,
+} from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import {
   appendOAuthTraceHttpHistory,
@@ -2732,6 +2736,12 @@ export async function initiateOAuth(
   options: BuiltOAuthRequest,
   control?: { shouldContinue?: () => boolean }
 ): Promise<OAuthResult> {
+  const protectedPreviewUrl = resolveProtectedPreviewAppUrl(window.location);
+  if (protectedPreviewUrl) {
+    window.location.replace(protectedPreviewUrl);
+    return { success: true };
+  }
+
   const assertCurrent = () => {
     if (control?.shouldContinue && !control.shouldContinue()) {
       throw new Error("OAuth authorization was canceled.");

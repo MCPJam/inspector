@@ -33,11 +33,28 @@ const INSPECTOR_PREVIEW_HOSTNAME_PATTERNS = [
   /^mcp-inspector-pr-(?:be-)?\d+\.up\.railway\.app$/i,
 ];
 
-function protectedPreviewOrigin(hostname: string): string | undefined {
+export function protectedPreviewOrigin(hostname: string): string | undefined {
   const match = hostname.match(
     /^mcp-inspector-(pr-(?:be-)?\d+)\.up\.railway\.app$/i,
   );
   return match ? `https://${match[1].toLowerCase()}.mcpjam.dev` : undefined;
+}
+
+/**
+ * Move raw Railway previews to the protected preview-router origin before
+ * OAuth stores any pending state. The path, query, and hash are preserved.
+ */
+export function resolveProtectedPreviewAppUrl(
+  locationLike: Pick<Location, "hostname" | "href">,
+): string | undefined {
+  const protectedOrigin = protectedPreviewOrigin(locationLike.hostname);
+  if (!protectedOrigin) return undefined;
+
+  const target = new URL(locationLike.href);
+  const protectedUrl = new URL(protectedOrigin);
+  target.protocol = protectedUrl.protocol;
+  target.host = protectedUrl.host;
+  return target.toString();
 }
 
 function isInspectorPreviewHostname(hostname: string): boolean {

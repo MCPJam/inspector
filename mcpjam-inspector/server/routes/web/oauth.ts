@@ -31,10 +31,18 @@ import { boundText } from "../../utils/hosted-upstream-projection.js";
 const oauthWeb = new Hono();
 const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
 const LOCAL_RECOVERY_TTL_MS = 15 * 60 * 1000;
+const LOCAL_RECOVERY_MAX_RECORDS = 128;
+const LOCAL_RECOVERY_MAX_HEADER_BYTES = 64 * 1024;
 const localRecoveryHeaders = new Map<
   string,
   { expiresAt: number; headers: Record<string, string> }
 >();
+
+function evictExpiredLocalRecoveryHeaders(now = Date.now()): void {
+  for (const [key, record] of localRecoveryHeaders) {
+    if (record.expiresAt <= now) localRecoveryHeaders.delete(key);
+  }
+}
 
 function localRecoveryKey(input: {
   bearerToken: string;
@@ -64,6 +72,18 @@ function parseRecoveryHeaders(value: unknown): Record<string, string> {
       400,
       ErrorCode.VALIDATION_ERROR,
       "Too many OAuth recovery headers",
+    );
+  }
+  const totalBytes = entries.reduce(
+    (sum, [key, headerValue]) =>
+      sum + Buffer.byteLength(key) + Buffer.byteLength(headerValue),
+    0,
+  );
+  if (totalBytes > LOCAL_RECOVERY_MAX_HEADER_BYTES) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "OAuth recovery headers are too large",
     );
   }
   return Object.fromEntries(entries);
@@ -318,6 +338,7 @@ oauthWeb.post("/recovery-headers", async (c) => {
       });
       return c.json({ success: true, headers: secrets.headers ?? {} });
     }
+    evictExpiredLocalRecoveryHeaders();
     const key = localRecoveryKey({ bearerToken, serverName, serverUrl });
     const staged = localRecoveryHeaders.get(key);
     localRecoveryHeaders.delete(key);
@@ -349,7 +370,18 @@ oauthWeb.post("/recovery-headers/stage", async (c) => {
         "Missing OAuth recovery headers",
       );
     }
+    evictExpiredLocalRecoveryHeaders();
     const key = localRecoveryKey({ bearerToken, serverName, serverUrl });
+    if (
+      !localRecoveryHeaders.has(key) &&
+      localRecoveryHeaders.size >= LOCAL_RECOVERY_MAX_RECORDS
+    ) {
+      throw new WebRouteError(
+        429,
+        ErrorCode.RATE_LIMITED,
+        "Too many pending OAuth recovery records",
+      );
+    }
     localRecoveryHeaders.set(key, {
       expiresAt: Date.now() + LOCAL_RECOVERY_TTL_MS,
       headers,
