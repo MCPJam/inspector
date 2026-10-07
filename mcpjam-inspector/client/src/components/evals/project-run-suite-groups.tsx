@@ -44,7 +44,8 @@ export function groupProjectRuns(
   return [...suites].map(([suiteId, suiteRows]) => {
     const launches = new Map<string, ProjectRunRow[]>();
     for (const row of suiteRows) {
-      const groupId = details.get(row._id)?.run.runGroupId;
+      const groupId =
+        row.runSummary?.runGroupId ?? details.get(row._id)?.run.runGroupId;
       const key = groupId ? `group:${groupId}` : `run:${row._id}`;
       const launch = launches.get(key) ?? [];
       launch.push(row);

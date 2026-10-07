@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   },
   /** The args the table asked the backend for, newest last. */
   queryArgs: [] as Array<Record<string, unknown>>,
+  pageOptions: [] as Array<{ initialNumItems: number }>,
   /** Whether the fake backend honours `origins`; off by default so tests
    *  about the loaded page see it unfiltered. */
   backendFiltersOrigins: false,
@@ -53,7 +54,12 @@ vi.mock("@/hooks/usePlatformPostLaunchEnabled", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  usePaginatedQuery: (_fn: unknown, args: Record<string, unknown>) => {
+  usePaginatedQuery: (
+    _fn: unknown,
+    args: Record<string, unknown>,
+    options: { initialNumItems: number },
+  ) => {
+    mocks.pageOptions.push(options);
     mocks.queryArgs.push(args);
     // The platform chips are a QUERY argument, so the fake backend answers
     // them the way the real one does: by run origin, falling back to the
@@ -81,8 +87,8 @@ function latestQueryArgs(): Record<string, unknown> {
 import {
   ProjectRunsTable,
   PROJECT_RUNS_PAGE_SIZE,
-  SUITE_HEALTH_AUTO_PAGES,
 } from "../project-runs-table";
+import { runMetricsFromIterations } from "../run-metrics";
 import { GroupSummaryRow } from "../project-run-suite-groups";
 import {
   formatRunHistoryDate,
@@ -111,6 +117,25 @@ function makeRow(overrides: Partial<ProjectRunRow> = {}): ProjectRunRow {
   };
 }
 
+function summaryRow(
+  row: ProjectRunRow,
+  extra: Record<string, unknown> = {},
+): ProjectRunRow {
+  return {
+    ...row,
+    runSummary: {
+      ...row,
+      completedAt: row.completedAt ?? undefined,
+      source: row.source ?? undefined,
+      summary: row.summary ?? undefined,
+      ciMetadata: row.ciMetadata ?? undefined,
+      configRevision: "v1",
+      configSnapshot: {},
+      ...extra,
+    } as any,
+  };
+}
+
 function setRows(results: ProjectRunRow[], status = "Exhausted") {
   mocks.paginated.current = {
     results,
@@ -133,38 +158,38 @@ beforeEach(() => {
   setRows([]);
   mocks.query.mockReset();
   mocks.queryArgs.length = 0;
+  mocks.pageOptions.length = 0;
   mocks.backendFiltersOrigins = false;
   mocks.suiteOverview.current = undefined;
   mocks.platformPostLaunchEnabled = true;
 });
 
 describe("ProjectRunsTable", () => {
-  it("gives each project a fresh auto-loading budget without remounting", () => {
+  it("loads older runs only after a click, including after switching projects", async () => {
+    const user = userEvent.setup();
     setRows([makeRow()], "CanLoadMore");
     const loadMore = mocks.paginated.current.loadMore;
-    const onSelectRun = vi.fn();
     const view = (projectId: string) => (
-      <ProjectRunsTable projectId={projectId} onSelectRun={onSelectRun} evaluateLayout />
+      <ProjectRunsTable
+        projectId={projectId}
+        onSelectRun={vi.fn()}
+        evaluateLayout
+      />
     );
     const { rerender } = render(view("project-a"));
-    for (let page = 1; page < SUITE_HEALTH_AUTO_PAGES; page += 1) {
-      mocks.paginated.current.status = "LoadingMore";
-      rerender(view("project-a"));
-      mocks.paginated.current.status = "CanLoadMore";
-      rerender(view("project-a"));
-    }
-    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
+    expect(mocks.pageOptions.at(-1)).toEqual({ initialNumItems: 20 });
+    expect(loadMore).not.toHaveBeenCalled();
     mocks.paginated.current.status = "LoadingMore";
     rerender(view("project-a"));
     mocks.paginated.current.status = "CanLoadMore";
     rerender(view("project-a"));
-    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES);
-
-    // Readiness stays the same: projectId itself must trigger the reset/load.
+    expect(loadMore).not.toHaveBeenCalled();
     rerender(view("project-b"));
     expect(latestQueryArgs().projectId).toBe("project-b");
-    expect(loadMore).toHaveBeenCalledTimes(SUITE_HEALTH_AUTO_PAGES + 1);
-    expect(loadMore).toHaveBeenLastCalledWith(PROJECT_RUNS_PAGE_SIZE);
+    expect(loadMore).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /load more/i }));
+    expect(loadMore).toHaveBeenCalledOnce();
+    expect(loadMore).toHaveBeenCalledWith(20);
   });
 
   it("filters embedded history and keeps pagination available for more matches", async () => {
@@ -389,18 +414,28 @@ describe("ProjectRunsTable", () => {
   it("keeps a selected platform clearable when its rows disappear", async () => {
     const user = userEvent.setup();
     setRows([makeRow({ source: "sdk" })]);
-    const view = render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
-    await user.click(screen.getByRole("button", { name: "Filter by platform" }));
+    const view = render(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
     expect(screen.getByRole("menuitemcheckbox", { name: "CLI" })).toBeVisible();
     await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
     await user.keyboard("{Escape}");
     setRows([makeRow({ source: "ui" })]);
-    view.rerender(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    view.rerender(
+      <ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />,
+    );
     expect(screen.getByText("No runs match these filters.")).toBeVisible();
     await user.click(screen.getByLabelText("Filter by suite"));
-    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["All suites"]);
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["All suites"]);
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "Filter by platform" }));
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
     expect(screen.getByRole("menuitemcheckbox", { name: "SDK" })).toBeChecked();
     await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
     await user.keyboard("{Escape}");
@@ -574,7 +609,11 @@ describe("project run history metrics", () => {
         createdAt: 1000,
       }),
     ];
-    setRows(rows);
+    setRows(
+      rows.map((row) =>
+        summaryRow(row, { namedHostId: "cursor", effectiveModelId: "gpt-5.1" }),
+      ),
+    );
     mocks.query.mockImplementation(async (name: string, args: any) => {
       if (name === "testSuites:getTestSuiteRun")
         return {
@@ -607,6 +646,34 @@ describe("project run history metrics", () => {
       };
     });
   }
+
+  it("uses stored summary metrics without fetching snapshots or iterations", async () => {
+    const row = makeRow();
+    const iterations = [
+      {
+        _id: "i",
+        suiteRunId: row._id,
+        status: "completed",
+        result: "passed",
+        tokensUsed: 1000,
+        startedAt: 1000,
+        updatedAt: 2000,
+      },
+    ] as any;
+    setRows([
+      summaryRow(row, { metrics: runMetricsFromIterations(iterations) }),
+    ]);
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    expect(await screen.findByTestId("suite-health-average")).toBeVisible();
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
 
   it("renders Ding Dong as flat runs with Suite Health", async () => {
     arrangeHistory();
@@ -652,7 +719,10 @@ describe("project run history metrics", () => {
     await user.unhover(newestBar);
     expect(runRows[0]).not.toHaveAttribute("data-highlighted");
     await user.click(newestBar);
-    expect(onSelectRun).toHaveBeenLastCalledWith({ suiteId: "suite_1", runId: "new" });
+    expect(onSelectRun).toHaveBeenLastCalledWith({
+      suiteId: "suite_1",
+      runId: "new",
+    });
     onSelectRun.mockClear();
     await userEvent.setup().click(runRows[0]);
     expect(onSelectRun).toHaveBeenCalledWith({
@@ -729,6 +799,12 @@ describe("project run history metrics", () => {
     mocks.query.mockImplementation(async (name: string, args: any) => {
       if (name === "testSuites:getTestSuiteRun")
         return (runReads += 1) === 1 ? running : finishedRun;
+      if (
+        mocks.paginated.current.results.some(
+          (row: any) => row.status === "completed",
+        )
+      )
+        await finishedRun;
       return {
         page: [
           {
@@ -803,7 +879,7 @@ describe("project run history metrics", () => {
       makeRow({ _id: "first", runNumber: 1 }),
       makeRow({ _id: "second", runNumber: 2 }),
     ];
-    setRows(rows);
+    setRows(rows.map((row) => summaryRow(row, { runGroupId: "together" })));
     let release!: (value: unknown) => void;
     const delayed = new Promise((resolve) => {
       release = resolve;
@@ -813,6 +889,7 @@ describe("project run history metrics", () => {
         if (args.runId === "second") return delayed;
         return { ...rows[0], runGroupId: "together" };
       }
+      if (args.runId === "second") await delayed;
       return { page: [], isDone: true, continueCursor: "" };
     });
     render(
@@ -848,10 +925,7 @@ describe("project run history metrics", () => {
     ).toBeNull();
     expect(
       mocks.query.mock.calls.every(([name]) =>
-        [
-          "testSuites:getTestSuiteRun",
-          "testSuites:listTestSuiteRunIterations",
-        ].includes(name),
+        ["testSuites:listTestSuiteRunIterations"].includes(name),
       ),
     ).toBe(true);
   });
@@ -872,6 +946,11 @@ describe("project run history metrics", () => {
     expect(
       within(metrics).getByTestId("metric-sparkline-tokens"),
     ).toBeInTheDocument();
+    expect(
+      mocks.query.mock.calls.some(
+        ([name]) => name === "testSuites:getTestSuiteRun",
+      ),
+    ).toBe(false);
     const table = inTable();
     expect(table.getByText("Client : model")).toBeVisible();
     expect(table.getByText("Iteration pass")).toBeVisible();
@@ -957,8 +1036,24 @@ describe("project run history metrics", () => {
     const original = mocks.query.getMockImplementation()!;
     // Same suite, different client/server configuration in each run.
     setRows([
-      makeRow({ _id: "new", createdAt: 2000, runNumber: 2 }),
-      makeRow({ _id: "old", createdAt: 1000, runNumber: 1 }),
+      summaryRow(
+        makeRow({
+          _id: "new",
+          createdAt: 2000,
+          runNumber: 2,
+          serverNames: ["Alpha", "Beta"],
+        }),
+        { namedHostId: "cursor" },
+      ),
+      summaryRow(
+        makeRow({
+          _id: "old",
+          createdAt: 1000,
+          runNumber: 1,
+          serverNames: ["Gamma"],
+        }),
+        { namedHostId: "chatgpt" },
+      ),
     ]);
     mocks.query.mockImplementation(async (name, args: any) => {
       const result = await original(name, args);
@@ -1010,7 +1105,9 @@ describe("project run history metrics", () => {
     await user.click(
       screen.getByRole("combobox", { name: "Filter by server" }),
     );
-    expect(screen.queryByRole("option", { name: "Gamma", exact: true })).toBeNull();
+    expect(
+      screen.queryByRole("option", { name: "Gamma", exact: true }),
+    ).toBeNull();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByText(/2 of 2 loaded runs/)).toBeVisible();
@@ -1037,7 +1134,17 @@ describe("project run history metrics", () => {
   it("names a GitHub check's server after its suite, not the throwaway row", async () => {
     arrangeHistory();
     const original = mocks.query.getMockImplementation()!;
-    setRows([makeRow({ _id: "new", source: "github_check", createdAt: 2000 })]);
+    setRows([
+      summaryRow(
+        makeRow({
+          _id: "new",
+          source: "github_check",
+          createdAt: 2000,
+          serverNames: ["gh-check-p57h0dafyahm32m3s38vp"],
+        }),
+        { namedHostId: "cursor" },
+      ),
+    ]);
     // A check runs the pull request's own build, so the name it freezes is the
     // ephemeral `servers` row the worker made for it — an id, not a name any
     // reader chose. One per check run would fill the filter with ids.
@@ -1090,7 +1197,15 @@ describe("project run history metrics", () => {
       makeRow({ _id: "new", createdAt: 2000, runNumber: 2 }),
       makeRow({ _id: "old", createdAt: 1000, runNumber: 1 }),
     ];
-    setRows(rows);
+    setRows(
+      rows.map((row) =>
+        summaryRow(row, {
+          runGroupId: "shared-launch",
+          namedHostId: row._id === "new" ? "cursor" : "ChatGPT",
+          effectiveModelId: row._id === "new" ? "claude-fable-5" : "gpt-5.1",
+        }),
+      ),
+    );
     mocks.query.mockImplementation(async (name, args: any) => {
       const result = await original(name, args);
       return name === "testSuites:getTestSuiteRun"

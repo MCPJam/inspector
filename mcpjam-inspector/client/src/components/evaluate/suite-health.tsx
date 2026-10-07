@@ -16,11 +16,14 @@ import {
 import type { ProjectRunRow } from "../evals/project-runs-table";
 import { isActiveRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
-import type { EvalSuiteOverviewEntry } from "../evals/types";
+import type {
+  EvalSuiteRunListItem,
+  EvalSuiteOverviewEntry,
+} from "../evals/types";
 
 export function buildSuiteHealth(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
   suiteId: string,
   clientKey: string,
 ) {
@@ -100,7 +103,7 @@ export function SuiteHealth({
   onSelectRun,
 }: {
   rows: ProjectRunRow[];
-  details: Map<string, ProjectRunHistoryDetail>;
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>;
   /** Enough has loaded to draw something. */
   complete: boolean;
   /** More runs exist than the chart has read. */

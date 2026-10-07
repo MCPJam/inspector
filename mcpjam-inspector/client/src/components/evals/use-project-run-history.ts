@@ -36,6 +36,7 @@ export interface ProjectRunHistoryDetail<
 > {
   run: TRun;
   iterations: EvalIteration[];
+  statusWhenRead?: string;
   /**
    * Set by the suite page, which reads per-run metrics instead of iterations
    * (`iterations` is then empty). `null` means the run's metrics are still
@@ -138,6 +139,7 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
           if (!complete) throw new Error("Iteration history is incomplete");
           const detail = {
             run: run ?? undefined,
+            statusWhenRead: row.status,
             iterations: [...iterations.values()],
           };
           details.set(row._id, detail);

@@ -24,6 +24,9 @@ export function useSuiteRunMetrics(
   metricsByRun: ReadonlyMap<string, RunMetrics>;
   loading: boolean;
   iterations: import("./types").EvalIteration[];
+  iterationsByRun: ReadonlyMap<string, import("./types").EvalIteration[]>;
+  errorCount: number;
+  retry: () => void;
 } {
   const foldRows = useMemo(
     () => (runs ?? []).filter(runNeedsIterationFold),
@@ -42,7 +45,10 @@ export function useSuiteRunMetrics(
     const map = new Map<string, RunMetrics>();
     for (const run of runs ?? []) {
       const detail = history.details.get(run._id);
-      const metrics = resolveRunMetrics(run, detail?.iterations);
+      const metrics = resolveRunMetrics(
+        run,
+        detail?.statusWhenRead === run.status ? detail.iterations : undefined,
+      );
       if (metrics) map.set(run._id, metrics);
     }
     return map;
@@ -54,5 +60,10 @@ export function useSuiteRunMetrics(
     iterations: [...history.details.values()].flatMap(
       (detail) => detail.iterations,
     ),
+    iterationsByRun: new Map(
+      [...history.details].map(([id, detail]) => [id, detail.iterations]),
+    ),
+    errorCount: history.errorCount,
+    retry: history.retry,
   };
 }
