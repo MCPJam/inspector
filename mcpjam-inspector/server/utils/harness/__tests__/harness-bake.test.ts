@@ -306,8 +306,25 @@ describe("the toolchain pins", () => {
   });
 
   it("pin the providers' pnpm fallback too", () => {
-    expect(harnessPnpmGuardCommand()).toBe(
-      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
+    const installs = harnessPnpmGuardCommand().match(/npm install -g pnpm@[\d.]+/g);
+    // Both arms (own rights, then sudo) install the same pinned version.
+    expect(installs).toEqual([
+      `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
+      `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`,
+    ]);
+  });
+
+  it("fall back to sudo when npm's global prefix is root's", () => {
+    // The desktop template's Node comes from the distro: its global prefix is
+    // root-owned and the box runs as `user`, so a plain `npm install -g`
+    // exits 243. Own rights first, `sudo -n` (never prompting) otherwise.
+    const command = harnessPnpmGuardCommand();
+    expect(command.startsWith("command -v pnpm || ")).toBe(true);
+    expect(command).toContain(
+      '[ -w "$(npm config get prefix)/lib/node_modules" ]',
+    );
+    expect(command).toContain(
+      `else sudo -n npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}; fi`,
     );
   });
 
