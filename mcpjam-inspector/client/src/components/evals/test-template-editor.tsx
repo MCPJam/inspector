@@ -1,3 +1,5 @@
+import { useSelectedRun } from "./use-selected-run";
+import type { EvalSuiteRunListItem } from "./types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
   loadEvalToolMetadata,
@@ -396,7 +398,7 @@ interface TestTemplateEditorProps {
    * Suite runs for the current suite — used by the Runs tab to show which
    * host produced each batch (via `namedHostId` on suite runs).
    */
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: EvalSuiteRunListItem[];
   /**
    * Renders the case as a SPINE — numbered actions with their checks nested
    * under the action each one follows — instead of the form plus the Steps
@@ -1013,7 +1015,7 @@ export function TestTemplateEditor({
   projectId,
   availableModels,
   suiteIterations,
-  suiteRuns = [],
+  suiteRuns: listedSuiteRuns = [],
   onExportDraft,
   onContinueInChat,
   onSelectTab,
@@ -1279,6 +1281,16 @@ export function TestTemplateEditor({
       .filter((iteration) => iteration.testCaseId === selectedTestCaseId)
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
+
+  const detailRunId = replayIteration?.suiteRunId ?? routeCompareAnchorIteration?.suiteRunId ?? recentIterations[0]?.suiteRunId ?? lastSavedIteration?.suiteRunId ?? null;
+  const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
+  const suiteRuns = useMemo(
+    () => {
+      const fullRuns = listedSuiteRuns.filter((run): run is EvalSuiteRun => "tests" in run.configSnapshot);
+      return detailRun ? [detailRun, ...fullRuns.filter((run) => run._id !== detailRun._id)] : fullRuns;
+    },
+    [detailRun, listedSuiteRuns],
+  );
 
   const suite = useQuery(
     "testSuites:getTestSuite" as any,

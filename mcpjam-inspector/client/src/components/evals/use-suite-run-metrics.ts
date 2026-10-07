@@ -5,7 +5,7 @@ import {
   type RunMetrics,
 } from "./run-metrics";
 import { useProjectRunHistory } from "./use-project-run-history";
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRunListItem } from "./types";
 
 /**
  * One metrics object per listed run, for the suite page's history views.
@@ -18,9 +18,13 @@ import type { EvalSuiteRun } from "./types";
  */
 export function useSuiteRunMetrics(
   projectId: string | null | undefined,
-  runs: readonly EvalSuiteRun[] | undefined,
+  runs: readonly EvalSuiteRunListItem[] | undefined,
   enabled: boolean,
-): { metricsByRun: ReadonlyMap<string, RunMetrics>; loading: boolean } {
+): {
+  metricsByRun: ReadonlyMap<string, RunMetrics>;
+  loading: boolean;
+  iterations: import("./types").EvalIteration[];
+} {
   const foldRows = useMemo(
     () => (runs ?? []).filter(runNeedsIterationFold),
     [runs],
@@ -31,6 +35,7 @@ export function useSuiteRunMetrics(
     projectId ?? "no-project",
     foldRows,
     enabled,
+    { includeRunSnapshot: false },
   );
 
   const metricsByRun = useMemo(() => {
@@ -43,5 +48,11 @@ export function useSuiteRunMetrics(
     return map;
   }, [runs, history.details]);
 
-  return { metricsByRun, loading: history.loading };
+  return {
+    metricsByRun,
+    loading: history.loading,
+    iterations: [...history.details.values()].flatMap(
+      (detail) => detail.iterations,
+    ),
+  };
 }

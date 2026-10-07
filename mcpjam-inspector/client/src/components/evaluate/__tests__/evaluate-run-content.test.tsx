@@ -1,3 +1,4 @@
+vi.mock("../../evals/use-selected-run", () => ({ useSelectedRun: () => ({ run: null, isLoading: false, isUnavailable: false }) }));
 /**
  * The run body in each state the decision read can actually be in.
  *
