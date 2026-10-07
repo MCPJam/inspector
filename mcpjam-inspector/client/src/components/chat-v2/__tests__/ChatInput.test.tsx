@@ -1509,6 +1509,59 @@ describe("ChatInput", () => {
     });
   });
 
+  describe("plugin servers (normal chat)", () => {
+    const pluginServers = [
+      { serverId: "srv_bits", name: "bits-cad", pluginLabel: "Bits & Bolts" },
+    ];
+
+    it("shows a plugin's server as on, labelled with the plugin, and not toggleable", () => {
+      const onServerToggle = vi.fn();
+      const onDisconnectServer = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          pluginServers={pluginServers}
+          onServerToggle={onServerToggle}
+          onDisconnectServer={onDisconnectServer}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      const row = screen.getByTestId("composer-plugin-server-row");
+      expect(row).toHaveTextContent("bits-cad");
+      expect(row).toHaveTextContent("Bits & Bolts");
+      const toggle = screen.getByRole("switch", {
+        name: "bits-cad is added by Bits & Bolts",
+      });
+      expect(toggle).toBeChecked();
+      expect(toggle).toBeDisabled();
+
+      fireEvent.click(toggle);
+      expect(onServerToggle).not.toHaveBeenCalled();
+      expect(onDisconnectServer).not.toHaveBeenCalled();
+    });
+
+    it("lists no plugin rows in environment mode", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          environmentServers={[
+            { serverId: "srv_a", name: "bart", enabled: true, source: null },
+          ]}
+          onEnvironmentServerToggle={vi.fn()}
+          pluginServers={pluginServers}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(
+        screen.queryByTestId("composer-plugin-server-row")
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe("environment servers (environment mode)", () => {
     const environmentServers = [
       { serverId: "srv_a", name: "bart", enabled: true, source: "host_or_group" },

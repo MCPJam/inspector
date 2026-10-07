@@ -178,6 +178,7 @@ import {
   buildLiveEffectiveCapabilities,
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
+  withLiveProjectSkills,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
 import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
@@ -1303,8 +1304,19 @@ chatV2.post("/", async (c) => {
     // `runtimeSkillsOverride`. Wiring both would double-deliver — an
     // environment-scoped `loadSkill` alongside a project-wide one, with the
     // model free to pull skills the environment deliberately excluded.
+    //
+    // ONE exception, and it is not an environment the member chose: the
+    // Playground's HIDDEN environment (`includeProjectSkills`, sent only for
+    // an ad-hoc composition of the chat's client and its plugins while the
+    // environments UI is hidden). Its turns are client turns that also carry
+    // plugins, so the project's pool is delivered beside the environment's own
+    // union, exactly as a client turn delivers it. It widens nothing: the pool
+    // is read with the caller's own bearer, which a client turn does anyway.
+    const includeProjectSkills =
+      executionTarget.kind === "environment" &&
+      (rawBody as Record<string, unknown>).includeProjectSkills === true;
     const cloudSkillsEnabled =
-      !environmentServers &&
+      (!environmentServers || includeProjectSkills) &&
       shouldEnableCloudSkillTools({
         isGuest: Boolean(c.get("guestId")),
         harness: resolvedExecution.harness,
@@ -2561,6 +2573,9 @@ chatV2.post("/", async (c) => {
               environment_capability_problems: (
                 effectiveCapabilities?.problems ?? []
               ).map((problem) => problem.code),
+              // The Playground's hidden environment (a client turn carrying
+              // its project's plugins), not one a member chose.
+              ...(includeProjectSkills ? { environment_hidden: true } : {}),
             }
           : {}),
         // Environment-BACKED SCENARIO turn (live-follow). A deliberately
@@ -2720,7 +2735,7 @@ chatV2.post("/", async (c) => {
           // laziness as before — a body is fetched for the skill the model
           // loads, not for the catalog — but delivered through the one merged
           // surface instead of a parallel branch of the orchestrator.
-          ...(liveProjectCapabilities
+          ...(liveProjectCapabilities && !effectiveCapabilities
             ? {
                 effectiveCapabilities: liveProjectCapabilities,
                 liveSkillSurface: true,
@@ -2736,7 +2751,21 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
-          ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+          // A hidden environment adds the project's pool after its own union,
+          // and is a LIVE surface like the client turn it stands in for: its
+          // servers are connected now, not captured, so their skills compose
+          // too.
+          ...(effectiveCapabilities && liveProjectCapabilities
+            ? {
+                effectiveCapabilities: withLiveProjectSkills(
+                  effectiveCapabilities,
+                  liveProjectCapabilities,
+                ),
+                liveSkillSurface: true,
+              }
+            : effectiveCapabilities
+              ? { effectiveCapabilities }
+              : {}),
         },
         persist: {
           executionTarget: toResumeExecutionTarget(executionTarget),
