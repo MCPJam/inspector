@@ -383,6 +383,42 @@ describe("claimToolApproval", () => {
     expect(requests).toEqual([]);
   });
 
+  it("self-hosted with a dedicated signing secret and no service credential: mints, verifies and claims locally", async () => {
+    const { requests, fetchImpl } = backend(() => json({ status: "claimed" }));
+    const env = {
+      TOOL_APPROVAL_SIGNING_SECRET: "dedicated-approval-secret-0123456789",
+    };
+    const key = resolveToolApprovalSigningKey(env, false);
+    expect(key).not.toBeNull();
+    const id = mint({ key });
+    expect(verify(id, { key })).toEqual({ ok: true });
+
+    expect(await claimToolApproval(id, { nowMs: NOW, env, fetchImpl })).toBe(
+      "claimed",
+    );
+    expect(await claimToolApproval(id, { nowMs: NOW, env, fetchImpl })).toBe(
+      "already_claimed",
+    );
+    expect(requests).toEqual([]);
+  });
+
+  it("hosted with a dedicated signing secret but no service credential confirms nothing", async () => {
+    const { requests, fetchImpl } = backend(() => json({ status: "claimed" }));
+
+    expect(
+      await claimToolApproval(mint(), {
+        nowMs: NOW,
+        env: {
+          TOOL_APPROVAL_SIGNING_SECRET: "dedicated-approval-secret-0123456789",
+          VITE_MCPJAM_HOSTED_MODE: "true",
+          CONVEX_HTTP_URL: "https://backend.example.test/",
+        },
+        fetchImpl,
+      }),
+    ).toBe("unconfirmed");
+    expect(requests).toEqual([]);
+  });
+
   it("gives every approval its own claim key, and none to an unsigned id", () => {
     const first = mint();
     const second = mint();

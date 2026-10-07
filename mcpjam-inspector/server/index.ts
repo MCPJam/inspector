@@ -13,6 +13,7 @@ import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { v1BodyLimit } from "./middleware/v1-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
+import { reportServiceCredentialAtBoot } from "./services/service-credential-boot";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
@@ -371,6 +372,10 @@ if (!HOSTED_MODE) {
 // `isComputersDataPlaneConfigured()`, which is only truthful once the
 // credential bootstrap has resolved.
 const computersStartup = initComputersStartup();
+// Which credential-backed capabilities this process has (names only), and the
+// hosted-mode refusal to run half-configured. Mirror of the call in
+// server/app.ts::createHonoApp.
+reportServiceCredentialAtBoot(HOSTED_MODE);
 const app = new Hono().onError((err, c) => {
   // Last-resort handler: an exception escaped every route and every router's
   // own `onError`. Declared `mcpjam_internal` — if our routers could not name

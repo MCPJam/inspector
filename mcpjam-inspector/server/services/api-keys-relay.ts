@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "../config.js";
+import { hasServiceCredential } from "./service-credential.js";
 
 /**
  * Local builds (npx, Docker, Electron) cannot mint API keys themselves: doing
@@ -37,7 +38,7 @@ export function shouldRelayApiKeys(
   hosted: boolean = HOSTED_MODE,
 ): boolean {
   if (hosted) return false;
-  return !env.WORKOS_API_KEY || !env.INSPECTOR_SERVICE_TOKEN;
+  return !env.WORKOS_API_KEY?.trim() || !hasServiceCredential(env);
 }
 
 /**
