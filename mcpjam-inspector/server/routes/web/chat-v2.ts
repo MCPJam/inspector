@@ -13,6 +13,7 @@ import {
 } from "./chat-v2-plugin-forms.js";
 import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
 import { admitPluginWorkspace, assertPluginWorkspaceRuntime } from "../../services/plugin-host/admission.js";
+import { pluginChatRefusal } from "./chat-v2-plugin-refusal.js";
 import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
 import {
   globalOwnerAdmission,
@@ -2915,6 +2916,15 @@ chatV2.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
       );
     }
+    const pluginRefusal = pluginChatRefusal(error);
+    if (pluginRefusal)
+      return webError(
+        c,
+        pluginRefusal.status,
+        pluginRefusal.code,
+        pluginRefusal.message,
+        pluginRefusal.details,
+      );
     // `webErrorFromRoute`, not `webError` — this call dropped
     // `routeError.normalized`, so the envelope carried no `origin` and no
     // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,

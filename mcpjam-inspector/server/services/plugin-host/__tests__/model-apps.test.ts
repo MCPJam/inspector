@@ -115,14 +115,19 @@ it("removes structured context independently and acknowledges retry without resu
   const removed = context.remove(id, 1, request);
   expect(removed.state).toBeNull();
   expect(context.remove(id, 1, request)).toEqual(removed);
-  const mixed = context.update(id, 1, {
+  // The removal holds: the App's own update is refused; the person using the
+  // App attaches again.
+  const resend = {
     operationId: "mixed",
     sequence: 2,
     params: {
       content: [{ type: "text", text: "Keep text" }],
       structuredContent: { fixture: true },
     },
-  });
+  };
+  expect(() => context.update(id, 1, resend)).toThrow("INSTANCE_CONTEXT_HELD");
+  expect(context.snapshot(id, 1).state).toBeNull();
+  const mixed = context.update(id, 1, { ...resend, attach: "user" });
   const mixedRemoved = context.remove(id, 1, {
     operationId: "remove-mixed",
     updateId: mixed._meta["openai/modelContext"].updateId,
