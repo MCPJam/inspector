@@ -179,6 +179,7 @@ async function renderWithEngine(
     usePageTools?: boolean;
     requireToolApproval?: boolean;
     personalBrowserEngine?: EnginePref;
+    comparePane?: boolean;
   },
 ) {
   // The switch is STATE seeded from `executionConfig`, not a prop of its own —
@@ -401,6 +402,15 @@ describe("useChatSession — local computer engine transmission", () => {
     const { body, headers } = lastTransport();
     expect("computerEngine" in body).toBe(false);
     expect(headers[LOCAL_CONSENT_HEADER]).toBeUndefined();
+  });
+
+  it("a comparison column asks for a computer of its own; any other chat sends nothing", async () => {
+    await renderWithEngine(undefined, undefined, { comparePane: true });
+    expect(lastTransport().body.comparePane).toBe(true);
+
+    mockState.transportOptions = [];
+    await renderWithEngine();
+    expect("comparePane" in lastTransport().body).toBe(false);
   });
 
   it("omits page tools when the caller does not opt in", async () => {

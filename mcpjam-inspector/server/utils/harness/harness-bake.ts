@@ -21,8 +21,8 @@
  * the bake (`harness-bake-observer.ts`).
  *
  * WHAT A MISS MEANS. A box whose working directory is not `/home/user`, a
- * harness the template does not bake (Cursor), a custom environment image and
- * a template built from an older bake all miss the marker, and the framework
+ * custom environment image and a template built from an older bake all miss
+ * the marker, and the framework
  * falls back to installing — the turn still works, it is just slow. The
  * phase-timing log line says which of those it was (see
  * `harnessBootstrapLogFields`), so intentional fallback can be told apart
@@ -58,13 +58,15 @@ export const HARNESS_BAKE_MANIFEST_PATH = `${HARNESS_BAKE_HOME}/.harness-bootstr
 
 /**
  * Bootstrap directories (relative to the working directory) the template
- * bakes: the PATCHED Claude Code recipe and the Codex app-server recipe.
- * Cursor is not baked (its bootstrap installs whatever `cursor.com/install`
- * serves) and always installs.
+ * bakes: the PATCHED Claude Code recipe, the Codex app-server recipe and the
+ * Cursor recipe. Cursor became bakeable when its CLI install was PINNED to a
+ * checksummed build (`cursor-bootstrap.ts`); before that its bootstrap fetched
+ * whatever `cursor.com/install` served and could only ever install at turn time.
  */
 export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
   ".harness-bootstrap/claude-code",
   ".harness-bootstrap/codex-appserver",
+  ".harness-bootstrap/cursor",
 ];
 
 /**
@@ -78,13 +80,20 @@ export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
 export const HARNESS_BAKED_MARKER_AUTHOR = "mcpjam-harness-bake";
 
 /**
- * The toolchain the template pins and the bake is verified against. Equal to
- * `scripts/local-harness-toolchain.json` (asserted in `harness-bake.test.ts`),
- * which is the toolchain the local packs and the conformance suite already
- * run on — one set of versions the recipes are known to install with.
+ * The toolchain the template pins and the bake is verified against. Node is
+ * equal to `scripts/local-harness-toolchain.json` (asserted in
+ * `harness-bake.test.ts`), the toolchain the local packs and the conformance
+ * suite run on.
+ *
+ * pnpm is NOT: a hosted box has 1 GiB of memory, and pnpm 10 holds the Claude
+ * Code and Agent SDK native binaries (~392 MB unpacked each) in memory while
+ * extracting them, so the bake's `pnpm install` is OOM-killed there (974 MB
+ * peak on a live 1 GiB box). pnpm 12 streams them (638 MB peak) and is what
+ * the unpinned templates already ran. Local packs build on machines without
+ * that limit and keep the toolchain file's pnpm.
  */
 export const HARNESS_TEMPLATE_NODE_VERSION = "24.20.0";
-export const HARNESS_TEMPLATE_PNPM_VERSION = "10.18.1";
+export const HARNESS_TEMPLATE_PNPM_VERSION = "12.8.1";
 
 /**
  * The idempotent pnpm guard a provider runs before the framework's bootstrap.

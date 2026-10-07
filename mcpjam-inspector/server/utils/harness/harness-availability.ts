@@ -383,6 +383,23 @@ export type HarnessUnavailableKind =
    *  model, so it is final at the first admission pass. */
   | "setting-unsupported";
 
+/**
+ * The HTTP status a chat route answers an unavailable harness with.
+ *
+ * 422 when the turn itself is the problem — its host's settings, its model,
+ * its approval gate: the request is well-formed and retrying it changes
+ * nothing. 503 for the two OPERATOR states — broker delivery switched off, or
+ * this server not configured as a computers data plane: the request is fine,
+ * the server is not ready for it, and it will work once an operator fixes that.
+ */
+export function harnessUnavailableHttpStatus(
+  kind: HarnessUnavailableKind,
+): 422 | 503 {
+  return kind === "broker-disabled" || kind === "computers-unconfigured"
+    ? 503
+    : 422;
+}
+
 export type HarnessAvailability =
   /** `warning`: the turn may run, but the reader should be told something —
    *  today only an unverified harness × model pair in Playground chat. */

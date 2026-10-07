@@ -40,7 +40,10 @@ describe("Claude Code effort mapping", () => {
     });
     const args = vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!;
     expect(args.thinking).toEqual({ type: "disabled" });
-    expect(args.env).toEqual({ CLAUDE_CODE_EFFORT_LEVEL: "unset" });
+    expect(args.env).toEqual({
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      CLAUDE_CODE_EFFORT_LEVEL: "unset",
+    });
     expect("effort" in args).toBe(false);
   });
 
@@ -54,7 +57,50 @@ describe("Claude Code effort mapping", () => {
     const args = vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!;
     expect(args.effort).toBe("high");
     expect(args.thinking).toEqual({ type: "adaptive" });
-    expect(args.env).toEqual({ CLAUDE_CODE_EFFORT_LEVEL: "high" });
+    expect(args.env).toEqual({
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      CLAUDE_CODE_EFFORT_LEVEL: "high",
+    });
+  });
+
+  it("runs background tasks on allow-all turns, with or without an effort", () => {
+    // The bridge's background drain holds the turn open until a background
+    // agent reports back, as stock Claude Code would.
+    for (const reasoningEffort of [undefined, "low"] as const) {
+      adapter().createHarness({
+        modelId: "anthropic/claude-sonnet-4-6",
+        auth: {},
+        mcpJson,
+        permissionMode: "allow-all",
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      });
+      const args = vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!;
+      expect(args.env).not.toHaveProperty(
+        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+      );
+      expect(args.env).toHaveProperty("CLAUDE_CODE_EFFORT_LEVEL");
+    }
+  });
+
+  it("turns background tasks off under any other mode, or none", () => {
+    // Under allow-reads the main thread pauses for approval on any edit, and
+    // the drain stops background work at every pause.
+    for (const permissionMode of [
+      "allow-reads",
+      "allow-edits",
+      undefined,
+    ] as const) {
+      adapter().createHarness({
+        modelId: "anthropic/claude-sonnet-4-6",
+        auth: {},
+        mcpJson,
+        ...(permissionMode ? { permissionMode } : {}),
+      });
+      const args = vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!;
+      expect(args.env).toMatchObject({
+        CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      });
+    }
   });
 });
 

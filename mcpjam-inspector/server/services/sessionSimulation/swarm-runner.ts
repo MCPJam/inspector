@@ -53,7 +53,6 @@ import { collectHostedRecordingBeforeRelease } from "../browserd/hosted-recordin
 import {
   canProvisionSwarmSandboxes,
   provisionAttemptSandbox,
-  releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
   targetWantsBrowser,
@@ -112,7 +111,7 @@ import type {
  *     backend stale-run cron is the hard backstop.
  */
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_INTERVAL_MS = 5_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 /**
@@ -658,7 +657,9 @@ async function runJourneyFanOut(
   const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
   if (!opts.budgets) {
     // Only size a platform default. Explicit/frozen limits remain authoritative.
-    const localSessions = hosts.filter(host => runsLocally(opts, host.harness)).length * sessionsPerTarget;
+    const localSessions =
+      hosts.filter((host) => runsLocally(opts, host.harness)).length *
+      sessionsPerTarget;
     budgets.runTimeoutMs = Math.min(
       platformExecutionBudgetCeilings("swarms").runTimeoutMs,
       Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
@@ -684,6 +685,16 @@ async function runJourneyFanOut(
   let spendCapTripped = false;
   let spendCapMessage: string | undefined;
   let stoppedByBackend = false;
+
+  // Every attempt response is another opportunity to observe a durable stop.
+  const reportRunAttempt: typeof reportAttempt = async (...args) => {
+    const result = await reportAttempt(...args);
+    if (result.canceled) {
+      stoppedByBackend = true;
+      runStop.abort();
+    }
+    return result;
+  };
 
   // Reads the RUN deadline's signal, not the raw abort: a run that spent its
   // budget must stop handing out new sessions, and the raw signal knows
@@ -954,12 +965,14 @@ async function runJourneyFanOut(
                 ? "This target runs the " +
                   target.harness +
                   " harness, which needs a disposable sandbox per session. " +
-                  // An intent with no reason is a pre-B-isolation run snapshot: the
-                  // backend never resolved an image because it did not know how to.
-                  // Silent is right for bash (it simply goes missing); a harness
-                  // cannot run at all, so the session must say something true.
+                  // Only an UNAVAILABLE pin lands here, and only on a run
+                  // created before the backend began refusing such a target at
+                  // launch: a harness target that pinned nothing boots the
+                  // default template instead (`sandboxIntentFor`). The reason
+                  // names the broken pin, and the target is refused before any
+                  // box is booted for it.
                   (harnessTargetIntent.reason ??
-                    "This run pinned no computer image, so one cannot be created.")
+                    "The computer image this target pinned is unavailable, so one cannot be created.")
                 : undefined;
       } catch (err) {
         // Fail CLOSED and name what happened. We do not know WHICH rule threw,
@@ -1074,7 +1087,7 @@ async function runJourneyFanOut(
         // after. A claim failure skips the session (we can't run without it).
         let claim: { ok: true; applied: boolean };
         try {
-          claim = await reportAttempt(convexHttpUrl, bearer, {
+          claim = await reportRunAttempt(convexHttpUrl, bearer, {
             projectId,
             runId,
             hostId,
@@ -1164,7 +1177,11 @@ async function runJourneyFanOut(
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target, hostedBrowserAvailable);
+          const intent = sandboxIntentFor(
+            target,
+            hostedBrowserAvailable,
+            localHarness,
+          );
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits
@@ -1202,7 +1219,7 @@ async function runJourneyFanOut(
               status: "failed",
               errorMessage: humanizeSwarmAttemptErrorMessage(message),
             });
-            await reportAttempt(convexHttpUrl, bearer, {
+            await reportRunAttempt(convexHttpUrl, bearer, {
               projectId,
               runId,
               hostId,
@@ -1300,7 +1317,7 @@ async function runJourneyFanOut(
                 status: failure.status,
                 errorMessage: failure.errorMessage,
               });
-              await reportAttempt(convexHttpUrl, bearer, {
+              await reportRunAttempt(convexHttpUrl, bearer, {
                 projectId,
                 runId,
                 hostId,
@@ -1346,13 +1363,13 @@ async function runJourneyFanOut(
         // personal computer.
         const harnessBlockedReason = !harnessNeedsBox
           ? undefined
-          : harnessTargetBlockedReason ??
+            : (harnessTargetBlockedReason ??
             (attemptSandbox
               ? undefined
               : "This session could not get a disposable sandbox for its " +
                 `${target.harness} harness. A swarm harness never falls back ` +
                 "to the launcher's shared project computer, so this session " +
-                "cannot run.");
+                  "cannot run."));
 
         try {
           // Execute the session via the shared core. It owns manager lifecycle +
@@ -1410,12 +1427,7 @@ async function runJourneyFanOut(
               // `runHarnessTurn` does not use the tool resolver at all. Only
               // for a harness target: the emulated engine has no use for it.
               ...(target.harness && attemptSandbox
-                ? {
-                    harnessSandboxBinding: {
-                      sandboxRowId: attemptSandbox.sandboxRowId,
-                      ...attemptSandbox.binding,
-                    },
-                  }
+                ? { harnessSandboxBinding: attemptSandbox.harnessBinding }
                 : {}),
               // F4: refuse the harness turn rather than let it reserve the
               // launcher's shared personal computer.
@@ -1570,7 +1582,7 @@ async function runJourneyFanOut(
               : {}),
           });
           try {
-            await reportAttempt(convexHttpUrl, bearer, {
+            await reportRunAttempt(convexHttpUrl, bearer, {
               projectId,
               runId,
               hostId,
@@ -1710,7 +1722,14 @@ async function runJourneyFanOut(
               remaining: sessionsPerTarget - (sessionIdx + 1),
             });
             await markRemainingTargetAttemptsRateLimited(
-              { convexHttpUrl, bearer, projectId, runId, target },
+                {
+                  convexHttpUrl,
+                  bearer,
+                  projectId,
+                  runId,
+                  target,
+                  reportAttemptFn: reportRunAttempt,
+                },
               sessionIdx + 1,
               sessionsPerTarget,
               cause === "transient_capacity"
@@ -1777,7 +1796,8 @@ async function runJourneyFanOut(
                 error: err instanceof Error ? err.message : String(err),
               });
             }
-            await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
+            // Stops the turn heartbeat, then releases the box.
+            await attemptSandbox.release();
           }
         }
         } finally { releaseLocalSlot?.(); }
@@ -1850,7 +1870,14 @@ async function runJourneyFanOut(
         return;
       }
       await markRemainingTargetAttemptsFailed(
-        { convexHttpUrl, bearer: cleanupBearer, projectId, runId, target },
+        {
+          convexHttpUrl,
+          bearer: cleanupBearer,
+          projectId,
+          runId,
+          target,
+          reportAttemptFn: reportRunAttempt,
+        },
         sessionIdx,
         sessionsPerTarget,
         err instanceof SwarmSetupError
@@ -2104,12 +2131,13 @@ async function markRemainingTargetAttemptsRateLimited(
     projectId: string;
     runId: string;
     target: PinnedHostExecutionSpec;
+    reportAttemptFn: typeof reportAttempt;
   },
   fromIdx: number,
   toIdx: number,
   transientMessage?: string,
 ): Promise<void> {
-  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
     const chatSessionId = swarmAttemptChatSessionId(
@@ -2118,7 +2146,7 @@ async function markRemainingTargetAttemptsRateLimited(
       sessionIdx,
     );
     try {
-      await reportAttempt(convexHttpUrl, bearer, {
+      const claim = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2127,7 +2155,8 @@ async function markRemainingTargetAttemptsRateLimited(
         status: "running",
         chatSessionId,
       });
-      await reportAttempt(convexHttpUrl, bearer, {
+      if (claim.canceled) return;
+      const terminal = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2138,6 +2167,7 @@ async function markRemainingTargetAttemptsRateLimited(
         errorCode: transientMessage ? "user_rate_limit" : "rate_limited",
         ...(transientMessage ? { errorMessage: transientMessage } : {}),
       });
+      if (terminal.canceled) return;
     } catch (err) {
       logger.warn(
         "[swarm.runner] failed to mark remaining target attempt rate_limited",
@@ -2171,12 +2201,13 @@ async function markRemainingTargetAttemptsFailed(
     projectId: string;
     runId: string;
     target: PinnedHostExecutionSpec;
+    reportAttemptFn: typeof reportAttempt;
   },
   fromIdx: number,
   toIdx: number,
   errorCode = "host_worker_failed",
 ): Promise<void> {
-  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
     const chatSessionId = swarmAttemptChatSessionId(
@@ -2185,7 +2216,7 @@ async function markRemainingTargetAttemptsFailed(
       sessionIdx,
     );
     try {
-      await reportAttempt(convexHttpUrl, bearer, {
+      const claim = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2194,7 +2225,8 @@ async function markRemainingTargetAttemptsFailed(
         status: "running",
         chatSessionId,
       });
-      await reportAttempt(convexHttpUrl, bearer, {
+      if (claim.canceled) return;
+      const terminal = await reportAttemptFn(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
@@ -2204,6 +2236,7 @@ async function markRemainingTargetAttemptsFailed(
         chatSessionId,
         errorCode,
       });
+      if (terminal.canceled) return;
     } catch (err) {
       logger.warn(
         "[swarm.runner] failed to mark remaining target attempt failed",

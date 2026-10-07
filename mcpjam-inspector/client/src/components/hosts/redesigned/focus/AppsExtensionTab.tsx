@@ -38,6 +38,13 @@ import {
 import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { HostStyleTokens } from "./HostStyleTokens";
+import {
+  PLUGIN_EXTENSION_CAPABILITY_KEYS,
+  PLUGIN_EXTENSION_CAPABILITY_LABELS,
+  pluginExtensionsForHost,
+  setPluginExtensionCapabilityOnDraft,
+  setPluginExtensionsEnabledOnDraft,
+} from "@/lib/client-config-v2-plugin-extensions";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 interface AppsExtensionTabProps {
@@ -211,6 +218,14 @@ type AppsDoc = {
    * JSON that may be one rev behind.
    */
   mcpAppsOverrides?: McpAppsCapabilities;
+  /**
+   * Round-trips with `mcpProfile.apps.pluginExtensions` — the OpenAI plugin
+   * extensions card above edits it, so the JSON shows it too. Present only
+   * when the client saved an explicit setting.
+   */
+  pluginExtensions?: NonNullable<
+    NonNullable<HostConfigMcpProfileV1["apps"]>["pluginExtensions"]
+  >;
 };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -490,7 +505,35 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
     }
   }
 
+  const pluginExtensions = draft.mcpProfile?.apps?.pluginExtensions;
+  if (pluginExtensions !== undefined) {
+    doc.pluginExtensions = pluginExtensions;
+  }
+
   return doc;
+}
+
+/**
+ * Soft-validate a hand-edited `pluginExtensions` block: `enabled` must be a
+ * boolean (otherwise the block is dropped), and only known extension keys
+ * with boolean values survive.
+ */
+function parsePluginExtensionsDoc(
+  value: unknown
+): AppsDoc["pluginExtensions"] | undefined {
+  if (!isPlainObject(value) || typeof value.enabled !== "boolean") {
+    return undefined;
+  }
+  const capabilities: Record<string, boolean> = {};
+  if (isPlainObject(value.capabilities)) {
+    for (const key of PLUGIN_EXTENSION_CAPABILITY_KEYS) {
+      const entry = value.capabilities[key];
+      if (typeof entry === "boolean") capabilities[key] = entry;
+    }
+  }
+  return Object.keys(capabilities).length > 0
+    ? { enabled: value.enabled, capabilities }
+    : { enabled: value.enabled };
 }
 
 export function applyJsonToDraft(
@@ -885,6 +928,12 @@ export function applyJsonToDraft(
   }
   if (nextMcpAppsOverrides !== undefined) {
     appsBlock.mcpAppsOverrides = nextMcpAppsOverrides;
+  }
+  const nextPluginExtensions = parsePluginExtensionsDoc(
+    parsed.pluginExtensions
+  );
+  if (nextPluginExtensions !== undefined) {
+    appsBlock.pluginExtensions = nextPluginExtensions;
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 
@@ -2022,6 +2071,99 @@ function WidgetToolResultsCard({
   );
 }
 
+/**
+ * `mcpProfile.apps.pluginExtensions` — which OpenAI plugin extensions this
+ * client offers. Defaults follow the client style (on for ChatGPT and Codex,
+ * off for everything else). Turning one extension off removes only that
+ * extension; the master switch turns them all off.
+ */
+function PluginExtensionsCard({
+  draft,
+  onDraftChange,
+}: {
+  draft: HostConfigInputV2;
+  onDraftChange: (
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+  ) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const resolved = pluginExtensionsForHost(draft);
+  const onCount = PLUGIN_EXTENSION_CAPABILITY_KEYS.filter(
+    (key) => resolved.capabilities[key]
+  ).length;
+
+  return (
+    <section
+      className="rounded-[10px] border border-border bg-background"
+      data-testid="plugin-extensions-card"
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
+        <div className="min-w-0">
+          <div className="text-[12px] font-medium">
+            OpenAI plugin extensions
+          </div>
+          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+            Sidebar Apps, file viewers, forms and the other plugin extensions
+            ChatGPT and Codex offer.
+          </p>
+        </div>
+        <Switch
+          checked={resolved.enabled}
+          onCheckedChange={(checked) =>
+            onDraftChange((prev) =>
+              setPluginExtensionsEnabledOnDraft(prev, checked)
+            )
+          }
+          aria-label="OpenAI plugin extensions"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 bg-muted/30 px-3.5 py-1.5 text-left text-[11px] font-medium text-muted-foreground"
+      >
+        <span>
+          Extensions · {onCount} of {PLUGIN_EXTENSION_CAPABILITY_KEYS.length}{" "}
+          on
+        </span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+          aria-hidden
+        />
+      </button>
+      {open
+        ? PLUGIN_EXTENSION_CAPABILITY_LABELS.map(
+            ({ key, label, description }) => (
+              <div
+                key={key}
+                className="flex items-center justify-between gap-3 border-t border-border/50 px-3.5 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="text-[12px]">{label}</div>
+                  <div className="text-[11px] leading-snug text-muted-foreground">
+                    {description}
+                  </div>
+                </div>
+                <Switch
+                  checked={resolved.capabilities[key]}
+                  onCheckedChange={(checked) =>
+                    onDraftChange((prev) =>
+                      setPluginExtensionCapabilityOnDraft(prev, key, checked)
+                    )
+                  }
+                  aria-label={label}
+                />
+              </div>
+            )
+          )
+        : null}
+    </section>
+  );
+}
+
 export function AppsExtensionTab({
   draft,
   onDraftChange,
@@ -2064,6 +2206,7 @@ export function AppsExtensionTab({
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
         <BrowserStorageCard draft={draft} onDraftChange={onDraftChange} />
         <WidgetToolResultsCard draft={draft} onDraftChange={onDraftChange} />
+        <PluginExtensionsCard draft={draft} onDraftChange={onDraftChange} />
         {/* Read-only companion to the two matrices: the capability rows say
             what the host CAN do, this says what it LOOKS like to a view. */}
         <HostStyleTokens draft={draft} />

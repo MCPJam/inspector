@@ -171,6 +171,10 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   registry_connection_not_found: "NOT_FOUND",
   registry_server_not_approved: "FORBIDDEN",
   registry_project_org_mismatch: "FORBIDDEN",
+  // A beta feature that is not enabled for the caller's organization. Publicly
+  // FORBIDDEN, the same as the backend's `/v1`; the reason stays in
+  // `details.code` (see `isFeatureUnavailable` in the platform client).
+  FEATURE_UNAVAILABLE: "FORBIDDEN",
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {
