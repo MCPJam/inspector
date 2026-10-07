@@ -46,6 +46,10 @@ import {
 } from "../../utils/computers/local-consent.js";
 import { getLocalTerminalAvailability } from "../../utils/computers/local-pty.js";
 import {
+  contextCredentialClass,
+  resolveLocalHarnessActor,
+} from "../../utils/harness/local/acting-user.js";
+import {
   issueLocalNonce,
   issueLocalTerminalNonce,
 } from "../../utils/computers/local-terminal-auth.js";
@@ -197,6 +201,40 @@ computers.use("/local-terminal-token", async (c, next) => {
   }
   return next();
 });
+
+/**
+ * Granting the shell capability, and opening a shell with it, require a
+ * POSITIVELY verified WorkOS member — the same verifier and the same accepted
+ * credential class the local-harness consent route binds with
+ * (`resolveLocalHarnessActor`).
+ *
+ * `requireVerifiedAuth` above is not enough on its own: it also admits an
+ * `sk_` key, a Slack/Discord service token, and ANY caller on a deployment
+ * with no AuthKit at all. None of those is a person on this machine who
+ * clicked Allow, so none of them may mint or spend local shell access.
+ * Verify and revoke stay on the wider gate: verifying reveals nothing, and
+ * revoking only ever removes access.
+ */
+const requireLocalMember = async (
+  c: Context,
+  next: () => Promise<void>,
+): Promise<Response | void> => {
+  const actor = await resolveLocalHarnessActor({
+    authorizationHeader: c.req.header("authorization"),
+    contextCredential: contextCredentialClass(c),
+  });
+  if (!actor.ok) {
+    logger.info("Refused local shell access for a non-member credential", {
+      event: "local_computer.member_required",
+      reason: actor.reason,
+      path: c.req.path,
+    });
+    return c.json({ error: actor.message, reason: actor.reason }, actor.status);
+  }
+  return next();
+};
+computers.use("/local-consent/grant", requireLocalMember);
+computers.use("/local-terminal-token", requireLocalMember);
 
 computers.post("/local-consent/grant", async (c) => {
   const granted = await grantLocalComputerConsent();

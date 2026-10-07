@@ -25,6 +25,8 @@
  */
 
 export const ANALYTICS_EVENTS = {
+  // One outcome per logical plugin App launch (closed vocabulary, no content).
+  extension_launch_completed: { source: "client" },
   // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
   platform_launch_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
@@ -230,6 +232,19 @@ export const ANALYTICS_EVENTS = {
   local_harness_runtime_install_completed: { source: "client" },
   local_harness_runtime_install_failed: { source: "client" },
   local_harness_unavailable: { source: "client" },
+  // --- Local harness runtime lifecycle (server; background work included) ---
+  // Fired by the installer and the launch path, including installs nobody is
+  // watching (boot prefetch, background updates). Enums, versions, durations
+  // and counts only — never a digest, path, machine id or installer message.
+  // {harness_id, pack_version, trigger, stage, reason, role, duration_ms}.
+  local_runtime_install_started: { source: "server" },
+  local_runtime_install_succeeded: { source: "server" },
+  local_runtime_install_failed: { source: "server" },
+  local_runtime_candidate_probe_failed: { source: "server" },
+  local_runtime_update_activated: { source: "server" },
+  local_runtime_launch_failed_after_update: { source: "server" },
+  local_runtime_rolled_back_to_previous: { source: "server" },
+  local_runtime_time_to_first_usable_turn: { source: "server" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },

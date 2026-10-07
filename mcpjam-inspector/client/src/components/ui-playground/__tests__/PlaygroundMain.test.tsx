@@ -42,6 +42,23 @@ const mockReactiveHistoryState = vi.hoisted(() => ({
   widgetSnapshots: undefined as any,
 }));
 
+const mockEnvironmentReadiness = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/hooks/use-playground-environment", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/use-playground-environment")>();
+  return {
+    ...actual,
+    usePlaygroundEnvironment: (...args: Parameters<typeof actual.usePlaygroundEnvironment>) => {
+      const state = actual.usePlaygroundEnvironment(...args);
+      return mockEnvironmentReadiness.enabled ? {
+        ...state, isEnvironmentMode: true, environmentId: "disposable-environment",
+        preview: { host: { hostId: null }, servers: [], plugins: [] },
+        isPreviewLoading: false, isResolutionPending: false,
+        executionTarget: { kind: "environment", environmentId: "disposable-environment" },
+      } : state;
+    },
+  };
+});
+
 const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
 const mockDefaultHostConfig = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
@@ -783,6 +800,7 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
     vi.clearAllMocks();
+    mockEnvironmentReadiness.enabled = false;
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
@@ -1407,6 +1425,8 @@ describe("PlaygroundMain", () => {
           session: sharedSessionLocal,
           widgetSnapshots: [],
         });
+      // The opened thread is the current chat, so its refreshed detail binds.
+      mockUseChatSession.chatSessionId = privateSessionLocal.chatSessionId;
 
       render(<PlaygroundMain {...defaultProps} />);
 
@@ -2872,6 +2892,23 @@ describe("PlaygroundMain", () => {
           expect.objectContaining({ text: "Hello from playground" })
         );
       });
+    });
+
+    it("does not reconnect an unrelated standalone server for an environment-owned widget message", async () => {
+      mockEnvironmentReadiness.enabled = true;
+      mockUseChatSession.messages = [{ id: "existing", role: "assistant", parts: [{ type: "text", text: "Disposable thread" }] }];
+      mockSharedAppState.servers["test-server"] = { connectionStatus: "disconnected" };
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [], missingServerNames: ["test-server"],
+        failedServerNames: [], reauthServerNames: [],
+      });
+      render(<PlaygroundMain {...defaultProps} ensureServersReady={ensureServersReady} />);
+      const props = mockThread.mock.calls.at(-1)![0];
+      await act(async () => { props.sendFollowUpMessage("Environment-owned App follow-up"); });
+      await waitFor(() => expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Environment-owned App follow-up" }),
+      ));
+      expect(ensureServersReady).not.toHaveBeenCalled();
     });
 
     it("injects an explicitly attached skill into the turn (INS-4)", async () => {

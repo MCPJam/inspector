@@ -1,3 +1,13 @@
+import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
+import {
+  useThreadAppWorkspace,
+  type WorkspaceServer,
+} from "@/components/host-workspace/ThreadAppPanel";
+import {
+  compareLaneWorkspace,
+  type ExtensionCapabilities,
+  type ExtensionOwnerIdentity,
+} from "@/components/host-workspace/extension-owners";
 import {
   useCallback,
   useEffect,
@@ -121,6 +131,16 @@ function InvokingIndicator({
 }
 
 interface MultiModelPlaygroundCardProps {
+  /**
+   * This lane's client has plugin extensions on (flag, backend access and the
+   * client's own setting all passed). The lane then owns its own Apps.
+   */
+  extensionBinding?: {
+    identity: ExtensionOwnerIdentity;
+    servers: WorkspaceServer[];
+    capabilities: ExtensionCapabilities;
+    profile: "chatgpt" | "codex";
+  } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
@@ -256,6 +276,7 @@ interface MultiModelPlaygroundCardProps {
 }
 
 export function MultiModelPlaygroundCard({
+  extensionBinding = null,
   browserWorkspace,
   compareId,
   compareLabel,
@@ -374,6 +395,36 @@ export function MultiModelPlaygroundCard({
     ],
   );
 
+  const laneIdentityKey = extensionBinding
+    ? JSON.stringify([
+        extensionBinding.identity.actorId,
+        extensionBinding.identity.projectId,
+        extensionBinding.identity.hostId,
+      ])
+    : null;
+  const laneIdentity = useMemo(
+    () => extensionBinding?.identity ?? null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [laneIdentityKey],
+  );
+  const laneWorkspaceForSession = useCallback(
+    (sessionId: string) =>
+      laneIdentity
+        ? compareLaneWorkspace(laneIdentity, compareKind, compareId, sessionId)
+        : undefined,
+    [laneIdentity, compareKind, compareId],
+  );
+  const laneContextRefs = useRef<{
+    workspaceId: string;
+    tokens: string[];
+  } | null>(null);
+  const currentLaneContext = useCallback(
+    (workspaceId: string) =>
+      laneContextRefs.current?.workspaceId === workspaceId
+        ? laneContextRefs.current.tokens
+        : [],
+    [],
+  );
   const {
     messages,
     setMessages,
@@ -393,6 +444,12 @@ export function MultiModelPlaygroundCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    // The lane's own extension owner: its turns carry its workspace and
+    // its Apps' context, never another lane's or the single chat's.
+    pluginWorkspace: laneWorkspaceForSession,
+    pluginContextReferences: currentLaneContext,
+    // A comparison column never shares the member's one personal computer.
+    comparePane: true,
     selectedServers,
     usePageTools,
     hostedContext,
@@ -426,6 +483,44 @@ export function MultiModelPlaygroundCard({
       setInjectedToolRenderOverrides({});
     },
   });
+
+  const laneScope = useMemo(() => {
+    const pluginWorkspace = laneWorkspaceForSession(chatSessionId);
+    return pluginWorkspace && laneIdentity
+      ? {
+          projectId: laneIdentity.projectId,
+          hostId: laneIdentity.hostId,
+          threadId: chatSessionId,
+          pluginWorkspace,
+        }
+      : null;
+  }, [laneWorkspaceForSession, chatSessionId, laneIdentity]);
+  const laneServers = useMemo(
+    () => extensionBinding?.servers ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      JSON.stringify(
+        (extensionBinding?.servers ?? []).map((server) => [
+          server.serverId,
+          server.name,
+          server.connection ?? null,
+        ]),
+      ),
+    ],
+  );
+  const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
+    capabilities: extensionBinding?.capabilities,
+    launchProfile: extensionBinding?.profile,
+  });
+  laneContextRefs.current = laneScope
+    ? {
+        workspaceId: laneScope.pluginWorkspace.workspaceId,
+        tokens: laneApps.contextReferences,
+      }
+    : null;
+  // A lane with live Apps keeps placeholder transcripts in its Trace view,
+  // so one App never has two live hosts.
+  const laneWidgetPolicy = laneScope ? "placeholder" : "live";
 
   useComparisonBrowser(
     browserWorkspace && hostedContext?.projectId
@@ -875,11 +970,15 @@ export function MultiModelPlaygroundCard({
           </div>
         ) : null}
 
-        {showTraceDiagnosticsShell ? (
+        <CompareLaneWorkspace
+          apps={laneScope ? laneApps : null}
+          showDiagnostics={showTraceDiagnosticsShell}
+          diagnostics={
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
               {activeTraceViewMode === "chat" && revealedInChat ? (
                 <TraceViewer
+                  widgetPolicy={laneWidgetPolicy}
                   chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
@@ -917,6 +1016,7 @@ export function MultiModelPlaygroundCard({
                 />
               ) : (
                 <TraceViewer
+                  widgetPolicy={laneWidgetPolicy}
                   chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
@@ -943,7 +1043,8 @@ export function MultiModelPlaygroundCard({
               )}
             </div>
           </div>
-        ) : (
+          }
+        >
           <div
             className={cn(
               "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
@@ -1009,7 +1110,7 @@ export function MultiModelPlaygroundCard({
               </StickToBottom>
             )}
           </div>
-        )}
+        </CompareLaneWorkspace>
       </div>
     </div>
   );

@@ -73,6 +73,8 @@ type ConvexErrorData = {
   kind?: unknown;
   /** The stable sub-code a coded refusal carries alongside its prose. */
   reason?: unknown;
+  /** The gated feature's key, on a `FEATURE_UNAVAILABLE` refusal. */
+  feature?: unknown;
 };
 
 /**
@@ -484,7 +486,14 @@ export function translateConvexWriteError(
   // customer-facing, already feature-parameterized ("Swarms" vs "User
   // testing"), and re-writing it here would create a second place to keep
   // that copy correct.
+  //
+  // `details.code` keeps the reason a program branches on, since the public
+  // code is the generic FORBIDDEN, and `details.feature` names the gated
+  // feature when the backend sent one. That is the shape the backend's own
+  // `/v1` returns for the same refusal, and what the SDK's
+  // `isFeatureUnavailable` reads.
   if (code === "FEATURE_UNAVAILABLE") {
+    const feature = data?.feature;
     return new WebRouteError(
       403,
       // FORBIDDEN, not FEATURE_NOT_SUPPORTED, and the distinction is not
@@ -497,7 +506,11 @@ export function translateConvexWriteError(
       // being collapsed into the neutral 404.
       ErrorCode.FORBIDDEN,
       structuredMessage ??
-        "This feature is not available for your organization."
+        "This feature is not available for your organization.",
+      {
+        code: "FEATURE_UNAVAILABLE",
+        ...(typeof feature === "string" && feature ? { feature } : {}),
+      },
     );
   }
 

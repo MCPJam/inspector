@@ -111,6 +111,45 @@ const assistantTurnMock = vi.hoisted(() => vi.fn());
 vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => assistantTurnMock(...args),
 }));
+// Pass-through unless a test rewrites the options the runner hands the holder
+// (to stub the box and observe its heartbeat).
+const harnessBoxOptionsOverride = vi.hoisted(() => ({
+  current: undefined as ((options: any) => any) | undefined,
+}));
+vi.mock("../../../utils/harness/harness-box.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../../utils/harness/harness-box.js")
+    >();
+  return {
+    ...actual,
+    acquireHarnessBox: (options: any) =>
+      actual.acquireHarnessBox(
+        harnessBoxOptionsOverride.current?.(options) ?? options,
+      ),
+  };
+});
+// A stubbed box has no attachments to seed; pass-through otherwise.
+const seedAttachmentsOverride = vi.hoisted(() => ({
+  current: undefined as (() => Promise<{ note: null }>) | undefined,
+}));
+vi.mock(
+  "../../../utils/computers/eval-attachments-seed.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../../utils/computers/eval-attachments-seed.js")
+      >();
+    return {
+      ...actual,
+      seedEvalCaseAttachments: (
+        ...args: Parameters<typeof actual.seedEvalCaseAttachments>
+      ) =>
+        seedAttachmentsOverride.current?.() ??
+        actual.seedEvalCaseAttachments(...args),
+    };
+  },
+);
 import {
   isRunDeletedError,
   runEvalSuiteWithAiSdk,
@@ -255,6 +294,24 @@ describe("provisionEvalSandbox — capacity", () => {
       ok: true,
     });
     expect(requests).toBe(1);
+  });
+
+  it("names the run first, and the iteration alone for a single-case run", async () => {
+    const bodies: unknown[] = [];
+    global.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ sandboxId: "s1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    await provisionEvalSandbox(args);
+    await provisionEvalSandbox({ bearer: "token", iterationId: "i9" });
+    // A suite-run body is unchanged on the wire, key order included.
+    expect(JSON.stringify(bodies[0])).toBe(
+      JSON.stringify({ runId: "r1", iterationId: "i1" }),
+    );
+    expect(bodies[1]).toEqual({ iterationId: "i9" });
   });
 
   it("hands back a non-capacity refusal immediately, without retrying", async () => {
@@ -611,6 +668,140 @@ describe.each(["local", "hosted"] as const)(
     });
   },
 );
+
+describe("hosted iteration box heartbeat", () => {
+  afterEach(() => {
+    harnessBoxOptionsOverride.current = undefined;
+    seedAttachmentsOverride.current = undefined;
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  /**
+   * One hosted iteration on a pinned computer, with the box stubbed so only
+   * its heartbeat and release are observed. `turn` decides how the agent run
+   * ends.
+   */
+  async function runOnBox(turn: "hangs" | "throws") {
+    vi.useFakeTimers();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT", "1");
+    vi.stubEnv("E2B_API_KEY", "test-key");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+    const touch = vi.fn(async () => "touched" as const);
+    const release = vi.fn(async () => {});
+    harnessBoxOptionsOverride.current = (options) => ({
+      ...options,
+      provision: async () => ({
+        ok: true as const,
+        box: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
+      }),
+      release,
+      touch,
+    });
+    seedAttachmentsOverride.current = async () => ({ note: null });
+    executeStepsMock.mockImplementation(() =>
+      turn === "hangs"
+        ? // Ignores its abort: the iteration is abandoned after the grace.
+          new Promise(() => {})
+        : Promise.reject(new Error("engine blew up")),
+    );
+    const snapshot = {
+      title: "Case",
+      query: "Hello",
+      model: "gpt-5-mini",
+      provider: "openai",
+    };
+    const row: Record<string, any> = {
+      _id: "iter-1",
+      testCaseId: "case-1",
+      iterationNumber: 1,
+      testCaseSnapshot: snapshot,
+      status: "pending",
+      result: "pending",
+    };
+    const pending = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder: {
+        startIteration: vi.fn(async () => row._id),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (args) => Object.assign(row, args)),
+        finalize: vi.fn(async () => {}),
+      },
+      config: {
+        tests: [
+          {
+            ...snapshot,
+            runs: 1,
+            testCaseId: "case-1",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+          },
+        ],
+        environment: { servers: ["srv-1"], computerEnvironmentId: "env-1" },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: [row] }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, args) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(row, args);
+        }),
+      },
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      },
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        unitTimeoutMs: 100,
+        runTimeoutMs: 10 * 60_000,
+      },
+    } as any);
+    // Past the iteration budget AND its 30s unwind grace.
+    await vi.advanceTimersByTimeAsync(31_000);
+    await pending;
+    return { row, touch, release };
+  }
+
+  it("an iteration abandoned past its grace stops beating, though nothing releases its box", async () => {
+    const { row, touch, release } = await runOnBox("hangs");
+    // The agent run started on the box and never came back.
+    expect(executeStepsMock).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe("timed_out");
+    // Several beats' worth of the eval scope's TTL: an abandoned holder used
+    // to touch forever, keeping the box live until the backend's ceiling.
+    await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
+    expect(touch).not.toHaveBeenCalled();
+    // The abort is not a teardown; the idle reaper takes the box.
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("an iteration whose turn throws releases its box and stops beating", async () => {
+    const { touch, release } = await runOnBox("throws");
+    expect(release).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
+    expect(touch).not.toHaveBeenCalled();
+  });
+});
 
 // Deleting a suite (or run) mid-run: the cancellation checker is the only
 // thing that stops the whole run. Production masks a plain error as
