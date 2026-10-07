@@ -169,6 +169,8 @@ function bindingDelivers(
   return required.hosts.every((host) => hosts.has(host.toLowerCase()));
 }
 
+const BOX_CREDENTIAL_LOOKUP_TIMEOUT_MS = 10_000;
+
 /**
  * Ask the box's own scope. `null` ⇒ could not establish (refused like an
  * absence); `undefined` ⇒ the backend predates the route.
@@ -177,10 +179,18 @@ async function fetchFromBox(args: {
   bearer: string;
   sandboxRowId: string;
   required: Readonly<Record<string, HarnessExternalAccountBrokerBinding>>;
+  /** The turn's own signal: a stopped turn must not wait out the lookup. */
+  signal?: AbortSignal;
 }): Promise<BrokeredCredentialAvailability | null | undefined> {
   let answer;
   try {
-    answer = await getBoxCredentialAvailability(args);
+    // Bounded as well as cancellable: a stalled lookup is refused like an
+    // absence instead of holding the turn open.
+    const timeout = AbortSignal.timeout(BOX_CREDENTIAL_LOOKUP_TIMEOUT_MS);
+    answer = await getBoxCredentialAvailability({
+      ...args,
+      signal: args.signal ? AbortSignal.any([args.signal, timeout]) : timeout,
+    });
   } catch (error) {
     logger.warn(
       "[external-account-credentials] box credential lookup failed; " +
@@ -285,6 +295,8 @@ export async function fetchBrokeredCredentialNames(args: {
    * falls back to those readers. Absent (a persistent computer) ⇒ the readers.
    */
   sandboxRowId?: string;
+  /** Cancels the box lookup when the turn stops. */
+  signal?: AbortSignal;
   projectId?: string;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY. Absent ⇒
@@ -328,6 +340,7 @@ export async function fetchBrokeredCredentialNames(args: {
       bearer: args.bearer,
       sandboxRowId: args.sandboxRowId,
       required: args.required,
+      ...(args.signal ? { signal: args.signal } : {}),
     });
     // `undefined` ⇒ this backend has no such route: use the member readers.
     if (fromBox !== undefined) return fromBox;
@@ -558,6 +571,7 @@ export async function resolveExternalAccountCredentialPlan(args: {
   boxKind: "sandbox" | "computer";
   /** The box's own row, when the turn is bound to one: it answers for itself. */
   sandboxRowId?: string;
+  signal?: AbortSignal;
 }): Promise<ExternalAccountCredentialPlan | undefined> {
   const required =
     args.harness.modelAccess === "external-account"
@@ -581,6 +595,7 @@ export async function resolveExternalAccountCredentialPlan(args: {
             : {}),
           boxKind: args.boxKind,
           ...(args.sandboxRowId ? { sandboxRowId: args.sandboxRowId } : {}),
+          ...(args.signal ? { signal: args.signal } : {}),
           required: Object.fromEntries(
             unresolved.map((name) => [name, brokerBinding[name]!]),
           ),
