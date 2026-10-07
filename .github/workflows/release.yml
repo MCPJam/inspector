@@ -254,6 +254,12 @@ jobs:
           cat "$RUNNER_TEMP/unpublished.json"
           node .github/scripts/release-plan.mjs "$RUNNER_TEMP/unpublished.json"
 
+      # The published local Inspector uses production AuthKit. A code build
+      # can pass while its callback allowlist still rejects non-default ports.
+      - name: Verify production WorkOS loopback callbacks
+        if: steps.plan.outputs.inspector_version != '' && !fromJSON(inputs.skip_verify)
+        run: node .github/scripts/check-workos-loopback.mjs production
+
       # The local-execution release gate. It refuses a build whose derived
       # OFFER is inconsistent with what it can serve — a platform advertised
       # with no pack digest, or a digest table stamped at a version whose
