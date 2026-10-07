@@ -32,7 +32,10 @@ import {
   type AcquireHarnessBoxResult,
   type HarnessBox,
 } from "./harness-box.js";
-import { resolveExternalAccountCredentialPlan } from "./external-account-credentials.js";
+import {
+  ExternalAccountCredentialRefusal,
+  resolveExternalAccountCredentialPlan,
+} from "./external-account-credentials.js";
 import { convexListProjectSecretBindings } from "../computers/convex-secrets-client.js";
 import { createConvexClient } from "../../routes/v1/convex-client.js";
 import {
@@ -204,7 +207,8 @@ export async function playgroundCredentialRefusal(args: {
     });
     return null;
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    if (error instanceof ExternalAccountCredentialRefusal) return error.message;
+    throw error;
   }
 }
 
