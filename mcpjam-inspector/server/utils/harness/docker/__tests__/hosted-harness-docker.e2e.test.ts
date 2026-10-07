@@ -835,6 +835,41 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           expect(statuses).toContainEqual(
             expect.objectContaining({ kind: "task", status: "completed" }),
           );
+          // The subagent's own step reached the client, tied to the Agent
+          // call, and never the transcript.
+          const agentCall = result.chunks.find(
+            (c) =>
+              c.type === "tool-input-available" &&
+              (c as { toolName?: string }).toolName === "Agent",
+          ) as { toolCallId?: string } | undefined;
+          expect(agentCall?.toolCallId).toBeDefined();
+          const steps = result.chunks
+            .filter((c) => c.type === "data-harness-subagent-step")
+            .map((c) => (c as { data?: Record<string, unknown> }).data);
+          expect(steps).toContainEqual(
+            expect.objectContaining({
+              kind: "tool-call",
+              rootToolUseId: agentCall?.toolCallId,
+              toolName: "Bash",
+              input: {
+                command: "echo subagent-step",
+                description: "subagent step",
+              },
+            }),
+          );
+          expect(steps).toContainEqual(
+            expect.objectContaining({
+              kind: "tool-result",
+              rootToolUseId: agentCall?.toolCallId,
+              isError: false,
+            }),
+          );
+          // The turn's own tool calls are the Agent call alone.
+          expect(
+            result.chunks
+              .filter((c) => c.type === "tool-input-available")
+              .map((c) => (c as { toolName?: string }).toolName),
+          ).toEqual(["Agent"]);
           expect(mocks.revoke).toHaveBeenCalledTimes(1);
           // The tests above leave their orphaned `sleep 45` tool shell behind.
           expect(await leftovers({ allowOrphanedTools: "sleep 45" })).toEqual(

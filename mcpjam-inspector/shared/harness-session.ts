@@ -225,3 +225,120 @@ export function isHarnessBackgroundTaskDataPart(
     typeof data.status === "string"
   );
 }
+
+/**
+ * One step of a Claude Code subagent, while it works (the bridge's Group E,
+ * `claude-code-subagent-steps.ts`). `rootToolUseId` is the main-thread Agent
+ * call the step belongs to, through any nesting, so the client attaches it to
+ * that call's card. A step is a label, not a transcript: inputs keep scalar
+ * fields cut to 300 characters, and a result says only whether it failed.
+ * Transient, like the background-task part: a reload shows the Agent call's
+ * result only.
+ */
+export type HarnessSubagentStepInfo =
+  | {
+      kind: "tool-call";
+      rootToolUseId: string;
+      parentToolUseId: string;
+      toolUseId: string;
+      toolName: string;
+      input?: Record<string, string | number | boolean>;
+    }
+  | {
+      kind: "tool-result";
+      rootToolUseId: string;
+      parentToolUseId: string;
+      toolUseId: string;
+      isError: boolean;
+      error?: string;
+    };
+
+export interface HarnessSubagentStepDataPart {
+  type: "data-harness-subagent-step";
+  data: HarnessSubagentStepInfo;
+}
+
+const STEP_STRING_MAX = 300;
+const STEP_FIELDS_MAX = 8;
+
+function stepInput(
+  value: unknown,
+): Record<string, string | number | boolean> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const out: Record<string, string | number | boolean> = {};
+  let fields = 0;
+  for (const [key, field] of Object.entries(value)) {
+    if (fields >= STEP_FIELDS_MAX) break;
+    if (typeof field === "string") {
+      out[key] = field.slice(0, STEP_STRING_MAX + 1);
+    } else if (typeof field === "number" || typeof field === "boolean") {
+      out[key] = field;
+    } else {
+      continue;
+    }
+    fields++;
+  }
+  return out;
+}
+
+/**
+ * Read the bridge's `raw` subagent steps (`{ mcpjam: "subagent-step" … }`).
+ * Re-bounds what it forwards, since the raw part crossed a process boundary.
+ * Anything else is not ours: undefined.
+ */
+export function harnessSubagentStepFromRaw(
+  rawValue: unknown,
+): HarnessSubagentStepInfo | undefined {
+  if (!rawValue || typeof rawValue !== "object") return undefined;
+  const raw = rawValue as Record<string, unknown>;
+  if (raw.mcpjam !== "subagent-step") return undefined;
+  const rootToolUseId = optionalString(raw.rootToolUseId);
+  const parentToolUseId = optionalString(raw.parentToolUseId);
+  const toolUseId = optionalString(raw.toolUseId);
+  if (!rootToolUseId || !parentToolUseId || !toolUseId) return undefined;
+  if (raw.kind === "tool-call") {
+    const toolName = optionalString(raw.toolName);
+    if (!toolName) return undefined;
+    const input = stepInput(raw.input);
+    return {
+      kind: "tool-call",
+      rootToolUseId,
+      parentToolUseId,
+      toolUseId,
+      toolName: toolName.slice(0, STEP_STRING_MAX),
+      ...(input ? { input } : {}),
+    };
+  }
+  if (raw.kind === "tool-result") {
+    const error = optionalString(raw.error);
+    return {
+      kind: "tool-result",
+      rootToolUseId,
+      parentToolUseId,
+      toolUseId,
+      isError: raw.isError === true,
+      ...(error ? { error: error.slice(0, STEP_STRING_MAX + 1) } : {}),
+    };
+  }
+  return undefined;
+}
+
+export function isHarnessSubagentStepDataPart(
+  value: unknown,
+): value is HarnessSubagentStepDataPart {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type !== "data-harness-subagent-step") return false;
+  const data = candidate.data as Record<string, unknown> | undefined;
+  if (!data || typeof data !== "object") return false;
+  if (
+    typeof data.rootToolUseId !== "string" ||
+    typeof data.toolUseId !== "string"
+  ) {
+    return false;
+  }
+  if (data.kind === "tool-call") return typeof data.toolName === "string";
+  return data.kind === "tool-result" && typeof data.isError === "boolean";
+}
