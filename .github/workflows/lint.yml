@@ -50,7 +50,8 @@ jobs:
             .github/scripts/release-plan.test.mjs \
             .github/scripts/release-pr.test.mjs \
             .github/scripts/release-trigger.test.mjs \
-            .github/scripts/local-harness-bot-pr.test.mjs
+            .github/scripts/local-harness-bot-pr.test.mjs \
+            .github/scripts/check-workos-loopback.test.mjs
 
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
