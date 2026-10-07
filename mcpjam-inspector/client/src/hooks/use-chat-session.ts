@@ -1,3 +1,10 @@
+import {
+  pluginMessageParts,
+  type PluginMessageIntent,
+} from "@/shared/plugin-message";
+import { buildMentionContextMessages } from "@/shared/user-context-message";
+import type { PluginMentionSelection } from "@/shared/plugin-mentions";
+import { createPrivateFormAnswer } from "@/lib/apis/private-form-answer";
 import { sameChatAuthSession } from "@/lib/chat-auth-session";
 import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
@@ -47,7 +54,7 @@ import {
 } from "ai";
 import { lastStepHasPendingApproval } from "@/lib/chat-auto-resume";
 import {
-  useAppToolsRegistry,
+  useAppToolsRegistryApi,
   recordAppToolInvocation,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
@@ -220,9 +227,10 @@ import {
   type MrtrElicitationResponse,
   type MrtrInputRequiredEvent,
 } from "@/shared/mrtr-continuation";
-import { cancelHostedMrtrContinuation } from "@/lib/apis/web/mrtr-api";
+import { acknowledgeHostedMrtrContinuation, cancelHostedMrtrContinuation } from "@/lib/apis/web/mrtr-api";
 import {
   buildMrtrChatResumeBody,
+  buildOwnedMrtrChatResumeBody,
   findUnresolvedMrtrToolCallId,
 } from "@/lib/mrtr-chat-resume";
 import {
@@ -382,7 +390,42 @@ function useMaybeSharedAppState(): AppState | null {
   }
 }
 
+/** Global App ownership rides beside the chat's own workspace on each turn. */
+function pluginGlobalTurnFields(
+  global:
+    | {
+        workspace: import("@/shared/plugin-workspace").PluginWorkspaceDescriptor;
+        references: string[];
+      }
+    | undefined,
+) {
+  if (!global) return {};
+  return {
+    pluginGlobalWorkspace: global.workspace,
+    ...(global.references.length
+      ? { pluginGlobalContextReferences: global.references }
+      : {}),
+  };
+}
+
 export interface UseChatSessionOptions {
+  pluginContextReferences?: string[] | ((workspaceId: string) => string[]);
+  /**
+   * The Playground's global extension owner. Its Apps have no chat of their
+   * own, so their context and messages bind to whichever chat sends the turn.
+   * Read at send time.
+   */
+  pluginGlobalContext?: () =>
+    | {
+        workspace: import("@/shared/plugin-workspace").PluginWorkspaceDescriptor;
+        references: string[];
+      }
+    | undefined;
+  pluginWorkspace?:
+    | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
+    | ((chatSessionId: string) =>
+        | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
+        | undefined);
   /** Server names to connect to */
   selectedServers: string[];
   /**
@@ -543,7 +586,11 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
+  | "auth-bootstrap"
+  | "hydrate"
+  | "fork"
+  | "servers-changed"
+  | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -604,6 +651,10 @@ export interface UseChatSessionReturn {
      *  attribute it before persistence round-trips (shared sessions). */
     metadata?: Record<string, unknown>;
     /** Ephemeral SEP-1865 widget context for the next model turn. */
+    pluginMessage?: PluginMessageIntent;
+    isCurrent?: () => boolean;
+
+    pluginMentions?: PluginMentionSelection[];
     widgetModelContext?: WidgetModelContextEntry[];
     /**
      * Resolves `true` once the message was actually dispatched, `false` on
@@ -829,7 +880,7 @@ export interface UseChatSessionReturn {
       restoredModel?: ModelDefinition;
     },
   ) => Promise<void>;
-  syncResumedVersion: (version: number | null) => void;
+  syncResumedVersion: (version: number | null, sessionId?: string) => void;
   /**
    * Take the turn's `data-persist-receipt` — the server's own statement of what
    * happened to the chat-history save — or null when none arrived (a client
@@ -1916,6 +1967,9 @@ export function useChatSession(
     hostedContext?.requestRefreshAccessVersion;
   const hostedRefreshAccessSession = hostedContext?.refreshAccessSession;
   const hostedOnAccessRevoked = hostedContext?.onAccessRevoked;
+  const appToolsRegistry = useAppToolsRegistryApi();
+  const appToolsRegistryRef = useRef(appToolsRegistry);
+  appToolsRegistryRef.current = appToolsRegistry;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
@@ -2007,6 +2061,10 @@ export function useChatSession(
   const [chatSessionId, setChatSessionId] = useState(
     () => restoredScenarioTranscript?.chatSessionId ?? generateId(),
   );
+  const pluginWorkspace =
+    typeof options.pluginWorkspace === "function"
+      ? options.pluginWorkspace(chatSessionId)
+      : options.pluginWorkspace;
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
   /**
@@ -2039,7 +2097,14 @@ export function useChatSession(
    */
   const turnAbortedRef = useRef(false);
   const [, setHydrationTick] = useState(0);
-  const [resumedVersion, setResumedVersion] = useState<number | null>(null);
+  const [resumedVersionState, setResumedVersion] = useState<{
+    sessionId: string;
+    version: number | null;
+  } | null>(null);
+  const resumedVersion =
+    resumedVersionState?.sessionId === chatSessionId
+      ? resumedVersionState.version
+      : null;
   const [restoredToolRenderOverrides, setRestoredToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const [liveTraceState, setLiveTraceState] =
@@ -2058,6 +2123,8 @@ export function useChatSession(
    * chat turn) but referenced by the stream-part consumer, which is defined
    * before it — the same late-binding shape the transport refs use.
    */
+  const ownedMrtrAnswers = useRef(new Map<string, ReturnType<typeof createPrivateFormAnswer>>());
+  useEffect(() => () => { for (const answer of ownedMrtrAnswers.current.values()) answer.dispose(); ownedMrtrAnswers.current.clear(); }, []);
   const mrtrResumeSenderRef = useRef<
     | ((
         round: HostedMrtrRound,
@@ -2078,7 +2145,10 @@ export function useChatSession(
   const chatToolCallRequestIdsRef = useRef<
     Map<string, Map<string | number, string>>
   >(new Map());
-  const resumedVersionRef = useRef<number | null>(null);
+  const resumedVersionRef = useRef<{
+    sessionId: string;
+    version: number | null;
+  } | null>(null);
   const rewindRef = useRef<{
     chatSessionId: string;
     lineage: ChatRewind;
@@ -2243,6 +2313,7 @@ export function useChatSession(
     (event: MrtrInputRequiredEvent) => {
       const store = useHostedMrtrStore.getState();
       const withdraw = (reason: string) => {
+        for (const [key, answer] of ownedMrtrAnswers.current) if (key.startsWith(`${event.continuationId}:`)) { answer.dispose(); ownedMrtrAnswers.current.delete(key); }
         void cancelHostedMrtrContinuation({
           continuationId: event.continuationId,
           reason,
@@ -2269,6 +2340,7 @@ export function useChatSession(
           ? { operationLabel: event.operationLabel }
           : {}),
         requests: event.inputRequests,
+        ...(event.pluginModelOperation ? { pluginModelOperation: event.pluginModelOperation, pluginFormProfile: event.pluginFormProfile, pluginFormServiceScope: event.pluginFormServiceScope } : {}),
         expiresAt: event.expiresAt,
         timestamp: new Date().toISOString(),
       };
@@ -2432,6 +2504,10 @@ export function useChatSession(
           const store = useHostedMrtrStore.getState();
           if (event.kind === "resolved") {
             store.resolveContinuation(event.continuationId);
+            if (event.pluginModelOperation) {
+              for (const [key, answer] of ownedMrtrAnswers.current) if (key.startsWith(`${event.continuationId}:`)) { answer.dispose(); ownedMrtrAnswers.current.delete(key); }
+              void acknowledgeHostedMrtrContinuation(event.continuationId).catch(() => {});
+            }
             if (event.indeterminate) {
               // Exactly-once: a side-effecting call may or may not have run, so
               // never auto-retry — say so and let the user decide.
@@ -2669,10 +2745,25 @@ export function useChatSession(
     return aborted;
   }, []);
 
-  const syncResumedVersion = useCallback((version: number | null) => {
-    resumedVersionRef.current = version;
-    setResumedVersion(version);
-  }, []);
+  const syncResumedVersion = useCallback(
+    (version: number | null, sessionId = chatSessionId) => {
+      // History reads can finish after navigation. Their cursor belongs to the
+      // requested thread, never whichever thread happens to be mounted now.
+      if (sessionId !== chatSessionIdRef.current) return;
+      const previous = resumedVersionRef.current;
+      if (
+        version !== null &&
+        previous?.sessionId === sessionId &&
+        previous.version !== null &&
+        version < previous.version
+      )
+        return;
+      const next = { sessionId, version };
+      resumedVersionRef.current = next;
+      setResumedVersion(next);
+    },
+    [chatSessionId],
+  );
   const syncRestoredToolRenderOverrides = useCallback(
     (overrides: Record<string, ToolRenderOverride>) => {
       restoredToolRenderOverridesRef.current = overrides;
@@ -3152,37 +3243,40 @@ export function useChatSession(
     ],
   );
 
-  const handleChatError = useCallback((chatError: Error) => {
-    // Every chat failure used to end here and go no further: this handler
-    // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
-    // that no-ops everything else. A hosted 502 produced zero client
-    // telemetry — the failure a user reported was one we had no record of.
-    reportChatFailure(chatError, lastChatResponseRef.current);
+  const handleChatError = useCallback(
+    (chatError: Error) => {
+      // Every chat failure used to end here and go no further: this handler
+      // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
+      // that no-ops everything else. A hosted 502 produced zero client
+      // telemetry — the failure a user reported was one we had no record of.
+      reportChatFailure(chatError, lastChatResponseRef.current);
 
-    // Try to recover a structured limitKind from a JSON-shaped error message
-    // so the concurrency carve-out is honored on the SSE error path. Best
-    // effort: untouched if the message isn't JSON.
-    let limitKind: "total" | "concurrency" | undefined;
-    const jsonStart = chatError.message.indexOf("{");
-    if (jsonStart >= 0) {
-      try {
-        const parsed = JSON.parse(chatError.message.slice(jsonStart));
-        if (parsed && typeof parsed === "object") {
-          const value = (parsed as { limitKind?: unknown }).limitKind;
-          if (value === "total" || value === "concurrency") {
-            limitKind = value;
+      // Try to recover a structured limitKind from a JSON-shaped error message
+      // so the concurrency carve-out is honored on the SSE error path. Best
+      // effort: untouched if the message isn't JSON.
+      let limitKind: "total" | "concurrency" | undefined;
+      const jsonStart = chatError.message.indexOf("{");
+      if (jsonStart >= 0) {
+        try {
+          const parsed = JSON.parse(chatError.message.slice(jsonStart));
+          if (parsed && typeof parsed === "object") {
+            const value = (parsed as { limitKind?: unknown }).limitKind;
+            if (value === "total" || value === "concurrency") {
+              limitKind = value;
+            }
           }
+        } catch {
+          // not JSON; ignore
         }
-      } catch {
-        // not JSON; ignore
       }
-    }
-    notifyMCPJamLimitError({
-      message: chatError.message,
-      limitKind,
-      ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
-    });
-  }, [hostedScenarioId]);
+      notifyMCPJamLimitError({
+        message: chatError.message,
+        limitKind,
+        ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
+      });
+    },
+    [hostedScenarioId],
+  );
 
   // Create transport
   const pendingWidgetModelContextRef = useRef<
@@ -3306,6 +3400,16 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
+        ...(isHostedDirectChat && pluginWorkspace
+          ? {
+              pluginWorkspace,
+              pluginContextReferences:
+                typeof options.pluginContextReferences === "function"
+                  ? options.pluginContextReferences(pluginWorkspace.workspaceId)
+                  : options.pluginContextReferences ?? [],
+              ...pluginGlobalTurnFields(options.pluginGlobalContext?.()),
+            }
+          : {}),
         ...(isHostedDirectChat
           ? { browserScope: "conversation" as const }
           : {}),
@@ -3510,8 +3614,10 @@ export function useChatSession(
           ...(shouldSendClientApiKey && customProviders.length > 0
             ? { customProviders }
             : {}),
-          ...(resumedVersionRef.current !== null
-            ? { expectedVersion: resumedVersionRef.current }
+          ...(resumedVersionRef.current?.sessionId ===
+            chatSessionIdRef.current &&
+          resumedVersionRef.current.version !== null
+            ? { expectedVersion: resumedVersionRef.current.version }
             : {}),
           ...(rewind ? { rewind } : {}),
           ...(comparePaneRef.current ? { comparePane: true } : {}),
@@ -3523,7 +3629,7 @@ export function useChatSession(
           // (no memoization) so any iframe that mounted between the previous
           // turn and this send contributes its tools. The registry caps size;
           // the server defends the boundary again in `validateAppToolEntries`.
-          appTools: useAppToolsRegistry
+          appTools: appToolsRegistryRef.current
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
           // WebMCP page tools, when the caller opted this turn into the tools
@@ -3601,6 +3707,10 @@ export function useChatSession(
     selectedServers,
     directVisibility,
     hostedProjectId,
+    pluginWorkspace?.workspaceId,
+    pluginWorkspace?.version,
+    options.pluginContextReferences,
+    options.pluginGlobalContext,
     chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
@@ -3720,7 +3830,7 @@ export function useChatSession(
         return;
       }
 
-      const entry = useAppToolsRegistry
+      const entry = appToolsRegistryRef.current
         .getState()
         .resolve(toolName, chatSessionIdRef.current);
       if (!entry) {
@@ -3801,7 +3911,7 @@ export function useChatSession(
       // Without this, a server stream paused on this tool call would hang
       // forever waiting for a client-fulfilled result.
       const controller = new AbortController();
-      const registry = useAppToolsRegistry.getState();
+      const registry = appToolsRegistryRef.current.getState();
       registry.registerPendingCall(entry.instance.bridgeId, controller);
       try {
         const call = entry.bridge.callTool({
@@ -3977,7 +4087,7 @@ export function useChatSession(
       round: HostedMrtrRound,
       responses: Record<string, MrtrElicitationResponse>,
     ) => {
-      const toolCallId = findUnresolvedMrtrToolCallId(
+      const toolCallId = round.pluginModelOperation?.toolCallId ?? findUnresolvedMrtrToolCallId(
         messagesRef.current,
         round.operationLabel,
       );
@@ -3998,6 +4108,15 @@ export function useChatSession(
       // the moment the request is dispatched, and holding the dialog's
       // `responding` flag for the turn's lifetime would freeze the NEXT round's
       // dialog behind a spinner. Stream failures surface through `onError`.
+      if (round.pluginModelOperation) {
+        let answer = ownedMrtrAnswers.current.get(round.key);
+        if (!answer) { answer = createPrivateFormAnswer({ kind: "mrtr", id: round.continuationId, round: round.round }); ownedMrtrAnswers.current.set(round.key, answer); }
+        {
+          const responsesBlobId = await answer.prepare(responses);
+          void baseSendMessage(undefined, { body: buildOwnedMrtrChatResumeBody({ operation: round.pluginModelOperation, serverId: round.serverId, continuationId: round.continuationId, round: round.round, responsesBlobId }) }).catch((error) => { console.warn("[hosted-mrtr] owned resume turn failed", error); });
+        }
+        return;
+      }
       void baseSendMessage(undefined, {
         body: buildMrtrChatResumeBody({
           toolCallId,
@@ -4085,7 +4204,10 @@ export function useChatSession(
   const isTurnActive = status === "submitted" || status === "streaming";
   useEffect(() => {
     if (!isTurnActive) return;
-    turnStartVersionRef.current = resumedVersionRef.current;
+    turnStartVersionRef.current =
+      resumedVersionRef.current?.sessionId === chatSessionIdRef.current
+        ? resumedVersionRef.current.version
+        : null;
     // The handle identifies THIS lane: compare mode runs one of these hooks per
     // lane, and the hold has to know which turns are still live.
     const hold = beginChatTurnScopeStepUpHold(() => stopRef.current());
@@ -4424,9 +4546,21 @@ export function useChatSession(
         url: string;
       }>;
       metadata?: Record<string, unknown>;
+      pluginMessage?: PluginMessageIntent;
+      isCurrent?: () => boolean;
+      pluginMentions?: PluginMentionSelection[];
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
-      const { text, files, metadata, widgetModelContext } = options;
+      const {
+        text,
+        files,
+        metadata,
+        widgetModelContext,
+        pluginMessage,
+        isCurrent,
+        pluginMentions,
+      } = options;
+
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
       // client (`web-chat-turn.ts` disconnects the prior one), and each new
       // client RESTARTS its numeric JSON-RPC ids from scratch. Any `tools/call`
@@ -4438,6 +4572,7 @@ export function useChatSession(
       // (Only genuinely NEW user turns flow through this wrapper; in-turn
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
+      if (isCurrent && !isCurrent()) return Promise.resolve(false);
       chatToolCallRequestIdsRef.current.clear();
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
@@ -4547,6 +4682,7 @@ export function useChatSession(
           return false;
         }
         try {
+          if (isCurrent && !isCurrent()) return false;
           const timestampedMetadata = withMessageTimestampMetadata(
             metadata,
             Date.now(),
@@ -4554,7 +4690,23 @@ export function useChatSession(
           const extra = {
             metadata: timestampedMetadata,
           } as { metadata: unknown };
-          if (files && files.length > 0) {
+          if (pluginMessage) {
+            baseSendMessage(
+              { parts: pluginMessageParts(pluginMessage.params), ...extra },
+              { body: { pluginMessage } },
+            );
+          } else if (pluginMentions?.length) {
+            baseSendMessage({
+              parts: [
+                ...buildMentionContextMessages(pluginMentions).flatMap(
+                  (message) => message.parts,
+                ),
+                { type: "text", text },
+                ...(files ?? []),
+              ],
+              ...extra,
+            });
+          } else if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
             baseSendMessage({ text, files, ...extra });
           } else {
