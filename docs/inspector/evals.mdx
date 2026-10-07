@@ -305,6 +305,17 @@ A run needs three things, all picked from the suite header:
 
 When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
 
+**Pre-flight notices** appear in the sheet before you click Start, so problems surface before the run is submitted rather than after:
+
+| Notice | What it means | Effect on Start |
+|--------|---------------|-----------------|
+| Server isn't connected | A server the run needs is not currently connected. A **Connect** button lets you connect it from the sheet. If the connect attempt fails, an inline message says so with an **Open Servers** link. | Start is still enabled — the launch will try to connect. |
+| Server no longer in project | A server referenced by the suite or its environment has been removed from the project. | **Blocks Start.** Remove the server from the suite's settings or pick a different server group. |
+| Environment refused by backend | The backend cannot launch one of the run's environments — for example, because a server group references a deleted server. The backend's reason is shown, with an **Open suite settings** link. | **Blocks Start.** Fix the environment's configuration in suite settings. |
+| Provider not enabled | A model provider used by the run is not enabled for your organization. A **Manage models** link opens the org's AI providers settings. | Start is still enabled — the hosted catalog is dynamic and the provider may still serve the model. |
+
+If the launch fails after you click Start, the error appears inline in the sheet (the sheet stays open) rather than as a separate toast notification. Fix the problem and click Start again.
+
 ### Pre-run credit estimate
 
 When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
