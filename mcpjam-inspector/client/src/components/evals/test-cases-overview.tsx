@@ -34,7 +34,7 @@ import {
   getEffectiveSuiteServers,
   suiteHasRunnableServers,
 } from "./helpers";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRunListItem } from "./types";
 import { isModelFree } from "@/shared/steps";
 import {
   getDefaultTestCaseModelValue,
@@ -81,7 +81,7 @@ interface TestCasesOverviewProps {
    * minimal callers don't need it; the matrix only renders when host
    * attachments exist, which implies runs.
    */
-  runs?: EvalSuiteRun[];
+  runs?: EvalSuiteRunListItem[];
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   onTestCaseClick: (testCaseId: string) => void;
