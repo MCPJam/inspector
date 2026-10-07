@@ -82,6 +82,7 @@ import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
+  harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -1160,8 +1161,12 @@ chatV2.post("/", async (c) => {
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+            code: "FEATURE_NOT_SUPPORTED",
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: "model-unsupported",
           },
-          503,
+          422,
         );
       }
     }
@@ -1596,11 +1601,18 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422 when this turn's settings are the problem; 503 for an operator
+        // state (broker delivery off, no computers data plane).
+        const status = harnessUnavailableHttpStatus(availability.kind);
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+            ...(status === 422 ? { code: "FEATURE_NOT_SUPPORTED" } : {}),
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: availability.kind,
           },
-          503,
+          status,
         );
       }
     }

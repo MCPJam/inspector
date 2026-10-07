@@ -4028,7 +4028,9 @@ export async function runHarnessTurn(
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}${bootstrapLog.text}`,
-          bootstrapLog.context,
+          // `harnessId` rides both outcome lines so the feature-health monitor
+          // can compare failed against completed turns per harness.
+          { ...bootstrapLog.context, harnessId: harnessAdapter.id },
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
@@ -4245,7 +4247,7 @@ export async function runHarnessTurn(
         source: "chat.harness-turn",
         hop: "user_server_hop",
         transport: "http_stream",
-        context: { promptIndex },
+        context: { promptIndex, harnessId: harnessAdapter.id },
       });
       // A turn-time install that failed (the pnpm 11 / deny-all egress class)
       // never reaches the timing line, so the failure path reports the
@@ -4254,6 +4256,7 @@ export async function runHarnessTurn(
       void logHarnessBootstrapOnFailure(
         bakeObservedSandbox,
         harnessAdapter.pinnedRuntimeVersion,
+        harnessAdapter.id,
       );
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();

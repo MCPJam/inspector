@@ -1793,8 +1793,13 @@ describe("web routes — chat-v2 hosted mode", () => {
         token
       );
 
-      expect(response.status).toBe(503);
-      const body = (await response.json()) as { error?: { message?: string } };
+      expect(response.status).toBe(422);
+      const body = (await response.json()) as {
+        error?: { message?: string; code?: string };
+        details?: Record<string, unknown>;
+      };
+      expect(JSON.stringify(body)).toContain("FEATURE_NOT_SUPPORTED");
+      expect(JSON.stringify(body)).toContain('"reason":"HARNESS_UNAVAILABLE"');
       expect(JSON.stringify(body)).toContain("chooses its own model");
       // The id its owner has to fix, named in the refusal.
       expect(JSON.stringify(body)).toContain("anthropic/claude-sonnet-4.5");
@@ -1827,7 +1832,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         token
       );
 
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
       expect(JSON.stringify(await response.json())).toContain(
         "anthropic/claude-sonnet-4.5"
       );
@@ -1982,6 +1987,32 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(response.status).toBe(503);
       expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("an operator state (broker delivery off) stays 503; a turn setting is 422 FEATURE_NOT_SUPPORTED", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
+        ok: false,
+        kind: "broker-disabled",
+        reason: "broker delivery is disabled on this server",
+      } as never);
+      const operator = await post({}, claudeCode);
+      expect(operator.status).toBe(503);
+      const operatorBody = JSON.stringify(await operator.json());
+      expect(operatorBody).toContain('"kind":"broker-disabled"');
+      expect(operatorBody).not.toContain("FEATURE_NOT_SUPPORTED");
+
+      checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
+        ok: false,
+        kind: "setting-unsupported",
+        reason: "the harness can't apply a reasoning effort yet",
+      } as never);
+      const setting = await post({}, claudeCode);
+      expect(setting.status).toBe(422);
+      const settingBody = JSON.stringify(await setting.json());
+      expect(settingBody).toContain("FEATURE_NOT_SUPPORTED");
+      expect(settingBody).toContain('"reason":"HARNESS_UNAVAILABLE"');
+      expect(settingBody).toContain('"kind":"setting-unsupported"');
+      expect(settingBody).toContain('"harness":"claude-code"');
     });
 
     it("needs a conversation id: the box is per conversation", async () => {

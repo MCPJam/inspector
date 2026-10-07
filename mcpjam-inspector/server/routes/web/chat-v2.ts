@@ -127,6 +127,7 @@ import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
+  harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -1064,10 +1065,17 @@ chatV2.post("/", async (c) => {
         modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
       });
       if (hostModelRefusal) {
+        // 422, not 503: the request is well-formed and retrying it changes
+        // nothing. This client's harness cannot run this turn.
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: "model-unsupported",
+          },
         );
       }
     }
@@ -1235,10 +1243,22 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422 when this turn's settings are the problem (retrying changes
+        // nothing); 503 for an operator state — broker delivery off, or no
+        // computers data plane — which works once the server is fixed.
+        const status = harnessUnavailableHttpStatus(availability.kind);
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          status,
+          status === 503
+            ? ErrorCode.INTERNAL_ERROR
+            : ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            // Branch on the kind, never on the wording.
+            kind: availability.kind,
+          },
         );
       }
     }
