@@ -338,9 +338,34 @@ describe("inline App and composer composition", () => {
       content: [],
       structuredContent: { fixture: true, value: 42 },
     };
+    // The App re-sending context on its own right after Remove all (Bits &
+    // Bolts redraws and re-posts) is refused: the removal stays removed.
+    const contextPosts = () =>
+      mocks.fetch.mock.calls.filter(([url]) =>
+        String(url).endsWith("/model/context"),
+      ).length;
+    const posted = contextPosts();
+    await act(async () => {
+      await expect(update(structured)).rejects.toThrow(
+        "Use the App to attach it again",
+      );
+    });
+    expect(contextPosts()).toBe(posted);
+    expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
+    expect(
+      screen.queryByRole("button", { name: "Remove App context" }),
+    ).not.toBeInTheDocument();
+    // The person clicks into the App (focus moves into its frame) and it
+    // attaches again.
+    const frame = document.createElement("iframe");
+    frame.title = "MCP App: fixture.part";
+    document.body.append(frame);
+    frame.focus();
     await act(async () => {
       await update(structured);
     });
+    frame.remove();
+    expect(mocks.fetch.mock.lastCall![1].body).toContain('"attach":"user"');
     expect(
       screen.getByRole("button", { name: "Remove App context" }),
     ).toBeInTheDocument();
@@ -359,9 +384,12 @@ describe("inline App and composer composition", () => {
     expect(mocks.sourceEffects).toBe(1);
     // Keep the old leaf mounted deliberately: scope change must fence it before
     // passive cleanup, and returning cannot revive its former publications.
+    document.body.append(frame);
+    frame.focus();
     await act(async () => {
       await update(params);
     });
+    frame.remove();
     expect(
       screen.getByRole("button", { name: "Remove Triangle" }),
     ).toBeInTheDocument();

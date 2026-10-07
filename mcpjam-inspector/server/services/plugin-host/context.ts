@@ -26,6 +26,8 @@ export type PluginContextUpdate = {
   operationId: string;
   sequence: number;
   params: unknown;
+  /** The person was using the App when it sent this (see `held` below). */
+  attach?: "user";
 };
 export type PluginContextRemoval = {
   operationId: string;
@@ -60,6 +62,7 @@ const persistedContextSchema = z
     removals: z
       .array(z.tuple([z.string().min(1).max(128), z.string().max(160)]))
       .max(PLUGIN_CONTEXT_REMOVAL_WINDOW),
+    held: z.literal(true).optional(),
   })
   .strict();
 
@@ -69,6 +72,14 @@ export class PluginContextWorkspace {
   private readonly cursors = new Map<string, Cursor>();
   private readonly revisions = new Map<string, number>();
   private readonly removals = new Map<string, Map<string, string>>();
+  /**
+   * Instances whose context the person removed. The spec has the host send
+   * the App `null` and leaves the rest to the App, and some Apps post their
+   * view again at once (Bits & Bolts redraws, its camera settles, and it
+   * re-sends). A removal stays removed: until the person uses the App again
+   * (an update marked `attach: "user"`), its updates are refused.
+   */
+  private readonly held = new Set<string>();
   constructor(workspaceId: string) {
     this.state = createPluginSession(workspaceId);
   }
@@ -117,6 +128,7 @@ export class PluginContextWorkspace {
           }
         : null,
       removals: [...(this.removals.get(instanceId) ?? [])],
+      ...(this.held.has(instanceId) ? { held: true } : {}),
     });
     if (Buffer.byteLength(json, "utf8") > PLUGIN_INSTANCE_CONTEXT_BYTES)
       throw new PluginInvocationError("INSTANCE_CONTEXT_TOO_LARGE");
@@ -164,6 +176,8 @@ export class PluginContextWorkspace {
     if (saved.cursor) this.cursors.set(instanceId, saved.cursor);
     this.revisions.set(instanceId, saved.revision);
     this.removals.set(instanceId, new Map(saved.removals));
+    if (saved.held) this.held.add(instanceId);
+    else this.held.delete(instanceId);
   }
 
   /** Mutations prepare on a separate core session; failed storage never leaks optimism. */
@@ -212,6 +226,8 @@ export class PluginContextWorkspace {
       request.sequence !== (receipt?.sequence ?? 0) + 1
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_SEQUENCE_DENIED");
+    if (this.held.has(instanceId) && request.attach !== "user")
+      throw new PluginInvocationError("INSTANCE_CONTEXT_HELD");
     const updateId = randomUUID();
     const transition = reducePluginSession(this.state, {
       type: "context",
@@ -225,6 +241,7 @@ export class PluginContextWorkspace {
     if (transition.rejection)
       throw new PluginInvocationError(transition.rejection);
     this.state = transition.state;
+    this.held.delete(instanceId);
     this.revisions.set(instanceId, (this.revisions.get(instanceId) ?? 0) + 1);
     this.cursors.set(instanceId, {
       operationId: request.operationId,
@@ -311,6 +328,7 @@ export class PluginContextWorkspace {
       receipts.delete(key);
     }
     this.removals.set(instanceId, receipts);
+    this.held.add(instanceId);
     return this.snapshot(instanceId, generation);
   }
 
@@ -334,6 +352,7 @@ export class PluginContextWorkspace {
     this.cursors.delete(instanceId);
     this.revisions.delete(instanceId);
     this.removals.delete(instanceId);
+    this.held.delete(instanceId);
     const instance = this.state.instances[instanceId];
     if (instance?.lifecycle === "closed") {
       // The enclosing owner revoked/removed this UUID lease before release.

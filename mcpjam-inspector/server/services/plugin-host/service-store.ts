@@ -1,3 +1,4 @@
+import { getServiceCredential } from "../service-credential.js";
 import { PluginInvocationError } from "./invocation.js";
 import { timedPluginStep } from "./timing.js";
 import { localPluginControls, pluginLocalStoresEnabled } from "./local-store.js";
@@ -24,7 +25,7 @@ export function createPluginServiceStore(
   options: PluginServiceStoreOptions = {},
 ) {
   const env = options.env ?? process.env;
-  const token = env.INSPECTOR_SERVICE_TOKEN?.trim();
+  const token = getServiceCredential(env);
   if (!token) {
     // A single-user local install has no service token: keep App instance
     // controls in this process (D2). Receipts stay with the live invoker, and

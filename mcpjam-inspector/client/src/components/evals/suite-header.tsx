@@ -40,6 +40,7 @@ import {
 import {
   EvalSuite,
   EvalSuiteRun,
+  EvalSuiteRunListItem,
   EvalIteration,
   EvalCase,
   SuiteAggregate,
@@ -79,7 +80,7 @@ interface SuiteHeaderProps {
       refreshSnapshot?: boolean;
     },
   ) => void;
-  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
+  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRunListItem) => void;
   onCancelRun: (runId: string) => void;
   onViewModeChange: (mode: "overview") => void;
   connectedServerNames: Set<string>;
@@ -87,7 +88,7 @@ interface SuiteHeaderProps {
   replayingRunId?: string | null;
   cancellingRunId: string | null;
   runsViewMode?: SuiteOverviewView;
-  runs?: EvalSuiteRun[];
+  runs?: EvalSuiteRunListItem[];
   allIterations?: EvalIteration[];
   aggregate?: SuiteAggregate | null;
   testCases?: EvalCase[];
@@ -425,7 +426,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 Run {formatRunId(selectedRunDetails._id)}
               </h2>
               {selectedRunDetails.configSnapshot.executionVenue === "local" && (
-                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">Ran locally</span>
+                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  Ran locally
+                </span>
               )}
               <PassCriteriaBadge
                 run={selectedRunDetails}
@@ -496,23 +499,23 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             !isEnvironmentSuite && !hasServersConfigured;
           const isRunAllDisabled = Boolean(
             isRerunning ||
-              replayingRunId != null ||
-              runningTestCaseId != null ||
-              evalRunsDisabledReason ||
-              testCaseCount === 0 ||
-              runAllNeedsLocalServers,
+            replayingRunId != null ||
+            runningTestCaseId != null ||
+            evalRunsDisabledReason ||
+            testCaseCount === 0 ||
+            runAllNeedsLocalServers,
           );
           const runAllDisabledReasonTooltip = evalRunsDisabledReason
             ? evalRunsDisabledReason
             : runAllNeedsLocalServers
-            ? "Configure suite servers before running the full suite."
-            : testCaseCount === 0
-            ? "Add a test case first."
-            : isRerunning || replayingRunId != null
-            ? "A suite or replay is already in progress."
-            : runningTestCaseId != null
-            ? "Finish the in-progress test case run first."
-            : null;
+              ? "Configure suite servers before running the full suite."
+              : testCaseCount === 0
+                ? "Add a test case first."
+                : isRerunning || replayingRunId != null
+                  ? "A suite or replay is already in progress."
+                  : runningTestCaseId != null
+                    ? "Finish the in-progress test case run first."
+                    : null;
           // `missingServers` compares the LOCAL server list against connected
           // ones. An environment suite launches against the server-side resolved
           // set instead, so a disconnected legacy entry says nothing about
@@ -813,9 +816,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             {isGeneratingTestCases
               ? "Generating test cases…"
               : !canGenerateTestCases
-              ? generateTestCasesDisabledReason ??
-                "Configure suite servers before generating cases."
-              : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
+                ? (generateTestCasesDisabledReason ??
+                  "Configure suite servers before generating cases.")
+                : "Generate suggested cases from your server's tools. Use the arrow to set how many and what kind."}
           </TooltipContent>
         </Tooltip>
         <GenerateCasesConfigPopover
@@ -937,8 +940,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     ? "Replaying..."
                     : "Running..."
                   : replayableLatestRun
-                  ? "Replay latest run"
-                  : "Run"}
+                    ? "Replay latest run"
+                    : "Run"}
               </Button>
             </span>
           </TooltipTrigger>
@@ -948,12 +951,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 ? evalRunsDisabledReason
                 : "Replay the latest CI run"
               : evalRunsDisabledReason
-              ? evalRunsDisabledReason
-              : !hasServersConfigured
-              ? "No MCP servers are configured for this suite"
-              : missingServers.length > 0
-              ? "Connect and run."
-              : "Run all cases"}
+                ? evalRunsDisabledReason
+                : !hasServersConfigured
+                  ? "No MCP servers are configured for this suite"
+                  : missingServers.length > 0
+                    ? "Connect and run."
+                    : "Run all cases"}
           </TooltipContent>
         </Tooltip>
       </>

@@ -119,7 +119,12 @@ import {
 } from "@/shared/model-provider";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
-import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  formatErrorMessage,
+} from "@/components/chat-v2/shared/chat-helpers";
+import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
+import { isAbortError } from "@/shared/abort-errors";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import {
   withBuiltInToolDefinitions,
@@ -1861,6 +1866,39 @@ export function areHostedSessionScopesEqual(
   return a.projectId === b.projectId && a.targetKey === b.targetKey;
 }
 
+/**
+ * A chat turn that failed for an OpenAI plugin extension reason (the server
+ * tags those with `details.pluginCode`), or one an App sent, gets a Logs
+ * entry beside the chat's own error.
+ */
+export function logPluginChatFailure(
+  error: Error,
+  appMessageTurn: boolean,
+): void {
+  if (isAbortError(error)) return;
+  const formatted = formatErrorMessage(error);
+  let pluginCode: unknown;
+  const start = error.message.indexOf("{");
+  if (start >= 0) {
+    try {
+      pluginCode = JSON.parse(error.message.slice(start))?.details?.pluginCode;
+    } catch {
+      // Not a JSON envelope (a stream error); only an App turn is logged.
+    }
+  }
+  if (typeof pluginCode !== "string" && !appMessageTurn) return;
+  const code =
+    typeof pluginCode === "string" ? pluginCode : "APP_MESSAGE_TURN_FAILED";
+  const reason = formatted?.message ?? error.message;
+  logPluginExtensionIssue({
+    code,
+    message: appMessageTurn
+      ? `The message an App sent to this chat didn't get a reply. ${reason}`
+      : reason,
+    dedupeKey: `chat-turn:${code}`,
+  });
+}
+
 function isAuthDeniedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const withStatus = error as { status?: unknown; message?: unknown };
@@ -3158,6 +3196,9 @@ export function useChatSession(
   // `new Error(await response.text())` and the status, content type, and
   // request id are gone by the time `handleChatError` runs.
   const lastChatResponseRef = useRef<ChatResponseMeta | null>(null);
+  // Whether the turn in flight was sent by an App (`ui/message`), so its
+  // failure also lands in the Logs panel next to the App's other entries.
+  const appMessageTurnRef = useRef(false);
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3250,6 +3291,7 @@ export function useChatSession(
       // that no-ops everything else. A hosted 502 produced zero client
       // telemetry — the failure a user reported was one we had no record of.
       reportChatFailure(chatError, lastChatResponseRef.current);
+      logPluginChatFailure(chatError, appMessageTurnRef.current);
 
       // Try to recover a structured limitKind from a JSON-shaped error message
       // so the concurrency carve-out is honored on the SSE error path. Best
@@ -4690,6 +4732,7 @@ export function useChatSession(
           const extra = {
             metadata: timestampedMetadata,
           } as { metadata: unknown };
+          appMessageTurnRef.current = pluginMessage !== undefined;
           if (pluginMessage) {
             baseSendMessage(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
