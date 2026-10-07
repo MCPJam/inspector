@@ -53,6 +53,10 @@ type SharedSlackCardState =
   | "none"
   | "automatic_invite_pending";
 
+// Automation counts a declined or expired invite as done and never sends
+// another, so these keep their Retry even while a job is briefly pending.
+const AUTOMATION_DONE_STATUSES = new Set(["invite_declined", "invite_expired"]);
+
 // Codes where the backend refuses a manual retry until support reconciles.
 const SUPPORT_ONLY_ERROR_CODES = new Set([
   "provision_outcome_unknown",
@@ -452,7 +456,8 @@ export function SharedSlackChannelCard({
           </p>
         </div>
         {dto.canManageInvite &&
-        !dto.automaticInvitePending &&
+        (!dto.automaticInvitePending ||
+          AUTOMATION_DONE_STATUSES.has(channel.status)) &&
         !SUPPORT_ONLY_ERROR_CODES.has(channel.errorCode ?? "") ? (
           <button
             type="button"

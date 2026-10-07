@@ -425,6 +425,21 @@ describe("SharedSlackChannelCard", () => {
     }
   });
 
+  it.each(["invite_expired", "invite_declined"] as const)(
+    "keeps Retry for a %s invite even while an automatic job is pending",
+    (status) => {
+      mockUseQuery.mockReturnValue(
+        dto({
+          automaticInvitePending: true,
+          channel: { status, openUrl: null },
+        })
+      );
+      render(<SharedSlackChannelCard organizationId="org_1" />);
+      // Automation never resends these, so Retry is the only way forward.
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    }
+  );
+
   it("explains a declined invite: free Slack needs an upgrade or trial, not that it can never accept", () => {
     mockUseQuery.mockReturnValue(
       dto({ channel: { status: "invite_declined", openUrl: null } })
