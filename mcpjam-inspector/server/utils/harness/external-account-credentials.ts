@@ -61,6 +61,7 @@
  * `null` is the same answer the turn gave before brokering existed, so a
  * degraded read is a non-regression rather than a new failure.
  */
+import { getBoxCredentialAvailability } from "../computers/control-plane-client.js";
 import {
   convexGetEnvironmentSecretSelection,
   convexListProjectSecretBindings,
@@ -168,6 +169,61 @@ function bindingDelivers(
   return required.hosts.every((host) => hosts.has(host.toLowerCase()));
 }
 
+const BOX_CREDENTIAL_LOOKUP_TIMEOUT_MS = 10_000;
+
+/**
+ * Ask the box's own scope. `null` ⇒ could not establish (refused like an
+ * absence); `undefined` ⇒ the backend predates the route.
+ */
+async function fetchFromBox(args: {
+  bearer: string;
+  sandboxRowId: string;
+  required: Readonly<Record<string, HarnessExternalAccountBrokerBinding>>;
+  /** The turn's own signal: a stopped turn must not wait out the lookup. */
+  signal?: AbortSignal;
+}): Promise<BrokeredCredentialAvailability | null | undefined> {
+  let answer;
+  try {
+    // Bounded as well as cancellable: a stalled lookup is refused like an
+    // absence instead of holding the turn open.
+    const timeout = AbortSignal.timeout(BOX_CREDENTIAL_LOOKUP_TIMEOUT_MS);
+    answer = await getBoxCredentialAvailability({
+      ...args,
+      signal: args.signal ? AbortSignal.any([args.signal, timeout]) : timeout,
+    });
+  } catch (error) {
+    logger.warn(
+      "[external-account-credentials] box credential lookup failed; " +
+        "treating the credential as unestablished",
+      { error: error instanceof Error ? error.message : String(error) },
+    );
+    return null;
+  }
+  if (!answer.ok) {
+    if (answer.status === 404) return undefined;
+    logger.warn(
+      "[external-account-credentials] box credential lookup refused; " +
+        "treating the credential as unestablished",
+      { status: answer.status },
+    );
+    return null;
+  }
+  const available = new Set<string>();
+  const misboundHosts: Record<string, string[]> = {};
+  const unselected = new Set<string>();
+  for (const [name, state] of Object.entries(answer.value.credentials ?? {})) {
+    if (state.status === "available") available.add(name);
+    else if (state.status === "misbound") misboundHosts[name] = state.hosts;
+    else if (state.status === "unselected") unselected.add(name);
+  }
+  return {
+    available,
+    misboundHosts,
+    unselected,
+    environmentMissing: answer.value.environmentMissing === true,
+  };
+}
+
 /**
  * The brokered credentials this box will actually be carrying, by name.
  *
@@ -231,6 +287,16 @@ export type BrokeredCredentialAvailability = {
 
 export async function fetchBrokeredCredentialNames(args: {
   bearer?: string;
+  /**
+   * The ephemeral box the turn runs on. When present the question is put to the
+   * BOX's own scope (`getBoxCredentialAvailability`), which answers for anyone
+   * the box's scope admits — including a non-member participant, whom the
+   * member-only readers below always refuse. A backend that predates the route
+   * falls back to those readers. Absent (a persistent computer) ⇒ the readers.
+   */
+  sandboxRowId?: string;
+  /** Cancels the box lookup when the turn stops. */
+  signal?: AbortSignal;
   projectId?: string;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY. Absent ⇒
@@ -269,6 +335,16 @@ export async function fetchBrokeredCredentialNames(args: {
   // Not a failure: this box provably carries no brokered transform, so "none"
   // is the correct answer rather than an unknown.
   if (args.boxKind !== "sandbox") return empty;
+  if (args.sandboxRowId && args.bearer) {
+    const fromBox = await fetchFromBox({
+      bearer: args.bearer,
+      sandboxRowId: args.sandboxRowId,
+      required: args.required,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+    // `undefined` ⇒ this backend has no such route: use the member readers.
+    if (fromBox !== undefined) return fromBox;
+  }
   if (!args.bearer || !args.projectId) return null;
   let rows: ProjectSecretBinding[];
   try {
@@ -398,8 +474,7 @@ export function planExternalAccountCredentials(args: {
   secretEnv: Readonly<Record<string, string>> | undefined;
   /** The adapter's brokered binding declaration, if it has one. */
   brokerBinding:
-    | Readonly<Record<string, HarnessExternalAccountBrokerBinding>>
-    | undefined;
+    Readonly<Record<string, HarnessExternalAccountBrokerBinding>> | undefined;
   /** Names the box is carrying by brokered egress. `null` = could not tell,
    *  which is refused exactly like an absence. */
   brokeredAvailable: ReadonlySet<string> | null;
@@ -494,6 +569,9 @@ export async function resolveExternalAccountCredentialPlan(args: {
   environmentId?: string;
   environmentUnresolvedReason?: string;
   boxKind: "sandbox" | "computer";
+  /** The box's own row, when the turn is bound to one: it answers for itself. */
+  sandboxRowId?: string;
+  signal?: AbortSignal;
 }): Promise<ExternalAccountCredentialPlan | undefined> {
   const required =
     args.harness.modelAccess === "external-account"
@@ -516,6 +594,8 @@ export async function resolveExternalAccountCredentialPlan(args: {
             ? { environmentUnresolvedReason: args.environmentUnresolvedReason }
             : {}),
           boxKind: args.boxKind,
+          ...(args.sandboxRowId ? { sandboxRowId: args.sandboxRowId } : {}),
+          ...(args.signal ? { signal: args.signal } : {}),
           required: Object.fromEntries(
             unresolved.map((name) => [name, brokerBinding[name]!]),
           ),
@@ -562,8 +642,7 @@ function externalAccountCredentialRefusal(args: {
   harnessDisplayName: string;
   unsatisfied: readonly UnsatisfiedName[];
   brokerBinding:
-    | Readonly<Record<string, HarnessExternalAccountBrokerBinding>>
-    | undefined;
+    Readonly<Record<string, HarnessExternalAccountBrokerBinding>> | undefined;
 }): string {
   const misbound = args.unsatisfied.filter(
     (entry): entry is Extract<UnsatisfiedName, { reason: "misbound" }> =>

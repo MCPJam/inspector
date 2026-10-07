@@ -24,6 +24,7 @@ import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
   playgroundCredentialRefusal,
+  resolvePlaygroundCredentialEnvironment,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
   releaseBoxWhenStreamEnds,
@@ -98,6 +99,79 @@ describe("playgroundCredentialRefusal", () => {
         secretEnv: undefined,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolvePlaygroundCredentialEnvironment", () => {
+  const key = (overrides: Record<string, unknown> = {}) => ({
+    secretId: "sec_mine",
+    name: "CURSOR_API_KEY",
+    delivery: "brokered" as const,
+    sharing: "user" as const,
+    brokerHosts: ["api2.cursor.sh"],
+    brokerHeader: "authorization",
+    brokerTemplate: "Bearer {}",
+    ...overrides,
+  });
+  const base = {
+    bearer: "Bearer tok",
+    projectId: "p1",
+    hostId: "host_cursor",
+    harnessId: "cursor",
+  };
+
+  it("finds or mints the hidden environment selecting the member's own key, and nothing else", async () => {
+    const ensure = vi.fn(async () => ({ environmentId: "env_hidden" }));
+    const listSecrets = vi.fn(async () => [key()]);
+    const result = await resolvePlaygroundCredentialEnvironment({
+      ...base,
+      listSecrets: listSecrets as never,
+      ensureAdhocEnvironment: ensure,
+    });
+    expect(result).toEqual({ ok: true, environmentId: "env_hidden" });
+    expect(listSecrets).toHaveBeenCalledWith("tok", { projectId: "p1" });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "p1",
+      hostId: "host_cursor",
+      secretSelection: { mode: "explicit", secretIds: ["sec_mine"] },
+    });
+  });
+
+  it("with no usable key, says where to add it in the UI there is — never 'use an environment' — and mints nothing", async () => {
+    for (const secrets of [[], [key({ sharing: "project" })]]) {
+      const ensure = vi.fn(async () => ({ environmentId: "env_hidden" }));
+      const result = await resolvePlaygroundCredentialEnvironment({
+        ...base,
+        listSecrets: (async () => secrets) as never,
+        ensureAdhocEnvironment: ensure,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.status).toBe(409);
+      expect(result.message).toMatch(/Project Settings → Secrets/);
+      expect(result.message).not.toMatch(/environment/i);
+      expect(ensure).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a failed read or mint is a retryable refusal, not a box without a key", async () => {
+    expect(
+      await resolvePlaygroundCredentialEnvironment({
+        ...base,
+        listSecrets: (async () => {
+          throw new Error("down");
+        }) as never,
+      }),
+    ).toMatchObject({ ok: false, status: 502 });
+    expect(
+      await resolvePlaygroundCredentialEnvironment({
+        ...base,
+        listSecrets: (async () => [key()]) as never,
+        ensureAdhocEnvironment: async () => {
+          throw new Error("down");
+        },
+      }),
+    ).toMatchObject({ ok: false, status: 502 });
   });
 });
 
