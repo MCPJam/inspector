@@ -1714,8 +1714,8 @@ export async function runHarnessTurn(
         await resolveExternalAccountCredentialPlan({
           harness: harnessAdapter,
           secretEnv,
-          ...(authHeader ? { bearer: authHeader } : {}),
-          ...(projectId ? { projectId } : {}),
+          bearer: authHeader,
+          projectId,
           ...(environmentId ? { environmentId } : {}),
           ...(environmentUnresolvedReason
             ? { environmentUnresolvedReason }
