@@ -63,7 +63,7 @@ The Playground is a three-column IDE shell. Each side rail is collapsible — dr
 **Right rail — Logs / Shell**
 
 - **Logs** (always available) — Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
-- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
+- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to provision or wake the computer and connect. The terminal automatically opens in the harness's working directory and reconnects there whenever a new harness session moves it. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
 
 ## Chat, Trace, and Raw Views
 
