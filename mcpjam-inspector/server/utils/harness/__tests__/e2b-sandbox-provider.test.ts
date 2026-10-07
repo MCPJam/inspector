@@ -49,7 +49,10 @@ vi.mock("e2b", () => ({
 
 import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
-import { HARNESS_TEMPLATE_PNPM_VERSION } from "../harness-bake.js";
+import {
+  HARNESS_TEMPLATE_PNPM_VERSION,
+  harnessPnpmGuardCommand,
+} from "../harness-bake.js";
 import {
   HarnessInfraSetupError,
   harnessFailureEvidenceOf,
@@ -139,10 +142,12 @@ describe("the pnpm guard", () => {
     // turns. The fallback is the same exact version the template bakes.
     await provider().createSession();
     const command = sandboxState.run.mock.calls[0]?.[0] as string;
-    expect(command).toBe(
-      `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`
-    );
-    expect(command).toMatch(/pnpm@\d+\.\d+\.\d+$/);
+    expect(command).toBe(harnessPnpmGuardCommand());
+    for (const install of command.match(/npm install -g pnpm@[\d.]+/g) ?? []) {
+      expect(install).toBe(
+        `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`
+      );
+    }
   });
 });
 

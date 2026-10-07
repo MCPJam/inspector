@@ -88,11 +88,23 @@ vi.mock("@/components/computer/ComputerStatusChip", () => ({
   ComputerStatusChip: () => <div data-testid="computer-status-chip" />,
 }));
 
-vi.mock("@/components/computer/ComputerTerminalPane", () => ({
-  ComputerTerminalPane: ({ cwd }: { cwd?: string }) => (
-    <div data-testid="cloud-terminal-pane" data-cwd={cwd ?? ""} />
-  ),
-}));
+vi.mock("@/components/computer/ComputerTerminalPane", async () => {
+  const { useState } = await import("react");
+  return {
+    // Like the real pane, cwd only applies at CONNECT time: `data-connected-cwd`
+    // is the dir the terminal opened in, which only a remount can change.
+    ComputerTerminalPane: ({ cwd }: { cwd?: string }) => {
+      const [connectedCwd] = useState(cwd ?? "");
+      return (
+        <div
+          data-testid="cloud-terminal-pane"
+          data-cwd={cwd ?? ""}
+          data-connected-cwd={connectedCwd}
+        />
+      );
+    },
+  };
+});
 
 // The bare terminal the LOCAL body mounts (xterm won't run under jsdom).
 vi.mock("@/components/computer/ComputerTerminal", () => ({
@@ -289,6 +301,39 @@ describe("PlaygroundRightRail — which machine ran the turn", () => {
         isAuthenticated
       />,
     );
+
+  it("follows the harness: reconnects in its workdir once known, and again when a new session moves it — no reload button", () => {
+    const view = renderHarnessRail();
+    const pane = () => screen.getByTestId("cloud-terminal-pane");
+    const rerender = () =>
+      view.rerender(
+        <PlaygroundRightRail
+          onClose={() => {}}
+          hostConfig={harnessHost}
+          hostId="host-1"
+          projectId="proj-1"
+          isAuthenticated
+        />,
+      );
+    expect(pane()).toHaveAttribute("data-connected-cwd", "");
+
+    harnessStream.workdir = "/home/user/claude-code-abc";
+    rerender();
+    expect(pane()).toHaveAttribute(
+      "data-connected-cwd",
+      "/home/user/claude-code-abc",
+    );
+
+    harnessStream.workdir = "/home/user/claude-code-def";
+    rerender();
+    expect(pane()).toHaveAttribute(
+      "data-connected-cwd",
+      "/home/user/claude-code-def",
+    );
+    expect(
+      screen.queryByRole("button", { name: /reload in harness dir/i }),
+    ).not.toBeInTheDocument();
+  });
 
   it("opens the terminal in the streamed workdir when the turn ran on the personal computer", () => {
     harnessStream.workdir = "/home/user/claude-code-abc";
