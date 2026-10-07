@@ -1,7 +1,6 @@
 import { HOSTED_MODE } from "../../config.js";
 import { hasServiceCredential } from "../service-credential.js";
 import { PluginInvocationError } from "./invocation.js";
-import { hasServiceCredential } from "../service-credential.js";
 import {
   isDurableInteractiveFileDescriptor,
   INVOCATION_RECEIPT_RETENTION_MS,
