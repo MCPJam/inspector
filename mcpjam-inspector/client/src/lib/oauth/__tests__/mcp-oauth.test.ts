@@ -1147,7 +1147,7 @@ describe("mcp-oauth", () => {
       });
     });
 
-    it("does not persist preregistered client secrets to localStorage", async () => {
+    it("does not persist OAuth credentials or custom headers to localStorage", async () => {
       vi.resetModules();
 
       const oauthModule = await import("../mcp-oauth");
@@ -1161,6 +1161,9 @@ describe("mcp-oauth", () => {
         serverUrl: "https://example.com/mcp",
         clientId: "hosted-client-id",
         clientSecret: "hosted-client-secret",
+        customHeaders: {
+          "X-API-Key": "custom-header-secret",
+        },
       });
 
       expect(result.success).toBe(true);
@@ -1179,6 +1182,9 @@ describe("mcp-oauth", () => {
         const key = localStorage.key(i);
         expect(key ? localStorage.getItem(key) : "").not.toContain(
           "hosted-client-secret"
+        );
+        expect(key ? localStorage.getItem(key) : "").not.toContain(
+          "custom-header-secret"
         );
       }
     });
@@ -2050,7 +2056,9 @@ describe("mcp-oauth", () => {
       ).toBe(advertisedResource);
       expect(
         JSON.parse(
-          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "{}"
+          decodeURIComponent(
+            localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "%7B%7D"
+          )
         ).resourceUrl
       ).toBe(advertisedResource);
 
@@ -2180,15 +2188,17 @@ describe("mcp-oauth", () => {
       );
 
       expect(localStorage.getItem("mcp-oauth-config-asana")).toBe(
-        JSON.stringify({
-          registryServerId: "registry-asana",
-          useRegistryOAuthProxy: true,
-          resourceUrl: "https://mcp.asana.com/v2/mcp",
-          protocolMode: "auto",
-          protocolVersion: "2025-11-25",
-          registrationMode: "preregistered",
-          registrationStrategy: "preregistered",
-        })
+        encodeURIComponent(
+          JSON.stringify({
+            registryServerId: "registry-asana",
+            useRegistryOAuthProxy: true,
+            resourceUrl: "https://mcp.asana.com/v2/mcp",
+            protocolMode: "auto",
+            protocolVersion: "2025-11-25",
+            registrationMode: "preregistered",
+            registrationStrategy: "preregistered",
+          })
+        )
       );
     });
 

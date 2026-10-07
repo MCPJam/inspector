@@ -178,6 +178,20 @@ export interface StoredOAuthConfig {
   registrationStrategy?: OAuthRegistrationStrategy;
 }
 
+function encodePublicOAuthRecoveryConfig(config: StoredOAuthConfig): string {
+  return encodeURIComponent(JSON.stringify(config));
+}
+
+function decodeOAuthRecoveryConfig(raw: string): Record<string, unknown> {
+  const serialized = raw.trimStart().startsWith("{")
+    ? raw
+    : decodeURIComponent(raw);
+  const parsed: unknown = JSON.parse(serialized);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
 interface OAuthRoutingConfig {
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
@@ -1042,7 +1056,7 @@ export function readStoredOAuthConfig(
       };
     }
 
-    const parsed = JSON.parse(raw);
+    const parsed = decodeOAuthRecoveryConfig(raw);
     const config: StoredOAuthConfig = {
       registryServerId:
         typeof parsed?.registryServerId === "string"
@@ -1733,12 +1747,14 @@ function writeStoredOAuthConfig(
   updates: Partial<StoredOAuthConfig>
 ): void {
   const existing = readStoredOAuthConfig(serverName);
+  const publicConfig: StoredOAuthConfig = {
+    ...existing,
+    ...updates,
+  };
+  delete publicConfig.customHeaders;
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
-    JSON.stringify({
-      ...existing,
-      ...updates,
-    })
+    encodePublicOAuthRecoveryConfig(publicConfig)
   );
 }
 
@@ -2789,22 +2805,18 @@ export async function initiateOAuth(
       scopes: options.scopes,
       registryServerId: options.registryServerId,
       useRegistryOAuthProxy: options.useRegistryOAuthProxy,
-      customHeaders: options.customHeaders,
       resourceUrl: options.resourceUrl,
       protocolMode: requestedProtocolMode,
       protocolVersion,
       registrationMode: requestedRegistrationMode,
       registrationStrategy,
     });
-    // This redirect-recovery record is intentionally built from a strict
-    // allowlist above. Client credentials are persisted separately: public
-    // client ids in an issuer-keyed record and secrets only in the encrypted
-    // backend secret store. Keep this suppression adjacent to the audited sink
-    // so future additions to the record receive security review.
+    // This redirect-recovery record contains public OAuth metadata only.
+    // Custom headers and client credentials may contain secrets and must be
+    // recovered from their protected sources instead of browser storage.
     localStorage.setItem(
       `mcp-oauth-config-${options.serverName}`,
-      // codeql[js/clear-text-storage-of-sensitive-data]
-      JSON.stringify(oauthConfig)
+      encodePublicOAuthRecoveryConfig(oauthConfig)
     );
 
     // Store custom client id if provided, so it can be retrieved during callback.
