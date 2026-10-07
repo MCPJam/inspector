@@ -148,6 +148,7 @@ import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
+  harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -204,6 +205,7 @@ import {
   playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
 } from "../../utils/harness/playground-box.js";
 import {
   isSandboxNoticeReason,
@@ -1060,10 +1062,17 @@ chatV2.post("/", async (c) => {
         modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
       });
       if (hostModelRefusal) {
+        // 422, not 503: the request is well-formed and retrying it changes
+        // nothing. This client's harness cannot run this turn.
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: "model-unsupported",
+          },
         );
       }
     }
@@ -1231,10 +1240,22 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422 when this turn's settings are the problem (retrying changes
+        // nothing); 503 for an operator state — broker delivery off, or no
+        // computers data plane — which works once the server is fixed.
+        const status = harnessUnavailableHttpStatus(availability.kind);
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          status,
+          status === 503
+            ? ErrorCode.INTERNAL_ERROR
+            : ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            // Branch on the kind, never on the wording.
+            kind: availability.kind,
+          },
         );
       }
     }
@@ -2143,6 +2164,36 @@ chatV2.post("/", async (c) => {
           { reason: "NO_CHAT_SESSION_ID" },
         );
       }
+      // The environment whose grant the box carries: the turn's own when it
+      // targets one; otherwise, for a client that signs in with the member's
+      // own account, a HIDDEN ad-hoc environment selecting the member's key
+      // (the environments UI is off, so a client turn is the normal case).
+      // Refused here, before any box, when the member has no usable key.
+      let playgroundEnvironmentId =
+        environmentSpec?.environmentRef.environmentId;
+      if (
+        playgroundBoxReason === "credential" &&
+        !playgroundEnvironmentId &&
+        executionTarget.kind === "host"
+      ) {
+        const hidden = await resolvePlaygroundCredentialEnvironment({
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          hostId: executionTarget.hostId,
+          harnessId: resolvedExecution.harness,
+        });
+        if (!hidden.ok) {
+          throw new WebRouteError(
+            hidden.status,
+            hidden.status === 409
+              ? ErrorCode.CONFLICT
+              : ErrorCode.INTERNAL_ERROR,
+            hidden.message,
+            { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+          );
+        }
+        playgroundEnvironmentId = hidden.environmentId;
+      }
       // The credential check the harness turn would fail, run BEFORE the box
       // is booted: a refused Cursor turn must not pay for a box first. Same
       // function and inputs as `runHarnessTurn`'s own check.
@@ -2152,8 +2203,8 @@ chatV2.post("/", async (c) => {
           secretEnv,
           bearer: bearerToken,
           projectId: hostedBody.projectId,
-          ...(environmentSpec
-            ? { environmentId: environmentSpec.environmentRef.environmentId }
+          ...(playgroundEnvironmentId
+            ? { environmentId: playgroundEnvironmentId }
             : {}),
         });
         if (credentialRefusal) {
@@ -2166,11 +2217,8 @@ chatV2.post("/", async (c) => {
         bearer: bearerToken,
         projectId: hostedBody.projectId,
         chatSessionId: hostedBody.chatSessionId,
-        ...(environmentSpec
-          ? {
-              projectEnvironmentId:
-                environmentSpec.environmentRef.environmentId,
-            }
+        ...(playgroundEnvironmentId
+          ? { projectEnvironmentId: playgroundEnvironmentId }
           : {}),
         signal: c.req.raw.signal as AbortSignal | undefined,
       });

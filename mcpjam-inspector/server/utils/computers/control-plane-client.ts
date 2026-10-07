@@ -638,6 +638,59 @@ export async function provisionPlaygroundSandbox(args: {
   return outOfTime();
 }
 
+/** One required credential, as the box's own scope answers about it. */
+export type BoxCredentialStatus =
+  | { status: "available" }
+  | { status: "unselected" }
+  | { status: "misbound"; hosts: string[] }
+  | { status: "absent" };
+
+export interface BoxCredentialAvailabilityAnswer {
+  /** The box's grant names no usable environment, so nothing is granted. */
+  environmentMissing: boolean;
+  credentials: Record<string, BoxCredentialStatus>;
+}
+
+/**
+ * Which of these credentials does THIS box carry, and are they usable?
+ *
+ * Authorized by the box's own scope (a scenario participant may ask about their
+ * own conversation's box; so may a Playground owner or a run's launcher), which
+ * is the point: the member-only secret readers a Cursor pre-flight used before
+ * fail for everyone who is not a project member. The answer is statuses and, for
+ * a mis-bound row, the hosts it binds — never a row id, a secret id or a value.
+ *
+ * `404` means the backend predates the route; the caller falls back to the
+ * member readers it used before.
+ */
+export async function getBoxCredentialAvailability(args: {
+  bearer: string;
+  sandboxRowId: string;
+  required: Readonly<
+    Record<string, { hosts: readonly string[]; header: string; template: string }>
+  >;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<BoxCredentialAvailabilityAnswer>> {
+  return postJson<BoxCredentialAvailabilityAnswer>(
+    "/web/harness/box-credentials",
+    bearerHeader(args.bearer),
+    {
+      sandboxRowId: args.sandboxRowId,
+      required: Object.fromEntries(
+        Object.entries(args.required).map(([name, binding]) => [
+          name,
+          {
+            hosts: [...binding.hosts],
+            header: binding.header,
+            template: binding.template,
+          },
+        ]),
+      ),
+    },
+    args.signal,
+  );
+}
+
 /** The Playground conversation's disposable shell. */
 export interface PlaygroundTerminalSandbox {
   sandboxId: string;

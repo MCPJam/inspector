@@ -36,6 +36,18 @@ vi.mock("../../computers/convex-secrets-client.js", () => ({
   convexMarkSecretsDelivered: vi.fn(async () => ({ marked: 0 })),
 }));
 
+const boxState = vi.hoisted(() => ({
+  answer: null as unknown,
+  calls: [] as unknown[],
+}));
+
+vi.mock("../../computers/control-plane-client.js", () => ({
+  getBoxCredentialAvailability: vi.fn(async (args: unknown) => {
+    boxState.calls.push(args);
+    return boxState.answer;
+  }),
+}));
+
 import {
   EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER,
   fetchBrokeredCredentialNames,
@@ -274,6 +286,64 @@ describe("fetchBrokeredCredentialNames", () => {
     const result = await fetchBrokeredCredentialNames(ask());
     expect(result?.available.has("CURSOR_API_KEY")).toBe(true);
     expect(result?.misboundHosts).toEqual({});
+  });
+});
+
+describe("fetchBrokeredCredentialNames — box scope", () => {
+  beforeEach(() => {
+    boxState.calls = [];
+    clientState.rows = [];
+    clientState.calls = 0;
+    clientState.error = null;
+  });
+  const base = {
+    bearer: "tok",
+    sandboxRowId: "row-1",
+    boxKind: "sandbox" as const,
+    required: REQUIRED,
+  };
+
+  it("asks the box's own scope and never the member readers", async () => {
+    boxState.answer = {
+      ok: true,
+      value: {
+        environmentMissing: false,
+        credentials: { CURSOR_API_KEY: { status: "available" } },
+      },
+    };
+    const result = await fetchBrokeredCredentialNames(base);
+    expect(result?.available.has("CURSOR_API_KEY")).toBe(true);
+    expect(boxState.calls).toHaveLength(1);
+    expect(clientState.calls).toBe(0);
+  });
+
+  it("maps misbound and unselected answers", async () => {
+    boxState.answer = {
+      ok: true,
+      value: {
+        environmentMissing: false,
+        credentials: {
+          CURSOR_API_KEY: { status: "misbound", hosts: ["example.com"] },
+        },
+      },
+    };
+    const result = await fetchBrokeredCredentialNames(base);
+    expect(result?.available.size).toBe(0);
+    expect(result?.misboundHosts).toEqual({
+      CURSOR_API_KEY: ["example.com"],
+    });
+  });
+
+  it("falls back to the member readers when the backend has no route (404)", async () => {
+    boxState.answer = { ok: false, status: 404 };
+    await fetchBrokeredCredentialNames({ ...base, projectId: "p1" });
+    expect(clientState.calls).toBe(1);
+  });
+
+  it("treats any other refusal as unestablished", async () => {
+    boxState.answer = { ok: false, status: 403 };
+    expect(await fetchBrokeredCredentialNames(base)).toBeNull();
+    expect(clientState.calls).toBe(0);
   });
 });
 

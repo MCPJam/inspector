@@ -158,6 +158,12 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
     playgroundCredentialRefusal: vi.fn(
       async (): Promise<string | null> => null,
     ),
+    resolvePlaygroundCredentialEnvironment: vi.fn(
+      async (): Promise<
+        | { ok: true; environmentId: string }
+        | { ok: false; status: 409 | 502; message: string }
+      > => ({ ok: true, environmentId: "env_hidden" }),
+    ),
     acquirePlaygroundHarnessBox: vi.fn(async () => ({
       ok: true as const,
       box: {
@@ -178,6 +184,7 @@ import {
   acquirePlaygroundHarnessBox,
   playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
 } from "../../../utils/harness/playground-box.js";
 import {
   AuthKitConfigError,
@@ -583,7 +590,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
   });
 
-  it("503s a non-catalog model on a brokered harness host (model-not-hosted)", async () => {
+  it("422s a non-catalog model on a brokered harness host (model-not-hosted)", async () => {
     // The routing half of the same story: an org-BYOK model that is not in the
     // hosted catalog cannot run the real runtime, local or otherwise, and the
     // preflight says so rather than the turn failing later.
@@ -616,8 +623,13 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       }),
     });
 
-    expect(response.status).toBe(503);
-    expect((await response.json()).error).toMatch(/MCPJam-provided models/);
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toMatch(/MCPJam-provided models/);
+    expect(body).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      reason: "HARNESS_UNAVAILABLE",
+    });
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
@@ -721,7 +733,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
         reason: "the Claude Code harness can't apply a reasoning effort yet",
       });
       const response = await post({ reasoningEffort: "high" });
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
       expect((await response.json()).error).toMatch(/can't apply a reasoning effort/);
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
@@ -849,14 +861,60 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
 
+    it("a Cursor turn runs under the hidden environment carrying the member's key", async () => {
+      const response = await post(cursor);
+      expect(response.status).toBe(200);
+      expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({ hostId: "host-x", harnessId: "cursor" }),
+      );
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({ projectEnvironmentId: "env_hidden" }),
+      );
+    });
+
+    it("no usable key: refused before any box, with where to add it", async () => {
+      vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        message: "Add your key under Project Settings → Secrets.",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toMatch(/Project Settings/);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
     it("a turn the availability check refuses boots no box", async () => {
       checkHarnessRuntimeAvailableMock.mockReturnValue({
         ok: false,
+        kind: "tool-approval",
         reason: "it is off",
       });
       const response = await post(cursor);
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        code: "FEATURE_NOT_SUPPORTED",
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "cursor",
+        kind: "tool-approval",
+      });
       expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("an operator state (no computers data plane) stays 503", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValue({
+        ok: false,
+        kind: "computers-unconfigured",
+        reason: "this server is not a computers data plane",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(503);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        reason: "HARNESS_UNAVAILABLE",
+        kind: "computers-unconfigured",
+      });
+      expect(body.code).toBeUndefined();
     });
 
     it("releases the box on an early refusal after it was acquired (invalid tool names)", async () => {

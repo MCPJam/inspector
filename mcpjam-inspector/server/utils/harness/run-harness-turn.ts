@@ -1688,6 +1688,24 @@ export async function runHarnessTurn(
       // environment. The runtime process itself still receives it — it has to,
       // that is how the CLI authenticates. The BROKERED arm has no such
       // residue: the box never holds the value at any point.
+      // A NON-MEMBER PARTICIPANT never runs an external-account harness. Its
+      // credential is the project's own vendor key; brokered delivery keeps the
+      // raw value out of the box, but the box's agent still holds a shell and the
+      // egress proxy injects the key on the vendor's host, so a participant can
+      // have the CLI exchange it for a reusable vendor token (Cursor:
+      // `/auth/exchange_user_api_key`) and read it back. That crosses the
+      // project-to-guest boundary. Refused here, before any credential is
+      // planned or anything is provisioned, with copy that names neither the
+      // credential nor the project's settings.
+      if (
+        harnessAdapter.modelAccess === "external-account" &&
+        scenarioParticipant
+      ) {
+        throw new Error(
+          `${harnessAdapter.displayName} isn't available to participants of this study. ` +
+            "Ask the study owner to choose a different agent.",
+        );
+      }
       const externalAccountCredentialNames =
         harnessAdapter.modelAccess === "external-account"
           ? harnessAdapter.externalAccountCredentialEnv
@@ -1708,6 +1726,12 @@ export async function runHarnessTurn(
             ? { environmentUnresolvedReason }
             : {}),
           boxKind: harnessSandboxBinding ? "sandbox" : "computer",
+          // A box answers for itself: the member-only readers are the
+          // fallback for a persistent computer (and an older backend).
+          ...(harnessSandboxBinding
+            ? { sandboxRowId: harnessSandboxBinding.sandboxRowId }
+            : {}),
+          ...(abortSignal ? { signal: abortSignal } : {}),
         });
       const externalAccountAuth = externalAccountPlan?.auth;
       // What the BOX's session env carries: everything the project materialized
@@ -4009,7 +4033,9 @@ export async function runHarnessTurn(
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}${bootstrapLog.text}`,
-          bootstrapLog.context,
+          // `harnessId` rides both outcome lines so the feature-health monitor
+          // can compare failed against completed turns per harness.
+          { ...bootstrapLog.context, harnessId: harnessAdapter.id },
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
@@ -4226,7 +4252,7 @@ export async function runHarnessTurn(
         source: "chat.harness-turn",
         hop: "user_server_hop",
         transport: "http_stream",
-        context: { promptIndex },
+        context: { promptIndex, harnessId: harnessAdapter.id },
       });
       // A turn-time install that failed (the pnpm 11 / deny-all egress class)
       // never reaches the timing line, so the failure path reports the
@@ -4235,6 +4261,7 @@ export async function runHarnessTurn(
       void logHarnessBootstrapOnFailure(
         bakeObservedSandbox,
         harnessAdapter.pinnedRuntimeVersion,
+        harnessAdapter.id,
       );
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();

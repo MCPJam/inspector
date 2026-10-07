@@ -184,6 +184,12 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
     playgroundCredentialRefusal: vi.fn(
       async (): Promise<string | null> => null,
     ),
+    resolvePlaygroundCredentialEnvironment: vi.fn(
+      async (): Promise<
+        | { ok: true; environmentId: string }
+        | { ok: false; status: 409 | 502; message: string }
+      > => ({ ok: true, environmentId: "env_hidden" }),
+    ),
     acquirePlaygroundHarnessBox: vi.fn(async () => ({
       ok: true as const,
       box: {
@@ -229,6 +235,7 @@ import {
   acquirePlaygroundHarnessBox,
   playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
 } from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 
@@ -1786,8 +1793,13 @@ describe("web routes — chat-v2 hosted mode", () => {
         token
       );
 
-      expect(response.status).toBe(503);
-      const body = (await response.json()) as { error?: { message?: string } };
+      expect(response.status).toBe(422);
+      const body = (await response.json()) as {
+        error?: { message?: string; code?: string };
+        details?: Record<string, unknown>;
+      };
+      expect(JSON.stringify(body)).toContain("FEATURE_NOT_SUPPORTED");
+      expect(JSON.stringify(body)).toContain('"reason":"HARNESS_UNAVAILABLE"');
       expect(JSON.stringify(body)).toContain("chooses its own model");
       // The id its owner has to fix, named in the refusal.
       expect(JSON.stringify(body)).toContain("anthropic/claude-sonnet-4.5");
@@ -1820,7 +1832,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         token
       );
 
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(422);
       expect(JSON.stringify(await response.json())).toContain(
         "anthropic/claude-sonnet-4.5"
       );
@@ -1977,6 +1989,32 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
 
+    it("an operator state (broker delivery off) stays 503; a turn setting is 422 FEATURE_NOT_SUPPORTED", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
+        ok: false,
+        kind: "broker-disabled",
+        reason: "broker delivery is disabled on this server",
+      } as never);
+      const operator = await post({}, claudeCode);
+      expect(operator.status).toBe(503);
+      const operatorBody = JSON.stringify(await operator.json());
+      expect(operatorBody).toContain('"kind":"broker-disabled"');
+      expect(operatorBody).not.toContain("FEATURE_NOT_SUPPORTED");
+
+      checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
+        ok: false,
+        kind: "setting-unsupported",
+        reason: "the harness can't apply a reasoning effort yet",
+      } as never);
+      const setting = await post({}, claudeCode);
+      expect(setting.status).toBe(422);
+      const settingBody = JSON.stringify(await setting.json());
+      expect(settingBody).toContain("FEATURE_NOT_SUPPORTED");
+      expect(settingBody).toContain('"reason":"HARNESS_UNAVAILABLE"');
+      expect(settingBody).toContain('"kind":"setting-unsupported"');
+      expect(settingBody).toContain('"harness":"claude-code"');
+    });
+
     it("needs a conversation id: the box is per conversation", async () => {
       const response = await post({ chatSessionId: undefined }, cursor);
       expect(response.status).toBe(400);
@@ -2003,6 +2041,41 @@ describe("web routes — chat-v2 hosted mode", () => {
     it("a compare column on Claude Code needs no credential check", async () => {
       await post({ comparePane: true }, claudeCode);
       expect(playgroundCredentialRefusal).not.toHaveBeenCalled();
+      expect(resolvePlaygroundCredentialEnvironment).not.toHaveBeenCalled();
+    });
+
+    it("a Cursor turn on a client (no environment chosen) runs under a hidden environment carrying the member's key", async () => {
+      const response = await post({}, cursor);
+      expect(response.status).toBe(200);
+      expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "project-1",
+          hostId: "host-1",
+          harnessId: "cursor",
+        })
+      );
+      expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentId: "env_hidden" })
+      );
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
+        expect.objectContaining({ projectEnvironmentId: "env_hidden" })
+      );
+    });
+
+    it("no usable key: refused with where to add it, before any box", async () => {
+      vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        message:
+          "Add your Cursor API key (CURSOR_API_KEY) before using Cursor. Add or fix it under Project Settings → Secrets, then send again.",
+      });
+      const response = await post({}, cursor);
+      expect(response.status).toBe(409);
+      const text = await response.text();
+      expect(text).toMatch(/Project Settings → Secrets/);
+      expect(text).not.toMatch(/environment/i);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
   });
 });
