@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { createHash } from "node:crypto";
 import { describeError } from "@mcpjam/sdk";
 import {
   executeOAuthProxy,
@@ -44,18 +43,58 @@ function evictExpiredLocalRecoveryHeaders(now = Date.now()): void {
   }
 }
 
+function localRecoveryPrincipal(c: Context): string {
+  const guestId = c.get("guestId");
+  if (typeof guestId === "string" && guestId) return `guest:${guestId}`;
+  const workosUserId = c.get("workosUserId");
+  if (typeof workosUserId === "string" && workosUserId) {
+    return `workos:${workosUserId}`;
+  }
+  const workosApiKeyId = c.get("workosApiKeyId");
+  if (typeof workosApiKeyId === "string" && workosApiKeyId) {
+    return `api-key:${workosApiKeyId}`;
+  }
+  // Legacy local clients use passthrough bearer tokens. The high-entropy,
+  // single-use recovery handle remains the capability in that case.
+  return "unverified-passthrough";
+}
+
+function parseRecoveryHandle(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^[A-Za-z0-9_-]{32,128}$/.test(value)
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Missing or invalid OAuth recovery handle",
+    );
+  }
+  return value;
+}
+
 function localRecoveryKey(input: {
-  bearerToken: string;
+  principal: string;
+  recoveryHandle: string;
   serverName: string;
   serverUrl: string;
 }): string {
-  return createHash("sha256")
-    .update(input.bearerToken)
-    .update("\0")
-    .update(input.serverName)
-    .update("\0")
-    .update(input.serverUrl)
-    .digest("hex");
+  return [
+    input.principal,
+    input.recoveryHandle,
+    input.serverName,
+    input.serverUrl,
+  ].join("\0");
+}
+
+function omitAuthorizationHeader(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers ?? {}).filter(
+      ([name]) => name.toLowerCase() !== "authorization",
+    ),
+  );
 }
 
 function parseRecoveryHeaders(value: unknown): Record<string, string> {
@@ -336,10 +375,19 @@ oauthWeb.post("/recovery-headers", async (c) => {
         expectedTargetUrl: serverUrl,
         accessScope: "project_member",
       });
-      return c.json({ success: true, headers: secrets.headers ?? {} });
+      return c.json({
+        success: true,
+        headers: omitAuthorizationHeader(secrets.headers),
+      });
     }
+    const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
     evictExpiredLocalRecoveryHeaders();
-    const key = localRecoveryKey({ bearerToken, serverName, serverUrl });
+    const key = localRecoveryKey({
+      principal: localRecoveryPrincipal(c),
+      recoveryHandle,
+      serverName,
+      serverUrl,
+    });
     const staged = localRecoveryHeaders.get(key);
     localRecoveryHeaders.delete(key);
     if (!staged || staged.expiresAt <= Date.now()) {
@@ -349,7 +397,10 @@ oauthWeb.post("/recovery-headers", async (c) => {
         "OAuth recovery headers are no longer available",
       );
     }
-    return c.json({ success: true, headers: staged.headers });
+    return c.json({
+      success: true,
+      headers: omitAuthorizationHeader(staged.headers),
+    });
   } catch (error) {
     return webErrorCompat(c, toRouteError(error));
   }
@@ -357,11 +408,11 @@ oauthWeb.post("/recovery-headers", async (c) => {
 
 oauthWeb.post("/recovery-headers/stage", async (c) => {
   try {
-    const bearerToken = assertBearerToken(c);
     const body = await c.req.json();
     const serverName =
       typeof body?.serverName === "string" ? body.serverName : "";
     const serverUrl = typeof body?.serverUrl === "string" ? body.serverUrl : "";
+    const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
     const headers = parseRecoveryHeaders(body?.headers);
     if (!serverName || !serverUrl || Object.keys(headers).length === 0) {
       throw new WebRouteError(
@@ -371,7 +422,12 @@ oauthWeb.post("/recovery-headers/stage", async (c) => {
       );
     }
     evictExpiredLocalRecoveryHeaders();
-    const key = localRecoveryKey({ bearerToken, serverName, serverUrl });
+    const key = localRecoveryKey({
+      principal: localRecoveryPrincipal(c),
+      recoveryHandle,
+      serverName,
+      serverUrl,
+    });
     if (
       !localRecoveryHeaders.has(key) &&
       localRecoveryHeaders.size >= LOCAL_RECOVERY_MAX_RECORDS

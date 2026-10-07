@@ -8,11 +8,13 @@ export interface FetchServerSecretsRequest {
 export interface FetchOAuthRecoveryHeadersRequest extends Partial<FetchServerSecretsRequest> {
   serverName: string;
   serverUrl: string;
+  recoveryHandle?: string;
 }
 
 export interface StageOAuthRecoveryHeadersRequest {
   serverName: string;
   serverUrl: string;
+  recoveryHandle: string;
   headers: Record<string, string>;
 }
 

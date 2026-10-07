@@ -140,7 +140,10 @@ describe("web routes — oauth requires bearer token", () => {
   it("POST /recovery-headers returns only protected headers for the bound server", async () => {
     fetchRuntimeServerSecretsMock.mockResolvedValueOnce({
       env: { PRIVATE_ENV: "not-returned" },
-      headers: { "X-Tenant": "protected-tenant" },
+      headers: {
+        "X-Tenant": "protected-tenant",
+        Authorization: "Bearer mcp-server-token",
+      },
       boundOrigins: ["https://mcp.example.com"],
     });
 
@@ -175,11 +178,18 @@ describe("web routes — oauth requires bearer token", () => {
     const binding = {
       serverName: "local-example",
       serverUrl: "http://127.0.0.1:3000/mcp",
+      recoveryHandle: "a".repeat(48),
     };
     const stageResponse = await postJson(
       app,
       "/api/web/oauth/recovery-headers/stage",
-      { ...binding, headers: { "X-Tenant": "local-tenant" } },
+      {
+        ...binding,
+        headers: {
+          "X-Tenant": "local-tenant",
+          authorization: "Bearer mcp-server-token",
+        },
+      },
       token,
     );
     expect((await expectJson(stageResponse)).status).toBe(200);
@@ -204,6 +214,32 @@ describe("web routes — oauth requires bearer token", () => {
     expect((await expectJson(replayResponse)).status).toBe(404);
   });
 
+  it("recovers local headers after the caller bearer token rotates", async () => {
+    const binding = {
+      serverName: "rotating-token-example",
+      serverUrl: "http://127.0.0.1:3001/mcp",
+      recoveryHandle: "b".repeat(48),
+    };
+    const stageResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers/stage",
+      { ...binding, headers: { "X-Tenant": "local-tenant" } },
+      token,
+    );
+    expect((await expectJson(stageResponse)).status).toBe(200);
+
+    const recoverResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      binding,
+      "refreshed-token-456",
+    );
+    expect(await expectJson(recoverResponse)).toEqual({
+      status: 200,
+      data: { success: true, headers: { "X-Tenant": "local-tenant" } },
+    });
+  });
+
   it("bounds pending local recovery records and evicts them after expiry", async () => {
     vi.useFakeTimers();
     try {
@@ -214,6 +250,7 @@ describe("web routes — oauth requires bearer token", () => {
           {
             serverName: `bounded-${index}`,
             serverUrl: `http://127.0.0.1:${3000 + index}/mcp`,
+            recoveryHandle: `bounded_${String(index).padStart(32, "0")}`,
             headers: { "X-Tenant": `tenant-${index}` },
           },
           token,
@@ -227,6 +264,7 @@ describe("web routes — oauth requires bearer token", () => {
         {
           serverName: "over-capacity",
           serverUrl: "http://127.0.0.1:4000/mcp",
+          recoveryHandle: "c".repeat(48),
           headers: { "X-Tenant": "tenant" },
         },
         token,
@@ -240,6 +278,7 @@ describe("web routes — oauth requires bearer token", () => {
         {
           serverName: "after-expiry",
           serverUrl: "http://127.0.0.1:4001/mcp",
+          recoveryHandle: "d".repeat(48),
           headers: { "X-Tenant": "tenant" },
         },
         token,
@@ -263,6 +302,7 @@ describe("web routes — oauth requires bearer token", () => {
       {
         serverName: "oversized",
         serverUrl: "http://127.0.0.1:4002/mcp",
+        recoveryHandle: "e".repeat(48),
         headers,
       },
       token,

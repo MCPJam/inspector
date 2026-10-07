@@ -2562,9 +2562,14 @@ async function recoverOAuthCustomHeaders(input: {
     registryServerId: input.oauthConfig.registryServerId,
     useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
   });
+  const recoveryHandleKey = `mcp-oauth-recovery-handle-${input.serverName}`;
+  const recoveryHandle = binding
+    ? undefined
+    : sessionStorage.getItem(recoveryHandleKey) ?? undefined;
   const headers = await fetchOAuthRecoveryHeaders({
     serverName: input.serverName,
     serverUrl: input.serverUrl,
+    ...(recoveryHandle ? { recoveryHandle } : {}),
     ...(binding
       ? { projectId: binding.projectId, serverId: binding.serverId }
       : {}),
@@ -2574,6 +2579,7 @@ async function recoverOAuthCustomHeaders(input: {
       "OAuth custom headers are no longer available. Save them again and retry authorization."
     );
   }
+  if (recoveryHandle) sessionStorage.removeItem(recoveryHandleKey);
   return headers;
 }
 
@@ -2867,6 +2873,7 @@ export async function initiateOAuth(
       options.serverUrl
     );
 
+    let recoveryHandle: string | undefined;
     if (
       !HOSTED_MODE &&
       options.customHeaders &&
@@ -2878,11 +2885,17 @@ export async function initiateOAuth(
         useRegistryOAuthProxy: options.useRegistryOAuthProxy,
       })
     ) {
+      recoveryHandle = generateRandomString(48);
       await stageOAuthRecoveryHeaders({
         serverName: options.serverName,
         serverUrl: options.serverUrl,
+        recoveryHandle,
         headers: options.customHeaders,
       });
+      sessionStorage.setItem(
+        `mcp-oauth-recovery-handle-${options.serverName}`,
+        recoveryHandle
+      );
     }
 
     // Store server URL for callback recovery
@@ -4160,6 +4173,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  sessionStorage.removeItem(`mcp-oauth-recovery-handle-${serverName}`);
   oauthBindingStorage.clear(serverName);
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);

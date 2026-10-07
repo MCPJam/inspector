@@ -63,6 +63,10 @@ function seedServer(serverName: string) {
     `mcp-oauth-session-trace-${serverName}`,
     JSON.stringify({ version: 1, steps: [], httpHistory: [] }),
   );
+  sessionStorage.setItem(
+    `mcp-oauth-recovery-handle-${serverName}`,
+    "a".repeat(48),
+  );
 }
 
 describe("clearOAuthData owns the full per-server key list", () => {
@@ -83,6 +87,9 @@ describe("clearOAuthData owns the full per-server key list", () => {
     }
     expect(
       sessionStorage.getItem("mcp-oauth-session-trace-alpha"),
+    ).toBeNull();
+    expect(
+      sessionStorage.getItem("mcp-oauth-recovery-handle-alpha"),
     ).toBeNull();
   });
 
