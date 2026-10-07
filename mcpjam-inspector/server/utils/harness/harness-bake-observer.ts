@@ -302,6 +302,8 @@ export function harnessBootstrapLogFields(
 export async function logHarnessBootstrapOnFailure(
   provider: unknown,
   pinnedRuntimeVersion: string | undefined,
+  /** Which harness, so the line groups with the turn's other outcome lines. */
+  harnessId?: string,
 ): Promise<void> {
   try {
     const observation = await harnessBootstrapObservation(provider);
@@ -310,6 +312,7 @@ export async function logHarnessBootstrapOnFailure(
     logger.info(`[harness][bootstrap] turn=failed${fields.text}`, {
       ...fields.context,
       harnessTurn: "failed",
+      ...(harnessId ? { harnessId } : {}),
     });
   } catch {
     // Best-effort diagnostics.

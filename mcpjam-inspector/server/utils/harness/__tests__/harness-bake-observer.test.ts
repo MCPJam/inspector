@@ -267,7 +267,7 @@ describe("logHarnessBootstrapOnFailure", () => {
     });
     const observed = observeHarnessBootstrap(fake.provider);
     await frameworkBootstrap(observed, { installFails: true }).catch(() => {});
-    await logHarnessBootstrapOnFailure(observed, "2.1.245");
+    await logHarnessBootstrapOnFailure(observed, "2.1.245", "claude-code");
     expect(logged.info).toHaveBeenCalledTimes(1);
     expect(logged.info).toHaveBeenCalledWith(
       expect.stringMatching(
@@ -280,6 +280,8 @@ describe("logHarnessBootstrapOnFailure", () => {
         harnessBakeOnBox: "present",
         harnessRecipeIdentity: ID,
         harnessRuntimePinned: "2.1.245",
+        // Groups with the turn's `[harness] turn failed` line per harness.
+        harnessId: "claude-code",
       }),
     );
   });

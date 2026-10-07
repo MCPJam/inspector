@@ -4255,6 +4255,7 @@ export async function runHarnessTurn(
       void logHarnessBootstrapOnFailure(
         bakeObservedSandbox,
         harnessAdapter.pinnedRuntimeVersion,
+        harnessAdapter.id,
       );
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
