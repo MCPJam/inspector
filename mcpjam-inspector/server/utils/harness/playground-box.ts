@@ -32,7 +32,10 @@ import {
   type AcquireHarnessBoxResult,
   type HarnessBox,
 } from "./harness-box.js";
-import { resolveExternalAccountCredentialPlan } from "./external-account-credentials.js";
+import {
+  ExternalAccountCredentialRefusal,
+  resolveExternalAccountCredentialPlan,
+} from "./external-account-credentials.js";
 import { getHarnessAdapter, harnessUsesExternalAccount } from "./registry.js";
 
 export type PlaygroundBoxReason = "credential" | "compare";
@@ -88,7 +91,8 @@ export async function playgroundCredentialRefusal(args: {
     });
     return null;
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    if (error instanceof ExternalAccountCredentialRefusal) return error.message;
+    throw error;
   }
 }
 
