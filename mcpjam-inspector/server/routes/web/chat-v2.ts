@@ -2491,6 +2491,14 @@ chatV2.post("/", async (c) => {
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = isScenarioSession ? "scenario" : "playground";
       const isDirectChat = !isScenarioSession;
+      // The turn's servers minus the ones a plugin contributed, for the
+      // trace's host config (see where it is built below).
+      const pluginServerIdSet = new Set(
+        effectiveCapabilities?.pluginServerIds ?? [],
+      );
+      const hostConfigServerIds = effectiveServerIds.filter(
+        (serverId) => !pluginServerIdSet.has(serverId),
+      );
 
       // Server twin of the client's `send_message` — fires even when the
       // browser can't reach PostHog. Identity: guests always resolve (the
@@ -2832,7 +2840,10 @@ chatV2.post("/", async (c) => {
                     resolvedExecution.modelVisibleMcpToolResults,
                   mcpToolResultImageRendering:
                     resolvedExecution.mcpToolResultImageRendering,
-                  selectedServerIds: effectiveServerIds,
+                  // Plugin servers stay out: ingestion's server-scope check
+                  // refuses a plugin id in a host config (lifecycle bypass),
+                  // and would drop the trace's whole host config with it.
+                  selectedServerIds: hostConfigServerIds,
                 })
             : null,
           selectedServerNames: effectiveServerNames,
