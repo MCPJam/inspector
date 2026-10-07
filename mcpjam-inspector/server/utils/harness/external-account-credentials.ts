@@ -429,6 +429,18 @@ function requiredBindingSummary(
 }
 
 /**
+ * A credential the turn cannot run without. Its own type so a caller that only
+ * wants the refusal sentence (the Playground pre-flight) can tell it from an
+ * unexpected failure, which must stay a server fault.
+ */
+export class ExternalAccountCredentialRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExternalAccountCredentialRefusal";
+  }
+}
+
+/**
  * Decide, per credential name, which delivery satisfies it — or refuse.
  *
  * PURE: the reads happen above, so the decision can be tested without a
@@ -501,7 +513,7 @@ export function planExternalAccountCredentials(args: {
   }
 
   if (unsatisfied.length > 0) {
-    throw new Error(
+    throw new ExternalAccountCredentialRefusal(
       externalAccountCredentialRefusal({
         harnessDisplayName: args.harnessDisplayName,
         unsatisfied,
