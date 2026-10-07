@@ -69,7 +69,6 @@ import { type ComparePlanCell } from "@/components/organization/compare-plan-mar
 import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeConfirmDialog";
 import { BillingIntervalToggle } from "@/components/organization/BillingIntervalToggle";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
-import { TaxIdStatusSection } from "@/components/billing/TaxIdStatusSection";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ErrorCard } from "@/components/ui/error-card";
@@ -1231,22 +1230,6 @@ export function OrganizationBillingSection({
       ) : (
         currentPlanPanel
       )}
-
-      {showPlanBilling &&
-      canManageBilling &&
-      billingConfigured &&
-      billingStatus?.hasCustomer &&
-      currentPlan !== "free" ? (
-        <ErrorBoundary
-          key={organizationId}
-          name="org_billing_tax_ids"
-          fallback={({ error, reset }) => (
-            <ErrorCard error={error} onRetry={reset} />
-          )}
-        >
-          <TaxIdStatusSection organizationId={organizationId} />
-        </ErrorBoundary>
-      ) : null}
 
       {showCredits ? (
         <ErrorBoundary

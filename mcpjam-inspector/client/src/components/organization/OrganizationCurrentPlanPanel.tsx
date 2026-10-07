@@ -460,7 +460,7 @@ export function OrganizationCurrentPlanPanel({
                 Loading...
               </>
             ) : (
-              <>Manage plan</>
+              <>Manage billing</>
             )}
           </Button>
         ) : null}

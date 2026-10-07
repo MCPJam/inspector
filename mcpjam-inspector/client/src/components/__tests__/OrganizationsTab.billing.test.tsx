@@ -449,53 +449,25 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
-  it("contains a tax status render failure and lets the owner retry", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockListTaxIds
-      .mockResolvedValueOnce([
-        { id: "tax-bad", value: "DE123456789", status: "pending" },
-      ])
-      .mockResolvedValue([]);
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "team",
-          hasCustomer: true,
-        }),
-      }),
-    );
-    try {
-      render(<OrganizationsTab organizationId="org-1" section="billing" />);
-      const retry = await screen.findByRole("button", {
-        name: /try again|retry/i,
-      });
-      expect(screen.getByTestId("current-plan-panel")).toBeInTheDocument();
-      fireEvent.click(retry);
-      expect(await screen.findByText("No tax IDs added.")).toBeInTheDocument();
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it.each([
-    { plan: "free" as const, hasCustomer: false, visible: false },
-    { plan: "free" as const, hasCustomer: true, visible: false },
-    { plan: "team" as const, hasCustomer: false, visible: false },
-    { plan: "team" as const, hasCustomer: true, visible: true },
-  ])(
-    "shows tax status only with portal access: %j",
-    async ({ plan, hasCustomer, visible }) => {
+  it.each(["plans", "billing"] as const)(
+    "%s keeps billing management without a tax verification card or requests",
+    (section) => {
       mockUseOrganizationBilling.mockReturnValue(
         createBillingHookState({
-          billingStatus: billingStatusFixture({ plan, hasCustomer }),
+          billingStatus: billingStatusFixture({
+            plan: "team",
+            hasCustomer: true,
+          }),
         }),
       );
-      render(<OrganizationsTab organizationId="org-1" section="billing" />);
-      await act(async () => {});
+      render(<OrganizationsTab organizationId="org-1" section={section} />);
       expect(
-        Boolean(screen.queryByRole("region", { name: "Tax ID verification" })),
-      ).toBe(visible);
-      expect(mockListTaxIds).toHaveBeenCalledTimes(visible ? 1 : 0);
+        screen.queryByRole("region", { name: "Tax ID verification" }),
+      ).toBeNull();
+      expect(mockListTaxIds).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: "Manage billing" }),
+      ).toBeInTheDocument();
     },
   );
 
@@ -1762,7 +1734,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => expect(removeMemberMock).toHaveBeenCalledTimes(2));
   });
 
-  it("billing view hides Manage plan for non-owners and shows owner-only copy", () => {
+  it("billing view hides Manage billing for non-owners and shows owner-only copy", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -1781,7 +1753,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.queryByRole("button", { name: "Manage plan" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
     expect(
       screen.getByText("Only organization owners can manage billing."),
     ).toBeInTheDocument();
@@ -1938,7 +1910,7 @@ describe("OrganizationsTab billing", () => {
       screen.getByRole("button", { name: "Keep Team annual plan" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Manage plan" }),
+      screen.getByRole("button", { name: "Manage billing" }),
     ).toBeInTheDocument();
   });
 
@@ -2105,7 +2077,7 @@ describe("OrganizationsTab billing", () => {
       screen.queryByRole("button", { name: "View plans" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Manage plan" }),
+      screen.queryByRole("button", { name: "Manage billing" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Upgrade plan" }),
@@ -2700,7 +2672,7 @@ describe("OrganizationsTab billing", () => {
   it.each([
     {
       name: "billing portal",
-      buttonName: "Manage plan",
+      buttonName: "Manage billing",
       flow: "manage_billing",
       openBilling: "portal" as const,
     },
@@ -3423,7 +3395,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="plans" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Manage plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage billing" }));
 
     await waitFor(() => {
       expect(openPortal).toHaveBeenCalledWith(
