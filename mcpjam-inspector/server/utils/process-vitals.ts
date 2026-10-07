@@ -17,6 +17,7 @@
  * socket-diagnostics.ts): a fixed field set, no per-event rows, and a timer
  * that never holds the process open.
  */
+import fs from "node:fs";
 import v8 from "node:v8";
 import * as Sentry from "@sentry/node";
 import { getSystemLogger } from "./request-logger.js";
@@ -64,6 +65,7 @@ export type ProcessVitals = {
   peakRpcLogBufferBytes: number;
   tokenizerPeakChars: number;
   tokenizerOversizeSkips: number;
+  openFdCount: number | null;
 };
 
 let peakHeapUsedBytes = 0;
@@ -80,6 +82,25 @@ function oldSpace(): { used: number; size: number } {
     }
   }
   return { used: 0, size: 0 };
+}
+
+/**
+ * Open file descriptors of THIS process, by listing `/dev/fd` (devfs on macOS,
+ * a link to `/proc/self/fd` on Linux). `null` where there is nothing to list —
+ * Windows has no fd table to read — so "not measured" is never mistaken for
+ * zero. The listing briefly holds one fd of its own; the ramp is what matters,
+ * not the exact figure.
+ *
+ * INSPECTOR-ELECTRON-X3 (PLB-140): the renderer died of ENFILE, the SYSTEM
+ * file table, while holding 15 fds of its own. Whether the main process was
+ * the one draining that table went unrecorded. This answers it next time.
+ */
+function openFdCount(): number | null {
+  try {
+    return fs.readdirSync("/dev/fd").length;
+  } catch {
+    return null;
+  }
 }
 
 export function collectProcessVitals(): ProcessVitals {
@@ -109,6 +130,7 @@ export function collectProcessVitals(): ProcessVitals {
     peakRpcLogBufferBytes,
     tokenizerPeakChars: tokenizer.chars,
     tokenizerOversizeSkips: tokenizer.oversizeSkips,
+    openFdCount: openFdCount(),
   };
 }
 

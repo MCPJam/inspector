@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const setContext = vi.fn();
@@ -52,6 +53,7 @@ afterEach(() => {
   setExtra.mockClear();
   event.mockClear();
   vi.doUnmock("node:v8");
+  vi.restoreAllMocks();
 });
 
 describe("process vitals sampler", () => {
@@ -209,5 +211,37 @@ describe("process vitals sampler", () => {
     const last = event.mock.calls.at(-1)![1];
     expect(last.heapUsedBytes).toBe(520 * MB);
     expect(last.peakHeapUsedBytes).toBe(900 * MB);
+  });
+
+  // PLB-140 / INSPECTOR-ELECTRON-X3: the renderer died of ENFILE holding 15
+  // fds of its own, and nothing recorded whether the main process was the one
+  // draining the system file table.
+  it("counts this process's open file descriptors", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB]);
+
+    flushProcessVitals(0);
+
+    const [, payload] = event.mock.calls[0]!;
+    if (process.platform === "win32") {
+      expect(payload.openFdCount).toBeNull();
+    } else {
+      expect(payload.openFdCount).toBeGreaterThan(0);
+    }
+  });
+
+  // No fd table to list (Windows, a sandbox without /dev) must read as "not
+  // measured", never as zero open files — and must not cost the rest of the
+  // sample.
+  it("reports null, not zero, where /dev/fd cannot be listed", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB]);
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    flushProcessVitals(0);
+
+    const [, payload] = event.mock.calls[0]!;
+    expect(payload.openFdCount).toBeNull();
+    expect(payload.heapUsedBytes).toBe(500 * MB);
   });
 });
