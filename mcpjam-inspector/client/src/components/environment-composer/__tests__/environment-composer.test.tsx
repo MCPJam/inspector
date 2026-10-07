@@ -12,7 +12,7 @@ import {
 
 const flagState = vi.hoisted(() => ({
   skills: false,
-  computers: false,
+  sandboxImages: false,
   environments: true,
 }));
 const toastError = vi.hoisted(() => vi.fn());
@@ -30,8 +30,8 @@ vi.mock("@/lib/toast", () => ({
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => flagState.skills,
 }));
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => flagState.computers,
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => flagState.sandboxImages,
 }));
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => flagState.environments,
@@ -162,7 +162,7 @@ function withServer(): EnvironmentComposerState {
 describe("EnvironmentComposer slots", () => {
   beforeEach(() => {
     flagState.skills = false;
-    flagState.computers = false;
+    flagState.sandboxImages = false;
     flagState.environments = true;
   });
 
@@ -297,7 +297,7 @@ describe("EnvironmentComposer slots", () => {
 describe("EnvironmentComposer locked slots", () => {
   beforeEach(() => {
     flagState.skills = false;
-    flagState.computers = false;
+    flagState.sandboxImages = false;
     flagState.environments = true;
     toastError.mockClear();
   });

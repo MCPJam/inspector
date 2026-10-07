@@ -4,38 +4,38 @@
   "harnesses": {
     "claude-code": {
       "conformance": {
-        "version": "published-1.0.1-4e1989d1300c",
-        "evidence": "https://github.com/MCPJam/inspector/actions/runs/37383078880"
+        "version": "published-claude-code-1.0.3-e6cf005d1c94",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/37510041014"
       },
       "targets": {
         "darwin-arm64": {
           "desired": {
-            "packVersion": "1.0.1",
-            "treeDigest": "sha256:e59586541b541e0673ca9f74f90bcf5b19bde4c553611c5e7745a67a7d9d80f1"
+            "packVersion": "1.0.3",
+            "treeDigest": "sha256:89f07f4bf47378e0c82d319e75c2e0f156638a21c0c33ebd7b02b3c809845433"
           }
         },
         "darwin-x64": {
           "desired": {
-            "packVersion": "1.0.1",
-            "treeDigest": "sha256:c72405c79c67d5578c11fd0bc916594e2dd429e4f1220845c9f67c0002eae749"
+            "packVersion": "1.0.3",
+            "treeDigest": "sha256:39b21a925afa11ad556263a7049e060e1bf3a6cc093128ff2aea214ba2ce854c"
           }
         },
         "linux-arm64": {
           "desired": {
-            "packVersion": "1.0.1",
-            "treeDigest": "sha256:4b8f8b14f2fe403bcb6d56d6069f4dca661844619f946433bdb6676077cb89b7"
+            "packVersion": "1.0.3",
+            "treeDigest": "sha256:508538201ffee784ff583041be6e9a483f5769db1e4b46bacbc440839cc40616"
           }
         },
         "linux-x64": {
           "desired": {
-            "packVersion": "1.0.1",
-            "treeDigest": "sha256:a21fcb7ccefb2057e7814a6028995a3cdb4ed47daf90bc179d7ee8ed3c748132"
+            "packVersion": "1.0.3",
+            "treeDigest": "sha256:facdd4eecbe6f3453d6464631284ffe5a9c9b6f8e3b0e3fa29ef27da34ede1ea"
           }
         },
         "win32-x64": {
           "desired": {
-            "packVersion": "1.0.1",
-            "treeDigest": "sha256:58d48aa771a3b1d87d22a720504722afb81ac35f43726d49cd303d4c1572d4d0"
+            "packVersion": "1.0.3",
+            "treeDigest": "sha256:b3665706066bbfaa2647b8dc8a18a8bbdcdec87c0f1035f0132707777d24e406"
           }
         }
       }

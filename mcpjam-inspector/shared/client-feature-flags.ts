@@ -39,6 +39,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "project-environments-enabled",
   "registry-enabled",
   "run-disclosure-enabled",
+  "sandbox-images-enabled",
   "sandboxes-enabled",
   "scheduled-evals-enabled",
   "shared-slack-channel-enabled",
