@@ -207,6 +207,20 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
 
+// The project's installed plugins (`plugins:resolveActivePlugins`), as a
+// normal chat turn runs them. Empty unless a test installs one.
+const mockActivePlugins = vi.hoisted(() => ({
+  state: {
+    plugins: [] as any[],
+    activePlugins: [] as any[],
+    activeServers: [] as any[],
+    isLoading: false,
+  },
+}));
+vi.mock("@/hooks/useActivePlugins", () => ({
+  useActivePlugins: () => mockActivePlugins.state,
+}));
+
 // Mock convex/react
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
@@ -858,6 +872,78 @@ describe("PlaygroundMain", () => {
     mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
+  });
+
+  describe("installed plugins (normal chat)", () => {
+    const bitsServer = {
+      serverId: "srv_bits",
+      name: "bits-cad",
+      pluginId: "plg_bits",
+      pluginLabel: "Bits & Bolts",
+    };
+    const bitsRow = {
+      pluginId: "plg_bits",
+      pluginVersionId: "ver_bits",
+      name: "bits-and-bolts",
+      displayName: "Bits & Bolts",
+      status: "active",
+      servers: [
+        {
+          serverId: "srv_bits",
+          name: "bits-cad",
+          componentKey: "cad",
+          placement: "remote",
+        },
+      ],
+      skills: [],
+    };
+    const empty = {
+      plugins: [],
+      activePlugins: [],
+      activeServers: [],
+      isLoading: false,
+    };
+
+    afterEach(() => {
+      mockActivePlugins.state = { ...empty };
+    });
+
+    it("routes the turn to the web chat route and shows the plugin's server as on, read-only", () => {
+      mockActivePlugins.state = {
+        plugins: [bitsRow],
+        activePlugins: [bitsRow],
+        activeServers: [bitsServer],
+        isLoading: false,
+      };
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(capturedChatSessionOptions.hostedContext.requiresWebChatApi).toBe(
+        true,
+      );
+      // The chat route adds plugin servers itself; the turn never names them.
+      expect(capturedChatSessionOptions.selectedServers).not.toContain(
+        "bits-cad",
+      );
+      expect(
+        capturedChatSessionOptions.hostedContext.selectedServerIds,
+      ).not.toContain("srv_bits");
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([bitsServer]);
+    });
+
+    it("leaves the route and the composer alone without active plugins", () => {
+      mockActivePlugins.state = {
+        ...empty,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "disabled" }],
+      };
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        capturedChatSessionOptions.hostedContext.requiresWebChatApi,
+      ).toBeUndefined();
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([]);
+    });
   });
 
   describe("rendering", () => {

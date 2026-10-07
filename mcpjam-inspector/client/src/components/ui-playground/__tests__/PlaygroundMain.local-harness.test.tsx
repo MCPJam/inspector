@@ -251,6 +251,16 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 }));
 
 // Mock convex/react
+// The project's installed plugins (`plugins:resolveActivePlugins`). None here.
+vi.mock("@/hooks/useActivePlugins", () => ({
+  useActivePlugins: () => ({
+    plugins: [],
+    activePlugins: [],
+    activeServers: [],
+    isLoading: false,
+  }),
+}));
+
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).

@@ -6,6 +6,11 @@ import { createThreadAppApi } from "@/components/host-workspace/thread-app-api";
 import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
 import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
 import { useProjectPlugins } from "@/hooks/usePluginImportApi";
+import { useActivePlugins } from "@/hooks/useActivePlugins";
+import {
+  buildExtensionServers,
+  playgroundTurnsCarryPlugins,
+} from "./playground-plugins";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
 import type { PluginMessageIntent } from "@/shared/plugin-message";
@@ -1159,6 +1164,16 @@ export function PlaygroundMain({
     }),
     [localHarnessRequested, localHarnessResolveSendTarget],
   );
+  // The project's installed plugins as a normal chat turn runs them. The chat
+  // route adds them to every host-target turn itself; the browser only shows
+  // them and picks the route (see `playground-plugins.ts`). Agent plugins load
+  // on every client — the client's plugin-extensions switch is not read here.
+  const activePluginState = useActivePlugins(convexProjectId);
+  const turnsCarryPlugins = playgroundTurnsCarryPlugins({
+    isEnvironmentMode,
+    hasActivePlugins: activePluginState.activePlugins.length > 0,
+    localHarnessRequested,
+  });
 
   // ONE dialog for the whole surface. Six composers each owning their own
   // would be six dialogs racing one approval, and a compare view would open
@@ -1378,7 +1393,10 @@ export function PlaygroundMain({
         harness: previewedHost?.config?.harness,
         hostId: previewedHostId,
         actorId: currentUserForSender?._id,
-      })
+      }) ||
+      // Only the web chat route adds the project's plugins, so a turn that
+      // carries them goes there on the local binary too.
+      turnsCarryPlugins
         ? { requiresWebChatApi: true }
         : {}),
       projectId: convexProjectId,
@@ -1721,39 +1739,37 @@ export function PlaygroundMain({
         : null,
     [extensionIdentity, chatSessionId, multiModelEnabled],
   );
+  // Plugin-owned servers show their plugin's icons (composer icon, logo).
+  // One subscription to the project's plugins; discovery names each
+  // server's plugin, and the active plugins' own servers carry them directly.
+  const pluginIconsById = usePluginIconsById(
+    useProjectPlugins(
+      extensionScope?.projectId ??
+        (activePluginState.activeServers.length > 0 ? convexProjectId : null),
+    ),
+  );
+  // Outside environment mode the active plugins' servers join the selected
+  // ones: the chat route adds them to every turn, so the Apps menu, sidebar
+  // Apps, settings and onboarding have to see them too.
   const extensionServers = useMemo(
     () =>
-      isEnvironmentMode
-        ? playgroundEnvironment.servers
-            .filter((server) => server.enabled)
-            .map((server) => ({ serverId: server.serverId, name: server.name }))
-        : selectedServers.flatMap((name) => {
-            const serverId = serversByName.get(name);
-            const server = servers[name];
-            // A new epoch after the first means a reconnect: entrypoints and
-            // open Apps' tool metadata are read again.
-            const connection =
-              server?.connectionStatus === "connected"
-                ? String(new Date(server.lastConnectionTime).getTime())
-                : undefined;
-            const icons = server?.initializationInfo?.serverVersion?.icons;
-            return serverId
-              ? [
-                  {
-                    serverId,
-                    name,
-                    ...(connection ? { connection } : {}),
-                    ...(Array.isArray(icons) && icons.length ? { icons } : {}),
-                  },
-                ]
-              : [];
-          }),
+      buildExtensionServers({
+        isEnvironmentMode,
+        environmentServers: playgroundEnvironment.servers,
+        selectedServers,
+        serversByName,
+        servers,
+        pluginServers: activePluginState.activeServers,
+        pluginIconsById,
+      }),
     [
       isEnvironmentMode,
       playgroundEnvironment.servers,
       selectedServers,
       serversByName,
       servers,
+      activePluginState.activeServers,
+      pluginIconsById,
     ],
   );
   // Compare lanes (Phase 7): each lane is its own client with its own owner,
@@ -1956,12 +1972,6 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
-  );
-  // Plugin-owned servers show their plugin's icons (composer icon, logo).
-  // One subscription to the project's plugins; discovery names each
-  // server's plugin.
-  const pluginIconsById = usePluginIconsById(
-    useProjectPlugins(extensionScope?.projectId ?? null),
   );
   usePublishPluginIcons(pluginIconsById);
   const composerMentions = useComposerMentions(
@@ -6134,6 +6144,11 @@ export function PlaygroundMain({
         }
       : {
           allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
+          // Added by the chat route on every turn, so shown as on and not
+          // toggleable — and never put in `selectedServers`.
+          pluginServers: turnsCarryPlugins
+            ? activePluginState.activeServers
+            : [],
           onServerToggle: handlePlaygroundServerToggle,
           onReconnectServer: playgroundServerSelectorProps?.onReconnect,
           onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,

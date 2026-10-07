@@ -258,6 +258,8 @@ import {
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
 import { isHistoryNoticeDataPart } from "@/shared/history-notice";
+import { isPluginNoticeDataPart } from "@/shared/plugin-notice";
+import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import { useHistoryNoticeStore } from "@/stores/history-notice-store";
 import {
   HOSTED_TASKS_VERSION,
@@ -2406,6 +2408,13 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (isPluginNoticeDataPart(part)) {
+        // Installed plugins this turn did not load (see
+        // `shared/plugin-notice.ts`): one plain line per chat for the same
+        // set of skips, plus one Logs entry.
+        showPluginNotice(chatSessionIdRef.current ?? "new", part.data);
+        return;
+      }
       if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
         const session = chatSessionIdRef.current ?? "new";
         if (!paidFallbackNotices.current.has(session)) {
