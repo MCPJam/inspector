@@ -395,6 +395,14 @@ export const hostedChatSchema = z
      * instead of an arg-validation failure deep inside the ingest action.
      */
     expectedVersion: z.number().int().nonnegative().optional(),
+    /**
+     * Sent by a Playground COMPARE column. Every column runs the same host at
+     * the same time, so a harness column cannot share the member's one personal
+     * computer without overwriting its siblings' files; the server gives each
+     * column its own conversation's disposable box instead. Only ever read as a
+     * request for MORE isolation, so it needs no authority of its own.
+     */
+    comparePane: z.boolean().optional(),
   })
   .passthrough();
 
