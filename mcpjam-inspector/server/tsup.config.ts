@@ -109,6 +109,7 @@ export default defineConfig({
     "@mcpjam/sdk/plugin-bundle",
     "@mcpjam/sdk/oauth/node",
     "@mcpjam/sdk/widget-runtime",
+    "@mcpjam/sdk/internal/plugin-host",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -128,6 +129,10 @@ export default defineConfig({
       // esbuild never resolves an unreferenced file, so this stayed invisible
       // while the discovery preflight was dead code.
       "@mcpjam/sdk/oauth/node": join(rootDir, "../sdk/dist/oauth/node.js"),
+      "@mcpjam/sdk/internal/plugin-host": join(
+        rootDir,
+        "../sdk/dist/internal/plugin-host.js",
+      ),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
       "@mcpjam/sdk/model-factory": join(

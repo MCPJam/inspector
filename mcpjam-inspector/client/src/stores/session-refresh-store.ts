@@ -27,6 +27,12 @@ interface SessionRefreshState {
   queriesPaused: boolean;
   /** Only the current Convex auth configuration may release the recovery gate. */
   authConfirmed: boolean;
+  /**
+   * Bumped every time the server accepts a token for this tab. A call that
+   * was refused for missing identity waits for the next bump before its one
+   * retry (`lib/auth/sign-in-retry.ts`).
+   */
+  authEpoch: number;
   recoveryId: string | null;
   recoveryAt: number;
   pauseQueries: () => void;
@@ -43,6 +49,7 @@ export const useSessionRefreshStore = create<SessionRefreshState>(
     retryNonce: 0,
     queriesPaused: false,
     authConfirmed: false,
+    authEpoch: 0,
     recoveryId: null,
     recoveryAt: 0,
     pauseQueries: () => set({ queriesPaused: true }),

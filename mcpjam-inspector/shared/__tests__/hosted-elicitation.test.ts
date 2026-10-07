@@ -28,9 +28,48 @@ const urlRequest = {
 };
 
 describe("isHostedElicitationEvent — request", () => {
+  it("accepts only a well-formed opaque source link on an owned form", () => {
+    const request = {
+      ...formRequest,
+      formDialect: "openai",
+      pluginWorkspaceId: "workspace",
+      pluginFormSourceToken: "A".repeat(43),
+    };
+    expect(isHostedElicitationEvent(request)).toBe(true);
+    for (const fields of [
+      { formDialect: undefined },
+      { pluginWorkspaceId: undefined },
+      { mode: "url", url: "https://fixture.invalid" },
+      { pluginFormSourceToken: "forged" },
+      { pluginFormSourceToken: "!".repeat(43) },
+    ])
+      expect(isHostedElicitationEvent({ ...request, ...fields })).toBe(false);
+  });
   it("accepts form and url requests", () => {
     expect(isHostedElicitationEvent(formRequest)).toBe(true);
     expect(isHostedElicitationEvent(urlRequest)).toBe(true);
+  });
+
+  it("requires a private marker to have owned form scope without an inline schema", () => {
+    const privateRequest = {
+      ...formRequest,
+      formDialect: "openai",
+      pluginWorkspaceId: "workspace",
+      requestedSchema: undefined,
+      hasPrivateSchema: true,
+    };
+    expect(isHostedElicitationEvent(privateRequest)).toBe(true);
+    for (const fields of [
+      { formDialect: undefined },
+      { pluginWorkspaceId: undefined },
+      { mode: "url", url: "https://fixture.invalid" },
+      { requestedSchema: {} },
+      { hasPrivateSchema: "yes" },
+    ]) {
+      expect(isHostedElicitationEvent({ ...privateRequest, ...fields })).toBe(
+        false,
+      );
+    }
   });
 
   it("rejects a url request with no url", () => {
@@ -53,7 +92,9 @@ describe("isHostedElicitationEvent — request", () => {
     ["message", { a: 1 }],
     ["expiresAt", "soon"],
   ])("rejects a bad required field: %s", (key, bad) => {
-    expect(isHostedElicitationEvent({ ...formRequest, [key]: bad })).toBe(false);
+    expect(isHostedElicitationEvent({ ...formRequest, [key]: bad })).toBe(
+      false,
+    );
   });
 
   it("rejects a non-finite expiry", () => {
@@ -90,7 +131,11 @@ describe("isHostedElicitationEvent — resolved", () => {
   it("accepts each terminal outcome", () => {
     for (const outcome of ["answered", "expired", "cancelled"]) {
       expect(
-        isHostedElicitationEvent({ kind: "resolved", rendezvousId: "rv", outcome }),
+        isHostedElicitationEvent({
+          kind: "resolved",
+          rendezvousId: "rv",
+          outcome,
+        }),
       ).toBe(true);
     }
   });
@@ -144,10 +189,16 @@ describe("isHostedElicitationEvent — url_required", () => {
 
   it("rejects entries missing url or elicitationId", () => {
     expect(
-      isHostedElicitationEvent({ ...base, elicitations: [{ url: "https://x" }] }),
+      isHostedElicitationEvent({
+        ...base,
+        elicitations: [{ url: "https://x" }],
+      }),
     ).toBe(false);
     expect(
-      isHostedElicitationEvent({ ...base, elicitations: [{ elicitationId: "e" }] }),
+      isHostedElicitationEvent({
+        ...base,
+        elicitations: [{ elicitationId: "e" }],
+      }),
     ).toBe(false);
   });
 

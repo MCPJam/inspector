@@ -66,6 +66,17 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: "@mcpjam/sdk/host-compat",
+        replacement: path.resolve(rootDir, "../sdk/src/host-compat/index.ts"),
+      },
+      {
+        find: "@mcpjam/sdk/widget-runtime",
+        replacement: path.resolve(
+          rootDir,
+          "../sdk/src/widget-runtime/index.ts",
+        ),
+      },
+      {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
       },

@@ -131,10 +131,16 @@ vi.mock("sonner", () => ({ toast: { info: vi.fn(), dismiss: vi.fn() } }));
 vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
 
 // ── Module mocks ───────────────────────────────────────────────────────────
-vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
-  AppBridge: mockAppBridgeCtor,
-  PostMessageTransport: mockPostMessageTransport,
-}));
+vi.mock(
+  "@modelcontextprotocol/ext-apps/app-bridge",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@modelcontextprotocol/ext-apps/app-bridge")
+    >()),
+    AppBridge: mockAppBridgeCtor,
+    PostMessageTransport: mockPostMessageTransport,
+  }),
+);
 
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
 // The renderer relocated to @mcpjam/widget-react imports `./sandboxed-iframe`
@@ -576,6 +582,38 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();
     expect(sandboxedIframeMountsRef.current).toBe(1);
     expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("reloads the guest when its bridge is rebuilt, so it initializes the new bridge", async () => {
+    const renderTree = (override: Record<string, unknown>) => (
+      <ScenarioHostCapabilitiesOverrideProvider value={override}>
+        <HostedRenderer {...baseProps} />
+      </ScenarioHostCapabilitiesOverrideProvider>
+    );
+    const { rerender } = render(renderTree({ openLinks: {} }));
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+    });
+    const firstLoad = sandboxedIframePropsRef.current.reloadKey;
+    act(() => triggerReady());
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sandboxed-iframe").style.opacity).toBe("1"),
+    );
+
+    // New advertised capabilities need a new bridge. The guest already
+    // initialized the old one, so it must load again for the new one.
+    rerender(renderTree({ openLinks: {}, logging: {} }));
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+      expect(sandboxedIframePropsRef.current.reloadKey).not.toBe(firstLoad);
+    });
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    act(() => triggerReady());
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sandboxed-iframe").style.opacity).toBe("1"),
+    );
   });
 
   it("renders separate iframes for distinct tool calls on the same widget", async () => {
