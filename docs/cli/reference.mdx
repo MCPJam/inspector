@@ -1180,6 +1180,16 @@ Start a hosted readiness run that grades a saved server against OpenAI's app-dir
 | `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
 | `--idempotency-key <key>` | No | Replay guard |
 
+### `readiness start muse`
+
+Start a hosted readiness run that grades a saved server against Meta's Muse connector guidelines. Free — Muse has no AI observations. Returns immediately with a run id; poll with `readiness status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+
 ### `readiness status`
 
 Read one hosted readiness run. The response carries three independent axes: `status` (whether the run finished), `overallStatus` (the grade — a `completed` run can be `not-ready`), and `llmObservations` (whether the optional model pass ran).
