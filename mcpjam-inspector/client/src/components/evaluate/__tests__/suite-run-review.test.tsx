@@ -102,7 +102,7 @@ describe("suite run review", () => {
     await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["env-opus"] }),
-      { iterationOverride: 4 },
+      { iterationOverride: 4, throwOnFailure: true },
     );
     expect(close).toHaveBeenCalledOnce();
   });
