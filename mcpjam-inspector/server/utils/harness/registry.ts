@@ -15,6 +15,12 @@ import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
 import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
+import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
+import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
+export {
+  CURSOR_CLI_CHECKSUMS,
+  CURSOR_CLI_VERSION,
+} from "./cursor-bootstrap.js";
 import { createCodexAppServer } from "./codex-appserver/index.js";
 import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
@@ -473,6 +479,12 @@ export type HarnessCreateArgs = {
    */
   reasoningEffort?: ModelReasoningEffort;
   /**
+   * The permission mode this turn's runtime runs under, as the turn resolved
+   * it. An adapter may shape its runtime by it (Claude Code runs background
+   * tasks only under `allow-all`); absent means unknown, never permissive.
+   */
+  permissionMode?: HarnessV1PermissionMode;
+  /**
    * The command-sandbox policy an UNATTENDED local turn runs under (D2), set
    * only by the local arm from the compatibility manifest
    * (`localSandboxPolicyFor`). It is not a permission mode: the turn is
@@ -790,6 +802,68 @@ function memoizedBuiltinTools(
 // runs with `buildBrokerDummyAuth` placeholders pointed at the metered model
 // proxy, which normalizes its own per-protocol proxyBaseUrl.
 
+/**
+ * CLI environment a Claude Code turn runs with, whatever its effort: the
+ * model pins below, and whether background tasks run.
+ *
+ * Background tasks run on `allow-all` turns only. The bridge's background
+ * drain (`claude-code-background-drain.ts`) holds such a turn open until its
+ * background agents report back, so the answer reaches the chat the way it
+ * does in stock Claude Code.
+ *
+ * Every other mode turns them off. Under `allow-reads` the main thread pauses
+ * for approval on any edit, and a paused turn's model lease is revoked, so
+ * the drain stops whatever runs in the background at the first approval:
+ * background work there would be cut off almost every time. Off, the same
+ * subagent runs in the foreground and its answer comes back inside the turn
+ * that asked for it. An unknown mode counts as not `allow-all`.
+ */
+function claudeCodeTurnEnv(
+  permissionMode: HarnessV1PermissionMode | undefined,
+  modelId: string,
+): Record<string, string> {
+  return {
+    ...claudeCodeModelPins(modelId),
+    ...(permissionMode === "allow-all"
+      ? {}
+      : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
+  };
+}
+
+const CLAUDE_CODE_MODEL_FAMILIES = ["haiku", "sonnet", "opus"] as const;
+
+/**
+ * Every model Claude Code picks for ITSELF resolves to the turn's model.
+ *
+ * Besides the model it is given, the CLI reaches for its family aliases on
+ * its own: plan mode switches to the `sonnet` alias (CLI 2.1.245 sends
+ * `claude-sonnet-5` right after `EnterPlanMode`, even on a Haiku turn), and
+ * background functionality and the `Explore` subagent use `haiku`. The
+ * turn's model lease admits only the model the user picked (plus that
+ * model's own alias), so each of those calls was refused with
+ * `403 Model not allowed for this lease`, ending the turn.
+ *
+ * Pinning the OTHER families' aliases (`ANTHROPIC_DEFAULT_<FAMILY>_MODEL`) to
+ * the turn's canonical id sends those calls to the chosen model — the one
+ * the lease admits exactly and the user is billed for. The chosen family's
+ * own alias is left alone, so the main model keeps its existing path (the
+ * bridge's Gateway model overrides). An id outside the three families pins
+ * all three.
+ */
+function claudeCodeModelPins(modelId: string): Record<string, string> {
+  const native = toClaudeCodeModel(modelId);
+  const family = CLAUDE_CODE_MODEL_FAMILIES.find(
+    (candidate) =>
+      native === candidate || native?.startsWith(`claude-${candidate}-`),
+  );
+  const pins: Record<string, string> = {};
+  for (const candidate of CLAUDE_CODE_MODEL_FAMILIES) {
+    if (candidate === family) continue;
+    pins[`ANTHROPIC_DEFAULT_${candidate.toUpperCase()}_MODEL`] = modelId;
+  }
+  return pins;
+}
+
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
@@ -866,11 +940,12 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   parseToolName: parseHarnessToolName,
   // No `model` here: the adapter no longer reads one at construction. The
   // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
-  createHarness({ auth, mcpJson, reasoningEffort }) {
+  createHarness({ modelId, auth, mcpJson, reasoningEffort, permissionMode }) {
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
-    // local session swaps this bootstrap for its verified pack's own
-    // (`withLocalPackBootstrap`), so the local pack bytes are untouched.
+    // local session swaps this bootstrap for the Inspector layer's
+    // (`withLocalRuntimeBootstrap`): the bridge it runs is the one compiled
+    // into the layer and re-hashed before every exec.
     return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
       auth,
@@ -903,9 +978,17 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
         ? {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
-            env: { CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
+            env: {
+              ...claudeCodeTurnEnv(permissionMode, modelId),
+              CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
+            },
           }
-        : { env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" } }),
+        : {
+            env: {
+              ...claudeCodeTurnEnv(permissionMode, modelId),
+              CLAUDE_CODE_EFFORT_LEVEL: "unset",
+            },
+          }),
     });
   },
 };
@@ -1046,7 +1129,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // environment, set once by an admin under Project Settings → Secrets.
   // Missing ⇒ the turn is refused up front with copy that says so, never
   // defaulted.
-  externalAccountCredentialEnv: ["CURSOR_API_KEY"],
+  externalAccountCredentialEnv: [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env],
   // …and it can be BROKERED, which is the preferred delivery and the only
   // one hosted evals and swarms accept at all (they refuse an environment that
   // selects materialized secrets — `evalSandboxes.ts`'s
@@ -1061,13 +1144,16 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // `Authorization: Bearer <CURSOR_API_KEY>`. MCPJam's egress transform is
   // host-scoped rather than path-scoped, so brokering the host covers that
   // exchange and any sibling call that authenticates the same way.
+  //
+  // Declared in `shared/external-credential-selection.ts` so the composer and
+  // the setup step that creates the secret use the SAME binding. (Lowercase
+  // header: `validateBrokerBinding` canonicalizes stored rows that way, so this
+  // is what a saved secret compares equal to.)
   externalAccountBrokerBinding: {
-    CURSOR_API_KEY: {
-      hosts: ["api2.cursor.sh"],
-      // LOWERCASE: `validateBrokerBinding` canonicalizes stored rows that way,
-      // so this is what a saved secret compares equal to.
-      header: "authorization",
-      template: "Bearer {}",
+    [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env]: {
+      hosts: [...EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.hosts],
+      header: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.header,
+      template: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.template,
     },
   },
   defaultPermissionMode: "allow-all",
@@ -1141,8 +1227,8 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // model gate for an external-account harness, because the model MCPJam knows
   // about is not the model that runs (the sentinel rule replaces them). Read
   // from the same table anyway — it says `cursor/auto` only — so a picker that
-  // asks gets the same answer. The CLI version is not pinned (see
-  // `runtimeVersionCommand`), and every Cursor row is version-independent.
+  // asks gets the same answer. The CLI build is pinned (see
+  // `cursor-bootstrap.ts`), and every Cursor row is version-independent.
   pinnedRuntimeVersion: harnessPinnedVersion("cursor"),
   modelSupport: modelSupportFor("cursor"),
   supportsModel: supportsModelFor("cursor"),
@@ -1155,11 +1241,12 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // — the adapter's own `isMcpToolCall` predicate keys off exactly those three
   // fields), so this hook is what makes Cursor MCP calls attributable at all.
   attributeToolCall: attributeCursorToolCall,
-  // The installed CLI is whatever `curl https://cursor.com/install | bash`
-  // fetched at bootstrap — the adapter pins its own version but NOT the CLI's,
-  // and two observed builds are four months of behaviour apart. Recording the
-  // version per session is what makes a silent upstream change attributable
-  // instead of a mystery regression.
+  // The CLI is PINNED: `pinCursorHarnessBootstrap` replaces the vendor's
+  // `curl https://cursor.com/install | bash` (which serves whatever Cursor
+  // shipped that day) with a checksummed download of `HARNESS_PINNED_VERSIONS
+  // .cursor`. Recording the version per session still earns its place: it is
+  // what makes a box that somehow runs another build — a stale template, a
+  // custom image — attributable instead of a mystery regression.
   runtimeVersionCommand: (sessionWorkDir) =>
     // Layout taken from the adapter's own bootstrap: `bootstrapDir` is
     // `.harness-bootstrap/<harnessId>` under the session workdir, and
@@ -1176,18 +1263,21 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     )}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version`,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return createCursor({
-      // The customer's own CURSOR_API_KEY, as the environment arm of
-      // HarnessV1Authentication. Passing an explicit env map (rather than
-      // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading the
-      // SERVER's process env for a credential — and the routing modes would
-      // only produce a warning here anyway, since Cursor cannot be re-routed.
-      auth,
-      // REQUIRED by this arm's signature: `session-config` delivery has no
-      // other channel, so a construction that forgot the servers would be a
-      // silently tool-less turn. The type makes that unwritable.
-      mcpServers: toAcpMcpServers(mcpJson),
-    }) as unknown as HarnessAgentAdapter;
+    return pinCursorHarnessBootstrap(
+      createCursor({
+        // The customer's own CURSOR_API_KEY, as the environment arm of
+        // HarnessV1Authentication. Passing an explicit env map (rather than
+        // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading
+        // the SERVER's process env for a credential — and the routing modes
+        // would only produce a warning here anyway, since Cursor cannot be
+        // re-routed.
+        auth,
+        // REQUIRED by this arm's signature: `session-config` delivery has no
+        // other channel, so a construction that forgot the servers would be a
+        // silently tool-less turn. The type makes that unwritable.
+        mcpServers: toAcpMcpServers(mcpJson),
+      }) as unknown as HarnessAgentAdapter,
+    );
   },
 };
 

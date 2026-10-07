@@ -261,7 +261,7 @@ export async function prepareSuiteReplayFromRun(
 }
 
 /**
- * Full suite replay used by synchronous `/replay-run` callers and trace repair.
+ * Full suite replay used by synchronous `/replay-run` callers.
  */
 export async function executeSuiteReplayFromRun(
   params: ExecuteSuiteReplayFromRunParams,

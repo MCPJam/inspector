@@ -9,7 +9,12 @@ import { TestCasesOverview } from "./test-cases-overview";
 import type { CrossHostEnvironment } from "./cross-host/use-cross-host-data";
 import { SuiteResultsSplit } from "./suite-results-split";
 import { buildHostNamesById } from "./helpers";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRunListItem,
+} from "./types";
 import { isModelFree } from "@/shared/steps";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 
@@ -34,8 +39,14 @@ export interface SuiteDashboardProps {
   suite: EvalSuite;
   cases: EvalCase[];
   allIterations: EvalIteration[];
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   runsLoading: boolean;
+  runHistoryStatus?:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreRuns?: () => void;
   runTrendData: RunTrendPoint[];
   modelStats: ModelStat[];
   /** Click a test case row — opens the case editor / detail. */
@@ -109,6 +120,8 @@ export function SuiteDashboard({
   allIterations,
   runs,
   runsLoading,
+  runHistoryStatus,
+  onLoadMoreRuns,
   runTrendData,
   modelStats,
   onTestCaseClick,
@@ -261,6 +274,8 @@ export function SuiteDashboard({
         suite={suite}
         cases={cases}
         runs={runs}
+        runHistoryStatus={runHistoryStatus}
+        onLoadMoreRuns={onLoadMoreRuns}
         allIterations={allIterations}
         hostNamesById={hostNamesById}
         environments={environments}

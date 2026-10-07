@@ -108,11 +108,21 @@ export type SwarmStreamLifecyclePayload =
       type: "session_complete";
       status: Exclude<SwarmAttemptStreamStatus, "pending" | "running">;
       errorMessage?: string;
+      /** The code the attempt row is stored under; see `attempt_status`. */
+      errorCode?: string;
     }
   | {
       type: "attempt_status";
       status: SwarmAttemptStreamStatus;
       errorMessage?: string;
+      /**
+       * The code the attempt row is stored under (`spending_reservation_busy`,
+       * `user_rate_limit`, ...), when it has one. `errorMessage` is the
+       * humanized sentence, which has dropped it, and a surface that tells
+       * MCPJam's own wait or limit from a provider's throttle reads the code
+       * first, ahead of the attempt row landing.
+       */
+      errorCode?: string;
     }
   | { type: "run_complete" };
 

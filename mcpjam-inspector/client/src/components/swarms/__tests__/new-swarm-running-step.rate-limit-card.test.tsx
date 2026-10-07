@@ -9,7 +9,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
  * be a false promise, which is the whole reason the ticket rejects a modal.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JourneyRun } from "@/lib/swarm-api";
 const appNavigate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/app-navigation", () => ({ useAppNavigate: () => appNavigate }));
@@ -22,8 +22,13 @@ const streamState = {
   error: null as string | null,
 };
 
+const streamHook = vi.hoisted(() => vi.fn());
+
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
-  useJourneyRunStream: () => streamState,
+  useJourneyRunStream: (...args: unknown[]) => {
+    streamHook(...args);
+    return streamState;
+  },
   liveSessionTrace: () => null,
   swarmCellKey: (targetKey: string, sessionIndex: number) =>
     `${targetKey}:${sessionIndex}`,
@@ -205,9 +210,17 @@ async function openTheSession() {
   });
 }
 
+// The dialog store outlives a test: a failed assertion must not leave its auth
+// status, its notified keys or an open dialog for the next one to inherit.
+const resetLimitDialogStore = () =>
+  useMCPJamLimitDialogStore.setState(
+    useMCPJamLimitDialogStore.getInitialState(),
+  );
+beforeEach(resetLimitDialogStore);
+afterEach(resetLimitDialogStore);
+
 describe("NewSwarmRunningStep — provider rate-limit card", () => {
   it("targets the swarm organization when an attempt automatically opens recovery", () => {
-    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
     attempt.errorCode = "user_rate_limit";
     attempt.errorMessage = "Credits exhausted";
@@ -221,7 +234,25 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       outOfCreditsOrganizationId: "org-1",
       surface: "swarm",
     });
-    useMCPJamLimitDialogStore.setState(useMCPJamLimitDialogStore.getInitialState());
+  });
+
+  it("hands the live stream the swarm's organization along with the run's wave", () => {
+    // The stream raises its own limit notices; without the organization the
+    // wave they speak for would belong to nobody.
+    streamHook.mockClear();
+    (runFixture as { swarmRunGroupId?: string }).swarmRunGroupId = "wave-1";
+    try {
+      renderStep();
+    } finally {
+      delete (runFixture as { swarmRunGroupId?: string }).swarmRunGroupId;
+    }
+
+    expect(streamHook).toHaveBeenCalledWith(
+      "run-1",
+      expect.any(Boolean),
+      "wave-1",
+      "org-1",
+    );
   });
 
   beforeEach(() => {
@@ -325,6 +356,142 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does NOT name a provider for a busy reservation", async () => {
+    // A busy reservation is MCPJam's own wait: the model was never called, so no
+    // provider throttled anything, and neither a purchase nor another model
+    // helps. The sessions it stops are stored `rate_limited` under its own code.
+    const busy =
+      "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+    attempt.errorCode = "spending_reservation_busy";
+    attempt.errorMessage = busy;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = busy;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("does NOT name a provider for a busy reservation known only by its sentence", async () => {
+    // The terminal event can reach the browser before the attempt row does, or
+    // the report can fail: the live message is then all there is, and the
+    // humanizer has already dropped the code from it. Rows stored before the
+    // runner kept the busy code carry the same sentence under the generic one.
+    const humanized =
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.";
+    attempt.errorCode = "rate_limited";
+    attempt.errorMessage = humanized;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = humanized;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("does NOT name a provider while only the live stream has said a session was busy", async () => {
+    // No attempt row has landed yet: its status is still the lifecycle's, and it
+    // carries no code or message of its own.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const humanized =
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.";
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = humanized;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("does NOT name a provider for the generic busy wording the live stream carries", async () => {
+    // What a backend that has not been redeployed wrote for the same refusal,
+    // after the runner's humanizer dropped the code from it.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
+    ).errorMessage = "MCPJam is temporarily busy. Please retry.";
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
+      "temporarily busy",
+    );
+  });
+
+  it("reads a busy reservation by the code the live event carries, whatever its wording", async () => {
+    // The terminal event now brings the code the attempt is stored under, so
+    // the pane does not have to recognise a sentence while the row is still on
+    // its way.
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const live = streamState.sessions[CHAT_SESSION_ID] as {
+      errorMessage: string;
+      errorCode?: string;
+    };
+    live.errorMessage = "Too many requests. Retry in a moment.";
+    live.errorCode = "spending_reservation_busy";
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    // The failure card reads the same code: MCPJam's own busy sentence, not the
+    // raw wording the event happened to carry.
+    const card = screen.getByTestId("swarm-live-pane-failure");
+    expect(card).toHaveTextContent(
+      "MCPJam is temporarily busy reserving spending capacity. Retry this attempt.",
+    );
+    expect(card).not.toHaveTextContent("rate-limited this key");
+    expect(card).not.toHaveTextContent("Raise the rate limit");
+    expect(card).not.toHaveTextContent("Out of MCPJam credits");
+  });
+
+  it("still names the provider when the live event's code is the generic one", async () => {
+    attempt.errorCode = null;
+    attempt.errorMessage = null;
+    const live = streamState.sessions[CHAT_SESSION_ID] as {
+      errorMessage: string;
+      errorCode?: string;
+    };
+    live.errorMessage = "429 Too Many Requests";
+    live.errorCode = "rate_limited";
+    renderStep();
+    await openTheSession();
+
+    const card = await screen.findByTestId("swarm-live-pane-rate-limit");
+    expect(card).toHaveTextContent("Your provider hit its limit");
+  });
+
   it("explains an account limit above the table when other sessions succeeded", async () => {
     // With a success in the wave the run banner stays silent, so without this
     // the stopped sessions would be amber chips with no reason given.
@@ -345,6 +512,180 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+  });
+
+  // What the runner stores for a `holds_committed` refusal once its wait
+  // budget runs out: the backend's sentence under the generic code, with the
+  // refusal reason gone. The wallet was never empty.
+  const HELD_ROW =
+    "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
+
+  it("words a hold as a wait, not as a usage limit or an empty wallet, and opens no dialog", async () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    attempt.errorCode = "user_rate_limit";
+    attempt.errorMessage = HELD_ROW;
+    renderStep();
+
+    // The session card says "Credits temporarily held"; the run banner agrees.
+    const banner = await screen.findByTestId("new-swarm-running-held-credits");
+    expect(banner).toHaveTextContent("Credits temporarily held");
+    expect(banner).toHaveTextContent("1 session stopped");
+    expect(banner).not.toHaveTextContent(
+      /usage limit|Out of MCPJam credits|credit options/i,
+    );
+    // It owns its cause: no account-limit callout, no grouped failure banner.
+    expect(
+      screen.queryByTestId("new-swarm-running-account-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "View credit options" }),
+    ).not.toBeInTheDocument();
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("keeps a hold out of the account-limit callout when a real exhaustion shares the run", async () => {
+    const otherChatSessionId = swarmAttemptChatSessionId(
+      "run-1",
+      { hostId: "host-1", environmentId: "env-2" },
+      0,
+    );
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      SUMMARY_ENV_1,
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 2 };
+    attempts = [
+      {
+        ...attempt,
+        chatSessionId: CHAT_SESSION_ID,
+        errorCode: "user_rate_limit",
+        errorMessage: HELD_ROW,
+      },
+      {
+        ...attempt,
+        chatSessionId: otherChatSessionId,
+        targetId: "environment:env-2",
+        errorCode: "user_rate_limit",
+        errorMessage:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      },
+    ];
+    sessionRows = [
+      { ...sessionRow },
+      { ...sessionRow, id: "s-2", chatSessionId: otherChatSessionId },
+    ];
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+
+    // Each cause gets its own line, and the held session is counted once.
+    const held = await screen.findByTestId("new-swarm-running-held-credits");
+    const limit = await screen.findByTestId("new-swarm-running-account-limit");
+    expect(held).toHaveTextContent("1 session stopped");
+    // The breakdown adds up to the run: the held session is listed in it too,
+    // not only subtracted from "failed".
+    expect(limit).toHaveTextContent(
+      "0 completed, 0 failed, 1 stopped at an organization usage limit, 1 held.",
+    );
+    expect(limit).toHaveTextContent("Out of MCPJam credits.");
+    expect(
+      screen.queryByTestId("new-swarm-running-failure"),
+    ).not.toBeInTheDocument();
+  });
+
+  // A run's attempts share its id. One target refused on a shortfall and a later
+  // one on an empty wallet: the second has to reach the store, or the dialog
+  // keeps saying credits remain and the models stay unlocked.
+  it("hears an empty wallet from a later attempt after an earlier attempt's shortfall", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const otherChatSessionId = swarmAttemptChatSessionId(
+      "run-1",
+      { hostId: "host-1", environmentId: "env-2" },
+      0,
+    );
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      SUMMARY_ENV_1,
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 2 };
+    attempts = [
+      {
+        ...attempt,
+        chatSessionId: CHAT_SESSION_ID,
+        errorCode: "user_rate_limit",
+        errorMessage:
+          'Backend stream error: 429 {"code":"user_rate_limit","limitKind":"total","refusalReason":"insufficient_for_request","creditsRemaining":23,"creditsRequired":30,"error":"This request needs about 30 MCPJam credits; your organization has 23 left today."}',
+      },
+      {
+        ...attempt,
+        chatSessionId: otherChatSessionId,
+        targetId: "environment:env-2",
+        errorCode: "user_rate_limit",
+        errorMessage:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      },
+    ];
+    sessionRows = [
+      { ...sessionRow },
+      { ...sessionRow, id: "s-2", chatSessionId: otherChatSessionId },
+    ];
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+
+    expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
+      isOpen: true,
+      shortfall: null,
+      outOfCreditsHit: true,
+    });
+  });
+
+  it("counts several held sessions and reads a hold stored under its structured reason", async () => {
+    const otherChatSessionId = swarmAttemptChatSessionId(
+      "run-1",
+      { hostId: "host-1", environmentId: "env-2" },
+      0,
+    );
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      SUMMARY_ENV_1,
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 2 };
+    attempts = [
+      {
+        ...attempt,
+        chatSessionId: CHAT_SESSION_ID,
+        errorCode: "user_rate_limit",
+        errorMessage: HELD_ROW,
+      },
+      {
+        ...attempt,
+        chatSessionId: otherChatSessionId,
+        targetId: "environment:env-2",
+        errorCode: "user_rate_limit",
+        errorMessage:
+          'Backend stream error: 429 {"code":"user_rate_limit","refusalReason":"holds_committed","error":"Try again shortly."}',
+      },
+    ];
+    sessionRows = [
+      { ...sessionRow },
+      { ...sessionRow, id: "s-2", chatSessionId: otherChatSessionId },
+    ];
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+
+    const held = await screen.findByTestId("new-swarm-running-held-credits");
+    expect(held).toHaveTextContent("2 sessions stopped");
+    expect(
+      screen.queryByTestId("new-swarm-running-account-limit"),
     ).not.toBeInTheDocument();
   });
 

@@ -13,49 +13,19 @@
  * hosted/chat dialogs later).
  */
 
-import { RE2JS } from "re2js";
-
-export type ElicitationFieldKind =
-  | "string"
-  | "number"
-  | "integer"
-  | "boolean"
-  | "enum"
-  | "multi-enum"
-  | "json";
-
-export type ElicitationFieldFormat = "email" | "uri" | "date" | "date-time";
-
-export interface ElicitationFieldOption {
-  /** The value sent back to the server. */
-  value: string;
-  /** Human-readable label; falls back to `value` when the schema has no title. */
-  label: string;
-}
-
-export interface ElicitationField {
-  /** Raw property key from the schema — this is what the server keys on. */
-  name: string;
-  kind: ElicitationFieldKind;
-  /** Schema `title`, when present. Display-only; never replaces `name`. */
-  title?: string;
-  description?: string;
-  required: boolean;
-  /** Schema `default`, when present. Used to prefill the form. */
-  default?: unknown;
-  format?: ElicitationFieldFormat;
-  minimum?: number;
-  maximum?: number;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
-  /** Present for `enum` and `multi-enum`. */
-  options?: ElicitationFieldOption[];
-  /** `multi-enum` only. */
-  minItems?: number;
-  /** `multi-enum` only. */
-  maxItems?: number;
-}
+import {
+  type SchemaFormField as ElicitationField,
+  type SchemaFormFieldFormat as ElicitationFieldFormat,
+  type SchemaFormFieldOption as ElicitationFieldOption,
+} from "../schema-form/field";
+export { validateSchemaFormField as validateField } from "../schema-form/validation";
+export { fieldLabel } from "../schema-form/field";
+export type {
+  SchemaFormField as ElicitationField,
+  SchemaFormFieldKind as ElicitationFieldKind,
+  SchemaFormFieldFormat as ElicitationFieldFormat,
+  SchemaFormFieldOption as ElicitationFieldOption,
+} from "../schema-form/field";
 
 /** A value that fits the MCP `ElicitResult.content` shape. */
 export type ElicitationContentValue = string | number | boolean | string[];
@@ -67,17 +37,7 @@ const FORMATS: readonly ElicitationFieldFormat[] = [
   "date-time",
 ];
 
-/** Patterns are shown verbatim and validated with RE2's linear-time engine. */
-export function patternHint(field: ElicitationField): string | undefined {
-  return field.pattern ? `Must match: ${field.pattern}` : undefined;
-}
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-// Tolerates the `datetime-local` input's timezone-less value as well as full
-// RFC 3339 strings.
-const DATE_TIME_RE =
-  /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([Zz]|[+-]\d{2}:\d{2})?$/;
+export { patternHint } from "../schema-form/field";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -164,7 +124,7 @@ function multiSelectOptions(prop: Record<string, unknown>) {
 function jsonField(
   name: string,
   prop: Record<string, unknown> | undefined,
-  required: boolean
+  required: boolean,
 ): ElicitationField {
   return {
     name,
@@ -188,7 +148,7 @@ export function parseElicitationSchema(schema: unknown): ElicitationField[] {
   const required = new Set(
     Array.isArray(schema.required)
       ? schema.required.filter((k): k is string => typeof k === "string")
-      : []
+      : [],
   );
 
   const fields: ElicitationField[] = [];
@@ -206,7 +166,7 @@ export function parseElicitationSchema(schema: unknown): ElicitationField[] {
 function parseProperty(
   name: string,
   prop: Record<string, unknown>,
-  required: boolean
+  required: boolean,
 ): ElicitationField {
   const base = {
     name,
@@ -257,6 +217,10 @@ function parseProperty(
         kind: type,
         minimum: asNumber(prop.minimum),
         maximum: asNumber(prop.maximum),
+        multipleOf:
+          prop.multipleOf === undefined
+            ? undefined
+            : (asNumber(prop.multipleOf) ?? NaN),
       };
     case "boolean":
       return { ...base, kind: "boolean" };
@@ -264,10 +228,6 @@ function parseProperty(
       // Nested objects, untyped props, anything else the spec forbids here.
       return jsonField(name, prop, required);
   }
-}
-
-export function fieldLabel(field: ElicitationField): string {
-  return field.title ?? field.name;
 }
 
 function isBlank(value: unknown): boolean {
@@ -278,142 +238,6 @@ function toStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
-}
-
-/**
- * Validate a single field's current form value.
- * @returns an error message to render under the field, or `null` when valid.
- */
-export function validateField(
-  field: ElicitationField,
-  value: unknown
-): string | null {
-  const label = fieldLabel(field);
-
-  if (field.kind === "multi-enum") {
-    const selected = toStringArray(value);
-    if (field.required && selected.length === 0) {
-      return `${label} is required`;
-    }
-    // Leaving an OPTIONAL multi-select empty is a valid non-answer, and
-    // `buildElicitationContent` omits it. Enforcing minItems here made that
-    // unreachable: the form refused to submit a field it would never send,
-    // with no way to satisfy the rule short of answering.
-    if (!field.required && selected.length === 0) {
-      return null;
-    }
-    if (field.minItems !== undefined && selected.length < field.minItems) {
-      return `Select at least ${field.minItems} option${
-        field.minItems === 1 ? "" : "s"
-      }`;
-    }
-    if (field.maxItems !== undefined && selected.length > field.maxItems) {
-      return `Select at most ${field.maxItems} option${
-        field.maxItems === 1 ? "" : "s"
-      }`;
-    }
-    return null;
-  }
-
-  // A checkbox always carries a definite answer; `false` satisfies `required`.
-  if (field.kind === "boolean") return null;
-
-  if (isBlank(value)) {
-    return field.required ? `${label} is required` : null;
-  }
-
-  switch (field.kind) {
-    case "number":
-    case "integer": {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return `${label} must be a number`;
-      if (field.kind === "integer" && !Number.isInteger(n)) {
-        return `${label} must be an integer`;
-      }
-      if (field.minimum !== undefined && n < field.minimum) {
-        return `${label} must be at least ${field.minimum}`;
-      }
-      if (field.maximum !== undefined && n > field.maximum) {
-        return `${label} must be at most ${field.maximum}`;
-      }
-      return null;
-    }
-    case "enum": {
-      const str = String(value);
-      if (field.options && !field.options.some((o) => o.value === str)) {
-        return `${label} must be one of the offered options`;
-      }
-      return null;
-    }
-    case "json": {
-      try {
-        JSON.parse(String(value));
-        return null;
-      } catch {
-        return `${label} must be valid JSON`;
-      }
-    }
-    case "string":
-    default:
-      return validateString(field, String(value), label);
-  }
-}
-
-function validateString(
-  field: ElicitationField,
-  str: string,
-  label: string
-): string | null {
-  if (field.minLength !== undefined && str.length < field.minLength) {
-    return `${label} must be at least ${field.minLength} character${
-      field.minLength === 1 ? "" : "s"
-    }`;
-  }
-  if (field.maxLength !== undefined && str.length > field.maxLength) {
-    return `${label} must be at most ${field.maxLength} character${
-      field.maxLength === 1 ? "" : "s"
-    }`;
-  }
-  if (field.pattern) {
-    try {
-      // RE2JS uses a non-backtracking DFA, so server-controlled patterns cannot
-      // freeze the renderer. `test` intentionally mirrors RegExp.test's
-      // unanchored semantics; schemas that need a full match include ^...$.
-      if (!RE2JS.compile(field.pattern).test(str)) {
-        return `${label} does not match the required pattern`;
-      }
-    } catch {
-      // RE2 deliberately rejects backreferences/lookarounds and malformed
-      // syntax. Do not silently accept content we could not validate.
-      return `${label} uses a pattern this client cannot safely validate`;
-    }
-  }
-  switch (field.format) {
-    case "email":
-      return EMAIL_RE.test(str)
-        ? null
-        : `${label} must be a valid email address`;
-    case "uri":
-      return isValidUri(str) ? null : `${label} must be a valid URI`;
-    case "date":
-      return DATE_RE.test(str) ? null : `${label} must be a valid date`;
-    case "date-time":
-      return DATE_TIME_RE.test(str)
-        ? null
-        : `${label} must be a valid date and time`;
-    default:
-      return null;
-  }
-}
-
-function isValidUri(str: string): boolean {
-  try {
-    // Parsing only — never fetched, never rendered as a link.
-    new URL(str);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function fitsContentShape(value: unknown): value is ElicitationContentValue {
@@ -434,13 +258,13 @@ function fitsContentShape(value: unknown): value is ElicitationContentValue {
  */
 export function buildElicitationContent(
   fields: ElicitationField[],
-  values: Record<string, unknown>
+  values: Record<string, unknown>,
 ): Record<string, ElicitationContentValue> {
   // Null-prototype: field names come from the server, and a field literally
   // named `__proto__` would otherwise mutate this object's prototype instead of
   // creating a key — the answer would silently never reach the server.
   const content: Record<string, ElicitationContentValue> = Object.create(
-    null
+    null,
   ) as Record<string, ElicitationContentValue>;
 
   for (const field of fields) {
@@ -499,7 +323,7 @@ export function buildElicitationContent(
 
 /** Initial form state for a parsed field list, honoring schema `default`s. */
 export function initialFormValues(
-  fields: ElicitationField[]
+  fields: ElicitationField[],
 ): Record<string, unknown> {
   // Null-prototype for the same reason as buildElicitationContent: a server can
   // name a field `__proto__`, and a plain object would swallow it.

@@ -1,3 +1,4 @@
+import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -56,6 +57,7 @@ import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
+import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
 import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
 import type {
   MCPJamEngineErrorEvent,
@@ -539,6 +541,7 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
+  const appContext = browser.getModelContext?.();
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -747,10 +750,11 @@ export async function driveHostedEvalTurn(
 
   // Cursor + Codex review fix: thread `toolChoice` AND `maxOutputTokens`
   // through `extraBodyFields` since the engine options don't expose them as
-  // first-class fields. `maxOutputTokens: 16384` matches the legacy per-step
-  // Convex body (Cursor round-2 "Dropped eval maxOutputTokens limit").
+  // first-class fields. The ceiling matches the legacy per-step Convex body
+  // (Cursor round-2 "Dropped eval maxOutputTokens limit"), and is shared with
+  // the swarm host steps.
   const mergedExtraBodyFields: Record<string, unknown> = {
-    maxOutputTokens: 16384,
+    maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
     ...(params.extraBodyFields ?? {}),
     ...(params.toolChoice ? { toolChoice: params.toolChoice } : {}),
   };
@@ -765,7 +769,7 @@ export async function driveHostedEvalTurn(
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
     turnResult = await runAssistantTurn({
-      messages: inputMessages,
+      messages: appendPluginModelContext(inputMessages, appContext),
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
       // in as `modelId`. The engine reads `modelDefinition.id` for the wire

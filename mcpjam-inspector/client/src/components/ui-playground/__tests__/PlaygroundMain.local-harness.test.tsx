@@ -963,6 +963,28 @@ describe("PlaygroundMain — local Claude Code", () => {
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
       expect(screen.getByTestId("chat-input-field")).toHaveValue("keep my draft");
     });
+    it("sets up on a machine that never authorized it — Set up is what creates the request", async () => {
+      // First run on this computer: no durable authorization yet, so the
+      // controller requests nothing (`preferredVenue` is not "local"). Set up
+      // must still reach setup; it used to return before sending anything.
+      const state = mockLocalHarness.state as Record<string, unknown>;
+      const requested = state.requestedTarget;
+      state.requestedTarget = null;
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+        await waitFor(() =>
+          expect(ensureReadyMock).toHaveBeenCalledWith(expect.any(String), true, undefined, undefined, "claude-code"),
+        );
+        await waitFor(() => expect(mockLocalHarness.state.refresh).toHaveBeenCalled());
+        // An ordinary Send on that machine still needs no local readiness.
+        ensureReadyMock.mockClear();
+        type("pwd"); await submit();
+        expect(ensureReadyMock).not.toHaveBeenCalled();
+      } finally {
+        state.requestedTarget = requested;
+      }
+    });
     it("sets up and renews the previewed harness, not Claude Code", async () => {
       // A Codex host's Set up and Send must reach Codex's own readiness:
       // Claude Code's would store a consent the Codex transport never reads.

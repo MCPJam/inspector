@@ -20,8 +20,6 @@ import {
 } from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
-import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
-import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
   callerContextFromHono,
@@ -140,27 +138,6 @@ const hostedReplayRunSchema = z.object({
   // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
   // and the gate it produced could never fail.
   passCriteria: passCriteriaSchema.optional(),
-});
-
-const hostedTraceRepairStartSchema = z.discriminatedUnion("scope", [
-  z.object({
-    scope: z.literal("suite"),
-    suiteId: z.string().min(1),
-    sourceRunId: z.string().min(1),
-    modelApiKeys: z.record(z.string(), z.string()).optional(),
-  }),
-  z.object({
-    scope: z.literal("case"),
-    suiteId: z.string().min(1),
-    sourceRunId: z.string().min(1),
-    sourceIterationId: z.string().min(1),
-    testCaseId: z.string().min(1),
-    modelApiKeys: z.record(z.string(), z.string()).optional(),
-  }),
-]);
-
-const hostedTraceRepairStopSchema = z.object({
-  jobId: z.string().min(1),
 });
 
 evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, false));
@@ -640,63 +617,6 @@ evals.post("/generate-negative-tests", async (c) => {
     },
   );
 });
-
-evals.post("/trace-repair/start", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(
-      hostedTraceRepairStartSchema,
-      await readJsonBody(c),
-    );
-    const convexAuthToken = assertBearerToken(c);
-    const convexClient = createConvexClient(convexAuthToken);
-    const start = await convexClient.mutation(
-      "traceRepair:startTraceRepairJob" as any,
-      {
-        testSuiteId: body.suiteId,
-        sourceRunId: body.sourceRunId,
-        scope: body.scope,
-        targetTestCaseId: body.scope === "case" ? body.testCaseId : undefined,
-        targetSourceIterationId:
-          body.scope === "case" ? body.sourceIterationId : undefined,
-      },
-    );
-    const shouldSpawnWorker =
-      start.shouldSpawnWorker !== false &&
-      (start.shouldSpawnWorker === true || start.existing !== true);
-    if (shouldSpawnWorker) {
-      void runTraceRepairJob({
-        convexClient,
-        convexAuthToken,
-        jobId: start.jobId,
-        modelApiKeys: body.modelApiKeys,
-      }).catch((err) => {
-        logger.error("[trace-repair] background job failed", err, {
-          jobId: start.jobId,
-        });
-      });
-    }
-    return {
-      success: true,
-      jobId: start.jobId,
-      existing: Boolean(start.existing),
-    };
-  }),
-);
-
-evals.post("/trace-repair/stop", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(
-      hostedTraceRepairStopSchema,
-      await readJsonBody(c),
-    );
-    const convexAuthToken = assertBearerToken(c);
-    const convexClient = createConvexClient(convexAuthToken);
-    await convexClient.mutation("traceRepair:stopTraceRepairJob" as any, {
-      jobId: body.jobId,
-    });
-    return { success: true };
-  }),
-);
 
 evals.post("/replay-run", async (c) =>
   handleRoute(

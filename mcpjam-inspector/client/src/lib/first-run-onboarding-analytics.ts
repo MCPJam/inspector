@@ -12,7 +12,7 @@ export type FirstRunOnboardingScreen =
 
 export type FirstRunServerKind = "demo" | "personal";
 export type FirstRunServerTransport = "http" | "stdio";
-export type FirstRunAuthentication = "auto" | "oauth" | "none";
+export type FirstRunAuthentication = "auto" | "oauth" | "none" | "xaa" | "bearer";
 
 export interface FirstRunConnectionAnalyticsContext {
   serverKind: FirstRunServerKind;

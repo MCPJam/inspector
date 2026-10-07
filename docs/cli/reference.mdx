@@ -609,7 +609,7 @@ string.
 | `connectionDefaults` | JSON object | Resets to the platform defaults |
 | `respectToolVisibility` | `true` \| `false` | Clears |
 | `progressiveToolDiscovery` | `true` \| `false` | Clears |
-| `harness` | string (`claude-code` \| `codex`) | Clears |
+| `harness` | string (`claude-code` \| `codex` \| `cursor`) | Clears |
 | `computer` | JSON object | Clears |
 | `builtInToolIds` | JSON array | Clears |
 | `skillSelection` | JSON object | Clears |
@@ -1647,6 +1647,35 @@ six chain rows — connection, discovery, selection, tool call, response, user
 value — with each row's state and reason in words. It is off by default because
 six rows per trial is a lot of terminal on a run with twenty failures; the
 first-break line above the per-trial detail is printed either way.
+
+### `cloud eval rerun`
+
+Rerun a finished run's failed cases as a new run. The platform picks the cases:
+every case with a trial that did not complete and pass. Cancelled and skipped
+trials do not count. The new run records `rerunOfRunId` and `rerunScope`, and
+because it ran only what failed, it is never used as the suite's latest run, a
+trend point, or a comparison baseline.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `<run-id>` | Yes | Eval run ID to rerun (from `eval run`) |
+| `--failed` | Yes | Rerun only the cases that did not pass (the only rerun scope) |
+| `--dry-run` | No | Show which cases would rerun, and why, without starting anything. Exits 1 when nothing can rerun |
+| `--notes <text>` | No | Free-text note stored on the new run |
+| `--idempotency-key <key>` | No | Repeating the call returns the run it already started |
+| `--wait` | No | Wait for the rerun to reach a terminal status; exits on its verdict like `eval run --wait` |
+| `--wait-timeout <ms>` | No | Maximum time to wait (requires `--wait`) |
+| `--json` | No | Print machine-readable JSON (same as `--format json`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+A run that is still executing or grading, or one where nothing qualifies, is
+refused with `409` (`details.reason` is `RERUN_SOURCE_NOT_TERMINAL` or
+`RERUN_NOTHING_TO_RERUN`) before anything starts.
+
+```bash
+mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --json
+mcpjam cloud eval rerun "$RUN_ID" --failed --wait
+```
 
 ### `cloud eval judge`
 

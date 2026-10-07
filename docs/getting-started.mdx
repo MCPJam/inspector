@@ -4,27 +4,39 @@ description: "Start testing your MCP server in minutes"
 icon: "rocket"
 ---
 
-## 1. Open MCPJam
+## 1. Choose how to open Inspector
 
-**Web**: HTTPS only, runs in the browser with no install. Share server links with teammates. **Terminal** and **Desktop**: HTTP/S and local STDIO.
+Every option below opens the MCPJam Inspector. Pick one based on where your MCP server runs.
 
-<CardGroup cols={3}>
-  <Card title="Web App" icon="globe" href="https://app.mcpjam.com">
-    HTTPS only. No install. Share with your team.
+<CardGroup cols={2}>
+  <Card title="Web" icon="globe" href="https://app.mcpjam.com">
+    No install. HTTPS servers only. Share servers with your team.
   </Card>
-  <Card title="Terminal" icon="terminal">
-    `npx @mcpjam/inspector@latest`. HTTP/S and local STDIO.
+  <Card title="Terminal" icon="terminal" href="/installation#terminal">
+    `npx @mcpjam/inspector@latest`. Requires Node.js. HTTP/S and local STDIO.
   </Card>
-  <Card title="Desktop App" icon="monitor" href="/installation">
-    Mac or Windows. HTTP/S and local STDIO.
+  <Card title="macOS" icon="laptop" href="/installation#desktop-app">
+    Desktop app (`.dmg`). No Node.js. HTTP/S and local STDIO.
+  </Card>
+  <Card title="Windows" icon="monitor" href="/installation#desktop-app">
+    Desktop app (`.exe` installer). No Node.js. HTTP/S and local STDIO.
+  </Card>
+  <Card title="Docker" icon="container" href="/installation#docker">
+    Built from source. HTTP/S, plus STDIO servers that run inside the container.
   </Card>
 </CardGroup>
+
+- **Your server has a public HTTPS URL**: any option works. The web app needs no install.
+- **Your server runs on `localhost` or over STDIO**: use Terminal or the macOS or Windows desktop app. The web app can't reach it.
+- **You want Inspector isolated in a container**: use Docker. Reach servers on your machine at `http://host.docker.internal:PORT`, and note that STDIO commands run inside the container, not on your machine.
+
+See [Installation](/installation#which-one-do-i-need) for the full comparison.
 
 ## 2. Connect a server
 
 On first launch, MCPJam shows a **Welcome** overlay that guides you through connecting your first server. You can:
 
-- **Enter your own server** — paste an HTTPS URL (e.g. `https://your-server.example/mcp`) or a STDIO command (Desktop and Terminal only).
+- **Enter your own server** — paste an HTTPS URL (e.g. `https://your-server.example/mcp`) or a STDIO command (Terminal, Desktop, and Docker only).
 - **Try the Excalidraw demo** — a hosted diagramming MCP app, no setup required.
 
 After connecting, MCPJam shows the server name and tool count, then offers an **Open Playground** button that seeds the chat with the prompt:
@@ -47,8 +59,8 @@ You should see your server show **Connected** and its tools listed in the Playgr
 
 Open the **Connect** tab in the left sidebar (labelled **Servers** in some builds). Click **Add server**.
 
-- **HTTP**: Paste a URL ending in `/mcp`. The web app accepts **HTTPS** URLs only. Desktop and Terminal accept **HTTP** or **HTTPS**. Add a bearer token or use the [OAuth Debugger](/inspector/guided-oauth) if the server requires auth.
-- **STDIO** (Desktop and Terminal only): Paste a command such as `npx -y @modelcontextprotocol/server-everything`. Not available in the web app. See [Hosted App](/hosted/overview).
+- **HTTP**: Paste a URL ending in `/mcp`. The web app accepts **HTTPS** URLs only. Terminal, Desktop, and Docker accept **HTTP** or **HTTPS**; from Docker, use `host.docker.internal` for servers on your machine. Add a bearer token or use the [OAuth Debugger](/inspector/guided-oauth) if the server requires auth.
+- **STDIO** (Terminal, Desktop, and Docker): Paste a command such as `npx -y @modelcontextprotocol/server-everything`. In Docker the command runs inside the container. Not available in the web app. See [Hosted App](/hosted/overview).
 
 Each **Connected** server is available in the Playground, Tools, Prompts, and Resources. Connect more from the **Connect** tab anytime.
 

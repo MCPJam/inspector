@@ -61,7 +61,7 @@ export interface HostedDirectMrtrPending {
 }
 
 export function isHostedDirectMrtrPending(
-  value: unknown
+  value: unknown,
 ): value is HostedDirectMrtrPending {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -105,7 +105,7 @@ export interface HostedMrtrResumeRequest {
 
 /** POST `/api/web/mrtr/resume` — drive exactly one retry leg. */
 export async function resumeHostedMrtrContinuation(
-  request: HostedMrtrResumeRequest
+  request: HostedMrtrResumeRequest,
 ): Promise<HostedMrtrResumeResponse> {
   const serverRequest = buildServerRequest(request.serverNameOrId);
   return webPost<Record<string, unknown>, HostedMrtrResumeResponse>(
@@ -119,7 +119,7 @@ export async function resumeHostedMrtrContinuation(
       ...(request.chatSessionId
         ? { chatSessionId: request.chatSessionId }
         : {}),
-    }
+    },
   );
 }
 
@@ -140,6 +140,13 @@ export async function cancelHostedMrtrContinuation(request: {
   });
 }
 
+/** Private terminal state is retained until the browser receives the outcome. */
+export async function acknowledgeHostedMrtrContinuation(
+  continuationId: string,
+): Promise<unknown> {
+  return webPost("/api/web/mrtr/ack", { continuationId });
+}
+
 /**
  * Thrown when a hosted MRTR operation ends without a usable result. Carries the
  * terminal outcome so a caller can distinguish a user withdrawal from an
@@ -152,7 +159,7 @@ export class HostedMrtrTerminalError extends Error {
   constructor(
     outcome: "failed" | "cancelled" | "expired" | "indeterminate",
     continuationId: string,
-    message: string
+    message: string,
   ) {
     super(message);
     this.name = "HostedMrtrTerminalError";
@@ -175,7 +182,7 @@ function roundFromPending(
     | "operationLabel"
     | "expiresAt"
   >,
-  requests: MrtrInputRequestDisplay[]
+  requests: MrtrInputRequestDisplay[],
 ) {
   return {
     key: `${pending.continuationId}:${pending.round}`,
@@ -199,7 +206,7 @@ function roundFromPending(
  */
 function collectRound(
   round: ReturnType<typeof roundFromPending>,
-  onCancel: () => Promise<void>
+  onCancel: () => Promise<void>,
 ): Promise<Record<string, MrtrElicitationResponse> | null> {
   return new Promise((resolve) => {
     useHostedMrtrStore.getState().enqueue(round, {
@@ -228,7 +235,7 @@ function collectRound(
  */
 export async function driveHostedDirectMrtr(
   pending: HostedDirectMrtrPending,
-  options: { serverNameOrId: string; chatSessionId?: string }
+  options: { serverNameOrId: string; chatSessionId?: string },
 ): Promise<unknown> {
   const { continuationId, negotiatedEra } = pending;
   const withdraw = async (reason: string): Promise<void> => {
@@ -246,7 +253,7 @@ export async function driveHostedDirectMrtr(
       "failed",
       continuationId,
       `This tab is running an outdated client (hosted-MRTR v${HOSTED_MRTR_VERSION}; ` +
-        `this request needs v${pending.version}). Refresh the page and try again.`
+        `this request needs v${pending.version}). Refresh the page and try again.`,
     );
   }
 
@@ -259,13 +266,13 @@ export async function driveHostedDirectMrtr(
   for (;;) {
     const responses = await collectRound(
       roundFromPending({ ...pending, round }, requests),
-      () => withdraw("cancelled by user")
+      () => withdraw("cancelled by user"),
     );
     if (!responses) {
       throw new HostedMrtrTerminalError(
         "cancelled",
         continuationId,
-        CANCELLED_BY_USER
+        CANCELLED_BY_USER,
       );
     }
 
@@ -290,7 +297,7 @@ export async function driveHostedDirectMrtr(
         : new HostedMrtrTerminalError(
             "failed",
             continuationId,
-            error instanceof Error ? error.message : String(error)
+            error instanceof Error ? error.message : String(error),
           );
     }
 
@@ -305,7 +312,7 @@ export async function driveHostedDirectMrtr(
     throw new HostedMrtrTerminalError(
       outcome.outcome,
       continuationId,
-      outcome.reason
+      outcome.reason,
     );
   }
 }
@@ -329,7 +336,7 @@ export async function webPostWithMrtr<TResponse>(
     serverNameOrId: string;
     chatSessionId?: string;
     wrapResult: (result: unknown) => TResponse;
-  }
+  },
 ): Promise<TResponse> {
   const response = await webPost<Record<string, unknown>, unknown>(path, {
     ...payload,

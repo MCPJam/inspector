@@ -1,3 +1,27 @@
+import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
+import {
+  readOwnedTurnContext,
+  pluginContextReferencesSchema,
+} from "../../services/plugin-host/turn-context.js";
+import { pluginHostBindingDigest } from "../../services/plugin-host/bindings.js";
+import { createModelMrtrAdapter } from "../../services/plugin-host/model-mrtr.js";
+import { parseMrtrChatResumeRequest } from "@/shared/mrtr-continuation";
+import { installedFormClientCapabilities } from "../../services/plugin-host/owned-legacy.js";
+import {
+  chatPluginFormPlan,
+  chatPluginToolExecutor,
+} from "./chat-v2-plugin-forms.js";
+import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
+import { admitPluginWorkspace, assertPluginWorkspaceRuntime } from "../../services/plugin-host/admission.js";
+import { pluginChatRefusal } from "./chat-v2-plugin-refusal.js";
+import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
+import {
+  globalOwnerAdmission,
+  mergePluginContextMessages,
+  withGlobalOwnerFallback,
+} from "./chat-v2-global-owner.js";
+import { toolApprovalSubjectFromAuthHeader } from "../../utils/tool-approval-token.js";
+import { buildHostConnectionPins } from "../../services/host-connection-pins.js";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { ensureLocalHarnessTarget, LOCAL_HARNESS_DISPLAY_NAMES } from "../../utils/harness/local/readiness.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
@@ -53,8 +77,6 @@ import {
 } from "../../utils/mrtr-hosted-chat.js";
 import {
   HOSTED_MRTR_VERSION,
-  isMrtrResumeSubmission,
-  type MrtrElicitationResponse,
 } from "@/shared/mrtr-continuation";
 import {
   parseScopeStepUpCancelRequest,
@@ -101,11 +123,16 @@ import { getSpendClientIp } from "../../utils/client-ip.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
+  isScenarioParticipant,
+  participantSafeStudyError,
   planScenarioSandbox,
+  scenarioHarnessRepublishRefusal,
   shouldWarnSecretsUndelivered,
   readScenarioEnvironment,
   readComputerSandboxMode,
+  readComputerSandboxHarness,
   type ScenarioEnvironmentRuntime,
+  type ScenarioSandboxPlan,
 } from "../../utils/scenario-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
@@ -122,6 +149,7 @@ import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
+  harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -165,9 +193,21 @@ import {
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
-  isComputersDataPlaneConfigured,
   provisionScenarioSandbox,
 } from "../../utils/computers/control-plane-client.js";
+import {
+  acquireHarnessBox,
+  canProvisionHarnessBoxes,
+  type HarnessBox,
+} from "../../utils/harness/harness-box.js";
+import {
+  acquirePlaygroundHarnessBox,
+  describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
+  playgroundHarnessBoxReason,
+  playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+} from "../../utils/harness/playground-box.js";
 import {
   isSandboxNoticeReason,
   type SandboxNoticeReason,
@@ -186,6 +226,10 @@ import {
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
+import {
+  applyPluginExtensionsToClientCapabilities,
+  resolvePluginExtensions,
+} from "@mcpjam/sdk/host-config/internal";
 
 const chatV2 = new Hono();
 
@@ -197,34 +241,100 @@ const chatV2 = new Hono();
  * (ownership, binding, round fence, per-response schema) is re-enforced
  * server-side against the durable record — this only rejects a broken body.
  */
-function parseMrtrResumeRequest(value: unknown): {
-  toolCallId: string;
-  serverId: string;
-  continuationId: string;
-  round: number;
-  responses: Record<string, MrtrElicitationResponse>;
-} | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "object") return null;
-  const v = value as Record<string, unknown>;
-  if (typeof v.toolCallId !== "string" || !v.toolCallId) return null;
-  if (typeof v.serverId !== "string" || !v.serverId) return null;
-  const submissionCandidate = {
-    continuationId: v.continuationId,
-    round: v.round,
-    responses: v.responses,
-  };
-  if (!isMrtrResumeSubmission(submissionCandidate)) return null;
-  return {
-    toolCallId: v.toolCallId,
-    serverId: v.serverId,
-    continuationId: submissionCandidate.continuationId as string,
-    round: submissionCandidate.round as number,
-    responses: submissionCandidate.responses as Record<
-      string,
-      MrtrElicitationResponse
-    >,
-  };
+const parseMrtrResumeRequest = parseMrtrChatResumeRequest;
+
+/**
+ * The refusal for a scenario HARNESS turn whose conversation box cannot be
+ * used. Named per cause, because each one has a different fix and none of
+ * them is "run it on your own computer".
+ */
+function scenarioHarnessBoxRefusal(
+  harness: string,
+  reason: ScenarioSandboxPlan["suppressReason"],
+): WebRouteError {
+  const subject = `This scenario runs the ${harness} harness on a disposable computer`;
+  switch (reason) {
+    case "sandbox_mode_unavailable":
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        `${subject}, and its environment's computer image can't boot right now. Fix or rebuild the image, then retry.`,
+        { reason: "SANDBOX_IMAGE_UNAVAILABLE" },
+      );
+    case "not_a_data_plane":
+      return new WebRouteError(
+        503,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        `${subject}, which this server can't run. Open the scenario in the MCPJam web app.`,
+        { reason: "NOT_A_DATA_PLANE" },
+      );
+    case "secrets_unavailable":
+      return new WebRouteError(
+        503,
+        ErrorCode.INTERNAL_ERROR,
+        `${subject}, and this turn couldn't confirm which of the environment's secrets it may hold. Retry in a moment.`,
+        { reason: "SECRETS_UNAVAILABLE" },
+      );
+    default:
+      return new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `${subject}, which belongs to one conversation, and this turn named none.`,
+        { reason: "NO_CHAT_SESSION_ID" },
+      );
+  }
+}
+
+function scenarioHarnessProvisionRefusal(
+  harness: string,
+  refusal: { status: number; error: string; code?: string } | undefined,
+  /** A non-member participant: never shown the owner-facing detail. */
+  participant = false,
+): WebRouteError {
+  const participantMessage = participant
+    ? participantSafeStudyError(refusal ?? {})
+    : undefined;
+  // A PARTICIPANT past the scenario's caps. The backend's sentence already
+  // says which cap and when to come back; it is the whole message.
+  if (refusal?.status === 429) {
+    return new WebRouteError(
+      429,
+      ErrorCode.RATE_LIMITED,
+      participantMessage ??
+        (refusal.error ||
+          "This scenario has reached its limit for participant sessions. Try again later."),
+      {
+        reason: "SCENARIO_PARTICIPANT_CAP",
+        ...(refusal.code ? { code: refusal.code } : {}),
+      },
+    );
+  }
+  // A refusal that names a fix (an image, a secret, access) keeps its status.
+  if (refusal?.status === 409 || refusal?.status === 403) {
+    return new WebRouteError(
+      refusal.status,
+      refusal.status === 409 ? ErrorCode.CONFLICT : ErrorCode.FORBIDDEN,
+      participantMessage ??
+        `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started: ${refusal.error}`,
+      {
+        reason: "SANDBOX_PROVISION_FAILED",
+        ...(refusal.code ? { code: refusal.code } : {}),
+      },
+    );
+  }
+  const atCapacity = refusal?.status === 503;
+  return new WebRouteError(
+    atCapacity ? 503 : 502,
+    atCapacity ? ErrorCode.RATE_LIMITED : ErrorCode.INTERNAL_ERROR,
+    participantMessage ??
+      `This scenario runs the ${harness} harness on a disposable computer, and one couldn't be started` +
+        (refusal?.error ? `: ${refusal.error}` : ".") +
+        (atCapacity ? " Retry in a moment." : ""),
+    {
+      reason: "SANDBOX_PROVISION_FAILED",
+      ...(refusal?.code ? { code: refusal.code } : {}),
+    },
+  );
 }
 
 chatV2.post("/", async (c) => {
@@ -234,6 +344,10 @@ chatV2.post("/", async (c) => {
   // Track OAuth server URLs so we can enrich auth errors with redirect info
   let oauthServerUrls: Record<string, string> = {};
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
+  // The scenario conversation's disposable box, held for this turn: its
+  // heartbeat runs until the turn's stream completes, or until a throw below.
+  // Releasing it never tears the box down — the next turn reattaches to it.
+  let scenarioBox: HarnessBox | undefined;
   try {
     const bearerToken = assertBearerToken(c);
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
@@ -512,6 +626,10 @@ chatV2.post("/", async (c) => {
         // that has since moved (rebind, mode change, republish); it must
         // re-redeem rather than have its stale view honored.
         accessVersion,
+        // Only a server that can provision the conversation's box may be
+        // told a participant's harness runs on one; anyone else would have
+        // nowhere to run it.
+        harnessBox: canProvisionHarnessBoxes(),
       });
       if (runtime.ok) {
         // Environment-backed scenario (live-follow): the backend resolved the
@@ -945,10 +1063,17 @@ chatV2.post("/", async (c) => {
         modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
       });
       if (hostModelRefusal) {
+        // 422, not 503: the request is well-formed and retrying it changes
+        // nothing. This client's harness cannot run this turn.
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: "model-unsupported",
+          },
         );
       }
     }
@@ -1116,10 +1241,22 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422 when this turn's settings are the problem (retrying changes
+        // nothing); 503 for an operator state — broker delivery off, or no
+        // computers data plane — which works once the server is fixed.
+        const status = harnessUnavailableHttpStatus(availability.kind);
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          status,
+          status === 503
+            ? ErrorCode.INTERNAL_ERROR
+            : ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          {
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            // Branch on the kind, never on the wording.
+            kind: availability.kind,
+          },
         );
       }
     }
@@ -1134,6 +1271,11 @@ chatV2.post("/", async (c) => {
         | null
         | undefined
     )?.executionScope;
+    // A non-member participant of this scenario: the refusals they see are
+    // reworded so they never name the study's credits, budget, organization or
+    // environment (`participantSafeStudyError`). Members keep the detail.
+    const scenarioParticipant =
+      isScenarioSession && isScenarioParticipant(hostRuntimeConfig);
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
@@ -1387,6 +1529,77 @@ chatV2.post("/", async (c) => {
       });
     }
 
+    const pluginWorkspace = parsePluginWorkspaceDescriptor(
+      body.pluginWorkspace,
+    );
+    let modelPluginAdmission:
+      | import("../../services/plugin-host/admission.js").PluginWorkspaceAdmission
+      | undefined;
+    let modelPluginBearer: string | undefined;
+    let modelPluginSubject: string | undefined;
+    let modelToolExecutor:
+      | import("../../utils/model-tool-executor.js").ModelToolExecutor
+      | undefined;
+    let modelFormDispatch:
+      | ReturnType<typeof createModelFormDispatch>
+      | undefined;
+    let modelMrtr: ReturnType<typeof createModelMrtrAdapter> | undefined;
+    // The client's OpenAI plugin extensions setting decides whether the OpenAI
+    // form extensions are advertised or handled at all.
+    const pluginExtensions = hostRuntimeConfig
+      ? resolvePluginExtensions(hostRuntimeConfig as Parameters<typeof resolvePluginExtensions>[0])
+      : undefined;
+    // Emulated and Codex harness turns (whose MCP tools run here, in process)
+    // take the same plugin executor; see `chatPluginFormPlan`.
+    const pluginPins =
+      pluginWorkspace && hostRuntimeConfig && !isScenarioSession
+        ? buildHostConnectionPins(hostRuntimeConfig as never, WEB_STREAM_TIMEOUT_MS)
+        : undefined;
+    const pluginPinFor = (id: string) =>
+      pluginPins?.mcpProtocolVersionsByServerId?.[id] ?? pluginPins?.initializePins?.mcpProtocolVersion;
+    const pluginFormPlan = pluginPins
+      ? chatPluginFormPlan({
+          harness: resolvedExecution.harness,
+          serverIds: effectiveServerIds,
+          pinFor: pluginPinFor,
+          mrtrEnabled,
+          forms: pluginExtensions?.capabilities.forms,
+        })
+      : undefined;
+    // Set once the turn's manager exists: an Auto server's era is the one its
+    // connection negotiated.
+    let pluginNegotiatedVersion: (serverId: string) => string | undefined = () => undefined;
+    if (pluginWorkspace && hostRuntimeConfig && pluginFormPlan?.admitted) {
+      assertPluginWorkspaceRuntime({ harness: resolvedExecution.harness, hostPolicy: { hostStyle: hostRuntimeConfig.hostStyle as string | undefined } });
+      modelPluginBearer = await getConvexBearerForRequest(c);
+      modelPluginSubject = toolApprovalSubjectFromAuthHeader(c.req.header("authorization"));
+      if (modelPluginSubject === "anonymous") throw new Error("Plugin model identity unavailable");
+      modelPluginAdmission = await admitPluginWorkspace({ descriptor: pluginWorkspace, projectId: hostedBody.projectId, bearer: modelPluginBearer, signal: c.req.raw.signal });
+      const hostId = hostRuntimeConfig.hostId;
+      if (typeof hostId !== "string") throw new Error("Plugin model host unavailable");
+      const { modernServerIds, legacyServerIds: eligibleServerIds } = pluginFormPlan;
+      if (modernServerIds.length) {
+        modelMrtr = createModelMrtrAdapter({ c, admission: modelPluginAdmission, bearer: modelPluginBearer, identity: { actorId: modelPluginAdmission.actorId, projectId: modelPluginAdmission.projectId, workspaceId: modelPluginAdmission.workspaceId, subject: modelPluginSubject }, hostId, hostRevision: pluginHostBindingDigest(hostRuntimeConfig), serverIds: modernServerIds, modelVisibleMcpToolResults });
+      }
+      // All of the turn's servers or none (shared connection capabilities).
+      let legacyExecutor: typeof modelToolExecutor;
+      if (eligibleServerIds.length) {
+        modelFormDispatch = createModelFormDispatch(eligibleServerIds);
+        legacyExecutor = createModelFormExecutor({
+          c, admission: modelPluginAdmission, bearer: modelPluginBearer,
+          identity: { actorId: modelPluginAdmission.actorId, projectId: modelPluginAdmission.projectId, workspaceId: modelPluginAdmission.workspaceId, subject: modelPluginSubject },
+          hostId, hostRevision: pluginHostBindingDigest(hostRuntimeConfig), serverIds: effectiveServerIds, eligibleServerIds, dispatch: modelFormDispatch,
+        });
+      }
+      // An Auto server is in both plans; each call follows its negotiated era.
+      modelToolExecutor = chatPluginToolExecutor({
+        ...(modelMrtr ? { modern: { serverIds: modernServerIds, execute: modelMrtr.execute } } : {}),
+        legacy: legacyExecutor,
+        pinFor: pluginPinFor,
+        negotiatedVersion: (serverId) => pluginNegotiatedVersion(serverId),
+      });
+    }
+
     // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / scenario)
@@ -1404,9 +1617,19 @@ chatV2.post("/", async (c) => {
       hostedBody.oauthTokens,
       // Scenario: advertise the HOST's capabilities, not the body's, so the
       // wire matches what we're prepared to honor.
-      effectiveClientCapabilities,
+      // OpenAI form extensions are claimed only with a handler installed.
+      installedFormClientCapabilities(
+        effectiveClientCapabilities && pluginExtensions
+          ? applyPluginExtensionsToClientCapabilities(effectiveClientCapabilities, pluginExtensions)
+          : effectiveClientCapabilities,
+        // An Auto server's MRTR answers standard elicitation; only a pinned
+        // modern server keeps OpenAI's claim for MRTR (unchanged by Auto).
+        { ...(modelFormDispatch ? { legacy: { binding: modelFormDispatch.handlers } } : {}), mrtr: !!modelMrtr && effectiveServerIds.some((id) => pluginPinFor(id) === "2026-07-28") },
+        pluginExtensions?.capabilities.forms,
+      ),
       {
         multiConnection: true,
+        ...(modelFormDispatch ? { extensionRequestHandlers: modelFormDispatch.handlers } : {}),
         ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
         scenarioId,
         accessVersion,
@@ -1432,7 +1655,7 @@ chatV2.post("/", async (c) => {
         ...(mrtrBridge
           ? {
               mrtrInputCollectorForServer:
-                mrtrBridge.mrtrInputCollectorForServer,
+                (serverId: string) => modelMrtr?.collectorForServer(serverId) ?? mrtrBridge.mrtrInputCollectorForServer(serverId),
             }
           : {}),
         // Same scope the bash tool reserves under, so a plugin's stdio
@@ -1449,6 +1672,8 @@ chatV2.post("/", async (c) => {
       );
 
     oauthServerUrls = urls;
+    pluginNegotiatedVersion = (serverId) =>
+      manager.getInitializationInfo(serverId)?.protocolVersion;
     // Inject the live manager so the collector's fingerprint/era thunks can
     // read the negotiated identity at suspend time (post-connect).
     mrtrBridge?.setManager(manager);
@@ -1458,7 +1683,16 @@ chatV2.post("/", async (c) => {
     // the first model call and splices the result. `resolve` closes over the
     // freshly-authorized manager for the bound server.
     const mrtrEngineResume: MrtrEngineResume | undefined =
-      mrtrResumeRequest && convexBearer
+      mrtrResumeRequest?.owned
+        ? {
+            toolCallId: mrtrResumeRequest.toolCallId,
+            resolve: async (emit) => {
+              if (!modelMrtr) throw new Error("Original model continuation unavailable");
+              modelMrtr.attachStreamWriter({ write: emit });
+              return modelMrtr.resume(mrtrResumeRequest.owned!, mrtrResumeRequest.owned!.submission, mrtrResumeRequest.serverId);
+            },
+          }
+        : mrtrResumeRequest && convexBearer
         ? {
             toolCallId: mrtrResumeRequest.toolCallId,
             resolve: (emit) =>
@@ -1481,7 +1715,7 @@ chatV2.post("/", async (c) => {
                 submission: {
                   continuationId: mrtrResumeRequest.continuationId,
                   round: mrtrResumeRequest.round,
-                  responses: mrtrResumeRequest.responses,
+                  responses: mrtrResumeRequest.responses!,
                 },
                 authPrincipal: mrtrAuthPrincipal,
                 ...(modelVisibleMcpToolResults
@@ -1561,16 +1795,10 @@ chatV2.post("/", async (c) => {
     // is projected by `buildEnvironmentScenarioRuntimeConfig` alone), so a
     // host-bound Playground turn never reads it.
     //
-    // HARNESS TURNS ARE EXCLUDED, and not merely because harness-on-scenario is
-    // Phase 6. `run-harness-turn.ts` resolves its OWN machine through
-    // `resolveHarnessSandbox` — the acting member's personal computer — and
-    // `prepare.builtInTools` is forwarded to it verbatim alongside the MCP
-    // plane. Provisioning here would therefore produce a MIXED-MACHINE turn:
-    // the model's `bash` on the ephemeral box, the harness's own Shell and file
-    // edits on the personal one, with no relationship between the two
-    // filesystems. It would also suppress the image context that IS correct for
-    // the harness's machine. Leaving harness turns entirely alone is the only
-    // coherent state until Phase 6 moves the harness onto the same box.
+    // A cloud HARNESS turn takes the same box: the harness gets it as its
+    // binding, and the model's `bash`, when advertised, execs on it too, so
+    // the two never see different filesystems. A scenario harness with no box
+    // is refused below; it never falls back to a persistent computer.
     //
     // ORDERING: this block sits AFTER the manager authorization and the body
     // validations on purpose. Provisioning is the step that spends money, so a
@@ -1667,8 +1895,22 @@ chatV2.post("/", async (c) => {
       resolved: runtimeSecrets ?? [],
     });
 
+    // A CLOUD harness needs a machine whether or not it asks for `bash`, and
+    // takes the conversation's box ONLY when the backend says its harness runs
+    // there (`computerSandbox.harness`). Without that field — an older backend,
+    // or an actor its reserve would refuse — a harness turn keeps its old path
+    // and reads no marker at all, as before. A local harness runs on the
+    // member's own machine and never takes a box.
+    const harnessWantsScenarioBox =
+      Boolean(resolvedExecution.harness) &&
+      !harnessExecutionTarget &&
+      isScenarioSession &&
+      Boolean(scenarioId) &&
+      readComputerSandboxHarness(hostRuntimeConfig);
     const computerSandboxMode =
-      isScenarioSession && scenarioId && !resolvedExecution.harness
+      isScenarioSession &&
+      scenarioId &&
+      (!resolvedExecution.harness || harnessWantsScenarioBox)
         ? readComputerSandboxMode(hostRuntimeConfig)
         : null;
     let sandboxBinding: TrustedSandboxBinding | undefined;
@@ -1696,12 +1938,27 @@ chatV2.post("/", async (c) => {
     const sandboxPlan = planScenarioSandbox({
       mode: computerSandboxMode,
       bashRequested: (turnBuiltInToolIds ?? []).includes(BASH_TOOL_NAME),
-      ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
+      harnessRequested: harnessWantsScenarioBox,
+      ephemeralCloudAvailable: canProvisionHarnessBoxes(),
       hasChatSessionId: Boolean(body.chatSessionId),
       secretsUnavailable,
       environmentSelectsSecrets:
         scenarioEnvironment?.selectsMaterializedSecrets === true,
     });
+    // A HARNESS turn has no shell to quietly drop: the only other machine is
+    // the member's personal computer, which a scenario conversation's harness
+    // must never run on once the backend has put it on a disposable box.
+    // Refused before anything is provisioned, with the reason the plan gave.
+    if (
+      harnessWantsScenarioBox &&
+      computerSandboxMode !== null &&
+      sandboxPlan.action === "suppress"
+    ) {
+      throw scenarioHarnessBoxRefusal(
+        resolvedExecution.harness!,
+        sandboxPlan.suppressReason,
+      );
+    }
     let suppressComputerResource = sandboxPlan.action === "suppress";
     if (sandboxPlan.suppressReason === "no_chat_session_id") {
       // The conversation id IS the isolation boundary (`scopeKey =
@@ -1737,13 +1994,37 @@ chatV2.post("/", async (c) => {
       scenarioId &&
       body.chatSessionId
     ) {
-      const provisioned = await provisionScenarioSandbox({
-        bearer: bearerToken,
-        scenarioId,
-        chatSessionId: body.chatSessionId,
-        signal: c.req.raw.signal as AbortSignal | undefined,
+      const chatSessionId = body.chatSessionId;
+      let provisioned:
+        Awaited<ReturnType<typeof provisionScenarioSandbox>> | undefined;
+      // The shared box holder: the box's idle clock keeps running for as long
+      // as this turn does (a long harness turn would otherwise outlive the
+      // scenario TTL), and stops when the turn's stream completes.
+      const acquired = await acquireHarnessBox({
+        surface: "scenario",
+        provision: async () => {
+          provisioned = await provisionScenarioSandbox({
+            bearer: bearerToken,
+            scenarioId,
+            chatSessionId,
+            signal: c.req.raw.signal as AbortSignal | undefined,
+          });
+          return provisioned.ok
+            ? {
+                ok: true as const,
+                box: {
+                  sandboxRowId: provisioned.value.sandboxRowId,
+                  sandboxId: provisioned.value.sandboxId,
+                  ...(provisioned.value.workdir
+                    ? { workdir: provisioned.value.workdir }
+                    : {}),
+                },
+              }
+            : { ok: false as const, refusal: provisioned };
+        },
       });
-      if (provisioned.ok) {
+      if (acquired.ok) scenarioBox = acquired.box;
+      if (provisioned?.ok) {
         sandboxBinding = {
           sandboxId: provisioned.value.sandboxId,
           ...(provisioned.value.workdir
@@ -1790,6 +2071,20 @@ chatV2.post("/", async (c) => {
             });
           };
         }
+      } else if (harnessWantsScenarioBox) {
+        // A harness has nothing to degrade to — refuse, never the member's
+        // personal computer. 503 (at capacity, a sibling still booting)
+        // resolves on its own, so the tester can simply retry.
+        logger.warn("[chat-v2] scenario harness box provision failed", {
+          scenarioId,
+          status: provisioned?.ok === false ? provisioned.status : undefined,
+          error: provisioned?.ok === false ? provisioned.error : undefined,
+        });
+        throw scenarioHarnessProvisionRefusal(
+          resolvedExecution.harness!,
+          provisioned?.ok === false ? provisioned : undefined,
+          scenarioParticipant,
+        );
       } else {
         // Degrade to a turn with no shell rather than failing the turn: the
         // conversation is still useful, and 503 (at capacity / a sibling call
@@ -1798,12 +2093,175 @@ chatV2.post("/", async (c) => {
           "[chat-v2] scenario sandbox provision failed; running without bash",
           {
             scenarioId,
-            status: provisioned.status,
-            error: provisioned.error,
+            status: provisioned?.ok === false ? provisioned.status : undefined,
+            error: provisioned?.ok === false ? provisioned.error : undefined,
           },
         );
         suppressComputerResource = true;
       }
+    }
+    // A SCENARIO-scoped cloud harness with no box bound to it: the backend sent
+    // no harness marker (a host-backed scenario, or a backend older than the
+    // `computerSandbox.harness` field), so there is nothing to provision, and
+    // the only other machine is a persistent computer, which the backend
+    // refuses for a scenario scope. Keyed on the harness itself, not on
+    // `harnessWantsScenarioBox` (which needs that marker). Refused here, before
+    // the turn starts, with copy that tells an author to republish rather than
+    // a 500 from deep in the harness.
+    if (
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      executionScope?.kind === "swarm" &&
+      !scenarioBox
+    ) {
+      throw scenarioHarnessRepublishRefusal({
+        harness: resolvedExecution.harness!,
+        accessKind: hostRuntimeConfig?.accessKind,
+      });
+    }
+
+    // ── PLAYGROUND FALLBACK: a disposable computer for THIS conversation ──
+    //
+    // A Playground harness turn runs on the member's personal computer, which
+    // never holds a project's credentials and is one machine however many
+    // columns ask for it. A harness that signs in with the customer's own
+    // account (Cursor) and every compare column therefore take the
+    // conversation's disposable box instead — the same box holder a scenario
+    // uses, heartbeat and all. There is NO quiet fallback to the personal
+    // computer: that is exactly the machine these turns must not run on, so a
+    // box that cannot be had is a refusal that says why.
+    const playgroundBoxReason = playgroundHarnessBoxReason({
+      harnessId: resolvedExecution.harness,
+      localExecution: Boolean(harnessExecutionTarget),
+      isScenarioSession,
+      comparePane: hostedBody.comparePane === true,
+    });
+    // A guest has no project computer to protect and no project to hold a box
+    // for, so it keeps its existing path (and, on a scenario, its own box).
+    if (
+      playgroundBoxReason &&
+      resolvedExecution.harness &&
+      !c.get("guestId")
+    ) {
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        resolvedExecution.harness,
+        playgroundBoxReason,
+      );
+      if (unavailable) {
+        throw new WebRouteError(
+          503,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          unavailable,
+          { reason: "NOT_A_DATA_PLANE" },
+        );
+      }
+      if (!hostedBody.chatSessionId) {
+        // The conversation id is the isolation boundary (one box per
+        // conversation). Without one every such turn would share one box.
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `This turn runs the ${resolvedExecution.harness} harness on a disposable computer, which belongs to one conversation, and this turn named none.`,
+          { reason: "NO_CHAT_SESSION_ID" },
+        );
+      }
+      // The environment whose grant the box carries: the turn's own when it
+      // targets one; otherwise, for a client that signs in with the member's
+      // own account, a HIDDEN ad-hoc environment selecting the member's key
+      // (the environments UI is off, so a client turn is the normal case).
+      // Refused here, before any box, when the member has no usable key.
+      let playgroundEnvironmentId =
+        environmentSpec?.environmentRef.environmentId;
+      if (
+        playgroundBoxReason === "credential" &&
+        !playgroundEnvironmentId &&
+        executionTarget.kind === "host"
+      ) {
+        const hidden = await resolvePlaygroundCredentialEnvironment({
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          hostId: executionTarget.hostId,
+          harnessId: resolvedExecution.harness,
+        });
+        if (!hidden.ok) {
+          throw new WebRouteError(
+            hidden.status,
+            hidden.status === 409
+              ? ErrorCode.CONFLICT
+              : ErrorCode.INTERNAL_ERROR,
+            hidden.message,
+            { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+          );
+        }
+        playgroundEnvironmentId = hidden.environmentId;
+      }
+      // The credential check the harness turn would fail, run BEFORE the box
+      // is booted: a refused Cursor turn must not pay for a box first. Same
+      // function and inputs as `runHarnessTurn`'s own check.
+      if (playgroundBoxReason === "credential") {
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: resolvedExecution.harness,
+          secretEnv,
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          ...(playgroundEnvironmentId
+            ? { environmentId: playgroundEnvironmentId }
+            : {}),
+        });
+        if (credentialRefusal) {
+          throw new WebRouteError(409, ErrorCode.CONFLICT, credentialRefusal, {
+            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+          });
+        }
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: bearerToken,
+        projectId: hostedBody.projectId,
+        chatSessionId: hostedBody.chatSessionId,
+        ...(playgroundEnvironmentId
+          ? { projectEnvironmentId: playgroundEnvironmentId }
+          : {}),
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (!acquired.ok) {
+        logger.warn("[chat-v2] playground harness box provision failed", {
+          reason: playgroundBoxReason,
+          status: acquired.refusal.status,
+          error: acquired.refusal.error,
+        });
+        const described = describePlaygroundBoxRefusal(
+          resolvedExecution.harness,
+          playgroundBoxReason,
+          acquired.refusal,
+        );
+        throw new WebRouteError(
+          described.status,
+          described.status === 429
+            ? ErrorCode.RATE_LIMITED
+            : described.status === 403
+              ? ErrorCode.FORBIDDEN
+              : described.status === 409
+                ? ErrorCode.CONFLICT
+                : described.status === 503
+                  ? ErrorCode.RATE_LIMITED
+                  : ErrorCode.INTERNAL_ERROR,
+          described.message,
+          {
+            reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+            ...(described.code ? { code: described.code } : {}),
+          },
+        );
+      }
+      scenarioBox = acquired.box;
+      // The model's own `bash` rides the same machine as the harness's Shell:
+      // two filesystems in one turn is a bug nobody can see.
+      sandboxBinding = {
+        sandboxId: acquired.box.binding.sandboxId,
+        ...(acquired.box.binding.workdir
+          ? { workdir: acquired.box.binding.workdir }
+          : {}),
+        lifetime: "conversation",
+      };
     }
 
     // MATERIALIZED secrets resolved, and nowhere legitimate to put them.
@@ -2033,6 +2491,14 @@ chatV2.post("/", async (c) => {
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = isScenarioSession ? "scenario" : "playground";
       const isDirectChat = !isScenarioSession;
+      // The turn's servers minus the ones a plugin contributed, for the
+      // trace's host config (see where it is built below).
+      const pluginServerIdSet = new Set(
+        effectiveCapabilities?.pluginServerIds ?? [],
+      );
+      const hostConfigServerIds = effectiveServerIds.filter(
+        (serverId) => !pluginServerIdSet.has(serverId),
+      );
 
       // Server twin of the client's `send_message` — fires even when the
       // browser can't reach PostHog. Identity: guests always resolve (the
@@ -2113,9 +2579,68 @@ chatV2.post("/", async (c) => {
           : {}),
       });
 
+      const contextReferences = pluginContextReferencesSchema.parse(
+        body.pluginContextReferences ?? [],
+      );
+      const globalContextReferences = pluginContextReferencesSchema.parse(
+        body.pluginGlobalContextReferences ?? [],
+      );
+      // Global Apps live in their own workspace and bind to this chat's turn.
+      const globalPluginAdmission = globalOwnerAdmission(
+        modelPluginAdmission,
+        body.pluginGlobalWorkspace,
+      );
+      if (
+        (contextReferences.length || globalContextReferences.length) &&
+        (!modelPluginAdmission || !modelPluginBearer || !modelPluginSubject)
+      )
+        throw new Error("App context unavailable for this chat");
+      const readTurnContext = (
+        references: string[],
+        admission: NonNullable<typeof modelPluginAdmission>,
+      ) =>
+        readOwnedTurnContext({
+          c,
+          references,
+          admission,
+          bearer: modelPluginBearer!,
+          actor: {
+            actorId: admission.actorId,
+            projectId: admission.projectId,
+            workspaceId: admission.workspaceId,
+            subject: modelPluginSubject!,
+          },
+        });
+      const pluginContext = mergePluginContextMessages(
+        contextReferences.length
+          ? await readTurnContext(contextReferences, modelPluginAdmission!)
+          : undefined,
+        globalContextReferences.length && globalPluginAdmission
+          ? await readTurnContext(globalContextReferences, globalPluginAdmission)
+          : undefined,
+      );
+      const appMessages = await withGlobalOwnerFallback(
+        (admission) =>
+          preparePluginMessageTurn({
+            c,
+            intent: body.pluginMessage,
+            messages: messages as import("ai").UIMessage[],
+            hostId:
+              typeof hostRuntimeConfig?.hostId === "string"
+                ? hostRuntimeConfig.hostId
+                : undefined,
+            serverIds: effectiveServerIds,
+            threadId: body.chatSessionId,
+            admission,
+            bearer: modelPluginBearer,
+          }),
+        modelPluginAdmission,
+        body.pluginMessage === undefined ? undefined : globalPluginAdmission,
+      );
       return await streamWebChatTurn({
         manager,
         prepare: {
+          ...(modelToolExecutor ? { modelToolExecutor } : {}),
           selectedServerIds: effectiveServerIds,
           modelDefinition,
           ...(routingSelection ? { routingSelection } : {}),
@@ -2147,7 +2672,8 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           customProviders: body.customProviders,
-          uiMessages: messages,
+          uiMessages: appMessages,
+          ...(pluginContext ? { pluginContext } : {}),
           ...(resolvedExecution.harness
             ? { harness: resolvedExecution.harness, ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}) }
             : {}),
@@ -2224,6 +2750,10 @@ chatV2.post("/", async (c) => {
           // Phase 3: forward the runtime-config scope into the harness path
           // (alongside the bash-tool path threaded above).
           ...(executionScope ? { executionScope } : {}),
+          // The conversation's box: its binding for a harness turn, and its
+          // heartbeat to stop when the turn's stream completes.
+          ...(scenarioBox ? { scenarioBox } : {}),
+          ...(scenarioParticipant ? { scenarioParticipant: true } : {}),
           authenticatedUserId,
           originalMessages: messages,
           ...(resolvedExecution.harness
@@ -2310,7 +2840,10 @@ chatV2.post("/", async (c) => {
                     resolvedExecution.modelVisibleMcpToolResults,
                   mcpToolResultImageRendering:
                     resolvedExecution.mcpToolResultImageRendering,
-                  selectedServerIds: effectiveServerIds,
+                  // Plugin servers stay out: ingestion's server-scope check
+                  // refuses a plugin id in a host config (lifecycle bypass),
+                  // and would drop the trace's whole host config with it.
+                  selectedServerIds: hostConfigServerIds,
                 })
             : null,
           selectedServerNames: effectiveServerNames,
@@ -2348,6 +2881,7 @@ chatV2.post("/", async (c) => {
           ...(sandboxNotices ? { sandboxNotices } : {}),
           ...(ackSandboxNotices ? { ackSandboxNotices } : {}),
           ...(mrtrBridge ? { mrtrBridge } : {}),
+          ...(modelMrtr ? { modelFormBridge: modelMrtr } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
           ...(scopeStepUpEnabled && convexBearer
@@ -2376,6 +2910,7 @@ chatV2.post("/", async (c) => {
       throw error;
     }
   } catch (error) {
+    await scenarioBox?.release();
     // Enrich MCPAuthError with OAuth server URL so the client can initiate OAuth
     if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
       const firstUrl = Object.values(oauthServerUrls)[0];
@@ -2392,6 +2927,15 @@ chatV2.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
       );
     }
+    const pluginRefusal = pluginChatRefusal(error);
+    if (pluginRefusal)
+      return webError(
+        c,
+        pluginRefusal.status,
+        pluginRefusal.code,
+        pluginRefusal.message,
+        pluginRefusal.details,
+      );
     // `webErrorFromRoute`, not `webError` — this call dropped
     // `routeError.normalized`, so the envelope carried no `origin` and no
     // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,

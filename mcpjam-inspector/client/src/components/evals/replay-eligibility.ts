@@ -1,9 +1,9 @@
-import type { EvalSuiteRun } from "./types";
+import type { EvalSuiteRunListItem } from "./types";
 
 export type SuiteReplayEligibility = {
   hasServersConfigured: boolean;
   missingServers: string[];
-  replayableLatestRun: EvalSuiteRun | null;
+  replayableLatestRun: EvalSuiteRunListItem | null;
   canRunLive: boolean;
   canReplayFallback: boolean;
   canRunNow: boolean;
@@ -23,7 +23,7 @@ export function getSuiteReplayEligibility({
 }: {
   suiteServers?: string[];
   connectedServerNames?: Set<string>;
-  latestRun?: EvalSuiteRun | null;
+  latestRun?: EvalSuiteRunListItem | null;
 }): SuiteReplayEligibility {
   const normalizedSuiteServers = suiteServers ?? [];
   const hasServersConfigured = normalizedSuiteServers.length > 0;
