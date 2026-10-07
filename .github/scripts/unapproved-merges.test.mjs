@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  allPages,
   hasQualifyingApproval,
   renderMarkdown,
   summarize,
@@ -60,6 +61,26 @@ test("comments and change requests are not approvals", () => {
     ]),
     false,
   );
+});
+
+test("an approval on a later page of reviews is found", async () => {
+  const pages = [
+    Array.from({ length: 100 }, () =>
+      review("reviewer", "COMMENTED", "2026-10-05T10:00:00Z"),
+    ),
+    [review("reviewer", "APPROVED", "2026-10-05T11:00:00Z")],
+  ];
+  const requested = [];
+  const reviews = await allPages("/repos/o/r/pulls/1/reviews", async (path) => {
+    requested.push(path);
+    return pages[requested.length - 1];
+  });
+  assert.deepEqual(requested, [
+    "/repos/o/r/pulls/1/reviews?per_page=100&page=1",
+    "/repos/o/r/pulls/1/reviews?per_page=100&page=2",
+  ]);
+  assert.equal(reviews.length, 101);
+  assert.equal(hasQualifyingApproval(pr, reviews), true);
 });
 
 const merges = [
