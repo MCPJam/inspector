@@ -28,8 +28,8 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useUpdateProjectEnvironment: () => mockUpdateEnvironment,
   isRevisionConflictError: () => false,
 }));
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => false,
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => false,
 }));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => false,

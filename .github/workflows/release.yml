@@ -850,8 +850,12 @@ jobs:
               },
             });
 
+            // The backend deploy runs its full test suite (~24 min) plus runner
+            // queueing and `convex deploy`; 3.14.0 timed out at a 30-min budget
+            // ~100s before a successful 33.5-min deploy finished.
+            const deadline = dispatchTime.getTime() + 60 * 60 * 1000;
             const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-            for (let attempt = 0; attempt < 120; attempt += 1) {
+            for (let attempt = 0; Date.now() < deadline; attempt += 1) {
               await sleep(15000);
               const { data } = await github.rest.actions.listWorkflowRuns({
                 owner,
@@ -866,7 +870,7 @@ jobs:
               );
 
               if (!matchingRun) {
-                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}/120).`);
+                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}).`);
                 continue;
               }
 
@@ -886,7 +890,7 @@ jobs:
               return;
             }
 
-            core.setFailed("Timed out waiting for backend production deployment to finish.");
+            core.setFailed("Timed out after 60 min waiting for backend production deployment to finish.");
 
   # The production deploy itself lives in deploy-webapp.yml so it can also be
   # dispatched on its own — a release is not the only reason to ship or roll

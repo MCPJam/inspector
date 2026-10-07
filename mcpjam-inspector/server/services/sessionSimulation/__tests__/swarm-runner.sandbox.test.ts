@@ -30,6 +30,7 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
+const touchSandboxMock = vi.fn(async () => "touched" as const);
 const resolveHostToolsMock = vi.fn();
 const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
@@ -161,6 +162,7 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
     provisionJourneySandbox: (...args: unknown[]) =>
       provisionJourneySandboxMock(...args),
     releaseSandbox: (...args: unknown[]) => releaseSandboxMock(...args),
+    touchSandbox: (...args: unknown[]) => touchSandboxMock(...(args as [])),
   };
 });
 
@@ -204,6 +206,8 @@ import {
   type StartJourneyRunOptions,
 } from "../swarm-runner.js";
 import type { PinnedHostExecutionSpec } from "../../swarm-agent.js";
+import { provisionAttemptSandbox } from "../swarm-sandbox.js";
+import { harnessBoxHeartbeatIntervalMs } from "../../../utils/harness/harness-box.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -1024,15 +1028,17 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(terminalReports()[0]).toMatchObject({ status: "failed" });
   });
 
-  it("FAILS CLOSED, without provisioning, when the run pinned no image", async () => {
+  it("FAILS CLOSED, without provisioning, when the target's pinned image cannot boot", async () => {
     // Knowable per TARGET, so it is refused before any box is booted — a
     // harness-blocked session would pay for a box purely to release it unused.
+    // The target ASKED for that image, so it does not quietly fall back to
+    // the default template either.
     await startJourneyRun(
       baseOpts({
         harness: "claude-code",
         computerEnvironment: undefined,
         computerUnavailableReason:
-          "This environment has no computer image configured, so this run has no sandbox to execute in.",
+          "This environment's computer image has no successful build yet, so this run has no sandbox to execute in.",
       })
     );
 
@@ -1057,19 +1063,48 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     );
   });
 
-  it("treats a PRE-B-isolation snapshot as blocked for a harness, not silently degraded", async () => {
-    // Both pin fields absent is an OLD run snapshot. For bash that stays silent
-    // (the tool simply goes missing); a harness cannot run at all, so the
-    // session must fail with something true rather than reserve the shared box.
+  it("runs a harness target that pinned NO image on a terminal box (the default template)", async () => {
+    // Both pin fields absent: nothing pinned and nothing unavailable. A harness
+    // has to run on a machine, so it gets a disposable terminal box on the
+    // deployment default — the control plane picks the image, so the request
+    // names none and stays byte-identical to a pinned one.
+    personaDrivesOneTurn();
     await startJourneyRun(
       baseOpts({
         harness: "claude-code",
+        builtInToolIds: [],
         computerEnvironment: undefined,
         computerUnavailableReason: undefined,
       })
     );
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).not.toHaveProperty(
+      "runtimeKind"
+    );
+    // Still never the launcher's personal computer.
     expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
-    expect(terminalReports()[0]).toMatchObject({ status: "failed" });
+    expect(turnOptions().harnessSandboxBinding).toMatchObject({
+      sandboxRowId: "row_1",
+      sandboxId: "sbx_1",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" })
+    );
+  });
+
+  it("a bash-only target that pinned nothing still provisions nothing", async () => {
+    // Only a HARNESS gets the default template. A shell does not have to
+    // exist, so an unpinned bash target keeps today's silent suppression.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({
+        computerEnvironment: undefined,
+        computerUnavailableReason: undefined,
+      })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 });
 
@@ -1482,6 +1517,36 @@ describe("swarm runner — the attempt's recording comes off before the box does
 
     await startJourneyRun(baseOpts());
 
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  });
+});
+
+describe("swarm attempt box — the attempt's signal", () => {
+  it("a stopped run stops the box's heartbeat, and the release still tears it down", async () => {
+    vi.useFakeTimers();
+    const attempt = new AbortController();
+    const provisioned = await provisionAttemptSandbox({
+      bearer: "bearer",
+      runId: "run-1",
+      targetId: "environment:env-1",
+      sessionIdx: 0,
+      signal: attempt.signal,
+    });
+    if (!provisioned.ok) throw new Error("expected a box");
+    const beat = harnessBoxHeartbeatIntervalMs("swarm");
+    await vi.advanceTimersByTimeAsync(beat);
+    expect(touchSandboxMock).toHaveBeenCalledTimes(1);
+
+    // A session that never unwinds to its `finally` must not keep the box
+    // live: the stop alone ends the beat.
+    attempt.abort();
+    await vi.advanceTimersByTimeAsync(beat * 8);
+    expect(touchSandboxMock).toHaveBeenCalledTimes(1);
+    expect(releaseSandboxMock).not.toHaveBeenCalled();
+
+    await provisioned.sandbox.release();
     expect(releaseSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxRowId: "row_1" }),
     );

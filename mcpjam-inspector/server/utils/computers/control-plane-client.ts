@@ -206,6 +206,14 @@ async function postJson<T>(
   headers: Record<string, string>,
   body: Record<string, unknown>,
   signal?: AbortSignal,
+  options?: {
+    /**
+     * A network failure is EXPECTED and retried by the caller (a heartbeat
+     * beat), so log it at warn: `logger.error` pages, and an outage would
+     * page once per active box per beat.
+     */
+    quietNetworkErrors?: boolean;
+  },
 ): Promise<ControlPlaneResult<T>> {
   const base = getConvexHttpUrl();
   if (!base) {
@@ -220,7 +228,13 @@ async function postJson<T>(
       signal,
     });
   } catch (err) {
-    logger.error(`[computers] ${path} network error`, err);
+    if (options?.quietNetworkErrors) {
+      logger.warn(`[computers] ${path} network error`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } else {
+      logger.error(`[computers] ${path} network error`, err);
+    }
     return { ok: false, status: 0, error: "network error" };
   }
   let payload: unknown = null;
@@ -290,6 +304,9 @@ export interface EvalSandbox {
   runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
+  /** Where the box's harness and shell start. Absent from an older control
+   * plane; the harness then falls back to the box home. */
+  workdir?: string;
 }
 
 /**
@@ -326,20 +343,29 @@ export interface EvalSandbox {
  * Every other failure (409, auth, a malformed body) is returned untouched on
  * the first attempt: only capacity is worth waiting on.
  */
-export async function provisionEvalSandbox(args: {
-  bearer: string;
-  runId: string;
-  iterationId?: string;
-  runtimeKind?: RuntimeKind;
-  signal?: AbortSignal;
-  /**
-   * Shorter aggregate wait than the policy's default. The caller knows what is
-   * LEFT of the iteration's clock; this function only knows the policy, and a
-   * capacity wait that outlives the iteration it is blocking is pure waste.
-   */
-  timeoutMs?: number;
-  onWait?: (info: { delayMs: number; resource?: string }) => void;
-}): Promise<ControlPlaneResult<EvalSandbox>> {
+export async function provisionEvalSandbox(
+  args: (
+    | { runId: string; iterationId?: string }
+    /**
+     * A SINGLE-CASE run has no suite run: the body names the iteration alone,
+     * and the control plane authorizes the iteration itself. Terminal only —
+     * a quick run boots a box for a harness, never a desktop.
+     */
+    | { runId?: undefined; iterationId: string; runtimeKind?: "terminal" }
+  ) & {
+    bearer: string;
+    runtimeKind?: RuntimeKind;
+    signal?: AbortSignal;
+    /**
+     * Shorter aggregate wait than the policy's default. The caller knows what
+     * is LEFT of the iteration's clock; this function only knows the policy,
+     * and a capacity wait that outlives the iteration it is blocking is pure
+     * waste.
+     */
+    timeoutMs?: number;
+    onWait?: (info: { delayMs: number; resource?: string }) => void;
+  },
+): Promise<ControlPlaneResult<EvalSandbox>> {
   type Result = ControlPlaneResult<EvalSandbox>;
   const atCapacity = (result: Result): boolean =>
     !result.ok && result.status === 503 && result.code === "at_capacity";
@@ -353,7 +379,9 @@ export async function provisionEvalSandbox(args: {
         "/evals/sandbox/provision",
         bearerHeader(args.bearer),
         {
-          runId: args.runId,
+          // Byte-identical to every suite-run request: `runId` first, and
+          // absent only for a single-case iteration.
+          ...(args.runId ? { runId: args.runId } : {}),
           ...(args.iterationId ? { iterationId: args.iterationId } : {}),
           ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
         },
@@ -820,6 +848,43 @@ export async function releaseSandbox(args: {
       error: result.error,
     });
   }
+}
+
+/**
+ * What a turn heartbeat learned from one touch.
+ *   - `touched` — the box is live and its idle clock restarted.
+ *   - `gone`    — the box is released, reaping, past its scope's lifetime
+ *     ceiling, or not this one (404/409), or the control plane predates the
+ *     route (also a 404). Stop beating.
+ *   - `failed`  — anything else (network, 5xx, no credential). Keep beating:
+ *     one missed touch costs nothing while the next lands inside the TTL.
+ */
+export type TouchSandboxOutcome = "touched" | "gone" | "failed";
+
+/**
+ * Restart an ephemeral box's idle clock (service-token auth). The reaper judges
+ * eval, scenario and playground boxes idle by the row's `lastUsedAt` alone, so
+ * a harness turn that runs longer than the scope's TTL without touching the row
+ * can lose its box mid-turn. Bound to the box: the control plane checks the
+ * vendor id against the row, so a stale binding never revives another box.
+ */
+export async function touchSandbox(args: {
+  sandboxRowId: string;
+  sandboxId: string;
+  signal?: AbortSignal;
+}): Promise<TouchSandboxOutcome> {
+  const headers = authHeaders();
+  if (!headers) return "failed";
+  const result = await postJson(
+    "/computers/sandbox/touch",
+    headers,
+    { sandboxRowId: args.sandboxRowId, sandboxId: args.sandboxId },
+    args.signal,
+    { quietNetworkErrors: true },
+  );
+  if (result.ok) return "touched";
+  if (result.status === 404 || result.status === 409) return "gone";
+  return "failed";
 }
 
 /** @deprecated Renamed {@link releaseSandbox} — release is scope-agnostic now.

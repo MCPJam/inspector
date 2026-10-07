@@ -62,7 +62,12 @@ import {
   HOSTED_MODE,
   WEBMCP_INSPECTOR_ENABLED,
 } from "../../config";
-import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
+import {
+  fetchScenarioRuntimeConfig,
+  readComputerSandboxHarness,
+  SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+  scenarioHarnessRepublishRefusal,
+} from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   checkHarnessRuntimeAvailable,
@@ -1477,6 +1482,49 @@ chatV2.post("/", async (c) => {
         // error (setup / Retry), never a silent switch to the cloud.
         return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
       }
+    }
+
+    // A scenario whose backend runs its harness on the conversation's
+    // DISPOSABLE box (`computerSandbox.harness`) cannot run here: this route
+    // has no box to provision, and the only other machine is the member's
+    // personal computer, which that harness must never run on. Refused before
+    // anything starts, naming where it does run. Without that field (an older
+    // backend, or a shell-only marker) the harness keeps today's behaviour.
+    if (
+      isScenarioSession &&
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      readComputerSandboxHarness(hostRuntimeConfig)
+    ) {
+      return c.json(
+        {
+          error: `This scenario runs the ${resolvedExecution.harness} harness on a disposable computer, which this inspector can't provision. Open the scenario in the MCPJam web app.`,
+          code: "SANDBOX_UNAVAILABLE",
+          reason: "not_a_data_plane",
+        },
+        409,
+      );
+    }
+    // No marker on a SCENARIO-scoped harness: a host-backed scenario, whose
+    // harness has no box to run on anywhere — the only other machine is a
+    // persistent computer, which the backend refuses for a scenario scope.
+    // Refused before the turn starts, as the web route does, rather than as a
+    // 500 from inside the harness.
+    if (
+      isScenarioSession &&
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      (hostRuntimeConfig?.executionScope as ExecutionScope | undefined)
+        ?.kind === "swarm"
+    ) {
+      const refusal = scenarioHarnessRepublishRefusal({
+        harness: resolvedExecution.harness,
+        accessKind: hostRuntimeConfig?.accessKind,
+      });
+      return c.json(
+        { error: refusal.message, code: SCENARIO_HARNESS_REPUBLISH_REQUIRED },
+        409,
+      );
     }
 
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).

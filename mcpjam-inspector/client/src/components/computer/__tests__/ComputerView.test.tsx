@@ -33,9 +33,24 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 
 let mockEnvironments: Array<{ environmentId: string; name: string }> = [];
 const resetComputer = vi.fn(async () => ({ reset: true }));
+const setComputerSandboxImage = vi.fn(
+  async () => ({ computerId: "c1", status: "provisioning" }) as never
+);
 vi.mock("@/hooks/useSandboxImages", () => ({
-  useSandboxImages: () => mockEnvironments,
+  useSandboxImages: (projectId: string | null) => {
+    sandboxImagesQueryArg = projectId;
+    return mockEnvironments;
+  },
   useResetComputer: () => resetComputer,
+  useSetComputerSandboxImage: () => setComputerSandboxImage,
+}));
+
+// Choosing a custom image rides `sandbox-images-enabled`, split from the
+// computers flag that gates this whole tab. On unless a test turns it off.
+let mockSandboxImagesEnabled = true;
+let sandboxImagesQueryArg: string | null | undefined;
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => mockSandboxImagesEnabled,
 }));
 
 // The drawer calls its own Convex hooks; stub it (its own tests cover it).
@@ -79,6 +94,8 @@ afterEach(() => {
   statusQueryArg = undefined;
   mockUsage = undefined;
   mockEnvironments = [];
+  mockSandboxImagesEnabled = true;
+  sandboxImagesQueryArg = undefined;
   mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
   window.localStorage.clear();
 });
@@ -416,6 +433,90 @@ describe("ComputerView image strip", () => {
     expect(
       (getByText("Reset", { selector: "button" }) as HTMLButtonElement).disabled
     ).toBe(true);
+  });
+
+  /**
+   * `computers-enabled` widens to everyone with a cloud client while custom
+   * images stay internal. The row still says which image the computer runs
+   * and keeps Reset — that is the computer's own action — but nothing here
+   * may open the image chooser.
+   */
+  it("hides Change and the drawer when sandbox images are off, keeping Reset", () => {
+    mockSandboxImagesEnabled = false;
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByText, queryByTestId } = render(
+      <ComputerView projectId="p1" isSignedInMember />
+    );
+    expect(getByText("Base image")).toBeTruthy();
+    expect(queryByText("Change")).toBeNull();
+    expect(queryByTestId("env-drawer")).toBeNull();
+    expect(getByText("Reset", { selector: "button" })).toBeTruthy();
+    expect(queryByText("Use base image")).toBeNull();
+    // Nothing attached and nothing to choose: the image list is never read.
+    expect(sandboxImagesQueryArg).toBeNull();
+  });
+
+  it("still names an attached image when sandbox images are off", () => {
+    mockSandboxImagesEnabled = false;
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "env1",
+    };
+    mockEnvironments = [{ environmentId: "env1", name: "ml-toolkit" }];
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isSignedInMember />
+    );
+    expect(getByText("ml-toolkit")).toBeTruthy();
+    expect(queryByText("Change")).toBeNull();
+    expect(sandboxImagesQueryArg).toBe("p1");
+  });
+
+  /**
+   * The backend keeps detaching ungated so a de-flagged user is never stuck
+   * on an image, but the drawer that offers it is hidden. So the row keeps
+   * the one way back, and nothing else from the drawer.
+   */
+  it("switches an attached image back to base when sandbox images are off", async () => {
+    mockSandboxImagesEnabled = false;
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "env1",
+    };
+    mockEnvironments = [{ environmentId: "env1", name: "ml-toolkit" }];
+    const { getByText } = render(
+      <ComputerView projectId="p1" isSignedInMember />
+    );
+    fireEvent.click(getByText("Use base image"));
+    expect(
+      getByText(/Switch to the base image\? All files on this computer/i)
+    ).toBeTruthy();
+    expect(setComputerSandboxImage).not.toHaveBeenCalled();
+    fireEvent.click(getByText("Switch", { selector: "button" }));
+    await waitFor(() =>
+      expect(setComputerSandboxImage).toHaveBeenCalledWith({
+        projectId: "p1",
+        environmentId: null,
+      })
+    );
+  });
+
+  it("offers Change, not Use base image, when sandbox images are on", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "env1",
+    };
+    mockEnvironments = [{ environmentId: "env1", name: "ml-toolkit" }];
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isSignedInMember />
+    );
+    expect(getByText("Change")).toBeTruthy();
+    expect(queryByText("Use base image")).toBeNull();
   });
 });
 
