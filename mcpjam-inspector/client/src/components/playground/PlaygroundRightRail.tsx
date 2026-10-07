@@ -547,10 +547,14 @@ function CloudShellBody({
   // Read with the SAME key the chat stream writes (previewedHostId), not
   // hostConfig.id — those are different identifiers and would never match.
   const streamedWorkdir = useHarnessWorkdir(projectId, hostId);
-  // The latest turn ran on this conversation's DISPOSABLE computer (a harness
-  // that signs in with your own account, or a compare column), not the one
-  // this terminal opens. Its workdir is a path on that other machine.
-  const ranOnDisposable = useHarnessRanOnDisposable(projectId, hostId);
+  // The latest turn of the conversation on screen ran on its DISPOSABLE
+  // computer (a harness that signs in with your own account), not the one this
+  // terminal opens. Per conversation: a compare column or another chat on the
+  // same host says nothing about this one.
+  const activeChatSessionId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const ranOnDisposable = useHarnessRanOnDisposable(activeChatSessionId);
   // COMP-16: open the terminal in the configured working directory. For a
   // harness host use the streamed per-session dir; for a plain computer host
   // fall back to the host-configured `computer.workdir` (the same dir the bash

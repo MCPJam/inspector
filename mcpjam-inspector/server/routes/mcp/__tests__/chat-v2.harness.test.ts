@@ -155,6 +155,9 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
   return {
     ...actual,
     playgroundHarnessBoxUnavailableReason: vi.fn((): string | null => null),
+    playgroundCredentialRefusal: vi.fn(
+      async (): Promise<string | null> => null,
+    ),
     acquirePlaygroundHarnessBox: vi.fn(async () => ({
       ok: true as const,
       box: {
@@ -173,6 +176,7 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
 import chatV2 from "../chat-v2.js";
 import {
   acquirePlaygroundHarnessBox,
+  playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
 } from "../../../utils/harness/playground-box.js";
 import {
@@ -825,23 +829,52 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
     });
 
-    it("releases the box when the harness runtime is unavailable after it was acquired", async () => {
-      checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
-        ok: false,
-        reason: "nope",
-      });
-      const response = await post(cursor);
-      expect(response.status).toBe(503);
-      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
-      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-      // No stream will carry the box to its release, so the route must.
-      expect(releaseMock).toHaveBeenCalledTimes(1);
-    });
-
     it("releases the box when the engine throws before it streams", async () => {
       handleMCPJamFreeChatModelMock.mockRejectedValueOnce(new Error("boom"));
       const response = await post(cursor);
       expect(response.status).toBe(500);
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("a Cursor turn whose key is refused provisions NOTHING: the check runs before the box", async () => {
+      vi.mocked(playgroundCredentialRefusal).mockResolvedValueOnce(
+        "The Cursor harness requires a CURSOR_API_KEY project secret.",
+      );
+      const response = await post(cursor);
+      expect(response.status).toBe(409);
+      expect((await response.json()).code).toBe(
+        "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+      );
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("a turn the availability check refuses boots no box", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValue({
+        ok: false,
+        reason: "it is off",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(503);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("releases the box on an early refusal after it was acquired (invalid tool names)", async () => {
+      prepareChatV2Mock.mockRejectedValueOnce(
+        new Error("Invalid tool name(s) for Anthropic: bad tool"),
+      );
+      const response = await post(cursor);
+      expect(response.status).toBe(400);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("releases the box on an early refusal after it was acquired (server misconfigured)", async () => {
+      delete process.env.CONVEX_HTTP_URL;
+      const response = await post(cursor);
+      expect(response.status).toBe(500);
+      expect(acquirePlaygroundHarnessBox).toHaveBeenCalledTimes(1);
       expect(releaseMock).toHaveBeenCalledTimes(1);
     });
   });

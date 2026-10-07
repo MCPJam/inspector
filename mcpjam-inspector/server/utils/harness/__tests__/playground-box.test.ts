@@ -23,6 +23,7 @@ vi.mock("../../logger.js", () => ({
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
   releaseBoxWhenStreamEnds,
@@ -75,6 +76,31 @@ describe("playgroundHarnessBoxReason", () => {
   });
 });
 
+describe("playgroundCredentialRefusal", () => {
+  it("refuses a Cursor turn with no usable key, in the harness's own words", async () => {
+    const refusal = await playgroundCredentialRefusal({
+      harnessId: "cursor",
+      secretEnv: undefined,
+    });
+    expect(refusal).toMatch(/CURSOR_API_KEY/);
+  });
+
+  it("passes a turn whose key is delivered, and a harness that needs none", async () => {
+    expect(
+      await playgroundCredentialRefusal({
+        harnessId: "cursor",
+        secretEnv: { CURSOR_API_KEY: "key_live" },
+      }),
+    ).toBeNull();
+    expect(
+      await playgroundCredentialRefusal({
+        harnessId: "claude-code",
+        secretEnv: undefined,
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("playgroundHarnessBoxUnavailableReason", () => {
   afterEach(() => dataPlaneMock.mockReturnValue(true));
 
@@ -108,6 +134,21 @@ describe("describePlaygroundBoxRefusal", () => {
       message: "Live Playground computer limit (4) reached.",
       code: "user_terminal_cap",
     });
+  });
+
+  it("turns an older control plane's bare refusal code into a sentence", () => {
+    const refused = describePlaygroundBoxRefusal("cursor", "credential", {
+      status: 409,
+      error: "environment_unavailable",
+    });
+    expect(refused.message).not.toMatch(/environment_unavailable/);
+    expect(refused.message).toMatch(/environment .* is unavailable/);
+    expect(
+      describePlaygroundBoxRefusal("cursor", "credential", {
+        status: 403,
+        error: "not_owner",
+      }).message,
+    ).toMatch(/belongs to someone else/);
   });
 
   it("keeps a 403 or 409 and says what could not start", () => {
@@ -203,8 +244,19 @@ describe("acquirePlaygroundHarnessBox", () => {
     );
     const beats = touchMock.mock.calls.length;
     await result.box.release();
+    // One last touch says the turn is over (so the box is evictable at the
+    // member's cap), and then nothing.
+    expect(touchMock.mock.calls.length).toBe(beats + 1);
+    expect(
+      (touchMock.mock.calls.at(-1) as unknown[] | undefined)?.[0],
+    ).toMatchObject({
+      sandboxRowId: "row",
+      sandboxId: "sbx",
+      ended: true,
+    });
+    await result.box.release();
     await vi.advanceTimersByTimeAsync(60 * 60_000);
-    expect(touchMock.mock.calls.length).toBe(beats);
+    expect(touchMock.mock.calls.length).toBe(beats + 1);
     // A conversation box is never torn down by its own turn.
     expect(releaseMock).not.toHaveBeenCalled();
   });
@@ -227,7 +279,6 @@ describe("acquirePlaygroundHarnessBox", () => {
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(touchMock.mock.calls.length).toBe(beats);
     expect(releaseMock).not.toHaveBeenCalled();
-    await result.box.release();
   });
 
   it("returns the control plane's refusal untouched", async () => {

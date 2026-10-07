@@ -22,6 +22,7 @@
 import { logger } from "../logger.js";
 import {
   provisionPlaygroundTerminalSandbox,
+  touchSandbox,
   type ControlPlaneResult,
   type PlaygroundTerminalSandbox,
 } from "../computers/control-plane-client.js";
@@ -31,7 +32,8 @@ import {
   type AcquireHarnessBoxResult,
   type HarnessBox,
 } from "./harness-box.js";
-import { harnessUsesExternalAccount } from "./registry.js";
+import { resolveExternalAccountCredentialPlan } from "./external-account-credentials.js";
+import { getHarnessAdapter, harnessUsesExternalAccount } from "./registry.js";
 
 export type PlaygroundBoxReason = "credential" | "compare";
 
@@ -60,9 +62,46 @@ export interface PlaygroundBoxRefusal {
 }
 
 /**
+ * The credential check a `credential` turn would fail inside `runHarnessTurn`,
+ * run BEFORE the box is booted — the same function, the same inputs — so a
+ * refused turn provisions nothing. The sentence on refusal, or null when the
+ * credential is satisfiable (or the harness needs none).
+ *
+ * `boxKind: "sandbox"` because that is where the turn is about to run: only a
+ * disposable box carries a brokered key.
+ */
+export async function playgroundCredentialRefusal(args: {
+  harnessId: string;
+  secretEnv: Readonly<Record<string, string>> | undefined;
+  bearer?: string;
+  projectId?: string;
+  environmentId?: string;
+}): Promise<string | null> {
+  try {
+    await resolveExternalAccountCredentialPlan({
+      harness: getHarnessAdapter(args.harnessId),
+      secretEnv: args.secretEnv,
+      ...(args.bearer ? { bearer: args.bearer } : {}),
+      ...(args.projectId ? { projectId: args.projectId } : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+      boxKind: "sandbox",
+    });
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
  * Hold this conversation's disposable shell for the turn. The heartbeat keeps
  * its idle clock running for as long as the turn does; `release()` stops it and
  * leaves the box, so the conversation's next turn reattaches to the same files.
+ *
+ * `release()` also sends the turn's FINAL touch (`ended`), which tells the
+ * control plane no turn holds the box any more: at the member's cap, an idle
+ * box is evicted to make room instead of refusing a new conversation (a compare
+ * reset mints one per column). Best-effort — a lost end touch only means the
+ * box becomes evictable two heartbeats later instead of now.
  */
 export async function acquirePlaygroundHarnessBox(args: {
   bearer: string;
@@ -72,7 +111,7 @@ export async function acquirePlaygroundHarnessBox(args: {
   projectEnvironmentId?: string;
   signal?: AbortSignal;
 }): Promise<AcquireHarnessBoxResult<PlaygroundBoxRefusal>> {
-  return acquireHarnessBox<PlaygroundBoxRefusal>({
+  const acquired = await acquireHarnessBox<PlaygroundBoxRefusal>({
     surface: "playground",
     // The turn's signal: a stopped or abandoned turn stops beating, and the
     // box idles out on its own clock (it is never torn down by the turn).
@@ -121,6 +160,29 @@ export async function acquirePlaygroundHarnessBox(args: {
       };
     },
   });
+  if (!acquired.ok) return acquired;
+  const box = acquired.box;
+  let ended: Promise<void> | null = null;
+  return {
+    ok: true,
+    box: {
+      ...box,
+      release: () =>
+        (ended ??= (async () => {
+          await box.release();
+          try {
+            await touchSandbox({
+              sandboxRowId: box.binding.sandboxRowId,
+              sandboxId: box.binding.sandboxId,
+              ended: true,
+              signal: AbortSignal.timeout(10_000),
+            });
+          } catch {
+            // Best-effort; see above.
+          }
+        })()),
+    },
+  };
 }
 
 /** Can this server hold the box at all? Null when it can. */
@@ -136,6 +198,23 @@ function subjectFor(harness: string, reason: PlaygroundBoxReason): string {
   return reason === "credential"
     ? `The ${harness} harness signs in with your own account, so it runs on a disposable computer for this conversation`
     : `Compare columns each run the ${harness} harness on a disposable computer of their own`;
+}
+
+/**
+ * A sentence for a refusal the control plane sent as a bare machine code (an
+ * older control plane answered `{ error: "not_owner" }`). Anything else is
+ * already written for a human and is kept as is.
+ */
+const REFUSAL_CODE_SENTENCES: Record<string, string> = {
+  not_member: "you are not a member of this project.",
+  not_owner: "this conversation's computer belongs to someone else.",
+  environment_unavailable:
+    "the environment this conversation runs in is unavailable.",
+  image_unavailable: "its computer image is unavailable.",
+};
+
+function refusalSentence(refusal: PlaygroundBoxRefusal): string {
+  return REFUSAL_CODE_SENTENCES[refusal.error.trim()] ?? refusal.error;
 }
 
 /**
@@ -162,7 +241,7 @@ export function describePlaygroundBoxRefusal(
   if (refusal?.status === 403 || refusal?.status === 409) {
     return {
       status: refusal.status,
-      message: `${subject}, and one couldn't be started: ${refusal.error}`,
+      message: `${subject}, and one couldn't be started: ${refusalSentence(refusal)}`,
       ...code,
     };
   }

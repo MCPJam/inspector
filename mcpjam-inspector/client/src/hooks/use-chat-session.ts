@@ -2532,6 +2532,8 @@ export function useChatSession(
           // pointer), so fall back to the presentation host: that is the id the
           // rail reads by, and without it the workdir lands under the project
           // key and the terminal opens at the box home instead.
+          // Which machine is recorded per CONVERSATION (a compare column and
+          // the main chat run the same host on different machines).
           useHarnessWorkdirStore
             .getState()
             .setWorkdir(
@@ -2539,6 +2541,7 @@ export function useChatSession(
               hostedHostId ?? hostedPresentationHostId ?? null,
               part.data.workdir,
               part.data.machine,
+              chatSessionIdRef.current,
             );
         } else if (isHistoryNoticeDataPart(part)) {
           // Earlier replies in this chat are not in the model's context this
