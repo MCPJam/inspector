@@ -157,11 +157,21 @@ describe("web hosted rpc logs", () => {
                       role: "member",
                       accessLevel: "project_member",
                       permissions: { chatOnly: false },
+                      // An explicit-OAuth server with no token, and one whose
+                      // token another request is refreshing.
+                      ...(serverId === "srv-refreshing"
+                        ? {
+                            oauthUnavailableReason: "refresh_in_progress",
+                            oauthRetryAfterMs: 2500,
+                          }
+                        : {}),
                       serverConfig: {
                         transportType: "http",
                         url: "https://server.example.com/mcp",
                         headers: {},
-                        useOAuth: false,
+                        useOAuth:
+                          serverId === "srv-oauth" ||
+                          serverId === "srv-refreshing",
                       },
                     },
               ])
@@ -379,7 +389,15 @@ describe("web hosted rpc logs", () => {
 
     const { status, data } = await expectJson<{
       results: Record<string, { tools: Array<{ name: string }> }>;
-      errors: Record<string, { status: number; code: string; message: string }>;
+      errors: Record<
+        string,
+        {
+          status: number;
+          code: string;
+          message: string;
+          details?: Record<string, unknown>;
+        }
+      >;
       _rpcLogs: Array<{ serverId: string }>;
     }>(response);
 
@@ -393,6 +411,7 @@ describe("web hosted rpc logs", () => {
         status: 403,
         code: "FORBIDDEN",
         message: "Access denied",
+        details: { serverId: "srv-denied", serverName: "Denied" },
       },
     });
     expect(data._rpcLogs.every((log) => log.serverId === "srv-1")).toBe(true);
@@ -421,6 +440,46 @@ describe("web hosted rpc logs", () => {
     expect(data.results).toEqual({});
     expect(data.errors).toEqual({
       "srv-denied": expect.objectContaining({ status: 403 }),
+    });
+  });
+
+  it("keeps the details and retry delay a refused server's own request carries", async () => {
+    const app = createRpcLogsTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/tools/list-multi",
+      {
+        projectId: "project-1",
+        serverIds: ["srv-1", "srv-oauth", "srv-refreshing"],
+        serverNames: ["Notion", "Linear", "Asana"],
+      },
+      "test-token",
+    );
+
+    const { status, data } = await expectJson<{
+      errors: Record<
+        string,
+        {
+          status: number;
+          details?: Record<string, unknown>;
+          retryAfterSeconds?: number;
+        }
+      >;
+    }>(response);
+
+    // `details.oauthRequired` is what tells the client to send the user to
+    // reconnect, and the delay is the `Retry-After` the 429 would have sent.
+    expect(status).toBe(200);
+    expect(data.errors["srv-oauth"]).toMatchObject({
+      status: 401,
+      details: { oauthRequired: true, serverId: "srv-oauth" },
+    });
+    expect(data.errors["srv-oauth"]).not.toHaveProperty("retryAfterSeconds");
+    expect(data.errors["srv-refreshing"]).toMatchObject({
+      status: 429,
+      details: { serverId: "srv-refreshing" },
+      retryAfterSeconds: 3,
     });
   });
 

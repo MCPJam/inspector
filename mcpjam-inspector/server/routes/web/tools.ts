@@ -94,24 +94,31 @@ tools.post("/list", async (c) =>
  * egress guard's 400 included, since the manager dials lazily and a refused
  * target surfaces inside `listTools`; an authorization refusal arrives as the
  * `WebRouteError` the connection built and passes through), and the hosted
- * projection (MJ-001) reduces the message, so a batch says no more about a
- * target than a single-server call does. The client rebuilds its usual
- * `WebApiError` from these three fields.
+ * projection (MJ-001) reduces the message and details, so a batch says no
+ * more about a target than a single-server call does. The client rebuilds its
+ * usual `WebApiError` from these fields. `details` carry what the client acts
+ * on (`oauthRequired`, `exportDenied`), and `retryAfterSeconds` stands in for
+ * the `Retry-After` header a 200 cannot carry per server.
  */
 function batchFailure(error: unknown): {
   status: number;
   code: ErrorCode;
   message: string;
+  details?: Record<string, unknown>;
+  retryAfterSeconds?: number;
 } {
   const { routeError } = projectRouteFailure(
     mapEphemeralServerFailure(error),
     error,
     undefined,
   );
+  const retryAfterSeconds = Number(routeError.headers?.["Retry-After"]);
   return {
     status: routeError.status,
     code: routeError.code,
     message: routeError.message,
+    ...(routeError.details ? { details: routeError.details } : {}),
+    ...(Number.isFinite(retryAfterSeconds) ? { retryAfterSeconds } : {}),
   };
 }
 

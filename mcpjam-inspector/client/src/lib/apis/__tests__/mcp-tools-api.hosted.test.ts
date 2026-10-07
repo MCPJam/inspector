@@ -152,6 +152,41 @@ describe("mcp-tools-api hosted mode", () => {
     });
   });
 
+  it("rebuilds a refused server's error with its details and retry delay", async () => {
+    listHostedToolsMultiMock.mockResolvedValueOnce({
+      results: {},
+      errors: {
+        "srv-b": {
+          status: 429,
+          code: "RATE_LIMITED",
+          message: 'Credentials for "B" are being refreshed.',
+          details: { serverId: "srv-b", serverName: "B" },
+          retryAfterSeconds: 3,
+        },
+        "srv-c": {
+          status: 401,
+          code: "UNAUTHORIZED",
+          message: 'Server "C" requires OAuth authentication.',
+          details: { oauthRequired: true, serverId: "srv-c" },
+        },
+      },
+    });
+
+    const result = await listToolsForServers(["B", "C"]);
+
+    expect(result.errors.B).toBeInstanceOf(WebApiError);
+    expect(result.errors.B).toMatchObject({
+      status: 429,
+      details: { serverId: "srv-b", serverName: "B" },
+      retryAfterMs: 3000,
+    });
+    expect(result.errors.C).toMatchObject({
+      status: 401,
+      details: { oauthRequired: true, serverId: "srv-c" },
+    });
+    expect((result.errors.C as WebApiError).retryAfterMs).toBeUndefined();
+  });
+
   it("fails the batch when the request itself fails", async () => {
     const failure = new WebApiError(401, "UNAUTHORIZED", "Session expired");
     listHostedToolsMultiMock.mockRejectedValueOnce(failure);

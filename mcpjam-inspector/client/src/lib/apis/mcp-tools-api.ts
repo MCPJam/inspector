@@ -153,9 +153,10 @@ export type ListToolsForServersResult = {
   /**
    * The error each failed server's listing threw, keyed the same way: a
    * `WebApiError` in both modes for a failure the server answered (hosted
-   * rebuilds it from the batch's per-server status, code and message), or a
-   * name the context could not resolve. Kept as an error, not a message, so
-   * `getToolsMetadata` can rethrow what a single-server call would have.
+   * rebuilds it from the batch's per-server status, code, message, details
+   * and retry delay), or a name the context could not resolve. Kept as an
+   * error, not a message, so `getToolsMetadata` can rethrow what a
+   * single-server call would have.
    */
   errors: Record<string, unknown>;
 };
@@ -214,14 +215,25 @@ export async function listToolsForServers(
       for (const [hostedId, failure] of Object.entries(
         (body?.errors ?? {}) as Record<
           string,
-          { status: number; code: string; message: string }
+          {
+            status: number;
+            code: string;
+            message: string;
+            details?: Record<string, unknown>;
+            retryAfterSeconds?: number;
+          }
         >,
       )) {
         const error = new WebApiError(
           failure.status,
           failure.code,
           failure.message,
+          undefined,
+          failure.details,
         );
+        if (failure.retryAfterSeconds !== undefined) {
+          error.retryAfterMs = Math.max(0, failure.retryAfterSeconds * 1000);
+        }
         for (const name of namesByHostedId[hostedId] ?? [hostedId]) {
           errors[name] = error;
         }

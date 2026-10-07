@@ -1274,6 +1274,27 @@ function resolveEffectiveInitializePinsForServer(
   return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
+/**
+ * Whether `tolerateServerRefusals` may keep `error` for its server: a
+ * `WebRouteError` that answers for that server. An `INTERNAL_ERROR` (a
+ * missing authorize result, a missing XAA issuer) or anything that is not a
+ * `WebRouteError` (a TypeError while building the config) is a fault in this
+ * builder, so it still fails the request and reaches Sentry and
+ * `http.request.failed` through the route's failure path. The test is the
+ * code, not `status < 500`: an unreachable authorization server is a 502/503
+ * that belongs to one server. A failed XAA mint is the one `INTERNAL_ERROR`
+ * kept: `toXaaConnectFailure` frames an unclassified handshake failure that
+ * way, it belongs to that server's IdP, and the mint site has already
+ * logged it.
+ */
+function isServerRefusal(error: unknown): boolean {
+  return (
+    error instanceof WebRouteError &&
+    (error.code !== ErrorCode.INTERNAL_ERROR ||
+      error.setupFailureSource === "xaa_mint")
+  );
+}
+
 export async function createAuthorizedManager(
   caller: ManagerCallerContext,
   bearerToken: string,
@@ -1451,10 +1472,12 @@ export async function createAuthorizedManager(
      * for a connection whose servers are used together (a chat turn, an eval
      * run). The tools batch route lists servers independently, and one
      * server's stale grant or missing XAA registration used to answer for all
-     * of them (PLB-187). With this set, passes 1 and 1b record such a server
-     * in `refusedServers` and leave it out of pass 2 and of the manager. The
-     * batch-level ordering stands: every remaining server still clears
-     * validation before any of them mints or connects.
+     * of them (PLB-187). With this set, passes 1, 1b and 2 record such a
+     * server in `refusedServers` and leave it out of the manager (and, from
+     * passes 1 and 1b, out of pass 2). An internal fault still fails the
+     * batch: see `isServerRefusal`. The batch-level ordering stands: every
+     * remaining server still clears validation before any of them mints or
+     * connects.
      */
     tolerateServerRefusals?: boolean;
   },
@@ -1802,7 +1825,9 @@ export async function createAuthorizedManager(
         }
       }
     } catch (error) {
-      if (!options?.tolerateServerRefusals) throw error;
+      if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
+        throw error;
+      }
       refusedServers[serverId] = error;
     }
   }
@@ -1848,7 +1873,7 @@ export async function createAuthorizedManager(
         );
         continue;
       }
-      if (options?.tolerateServerRefusals) {
+      if (options?.tolerateServerRefusals && isServerRefusal(error)) {
         refusedServers[recovery.serverId] = error;
         continue;
       }
@@ -2289,7 +2314,9 @@ export async function createAuthorizedManager(
           ),
         ] as const;
       } catch (error) {
-        if (!options?.tolerateServerRefusals) throw error;
+        if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
+          throw error;
+        }
         refusedServers[serverId] = error;
         return undefined;
       }

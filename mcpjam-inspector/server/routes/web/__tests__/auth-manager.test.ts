@@ -1,12 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock, admissionMock } =
-  vi.hoisted(() => ({
-    mcpClientManagerMock: vi.fn(),
-    disconnectAllServersMock: vi.fn(),
-    localRefreshMock: vi.fn(),
-    admissionMock: vi.fn(({ fetch }) => fetch),
-  }));
+const {
+  mcpClientManagerMock,
+  disconnectAllServersMock,
+  localRefreshMock,
+  admissionMock,
+  mintXaaMock,
+} = vi.hoisted(() => ({
+  mcpClientManagerMock: vi.fn(),
+  disconnectAllServersMock: vi.fn(),
+  localRefreshMock: vi.fn(),
+  admissionMock: vi.fn(({ fetch }) => fetch),
+  mintXaaMock: vi.fn(),
+}));
 
 vi.mock("../../../utils/mcp-backpressure.js", () => ({ hostedMcpBackpressureFetch: admissionMock }));
 
@@ -14,6 +20,13 @@ vi.mock("../../../utils/mcp-backpressure.js", () => ({ hostedMcpBackpressureFetc
 // tests; here it is mocked so these are about the connect path.
 vi.mock("../../../utils/local-oauth-refresh.js", () => ({
   refreshTokensAgainstPrivateAuthorizationServer: localRefreshMock,
+}));
+
+// Same for the XAA token exchange: what matters here is how the connect path
+// handles a mint that fails.
+vi.mock("../../../services/xaa-mint.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../services/xaa-mint.js")>()),
+  mintXaaAccessToken: mintXaaMock,
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -35,7 +48,7 @@ import {
   projectServerSchema,
   callerContextFromHono,
 } from "../auth.js";
-import { WebRouteError } from "../errors.js";
+import { ErrorCode, WebRouteError } from "../errors.js";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 
 // Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same
@@ -295,8 +308,8 @@ describe("web auth manager batching", () => {
     ]);
   });
 
-  it("records a pass-2 refusal per server when tolerating refusals", async () => {
-    global.fetch = vi.fn(async () =>
+  function xaaBatchFetch(): typeof fetch {
+    return vi.fn(async () =>
       Response.json({
         results: {
           "server-xaa": {
@@ -323,10 +336,16 @@ describe("web auth manager batching", () => {
         },
       }),
     ) as typeof fetch;
+  }
 
-    // No `xaaIssuer`: the XAA server fails in pass 2, where the mint would
-    // start. Without the option that throw is the batch's; with it, the
-    // sibling still connects.
+  it("records a pass-2 refusal per server when tolerating refusals", async () => {
+    global.fetch = xaaBatchFetch();
+    mintXaaMock.mockRejectedValueOnce(
+      new WebRouteError(404, ErrorCode.NOT_FOUND, "Unknown issuer"),
+    );
+
+    // The XAA server's mint fails in pass 2. Without the option that throw is
+    // the batch's; with it, the sibling still connects.
     const result = await createAuthorizedManager(
       callerContextFromHono(mockContext),
       "bearer-token",
@@ -335,16 +354,84 @@ describe("web auth manager batching", () => {
       10_000,
       undefined,
       undefined,
-      { tolerateServerRefusals: true },
+      { tolerateServerRefusals: true, xaaIssuer: "https://idp.example.com" },
+    );
+
+    expect(result.refusedServers?.["server-xaa"]).toMatchObject({
+      status: 404,
+      code: "NOT_FOUND",
+      details: { serverId: "server-xaa" },
+    });
+    expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
+      "server-plain",
+    ]);
+  });
+
+  it("keeps an unclassified XAA handshake failure per server", async () => {
+    global.fetch = xaaBatchFetch();
+    mintXaaMock.mockRejectedValueOnce(new Error("IdP answered 500"));
+
+    // Framed as a 500 INTERNAL_ERROR, but it is that server's IdP failing,
+    // and the mint site has already logged it.
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-xaa", "server-plain"],
+      10_000,
+      undefined,
+      undefined,
+      { tolerateServerRefusals: true, xaaIssuer: "https://idp.example.com" },
     );
 
     expect(result.refusedServers?.["server-xaa"]).toMatchObject({
       status: 500,
       code: "INTERNAL_ERROR",
+      details: { reason: "xaa_handshake_failed", serverId: "server-xaa" },
     });
     expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
       "server-plain",
     ]);
+  });
+
+  it("fails the batch on an internal fault even when tolerating refusals", async () => {
+    global.fetch = xaaBatchFetch();
+
+    // No `xaaIssuer` is the caller's bug, not the server's refusal: kept per
+    // server it would answer inside a 200 and reach neither Sentry nor
+    // `http.request.failed`.
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-xaa", "server-plain"],
+        10_000,
+        undefined,
+        undefined,
+        { tolerateServerRefusals: true },
+      ),
+    ).rejects.toMatchObject({ status: 500, code: "INTERNAL_ERROR" });
+    expect(mcpClientManagerMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the batch on a missing authorize result even when tolerating refusals", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json({ results: {} }),
+    ) as typeof fetch;
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-a"],
+        10_000,
+        undefined,
+        undefined,
+        { tolerateServerRefusals: true },
+      ),
+    ).rejects.toMatchObject({ status: 500, code: "INTERNAL_ERROR" });
   });
 
   it("records a failed required recovery per server when tolerating refusals", async () => {
