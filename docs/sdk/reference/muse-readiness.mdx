@@ -105,6 +105,7 @@ gradeMuseReadiness(input: MuseReadinessInput): MuseReadinessResult
 
 | Property | Type | Description |
 |----------|------|-------------|
+| `readinessKind` | `"muse-directory-readiness"` | Discriminator. Use `isMuseReadinessResult(result)` to narrow a union. |
 | `status` | `MuseLaneStatus` | The `submission-ready` rollup — the headline verdict. `"ready"`, `"not-ready"`, or `"incomplete"`. |
 | `technicalStatus` | `MuseLaneStatus` | The `technical-preflight` rollup, answerable without a submission profile. |
 | `summary` | `string` | Human-readable rollup of `status`, naming what is missing when incomplete. |
