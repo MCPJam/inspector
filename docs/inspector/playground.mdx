@@ -333,9 +333,16 @@ When a search is active and the source filter is hiding matching entries, a bann
 
 ### Shell tab
 
-When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on your personal computer. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
 
 Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
+
+Some turns run on a **disposable computer** for the conversation rather than your personal computer:
+
+- **Cursor harness turns** — Cursor authenticates with your own account, so its credentials are delivered only to a per-conversation disposable computer, never to your personal machine.
+- **Compare columns** — every column runs the same harness at the same time. Sharing one personal computer would have columns overwrite each other's files, so each column's conversation gets its own disposable computer.
+
+When the last turn ran on a disposable computer, the Shell tab shows a notice and does not open the terminal at a path that only exists on that other machine. The terminal itself always connects to your personal computer.
 
 ## Input Bar
 
