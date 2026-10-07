@@ -333,8 +333,14 @@ export function CiEvalsTab({
       selectedSuite,
       queries.suiteDetails.testCases,
       queries.activeIterations,
+      queries.runsForSelectedSuite,
     );
-  }, [selectedSuite, queries.suiteDetails, queries.activeIterations]);
+  }, [
+    selectedSuite,
+    queries.suiteDetails,
+    queries.activeIterations,
+    queries.runsForSelectedSuite,
+  ]);
 
   const showCiSuiteDrilldownSidebar = useMemo(
     () =>

@@ -23,7 +23,7 @@ import {
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -55,6 +55,7 @@ import {
   generationEnvironmentId,
   getLatestRunMetricSource,
   getRunMetricSource,
+  isSubsetRerunRun,
   runEnvironmentRef,
 } from "./helpers";
 import { SuiteHeader } from "./suite-header";
@@ -1022,6 +1023,8 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
+          // A subset rerun is never a baseline: it measured only what failed.
+          !isSubsetRerunRun(run) &&
           (!suiteDetailOverview ||
             (run.namedHostId === selectedRunDetails.namedHostId &&
               sameRunTarget(run, selectedRunDetails) &&
@@ -1106,13 +1109,13 @@ export function SuiteIterationsView({
   // ONE condition decides both whether the row renders and whether its images
   // are fetched. They used to be written separately — visibility here, the
   // fetch gated on the client flag alone — so a deployment whose capabilities
-  // say computers ARE available, seen by a client whose flag is off, rendered
+  // say images ARE available, seen by a client whose flag is off, rendered
   // an ENABLED select whose only option was "None (default image)". A control
   // that offers nothing is the failure this file is being repaired for.
-  const computersEnabled = useComputersEnabled();
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const computerEnvironmentRowVisible = capabilitiesReady
     ? Boolean(projectId)
-    : computersEnabled && Boolean(projectId);
+    : sandboxImagesEnabled && Boolean(projectId);
   const computerEnvironments = useSandboxImages(
     computerEnvironmentRowVisible ? projectId : null,
   );
@@ -1178,8 +1181,9 @@ export function SuiteIterationsView({
 
   const latestCompletedRun = useMemo(
     () =>
-      sortRunsNewestFirst(runs).find((run) => run.status === "completed") ??
-      null,
+      sortRunsNewestFirst(runs).find(
+        (run) => run.status === "completed" && !isSubsetRerunRun(run),
+      ) ?? null,
     [runs],
   );
   const groundedness = useGroundedness(latestCompletedRun);
@@ -1494,7 +1498,10 @@ export function SuiteIterationsView({
     ciOwnedReason ??
     (!capabilitiesReady
       ? undefined
-      : (featureDisabledReason(capabilities.features?.computers) ??
+      : (featureDisabledReason(
+          capabilities.features?.["sandbox-images"] ??
+            capabilities.features?.computers,
+        ) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
           : undefined))) ??

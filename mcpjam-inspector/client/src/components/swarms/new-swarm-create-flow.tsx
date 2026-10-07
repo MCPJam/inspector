@@ -92,7 +92,7 @@ import {
   serializeRubricForWire,
 } from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
@@ -452,7 +452,8 @@ export function NewSwarmCreateFlow({
    */
 }) {
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // Materialized targets carry an image pin only under its own flag.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Ad-hoc AND archived, because this is the lookup Confirm uses to say where a
   // reused goal is set up to run, and both kinds are exactly what a journey
@@ -970,15 +971,15 @@ export function NewSwarmCreateFlow({
       liveEnvironments: envList,
       createEnvironment,
       skillsEnabled,
-      computersEnabled,
+      computersEnabled: sandboxImagesEnabled,
     }),
     [
-      computersEnabled,
       createEnvironment,
       draft,
       envList,
       hostNameById,
       projectId,
+      sandboxImagesEnabled,
       skillsEnabled,
       swarmName,
       targetState.stack,

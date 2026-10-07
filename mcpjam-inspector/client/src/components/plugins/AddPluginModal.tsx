@@ -36,8 +36,11 @@ import {
   usePluginImport,
   usePluginImportActions,
   usePluginSetupStatus,
+  usePluginVersion,
 } from "@/hooks/usePluginImportApi";
 import { track } from "@/lib/analytics";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
 import { cn } from "@/lib/utils";
 import { PluginImportPreviewContent } from "./PluginImportPreviewContent";
 import {
@@ -156,6 +159,12 @@ export interface AddPluginModalProps {
   projectId: string | null;
   /** Fired after an import reaches `completed`, with the new version id. */
   onInstalled?: (result: { pluginId: string; pluginVersionId: string }) => void;
+  /**
+   * Where "Set up <Plugin>" runs the plugin's onboarding skill: a new chat
+   * (the default, an import from Connect), or the current chat when the
+   * import was started from inside one.
+   */
+  onboardingConversation?: "new" | "current";
 }
 
 export function AddPluginModal({
@@ -163,6 +172,7 @@ export function AddPluginModal({
   onClose,
   projectId,
   onInstalled,
+  onboardingConversation = "new",
 }: AddPluginModalProps) {
   const actions = usePluginImportActions();
   const [selected, setSelected] = useState<SelectedBundle | null>(null);
@@ -202,6 +212,23 @@ export function AddPluginModal({
   // guard that only checked one would leave the other's read unearned.
   const isInstalled =
     row?.status === "completed" && !!row.pluginId && !!row.pluginVersionId;
+  // D5: a plugin that declares an onboarding skill offers to run it.
+  const installedVersion = usePluginVersion(
+    isInstalled ? row.pluginVersionId : null,
+  );
+  const onboardingServerIds = (installedVersion?.servers ?? []).flatMap(
+    (server) =>
+      server.materializedServerId ? [server.materializedServerId] : [],
+  );
+  const pluginLabel =
+    row?.preview?.identity.displayName ||
+    row?.preview?.identity.name ||
+    "the plugin";
+  const offersOnboarding =
+    isInstalled &&
+    !!projectId &&
+    !!installedVersion?.onboarding &&
+    onboardingServerIds.length > 0;
 
   const previewedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -630,8 +657,49 @@ export function AddPluginModal({
           )}
         </div>
 
+        {offersOnboarding ? (
+          <p
+            className="text-sm text-muted-foreground"
+            data-testid="add-plugin-onboarding-prompt"
+          >
+            {pluginLabel} is ready for use. Set it up to start using it.
+          </p>
+        ) : null}
         <div className="flex items-center justify-end gap-2 border-t pt-3">
-          {isInstalled ? (
+          {offersOnboarding ? (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  reset();
+                  onClose();
+                }}
+                data-testid="add-plugin-onboarding-later"
+              >
+                Maybe later
+              </Button>
+              <Button
+                onClick={() => {
+                  // Same path as the server menu's Run onboarding: the
+                  // Playground runs the skill through normal chat once one of
+                  // this plugin's servers offers it.
+                  usePluginOnboardingIntentStore.getState().request({
+                    projectId: projectId!,
+                    serverIds: onboardingServerIds,
+                    pluginName: pluginLabel,
+                    conversation: onboardingConversation,
+                  });
+                  reset();
+                  onClose();
+                  if (onboardingConversation === "new")
+                    navigateApp(routePaths.playground);
+                }}
+                data-testid="add-plugin-onboarding-setup"
+              >
+                Set up {pluginLabel}
+              </Button>
+            </>
+          ) : isInstalled ? (
             <Button
               onClick={() => {
                 reset();

@@ -16,11 +16,15 @@ bearer at rest. 2025-era clients get no `Mcp-Session-Id` and a spec-compliant
 
 ## Status
 
-Protected by WorkOS AuthKit. Tools are thin adapters over the shared platform
-operation catalog in `@mcpjam/sdk/platform`; every call hits the Platform API
-(`/api/v1`) with the request's own bearer — the caller's AuthKit JWT, or a
-guest token minted lazily on first tool execution for an anonymous request —
-so results respect the caller's project access.
+Protected by WorkOS AuthKit, and **signed-in only** in every deployed
+environment: a client without a token gets the `401` that starts OAuth (see
+[Guest access](#guest-access)). Tools are thin adapters over the shared
+platform operation catalog in `@mcpjam/sdk/platform`; every call hits the
+Platform API (`/api/v1`) with the caller's own bearer, so results respect the
+caller's project access.
+
+Some catalog tools are **held** off this surface while their feature is in
+beta; they are listed [after the table](#held-tools).
 
 | Tool | What it does | Widget |
 | --- | --- | --- |
@@ -33,7 +37,7 @@ so results respect the caller's project access.
 | `list_project_servers` | List the MCP servers saved in an MCPJam project. | — |
 | `create_project_server` | Save a new MCP server in a project, including optional credentials. | — |
 | `get_project_server` | Read one saved MCP server by project and server id. | — |
-| `update_project_server` | Update saved MCP server metadata or rotate/clear credentials. | — |
+| `update_project_server` | Update a saved MCP server's configuration, or rotate or clear its credentials (sparse update). | — |
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
 | `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
 | `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
@@ -50,16 +54,6 @@ so results respect the caller's project access.
 | `get_server_skill` | Fetch one skill from a saved MCP server by uri, verified against its manifest digest, advertised frontmatter, and uri identity before any content is returned. | — |
 | `read_server_skill_file` | Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
-| `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; poll for the verdict. | — |
-| `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit submission mode; starts a durable run and returns its id. | — |
-| `get_readiness_run` | Read one readiness run: whether it finished, what it graded, and whether the optional model pass ran. | — |
-| `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. | — |
-| `cancel_readiness_run` | Stop a readiness run that is still going. | — |
-| `get_readiness_report` | Read a finished readiness run's findings, ordered most-consequential-first and capped. | — |
-| `start_conformance_run` | Run protocol/apps/tasks conformance on a saved HTTP server. Starts a durable run and returns its id; poll for the verdict. | — |
-| `get_conformance_run` | Read one conformance run: whether it finished, the outcome, score, and pending count. | — |
-| `list_conformance_runs` | List a project's conformance runs, newest first, optionally narrowed to one saved server. | — |
-| `get_conformance_report` | Read a finished conformance run's failing checks, capped, with per-suite profile stamps. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
@@ -70,7 +64,6 @@ so results respect the caller's project access.
 | `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
 | `list_eval_suite_revisions` | List a suite's settings history, newest first: who committed each edit, which stored fields moved, the note they left, and how many runs were launched against it. | — |
 | `delete_eval_suite` | Permanently delete an eval suite and all its cases and runs. | — |
-| `set_eval_suite_schedule` | Enable or disable automatic scheduled runs for a suite, and set the interval. | — |
 | `set_eval_suite_environments` | Attach project environments to an eval suite, replacing whatever it had. | — |
 | `list_eval_cases` | List the test cases in an eval suite, with their ids and configuration. | — |
 | `get_eval_case` | Fetch one eval test case's full definition. | — |
@@ -95,30 +88,14 @@ so results respect the caller's project access.
 | `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
 | `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
-| `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. Included with MCPJam, so no credits are consumed; the developer applies the diff in their own server, MCPJam never edits it. | — |
-| `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |
-| `get_eval_description_experiment` | Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible. | — |
-| `list_eval_github_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
-| `connect_eval_github_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
-| `list_eval_check_repos` | Deprecated spelling of `list_eval_github_repos` — a `check` here is a GITHUB check, never a case's grading check. | — |
-| `connect_eval_check_repo` | Deprecated spelling of `connect_eval_github_repo`. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
 | `ensure_adhoc_environment` | Get or create an unnamed, content-addressed environment for a composed stack (host plus optional model, sandbox image, server group, and pinned skills). Repeating the same stack reuses one row. Promote it with `name_environment` only when the user asks to keep it. | — |
-| `list_sandbox_images` | List the custom Computer sandbox images (blueprints) in a project — the choices for a suite's `environment.computerEnvironment`. | — |
-| `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
-| `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
-| `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
-| `list_project_skills` | List the Cloud Skills visible to you in a project, with the IDs that environments and eval runs pin. Each row reports whether it is eligible to be pinned, and why not if it isn't. | — |
-| `get_project_skill` | Show one Cloud Skill including its SKILL.md body. | — |
 | `list_studies` | List the studies published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
 | `get_study` | One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its actionable-insights envelope. Matched by id or by name. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
-| `search_sessions` | Search a project's sessions across every surface (Playground, user testing, evals, swarms), ranked by relevance. `scope=titles` searches titles and opening messages; `scope=transcripts` searches what was said. Every result carries a link. | — |
 | `send_chat_message` | Send one message to a project's MCP servers and get the reply plus the raw tool calls, per-call latency and token usage. SPENDS model credits. Send `browser: {policy: …}` initially and `browser: {}` on later browser turns. Pass the returned `sessionId` back to continue. Tools default to `read_only`; `toolMode=auto` may cause real side effects. `idempotencyKey` is required and must be stable across retries. | — |
-| `drive_chat_session_browser` | Open or drive an API Playground session browser under its stored policy; uses metered desktop time. | — |
-| `observe_chat_session_browser` | Observe the session browser (may wake a metered desktop), or read command traces and screenshot URLs. | — |
 | `get_chat_session` | Read a session's metadata and a window of its raw messages, indexed by absolute transcript position — the same indices the trace spans reference. | — |
 | `get_chat_session_trace` | Read a session's per-turn spans: tool latency, token usage, transcript indices. Returns the latest turn by default; page older turns with `afterPromptIndex`, or pass `includeSpans=false` for summaries. | — |
 | `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
@@ -180,12 +157,8 @@ so results respect the caller's project access.
 | `update_client` | Edit a client's name and/or config. `set` changes named fields, `config` replaces everything. Requires `expectedConfigId` for a config edit and `expectedName` for a rename. | — |
 | `set_client_servers` | Replace a client's required and optional server attachments. A REPLACEMENT — omitted servers are detached. Requires `expectedConfigId`. | — |
 | `duplicate_client` | Create a new client carrying the selected client's current config. The source is untouched. | — |
-| `search_registry_directory` | Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. | — |
-| `get_registry_directory_server` | Fetch one scraped directory row by catalogServerId, or by name (optionally with source). | — |
-| `list_registry_directory_sources` | Discover directory source ids for `search_registry_directory`. Sources are data, not an enum. | — |
 | `list_registry_servers` | List global curated cards and the project's organization registry cards. | — |
 | `list_registry_connections` | List directory and card installs already in a project (provenance rows whose server still exists). | — |
-| `install_registry_directory_server` | Install writes a project `servers` row and provenance and stops — it is not a live connection. | — |
 | `install_registry_server` | Install a curated registry card into a project. Writes a `servers` row and provenance; not a live connection. | — |
 | `uninstall_registry_server` | Remove a curated or org registry-card install from a project. Directory uninstall is `delete_project_server`. | — |
 | `send_feedback` | Report a bug, a missing capability or something confusing to the MCPJam team. Sends your text outside your organization; kept 180 days. Signed-in accounts only. | — |
@@ -197,6 +170,32 @@ so results respect the caller's project access.
      generator on purpose — a generator makes the file untouchable and its
      output unreviewed, while a test lets a human write the row and fails when
      the row stops being true. -->
+
+### Held tools
+
+The catalog is one static list for every caller, so a tool whose feature is in
+beta would be offered to organizations that cannot use it. Until the tool list
+is resolved per caller, these are held off this surface for **everyone**
+(`HELD_WHILE_IN_BETA` in `src/tools/platformTools.ts`, which also writes their
+`EXCLUDED_FROM_CATALOG` reasons). REST, the SDK and the CLI are unaffected.
+
+- Conformance and readiness: `start_claude_readiness_run`,
+  `start_openai_readiness_run`, `get_readiness_run`, `list_readiness_runs`,
+  `cancel_readiness_run`, `get_readiness_report`, `start_conformance_run`,
+  `get_conformance_run`, `list_conformance_runs`, `get_conformance_report`
+- Unified sessions: `search_sessions`
+- Registry directory: `search_registry_directory`,
+  `get_registry_directory_server`, `list_registry_directory_sources`,
+  `install_registry_directory_server`
+- Hosted browser: `drive_chat_session_browser`, `observe_chat_session_browser`
+- Cloud Skills: `list_project_skills`, `get_project_skill`
+- Computers: `list_sandbox_images`, `get_sandbox_image`
+- Agent Plugins: `list_project_plugins`, `get_plugin_version`
+- GitHub checks: `list_eval_github_repos`, `connect_eval_github_repo`,
+  `list_eval_check_repos`, `connect_eval_check_repo`
+- Description experiments: `propose_eval_description_rewrite`,
+  `start_eval_description_experiment`, `get_eval_description_experiment`
+- Scheduled runs: `set_eval_suite_schedule`
 
 **The MCP Apps widgets are PAUSED.** `PLATFORM_WIDGETS_ENABLED` in
 `src/shared/platform-widgets.ts` is `false`, so every widget-backed tool —
@@ -227,9 +226,16 @@ recently updated accessible project. The eval-run polling tools
 (`get_eval_run`, `list_eval_run_iterations`, `get_eval_iteration_trace`)
 require the project the run belongs to — `run_eval_suite` and
 `list_eval_suite_runs` return it, so the loop is self-contained.
-The eval authoring/editing tools are writes, annotated `readOnlyHint: false`
-(the deletes and `cancel_eval_run` additionally announce `destructiveHint`) so
-hosts can gate them. Two of them SPEND: `run_eval_suite` and `run_eval_case`
+Every tool carries `annotations.title` (Claude's directory reads the title
+there, not from the top-level `title`) and an explicit hint: reads are
+`readOnlyHint: true`, and writes announce `destructiveHint: true` unless they
+are purely additive (create a row or start new work) — updates, replacements,
+cancels, revokes, forced regenerations and anything that runs a third party's
+tool all say destructive. `idempotentHint: true` is claimed only where an
+identical retry was verified to land on the same outcome. The lists live in
+`src/tools/platformTools.ts` (`ADDITIVE_WRITE_NAMES`,
+`IDEMPOTENT_WRITE_NAMES`), and both are opt-in so an unreviewed write gets the
+conservative claim. Two of them SPEND: `run_eval_suite` and `run_eval_case`
 start LLM iterations against the organization's credits.
 `generate_eval_cases` and `import_eval_cases` also call a model, but those are
 on MCPJam — no credits are consumed; generation counts against the
@@ -290,7 +296,7 @@ This worker serves MCPJam's own Agent Skills alongside its tools, so an agent th
 
 and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
 
-The catalog includes `drive-mcpjam-playground`, which teaches agent-driven session turns, browser commands, handoff, and screenshot evidence. The eval skills are `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Among the eval skills, only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
+The catalog has six skills. `drive-mcpjam-playground` teaches agent-driven session turns, browser commands, handoff, and screenshot evidence; the browser tools are [held](#held-tools) on this surface, so it points browser commands at the CLI and here it covers the session turns. `user-value-chain-glossary` is reference material: the meaning of every wire enum the eval reads return. The eval skills are `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Among the eval skills, only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
 
 **The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
 
@@ -316,7 +322,23 @@ tenant's JWKS and exposes discovery metadata:
   issuer's discovery doc for older MCP clients.
 
 Unauthenticated requests to `/mcp` get a `401` with a `WWW-Authenticate` header
-pointing at the PRM URL, which MCP clients use to kick off the OAuth flow.
+pointing at the PRM URL, which MCP clients use to kick off the OAuth flow —
+unless guest access is `mixed`, below.
+
+### Guest access
+
+`MCPJAM_GUEST_ACCESS` decides who may use `/mcp` without signing in. It is set
+per environment in `wrangler.jsonc`, not the dashboard, because
+`wrangler deploy` without `--keep-vars` wipes dashboard vars.
+
+| Value | Tokenless request | Guest token | Environments |
+| --- | --- | --- | --- |
+| `off` (also unset, or anything else) | `401` → OAuth | rejected | production, staging, preview |
+| `mixed` | served as a guest minted on first tool call — only when `MCPJAM_INSPECTOR_SERVICE_TOKEN` and `MCPJAM_GUEST_MINT_URL` are both set; otherwise `401`, with the misconfiguration logged once per isolate | verified against `MCPJAM_GUEST_JWKS_URL` | dev |
+
+Under either value a presented AuthKit token is verified the same way, and a
+presented token that fails verification is a `401`, never a downgrade to a
+guest.
 
 The verified bearer token is forwarded to the Platform API
 (`PLATFORM_API_URL`, the Inspector `/api/v1` surface) on every tool call, so
@@ -369,8 +391,9 @@ Both tenants must have **Client ID Metadata Document** enabled under
 *Connect → Configuration* in the WorkOS dashboard — it's off by default, and
 without it dynamic-client-registration MCP clients will fail to connect.
 
-No secrets are required: JWKS is public, and the Platform API is called with
-the caller's own bearer.
+Signed-in only (`off`) needs no secrets: JWKS is public, and the Platform API
+is called with the caller's own bearer. Serving tokenless guests (`mixed`)
+needs the `MCPJAM_INSPECTOR_SERVICE_TOKEN` secret to mint them.
 
 **The trust boundary is the Inspector, not Convex.** This worker never talks to
 Convex. Every tool goes through `/api/v1` on the Inspector, which validates the
@@ -400,7 +423,9 @@ npm run cf-typegen
 npm run dev
 ```
 
-Unauthenticated request — expect `401` with a `WWW-Authenticate` header:
+Unauthenticated request — expect `401` with a `WWW-Authenticate` header
+(`npm run dev` binds the staging env, which is signed-in only; `dev:local` is
+`mixed` and serves it as a guest instead):
 
 ```sh
 curl -i http://localhost:8787/mcp
@@ -461,14 +486,15 @@ GitHub Environment UI.
 ## Architecture
 
 - `src/index.ts` — Worker entrypoint; serves the PRM metadata routes, enforces
-  bearer-token auth on `/mcp`, owns the `/mcp` CORS contract (the v2 handler is
-  deliberately validation-free and emits none), and hands the verified bearer
-  to the handler as pass-through `authInfo`.
+  bearer-token auth on `/mcp` per `MCPJAM_GUEST_ACCESS`, owns the `/mcp` CORS
+  contract (the v2 handler is deliberately validation-free and emits none),
+  and hands the verified bearer to the handler as pass-through `authInfo`.
 - `src/auth.ts` — JWKS-backed JWT verification (`jose`) and the
   `WWW-Authenticate` / 401 helpers.
 - `src/server.ts` — the `createMcpHandler` factory. Builds a fresh `McpServer`
-  per request, resolves the bearer (verified token, or a lazily-minted guest
-  for an anonymous request), and forwards it to the Platform API via
+  per request, resolves the bearer (the verified token, or — only under
+  `MCPJAM_GUEST_ACCESS: "mixed"` — a lazily-minted guest for a tokenless
+  request), and forwards it to the Platform API via
   `PlatformApiClient`. Also owns the isolate-local guest-token cache.
 - `src/tools/sessionToolRegistrar.ts` — thin helper over v2
   `registerTool`/`registerResource` that pairs a widget-backed tool with its
