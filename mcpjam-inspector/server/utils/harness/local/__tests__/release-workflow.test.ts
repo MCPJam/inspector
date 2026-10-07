@@ -23,19 +23,44 @@ describe("the layer digest helper", () => {
 });
 
 describe("release critical path", () => {
-  it("gates publishing on the desktop builds and the local runtime contract without a job of its own", () => {
-    // A separate 3-second `artifact-gate` job queued for a runner on the
-    // critical path (12.8 min in 3.14.0); its rule lives in publish's `if`.
+  it("publishes npm and the webapp without waiting for the desktop builds", () => {
+    // The desktop builds are mostly Apple's notary queue (10–25 min); they
+    // gate only the GitHub release. The local runtime contract still gates
+    // npm, which offers local execution too.
     const { jobs } = workflow("release");
     expect(jobs["artifact-gate"]).toBeUndefined();
     const publish = jobs["publish-packages"];
-    expect(publish.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    expect(publish.needs).not.toContain("build-mac");
+    expect(publish.needs).not.toContain("build-windows");
+    expect(publish.needs).toContain("local-harness-contract");
     const gate = String(publish.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.preflight.outputs.publish_inspector != 'true' || needs.local-harness-contract.result == 'success' )",
+    );
+    expect(gate).not.toContain("build-mac");
+  });
+
+  it("creates the immutable GitHub release only once every desktop asset exists, desktop-only included", () => {
+    const { jobs } = workflow("release");
+    const finalize = jobs.finalize;
+    expect(finalize.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    const gate = String(finalize.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.publish-packages.result == 'success' || needs.preflight.outputs.desktop_only == 'true' )",
+    );
     expect(gate).toContain(
       "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' ) )",
     );
-    // Nothing else may still wait on the removed job.
-    expect(JSON.stringify(jobs)).not.toContain("artifact-gate");
+    // The plan comes from the tested script, and desktop-only is an output.
+    const preflight = jobs.preflight;
+    expect(preflight.outputs.desktop_only).toBe("${{ steps.plan.outputs.desktop_only }}");
+    const plan = preflight.steps.find((step: any) => step.id === "plan");
+    expect(plan.run).toContain("node .github/scripts/release-plan.mjs");
+    // A desktop-only run still proves the local runtime its desktop app offers.
+    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract"]) {
+      expect(String(jobs[job].if), job).toContain("build_inspector_artifacts");
+      expect(String(jobs[job].if), job).not.toContain("publish_inspector");
+    }
   });
 
   it("runs every Ubuntu release job on RELEASE_RUNNER when it is set", () => {
