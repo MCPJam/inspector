@@ -1,5 +1,6 @@
 import { HOSTED_MODE } from "../../config.js";
 import { PluginInvocationError } from "./invocation.js";
+import { hasServiceCredential } from "../service-credential.js";
 import {
   isDurableInteractiveFileDescriptor,
   INVOCATION_RECEIPT_RETENTION_MS,
@@ -20,7 +21,7 @@ export function pluginLocalStoresEnabled(
   env: NodeJS.ProcessEnv = process.env,
   hosted: boolean = HOSTED_MODE,
 ) {
-  return !hosted && !env.INSPECTOR_SERVICE_TOKEN?.trim();
+  return !hosted && !hasServiceCredential(env);
 }
 
 const fail = (code: string): never => {
