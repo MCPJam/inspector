@@ -7,6 +7,9 @@ import {
 } from "@/shared/plugin-model-context";
 
 export class PluginContextUpdateRejected extends Error {}
+/** The person removed this App's context; its own updates stay refused until
+ * they use the App again. */
+export class PluginContextHeld extends PluginContextUpdateRejected {}
 /** Serialize replaces. An uncertain delivery cannot silently retry or reorder state. */
 export function createModelContextController({
   requireLive,
@@ -14,12 +17,15 @@ export function createModelContextController({
   sendRemoval,
   read,
   onSnapshot,
+  userAttaching,
+  onHeld,
 }: {
   requireLive: () => void;
   send: (request: {
     operationId: string;
     sequence: number;
     params: PluginModelContextParams;
+    attach?: "user";
   }) => Promise<unknown>;
   sendRemoval?: (request: {
     operationId: string;
@@ -28,9 +34,17 @@ export function createModelContextController({
   }) => Promise<unknown>;
   onSnapshot?: (snapshot: PluginContextSnapshot) => void;
   read?: () => Promise<unknown>;
+  /**
+   * Whether the person is using the App as it sends an update (read when the
+   * App asks). After a removal only such an update attaches context again;
+   * the server holds the same line, so a remounted App is held too.
+   */
+  userAttaching?: () => boolean;
+  onHeld?: (error: PluginContextHeld) => void;
 }) {
   let sequence = 0;
   let uncertain = false;
+  let held = false;
   let tail = Promise.resolve();
   let snapshot: PluginContextSnapshot = {
     revision: 0,
@@ -77,12 +91,31 @@ export function createModelContextController({
   };
   const update = (value: unknown) => {
     const params = parsePluginModelContext(value);
+    const user = userAttaching?.() === true;
     return enqueue(async () => {
-      const result = await send({
-        operationId: crypto.randomUUID(),
-        sequence: sequence + 1,
-        params,
-      });
+      if (held && !user) {
+        const refusal = new PluginContextHeld(
+          "Context was removed from this chat. Use the App to attach it again.",
+        );
+        onHeld?.(refusal);
+        throw refusal;
+      }
+      let result: unknown;
+      try {
+        result = await send({
+          operationId: crypto.randomUUID(),
+          sequence: sequence + 1,
+          params,
+          ...(user ? { attach: "user" as const } : {}),
+        });
+      } catch (error) {
+        if (error instanceof PluginContextHeld) {
+          held = true;
+          onHeld?.(error);
+        }
+        throw error;
+      }
+      held = false;
       requireLive();
       const updateId = (
         result as {
@@ -127,6 +160,8 @@ export function createModelContextController({
           updateId,
           index,
         });
+        // The server now refuses the App's own updates too.
+        held = true;
         requireLive();
         acceptSnapshot(result);
       }),
