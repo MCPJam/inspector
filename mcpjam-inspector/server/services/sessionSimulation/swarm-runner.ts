@@ -70,6 +70,7 @@ import {
   accountLimitCode,
   humanizeSwarmAttemptErrorMessage,
   isAccountLimit,
+  isBusyReservation,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -496,6 +497,7 @@ function terminalForOutcome(
   outcome: "succeeded" | "failed" | "rate_limited",
   errorMessage: string | undefined,
   errorReason?: string,
+  errorRefusal?: SpendRefusal,
 ): { status: SwarmAttemptStatus; errorCode?: string; errorMessage?: string } {
   if (outcome === "succeeded") {
     return { status: "succeeded" };
@@ -514,8 +516,14 @@ function terminalForOutcome(
       // Keep MCPJam's own denial code (`user_rate_limit`, …) when the raw
       // message carries one. The humanized sentence has dropped it, and a bare
       // `rate_limited` reads to the run screen as the user's PROVIDER
-      // throttling their key — naming Anthropic for MCPJam's daily limit.
-      errorCode: accountLimitCode(errorMessage) ?? "rate_limited",
+      // throttling their key — naming Anthropic for MCPJam's daily limit. A
+      // busy reservation is no provider's limit either, and carries its own
+      // code for the same reason.
+      errorCode:
+        accountLimitCode(errorMessage) ??
+        (isBusyReservation(errorRefusal?.code)
+          ? "spending_reservation_busy"
+          : "rate_limited"),
       ...(safeMessage ? { errorMessage: safeMessage } : {}),
     };
   }
@@ -568,6 +576,26 @@ export function classifyRateLimit(
     return "org_spend_cap";
   }
   return "provider_rate_limit";
+}
+
+/**
+ * What the sessions a wait stops are stored as. A hold keeps the credit denial
+ * its sentence quotes (`user_rate_limit`), which is how a stored row is read as
+ * a hold. A busy reservation keeps its own code: beside its sentence
+ * `user_rate_limit` reads as an empty wallet, and the run opens the credits
+ * dialog and locks hosted models for a wallet that was never empty.
+ */
+function transientStop(
+  message: string | undefined,
+  hint?: SpendRefusal,
+): { code: string; message: string } {
+  const refusal = hint ?? humanizeSwarmAttemptError(message);
+  return {
+    code: isBusyReservation(refusal.code)
+      ? "spending_reservation_busy"
+      : "user_rate_limit",
+    message: humanizeSwarmAttemptErrorMessage(message),
+  };
 }
 
 /** Concise structured log — ids + status only; NEVER prompts/transcripts/keys. */
@@ -1218,6 +1246,7 @@ async function runJourneyFanOut(
               type: "attempt_status",
               status: "failed",
               errorMessage: humanizeSwarmAttemptErrorMessage(message),
+              errorCode: "sandbox_unavailable",
             });
             await reportRunAttempt(convexHttpUrl, bearer, {
               projectId,
@@ -1316,6 +1345,7 @@ async function runJourneyFanOut(
                 type: "attempt_status",
                 status: failure.status,
                 errorMessage: failure.errorMessage,
+                errorCode: failure.errorCode,
               });
               await reportRunAttempt(convexHttpUrl, bearer, {
                 projectId,
@@ -1510,8 +1540,20 @@ async function runJourneyFanOut(
             } finally { await localResources?.cleanup(); }
           };
           const sessionResult = await runSession();
-          const { outcome, errorMessage, errorReason, errorRefusal } =
-            sessionResult;
+          const { errorMessage, errorReason, errorRefusal } = sessionResult;
+          // A busy reservation that ran out its retries is a wait however the
+          // backend words it. The core folds a failure into `rate_limited` by
+          // its words (`spend`, `cap`, ...), and the current sentence ("spending
+          // capacity") has none of them, so it came back `failed` and never
+          // reached the target stop below. The code is structural, as a hold's is.
+          // A session the run's own stop cancelled is an abort artifact whatever
+          // its last refusal was, and is reclassified below.
+          const outcome =
+            sessionResult.outcome === "failed" &&
+            !sessionSignal.aborted &&
+            isBusyReservation(errorRefusal?.code)
+              ? "rate_limited"
+              : sessionResult.outcome;
 
           // The core has persisted its partial transcript before returning.
           // Convex already settled the attempts; do not replace that outcome
@@ -1573,13 +1615,21 @@ async function runJourneyFanOut(
                       MAX_ATTEMPT_ERROR_CHARS,
                     ),
                 }
-              : terminalForOutcome(outcome, errorMessage, errorReason);
+              : terminalForOutcome(
+                  outcome,
+                  errorMessage,
+                  errorReason,
+                  errorRefusal,
+                );
           emit({
             type: "attempt_status",
             status: terminal.status,
             ...(terminal.errorMessage
               ? { errorMessage: terminal.errorMessage }
               : {}),
+            // The humanized message has dropped the code; the run screen reads
+            // a busy reservation or an account limit by it before the row lands.
+            ...(terminal.errorCode ? { errorCode: terminal.errorCode } : {}),
           });
           try {
             await reportRunAttempt(convexHttpUrl, bearer, {
@@ -1733,7 +1783,7 @@ async function runJourneyFanOut(
               sessionIdx + 1,
               sessionsPerTarget,
               cause === "transient_capacity"
-                ? humanizeSwarmAttemptErrorMessage(errorMessage)
+                ? transientStop(errorMessage, errorRefusal)
                 : undefined,
             );
             return;
@@ -2135,7 +2185,7 @@ async function markRemainingTargetAttemptsRateLimited(
   },
   fromIdx: number,
   toIdx: number,
-  transientMessage?: string,
+  transient?: { code: string; message: string },
 ): Promise<void> {
   const { convexHttpUrl, bearer, projectId, runId, target, reportAttemptFn } = ctx;
   const { hostId, targetId } = target;
@@ -2164,8 +2214,8 @@ async function markRemainingTargetAttemptsRateLimited(
         sessionIdx,
         status: "rate_limited",
         chatSessionId,
-        errorCode: transientMessage ? "user_rate_limit" : "rate_limited",
-        ...(transientMessage ? { errorMessage: transientMessage } : {}),
+        errorCode: transient ? transient.code : "rate_limited",
+        ...(transient ? { errorMessage: transient.message } : {}),
       });
       if (terminal.canceled) return;
     } catch (err) {

@@ -546,6 +546,26 @@ describe("credits held by in-flight requests", () => {
     expect(notifyMCPJamLimitError({ message: nested })).toBe(false);
   });
 
+  // The runner stores the sessions a busy reservation stopped under the busy
+  // code. A busy reservation is a wait on MCPJam's side, never an empty wallet,
+  // so it must not sell credits (it used to be stored as `user_rate_limit`,
+  // which this classifier reads as exhaustion).
+  it("does not open for a busy reservation", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const busy =
+      "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+
+    expect(
+      notifyMCPJamLimitError({
+        runId: "run-busy",
+        code: "spending_reservation_busy",
+        message: busy,
+        surface: "swarm",
+      }),
+    ).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
   it("words a refusal the way the dialog reads it, so the panel never contradicts an open dialog", () => {
     const HELD =
       "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish. Retry in a few seconds.";
