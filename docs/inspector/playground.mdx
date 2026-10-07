@@ -335,6 +335,8 @@ When a search is active and the source filter is hiding matching entries, a bann
 
 When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
 
+The terminal automatically opens in the harness's working directory. When a new harness session starts and moves to a different directory, the terminal reconnects there automatically — no manual reload is needed. Within a single conversation the directory is stable, so an already-open terminal is not disturbed between turns.
+
 Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
 
 ## Input Bar
