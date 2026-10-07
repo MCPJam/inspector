@@ -624,7 +624,12 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     });
 
     expect(response.status).toBe(422);
-    expect((await response.json()).error).toMatch(/MCPJam-provided models/);
+    const body = await response.json();
+    expect(body.error).toMatch(/MCPJam-provided models/);
+    expect(body).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      reason: "HARNESS_UNAVAILABLE",
+    });
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
@@ -882,11 +887,34 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     it("a turn the availability check refuses boots no box", async () => {
       checkHarnessRuntimeAvailableMock.mockReturnValue({
         ok: false,
+        kind: "tool-approval",
         reason: "it is off",
       });
       const response = await post(cursor);
       expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        code: "FEATURE_NOT_SUPPORTED",
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "cursor",
+        kind: "tool-approval",
+      });
       expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("an operator state (no computers data plane) stays 503", async () => {
+      checkHarnessRuntimeAvailableMock.mockReturnValue({
+        ok: false,
+        kind: "computers-unconfigured",
+        reason: "this server is not a computers data plane",
+      });
+      const response = await post(cursor);
+      expect(response.status).toBe(503);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        reason: "HARNESS_UNAVAILABLE",
+        kind: "computers-unconfigured",
+      });
+      expect(body.code).toBeUndefined();
     });
 
     it("releases the box on an early refusal after it was acquired (invalid tool names)", async () => {
