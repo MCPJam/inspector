@@ -3877,6 +3877,7 @@ export default function App() {
         oauthScopes: draft.oauthScopes,
         clientId: draft.clientId,
         clientSecret: draft.clientSecret,
+        hasClientSecret: draft.hasStoredClientSecret,
         clearClientSecret: draft.clearClientSecret,
         oauthAllowPathScopedIssuer: draft.oauthAllowPathScopedIssuer,
         xaaClientAuth: draft.xaaClientAuth,

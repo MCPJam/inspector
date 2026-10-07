@@ -267,7 +267,10 @@ export function FirstRunOnboardingOverlay({
     registrationMode === "cimd" &&
     xaaClientAuth === "private_key_jwt";
   const confidentialCimdCapability = useConfidentialCimdCapability({
-    enabled: open && wantsConfidentialCimd,
+    // Probe before the private option is selected; the picker itself depends
+    // on this capability becoming ready.
+    enabled:
+      open && serverAuthentication === "xaa" && registrationMode === "cimd",
     organizationId,
     isSignedIn,
   });
@@ -423,6 +426,8 @@ export function FirstRunOnboardingOverlay({
     setClientSecretError(null);
     setXaaConfigurationError(null);
 
+    if (serverTransport === "stdio") return true;
+
     if (serverAuthentication === "bearer" && !bearerToken.trim()) {
       setBearerTokenError("Enter a bearer token to continue.");
       bearerTokenInputRef.current?.focus();
@@ -471,6 +476,7 @@ export function FirstRunOnboardingOverlay({
     confidentialCimdBlockReason,
     registrationMode,
     serverAuthentication,
+    serverTransport,
     xaaEmail,
     xaaSubject,
   ]);
@@ -494,8 +500,9 @@ export function FirstRunOnboardingOverlay({
       name,
       transport: serverTransport,
       urlOrCommand,
-      authentication: serverAuthentication,
-      bearerToken: bearerToken.trim() || undefined,
+      authentication: serverTransport === "stdio" ? "none" : serverAuthentication,
+      bearerToken:
+        serverTransport === "http" ? bearerToken.trim() || undefined : undefined,
       oauthProtocolMode,
       registrationMode,
       oauthScopes: oauthScopesInput
@@ -506,6 +513,11 @@ export function FirstRunOnboardingOverlay({
       clientSecret: clearClientCredentials
         ? undefined
         : clientSecret || undefined,
+      hasStoredClientSecret:
+        hasStoredClientSecret &&
+        !clearClientCredentials &&
+        !clearStoredClientSecret &&
+        clientId === savedClientId,
       clearClientSecret: clearClientCredentials || clearStoredClientSecret,
       oauthAllowPathScopedIssuer,
       xaaClientAuth,
@@ -520,12 +532,14 @@ export function FirstRunOnboardingOverlay({
       clientSecret,
       clearClientCredentials,
       clearStoredClientSecret,
+      hasStoredClientSecret,
       oauthAllowPathScopedIssuer,
       oauthProtocolMode,
       oauthScopesInput,
       registrationMode,
       serverAuthentication,
       serverTransport,
+      savedClientId,
       xaaAllowPathScopedIssuer,
       xaaAuthzIssuer,
       xaaClientAuth,
@@ -1030,7 +1044,7 @@ export function FirstRunOnboardingOverlay({
                   Authorize
                 </Button>
                 <div className="mt-3 border-t border-border pt-3">
-                  {authenticationSection}
+                  {serverTransport === "http" ? authenticationSection : null}
                   {xaaConfigurationError ? (
                     <p className="mt-2 text-xs text-destructive" role="alert">
                       {xaaConfigurationError}
@@ -1267,7 +1281,7 @@ export function FirstRunOnboardingOverlay({
                   ) : null}
                 </div>
 
-                {authenticationSection}
+                {serverTransport === "http" ? authenticationSection : null}
                 {xaaConfigurationError ? (
                   <p className="text-xs text-destructive" role="alert">
                     {xaaConfigurationError}

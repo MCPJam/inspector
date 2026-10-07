@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIRST_RUN_OAUTH_OVERLAY_READY_EVENT } from "@/lib/first-run-oauth-return";
 
 const motionState = vi.hoisted(() => ({ reduced: false }));
+const confidentialCimdProbe = vi.hoisted(() => ({ enabled: false }));
 const analyticsState = vi.hoisted(() => ({
   entered: vi.fn(),
   connectionFailed: vi.fn(),
@@ -21,6 +22,20 @@ const analyticsState = vi.hoisted(() => ({
 vi.mock("framer-motion", () => ({
   useReducedMotion: () => motionState.reduced,
 }));
+
+vi.mock("@/hooks/use-confidential-cimd-capability", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-confidential-cimd-capability")>();
+  return {
+    ...actual,
+    useConfidentialCimdCapability: (
+      args: Parameters<typeof actual.useConfidentialCimdCapability>[0],
+    ) => {
+      confidentialCimdProbe.enabled = args.enabled;
+      return actual.useConfidentialCimdCapability(args);
+    },
+  };
+});
 
 vi.mock("@/lib/first-run-onboarding-analytics", () => ({
   trackFirstRunConnectionFailed: analyticsState.connectionFailed,
@@ -108,6 +123,7 @@ function renderOverlay(
 afterEach(() => {
   cleanup();
   motionState.reduced = false;
+  confidentialCimdProbe.enabled = false;
   analyticsState.entered.mockReset();
   analyticsState.connectionFailed.mockReset();
   analyticsState.screenViewed.mockReset();
@@ -908,6 +924,39 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
+  it("retains a saved client secret when retrying with the same client ID", async () => {
+    const { onAuthorizeConnection } = renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Secure",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Secure",
+        transport: "http",
+        urlOrCommand: "https://secure.example/mcp",
+        authentication: "oauth",
+        registrationMode: "preregistered",
+        clientId: "saved-client",
+        hasStoredClientSecret: true,
+      },
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Authorize" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    expect(onAuthorizeConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "saved-client",
+        clientSecret: undefined,
+        hasStoredClientSecret: true,
+        clearClientSecret: false,
+      }),
+    );
+  });
+
   it("keeps newly entered credentials after switching registration modes", async () => {
     const { onConnectOwnServer } = renderOverlay(
       {
@@ -1244,6 +1293,61 @@ describe("FirstRunOnboardingOverlay", () => {
         authentication: "xaa",
         registrationMode: "preregistered",
         clientId: "client-123",
+      }),
+    );
+  });
+
+  it("probes confidential CIMD before the private XAA option is selected", async () => {
+    renderOverlay(
+      {
+        status: "authorization-required",
+        serverName: "Enterprise",
+        serverKind: "personal",
+      },
+      true,
+      {
+        name: "Enterprise",
+        transport: "http",
+        urlOrCommand: "https://enterprise.example/mcp",
+        authentication: "xaa",
+        registrationMode: "cimd",
+      },
+    );
+
+    await waitFor(() => expect(confidentialCimdProbe.enabled).toBe(true));
+  });
+
+  it("hides HTTP authentication for STDIO retries and drops stale bearer input", async () => {
+    const { onConnectOwnServer } = renderOverlay(
+      {
+        status: "failed",
+        serverName: "Local",
+        serverKind: "personal",
+        error: "Connection refused",
+      },
+      true,
+    );
+    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+      target: { value: "node server.js" },
+    });
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Authentication" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
+    fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
+      target: { value: "unused-token" },
+    });
+    fireEvent.change(screen.getByLabelText("Transport"), {
+      target: { value: "stdio" },
+    });
+
+    expect(screen.queryByText("Authentication")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    expect(onConnectOwnServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transport: "stdio",
+        authentication: "none",
+        bearerToken: undefined,
       }),
     );
   });
