@@ -1,3 +1,6 @@
+import { parsePluginModelContext } from "@/shared/plugin-model-context";
+import { readPluginMessageHistoryTitle } from "@/shared/plugin-message-history";
+import { PLUGIN_MESSAGE_TEXT_PART } from "@/shared/plugin-message";
 import { type UIMessage } from "@ai-sdk/react";
 import {
   mergeMcpToolOriginMetadata,
@@ -309,7 +312,30 @@ function convertParts(
 
     const partType = part?.type;
     if (partType === "text" && typeof part.text === "string") {
-      parts.push(textPartWithProvenance(part, part.text));
+      const title = readPluginMessageHistoryTitle(part);
+      parts.push(
+        title
+          ? { type: PLUGIN_MESSAGE_TEXT_PART, data: { title, text: part.text } }
+          : textPartWithProvenance(part, part.text),
+      );
+    } else if (partType === "file" && typeof part.data === "string") {
+      // Persisted model file parts use data, while UI file parts use url. Only
+      // supplied, bounded image bytes may hydrate here: never fetch a URL or
+      // reconstruct a resource grant from a persisted reference.
+      const match =
+        /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(
+          part.data,
+        );
+      if (match && part.mediaType === match[1]) {
+        try {
+          parsePluginModelContext({
+            content: [{ type: "image", mimeType: match[1], data: match[2] }],
+          });
+          parts.push({ type: "file", mediaType: match[1], url: part.data });
+        } catch {
+          /* Malformed/oversized stored bytes stay unavailable. */
+        }
+      }
     } else if (partType === "tool-call") {
       const providerMetadata = readToolOriginMetadata(part);
       // A tool-call with no merged tool-result row is UNRESOLVED — a turn

@@ -1,3 +1,6 @@
+import { ServerSettingsPanel } from "../host-workspace/ServerSettingsPanel";
+import { useServerSettingsAvailability } from "../host-workspace/use-server-settings";
+import type { ThreadAppScope } from "../host-workspace/thread-app-api";
 import { ConnectionAccountsSection } from "./ConnectionAccountsSection";
 import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
@@ -69,6 +72,7 @@ import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 
 export type ServerDetailTab =
+  | "settings"
   | "overview"
   | "configuration"
   | "authorization"
@@ -77,6 +81,7 @@ export type ServerDetailTab =
   | "history";
 
 interface ServerDetailModalProps {
+  extensionSettingsScope?: ThreadAppScope | null;
   isOpen: boolean;
   onClose: () => void;
   server: ServerWithName;
@@ -116,6 +121,7 @@ interface ServerDetailModalProps {
 
 export function ServerDetailModal({
   isOpen,
+  extensionSettingsScope = null,
   onClose,
   server,
   defaultTab = "overview",
@@ -131,6 +137,13 @@ export function ServerDetailModal({
   hostDefaultMcpProtocolVersion,
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
+  const settings = useServerSettingsAvailability(
+    isOpen ? extensionSettingsScope : null,
+    hostedServerId
+  );
+  const [settingsVisited, setSettingsVisited] = useState(
+    defaultTab === "settings"
+  );
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
   // Any HTTP server, matching the token section's own guard rather than
   // `useOAuth`: a server that has since had OAuth turned off can still hold
@@ -694,7 +707,10 @@ export function ServerDetailModal({
         >
           <Tabs
             value={activeTab}
-            onValueChange={(v) => setActiveTab(v as ServerDetailTab)}
+            onValueChange={(v) => {
+              setActiveTab(v as ServerDetailTab);
+              if (v === "settings") setSettingsVisited(true);
+            }}
             className="flex min-h-0 flex-col"
           >
             <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
@@ -715,6 +731,11 @@ export function ServerDetailModal({
               >
                 Tools
               </TabsTrigger>
+              {(settings.available || settings.failed) && (
+                <TabsTrigger value="settings" className={tabTriggerClass}>
+                  Settings
+                </TabsTrigger>
+              )}
               {showAuthorization && (
                 <TabsTrigger value="authorization" className={tabTriggerClass}>
                   Auth
@@ -803,6 +824,30 @@ export function ServerDetailModal({
                   )}
                 </Button>
               </DialogFooter>
+
+              {isOpen && extensionSettingsScope && hostedServerId &&
+                settingsVisited && (settings.available || settings.failed) && (
+                  <TabsContent
+                    value="settings"
+                    forceMount
+                    className="mt-0 absolute inset-0 overflow-y-auto bg-background data-[state=inactive]:hidden"
+                  >
+                    {settings.failed ? (
+                      <div role="alert" className="space-y-2 p-4">
+                        <p>Settings could not be loaded.</p>
+                        <Button type="button" variant="outline" onClick={settings.retry}>
+                          Retry
+                        </Button>
+                      </div>
+                    ) : (
+                      <ServerSettingsPanel
+                        scope={extensionSettingsScope}
+                        serverId={hostedServerId}
+                        serverName={server.name}
+                      />
+                    )}
+                  </TabsContent>
+                )}
 
               {/* Overview: overlays the configuration panel + footer to use full space */}
               <TabsContent

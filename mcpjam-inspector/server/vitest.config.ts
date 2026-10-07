@@ -64,6 +64,10 @@ const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
 );
+const sdkPluginHostEntry = path.resolve(
+  rootDir,
+  "../sdk/src/internal/plugin-host.ts",
+);
 
 export default defineConfig({
   define: {
@@ -112,6 +116,7 @@ export default defineConfig({
           "@mcpjam/sdk/host-compat",
           "@mcpjam/sdk/plugin-bundle",
           "@mcpjam/sdk/widget-runtime",
+          "@mcpjam/sdk/internal/plugin-host",
         ],
       },
     },
@@ -155,6 +160,10 @@ export default defineConfig({
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,
+      },
+      {
+        find: "@mcpjam/sdk/internal/plugin-host",
+        replacement: sdkPluginHostEntry,
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },

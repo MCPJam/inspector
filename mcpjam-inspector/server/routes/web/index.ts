@@ -1,3 +1,5 @@
+import pluginFormAnswers from "./plugin-form-answers.js";
+import pluginInstances from "./plugin-instances.js";
 import oauthConnections from "./oauth-connections.js";
 import { Hono } from "hono";
 import { mapWebBoundaryError } from "./boundary-error.js";
@@ -12,7 +14,10 @@ import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
-import { mcpEgressRateLimitMiddleware, promoteServerCheck } from "../../middleware/mcp-egress-rate-limit.js";
+import {
+  mcpEgressRateLimitMiddleware,
+  promoteServerCheck,
+} from "../../middleware/mcp-egress-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 import servers from "./servers.js";
@@ -59,6 +64,12 @@ import { fetchGuestJwks } from "../../utils/guest-session-source.js";
 const web = new Hono();
 
 // Require bearer auth + guest rate limiting on MCP operation routes
+web.use(
+  "/apps/plugin-instances/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+);
+web.use("/plugin-forms/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/servers/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
@@ -234,7 +245,13 @@ web.use("*", passthroughRateLimitMiddleware);
 // Registered after the per-family `bearerAuthMiddleware` lines, whose verified
 // identity it keys on, and after the passthrough limiter, so a request that
 // limiter refuses is turned away before this one reads the body.
-for (const family of ["tools", "resources", "prompts", "tasks"] as const) {
+for (const family of [
+  "tools",
+  "resources",
+  "prompts",
+  "tasks",
+  "apps/plugin-instances",
+] as const) {
   web.use(`/${family}/*`, mcpOperationRateLimit(family));
 }
 
@@ -261,6 +278,8 @@ web.route("/chat-v2", chatV2);
 // Code harness (in a cloud sandbox) connects its MCP through here.
 web.route("/harness-mcp", harnessMcp);
 web.route("/mcpjam-agent", mcpjamAgent);
+web.route("/plugin-forms", pluginFormAnswers);
+web.route("/apps/plugin-instances", pluginInstances);
 web.route("/apps", apps);
 web.route("/oauth/connections", oauthConnections);
 web.route("/oauth", oauthWeb);

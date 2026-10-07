@@ -1,3 +1,5 @@
+import { pluginModelContextMessage } from "../../shared/plugin-model-context.js";
+import type { HarnessPresentation } from "../../shared/unattended-workspace";
 /**
  * browser-session-context.ts — per-session browser-rendered MCP App context for
  * any runner that mocks a user session (eval iterations, synthetic scenario
@@ -88,13 +90,13 @@ import { logger } from "../utils/logger";
  * the SDK's `isAppOnlyTool` predicate rather than re-deriving the rule here.
  */
 function resolveToolVisibilityFromMeta(
-  meta: Record<string, unknown> | undefined
+  meta: Record<string, unknown> | undefined,
 ): Array<"model" | "app"> | undefined {
   const visibility = (meta as { ui?: { visibility?: unknown } } | undefined)?.ui
     ?.visibility;
   if (!Array.isArray(visibility)) return undefined;
   const vals = visibility.filter(
-    (v): v is "model" | "app" => v === "model" || v === "app"
+    (v): v is "model" | "app" => v === "model" || v === "app",
   );
   return vals.length ? vals : undefined;
 }
@@ -136,8 +138,8 @@ function scriptedKindToAction(step: ScriptedStep): EvalTraceBrowserAction {
       return step.clickType === "double"
         ? "double_click"
         : step.clickType === "right"
-        ? "right_click"
-        : "left_click";
+          ? "right_click"
+          : "left_click";
     case "type":
       return "type";
     case "key":
@@ -183,7 +185,7 @@ function describeScriptedStep(step: ScriptedStep): string | undefined {
  * `interact`), so this never produces one.
  */
 export function interactActionToScriptedStep(
-  action: InteractAction
+  action: InteractAction,
 ): ScriptedStep {
   switch (action.kind) {
     case "click":
@@ -213,7 +215,7 @@ export function interactActionToScriptedStep(
  * `WidgetAssertion` (it is a transcript `Predicate`), so it never reaches here.
  */
 export function widgetAssertionToStepAssertion(
-  assertion: WidgetAssertion
+  assertion: WidgetAssertion,
 ): StepAssertion {
   switch (assertion.kind) {
     case "textVisible":
@@ -247,6 +249,7 @@ export interface WidgetStepOutcome {
 }
 
 export interface CreateBrowserSessionContextParams {
+  getWorkspacePresentation?: () => HarnessPresentation;
   /** Driver model id for model-driven turns (text + MCP tool calls + widget
    *  render). Omitted for model-free sessions (a pinned-tool-call / render-check
    *  iteration). NOTE: this no longer governs Computer Use — see
@@ -282,6 +285,8 @@ export interface CreateBrowserSessionContextParams {
 }
 
 export interface BrowserSessionContext {
+  /** Text-only presentation; never installs another execution owner. */
+  setWorkspacePresentation?: (read: () => HarnessPresentation) => void;
   /** Whether the driver model gets the `computer` / `finish_widget` tools. */
   readonly computerUseSupported: boolean;
   /** Anthropic provider-native version for mapped Claude ids, else null.
@@ -306,6 +311,7 @@ export interface BrowserSessionContext {
    * `onSendFollowUp -> sendMessage`.
    */
   drainFollowUps(): string[];
+  getModelContext(): import("ai").ModelMessage | undefined;
   /** Runner loop bookkeeping: stamp artifacts with the active prompt turn. */
   setActivePromptIndex(promptIndex: number): void;
   /**
@@ -337,7 +343,7 @@ export interface BrowserSessionContext {
     chunk: Pick<
       DirectChatTurnToolResultChunk,
       "toolCallId" | "toolName" | "input" | "output" | "serverId"
-    >
+    >,
   ): Promise<void>;
   /**
    * Model-free pinned-tool-call render path. Same render+observe pipeline as
@@ -371,7 +377,7 @@ export interface BrowserSessionContext {
    */
   replayInteractStep(
     toolName: string,
-    action: InteractAction
+    action: InteractAction,
   ): Promise<WidgetStepOutcome>;
   /**
    * Evaluate one unified-model widget `assert` (DOM-level `WidgetAssertion`)
@@ -381,7 +387,7 @@ export interface BrowserSessionContext {
    */
   evaluateWidgetAssertion(
     toolName: string,
-    assertion: WidgetAssertion
+    assertion: WidgetAssertion,
   ): Promise<WidgetStepOutcome>;
   /**
    * Tell the session to KEEP rendered widgets mounted so the unified step
@@ -414,7 +420,7 @@ export interface BrowserSessionContext {
 }
 
 export async function createBrowserSessionContext(
-  params: CreateBrowserSessionContextParams
+  params: CreateBrowserSessionContextParams,
 ): Promise<BrowserSessionContext> {
   const { mcpClientManager, injectOpenAiCompat } = params;
   const scope = params.logScope ?? "evals";
@@ -445,6 +451,7 @@ export async function createBrowserSessionContext(
   // `ui/message` follow-ups emitted by widgets during scripted replay, in
   // capture order. Drained by the runner, which replays each as a new model
   // turn (the run-side analogue of chat's `onSendFollowUp -> sendMessage`).
+  let readWorkspacePresentation = params.getWorkspacePresentation;
   const capturedFollowUps: string[] = [];
   const stepIndexByToolCallId = new Map<string, number>();
   // Per-widget accumulator of widget→host tool calls, so a `widgetToolCalled`
@@ -491,11 +498,12 @@ export async function createBrowserSessionContext(
   const ensureWidgetHarness = (): McpAppBrowserHarness => {
     if (!widgetHarnessRef.current) {
       widgetHarnessRef.current = new McpAppBrowserHarness({
+        getWorkspacePresentation: () => readWorkspacePresentation?.() ?? {},
         callTool: (sid, name, args) =>
           mcpClientManager.executeTool(sid, name, args),
         resolveToolVisibility: (sid, name) =>
           resolveToolVisibilityFromMeta(
-            mcpClientManager.getAllToolsMetadata(sid)?.[name]
+            mcpClientManager.getAllToolsMetadata(sid)?.[name],
           ),
         viewport: DEFAULT_VIEWPORT,
         // Honor a pinned turn's per-render budget override (mirrors the legacy
@@ -620,8 +628,10 @@ export async function createBrowserSessionContext(
     }
     liveFrameInFlight = true;
     void (async () => {
-      let pending: { step: RunnerBrowserInteractionStep; sequence: number } | null =
-        { step, sequence };
+      let pending: {
+        step: RunnerBrowserInteractionStep;
+        sequence: number;
+      } | null = { step, sequence };
       try {
         while (pending) {
           await emitLiveFrame(pending.step, pending.sequence);
@@ -714,7 +724,7 @@ export async function createBrowserSessionContext(
           widgetHarnessRef.current?.getMountedWidgetId()
             ? defaultToolNames
             : defaultToolNames.filter(
-                (n) => n !== "computer" && n !== "finish_widget"
+                (n) => n !== "computer" && n !== "finish_widget",
               )
       : undefined;
 
@@ -728,7 +738,7 @@ export async function createBrowserSessionContext(
   const runWidgetCheckGroup = async (
     toolCallId: string,
     toolName: string,
-    steps: ScriptedStep[]
+    steps: ScriptedStep[],
   ): Promise<void> => {
     const harness = widgetHarnessRef.current;
     if (!harness) return;
@@ -801,7 +811,7 @@ export async function createBrowserSessionContext(
    */
   const replayWidgetScriptedStep = async (
     toolCallId: string,
-    step: ScriptedStep
+    step: ScriptedStep,
   ): Promise<WidgetStepOutcome> => {
     const harness = widgetHarnessRef.current;
     if (!harness) {
@@ -892,7 +902,7 @@ export async function createBrowserSessionContext(
     // keep the widget mounted (independent of Computer Use) so the steps can
     // drive it. Marks the group as run for unrun-group fail-closed tracking.
     const checkEntry = activeWidgetChecks.find(
-      (e) => e.group.toolName === args.toolName
+      (e) => e.group.toolName === args.toolName,
     );
     if (!isRenderableMcpAppTool(meta)) {
       if (args.recordNonRenderable) {
@@ -977,7 +987,7 @@ export async function createBrowserSessionContext(
             await runWidgetCheckGroup(
               args.toolCallId,
               args.toolName,
-              checkEntry.group.steps
+              checkEntry.group.steps,
             );
           } else {
             scriptedCheckFailures.push({
@@ -1003,7 +1013,7 @@ export async function createBrowserSessionContext(
   };
 
   const handleEngineToolResult = async (
-    event: MCPJamToolResultEvent
+    event: MCPJamToolResultEvent,
   ): Promise<void> => {
     const { toolCallId, toolName, serverId } = event;
     // Feed the real tool-call args to the widget shim so the engine-path
@@ -1031,7 +1041,7 @@ export async function createBrowserSessionContext(
     chunk: Pick<
       DirectChatTurnToolResultChunk,
       "toolCallId" | "toolName" | "input" | "output" | "serverId"
-    >
+    >,
   ): Promise<void> => {
     if (!chunk.serverId) return;
     await renderIfRenderable({
@@ -1045,6 +1055,9 @@ export async function createBrowserSessionContext(
   };
 
   return {
+    setWorkspacePresentation(read) {
+      readWorkspacePresentation = read;
+    },
     computerUseSupported,
     computerUseVersion,
     computerWidgetTools,
@@ -1052,6 +1065,11 @@ export async function createBrowserSessionContext(
     browserInteractionSteps,
     prepareAdvertisedTools,
     scriptedCheckFailures,
+    getModelContext() {
+      return pluginModelContextMessage(
+        widgetHarnessRef.current?.getModelContexts() ?? [],
+      );
+    },
     drainFollowUps(): string[] {
       // Truncate each message before it drives a model turn. The driven COUNT
       // is bounded downstream by MAX_WIDGET_FOLLOWUP_TURNS; this caps a single
@@ -1079,7 +1097,7 @@ export async function createBrowserSessionContext(
       ) {
         inputByToolCallId.set(
           event.toolCallId,
-          event.input as Record<string, unknown>
+          event.input as Record<string, unknown>,
         );
       }
     },
@@ -1102,7 +1120,7 @@ export async function createBrowserSessionContext(
     },
     async replayInteractStep(
       toolName: string,
-      action: InteractAction
+      action: InteractAction,
     ): Promise<WidgetStepOutcome> {
       const live = mountedWidget;
       const liveId = widgetHarnessRef.current?.getMountedWidgetId() ?? null;
@@ -1118,12 +1136,12 @@ export async function createBrowserSessionContext(
       }
       return replayWidgetScriptedStep(
         live.toolCallId,
-        interactActionToScriptedStep(action)
+        interactActionToScriptedStep(action),
       );
     },
     async evaluateWidgetAssertion(
       toolName: string,
-      assertion: WidgetAssertion
+      assertion: WidgetAssertion,
     ): Promise<WidgetStepOutcome> {
       const live = mountedWidget;
       const liveId = widgetHarnessRef.current?.getMountedWidgetId() ?? null;
@@ -1142,7 +1160,7 @@ export async function createBrowserSessionContext(
     },
     drainNewArtifacts() {
       const observations = widgetRenderObservations.slice(
-        drainedObservationCount
+        drainedObservationCount,
       );
       const steps = browserInteractionSteps.slice(drainedStepCount);
       drainedObservationCount = widgetRenderObservations.length;

@@ -48,6 +48,7 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 vi.mock("@/hooks/useSandboxImages", () => ({
   useSandboxImages: () => [{ environmentId: "env-1", name: "My Image" }],
   useResetComputer: () => resetComputer,
+  useSetComputerSandboxImage: () => vi.fn(),
 }));
 
 // The non-member state renders <GuestSignInMessage>, which reads the WorkOS +
@@ -60,6 +61,9 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
 }));
 
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => true,
+}));
 vi.mock("../SandboxImagesDrawer", () => ({
   SandboxImagesDrawer: ({ open }: { open: boolean }) =>
     open ? <div data-testid="env-drawer" /> : null,
