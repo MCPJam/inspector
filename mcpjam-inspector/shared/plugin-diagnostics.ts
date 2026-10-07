@@ -142,6 +142,10 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   PLUGIN_WORKSPACE_DENIED:
     "Plugin extensions aren't available for this project or account.",
   PLUGIN_WORKSPACE_CANCELLED: "The request was cancelled.",
+  PLUGIN_WORKSPACE_UNREACHABLE:
+    "MCPJam couldn't reach its backend to check plugin access (a network problem or timeout). Check your connection and try again.",
+  PLUGIN_WORKSPACE_SIGN_IN_EXPIRED:
+    "Your sign-in lapsed while MCPJam was checking plugin access. Retry once your session reconnects, or sign in again.",
   PLUGIN_INSTANCE_CANCELLED: "The request was cancelled.",
   INVALID_PLUGIN_INSTANCE_REQUEST: "The request was malformed.",
   // Deep links
