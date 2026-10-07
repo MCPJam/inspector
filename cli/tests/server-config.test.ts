@@ -658,6 +658,25 @@ test("a hosted eval request gets longer than the 30s probe default", async () =>
   // No subcommand may reach for the probe default by writing the obvious
   // thing. The helper's own body is the single permitted mention.
   assert.equal(source.match(/getGlobalOptions\(command/g)?.length, 1);
+
+  // A scan of THIS file cannot see a default re-read in another one, which is
+  // how `eval list` kept the 30s default through `runCloudOp` even after the
+  // helper landed. Every delegating helper must be handed the default too.
+  assert.ok(
+    /runCloudOp\([^;]*defaultTimeoutMs: EVAL_REQUEST_TIMEOUT_MS/s.test(source),
+    "runCloudOp calls must pass the hosted-eval default",
+  );
+});
+
+test("runCloudOp honours a per-command default, and an explicit flag still wins", () => {
+  // `runCloudOp` resolves the global options a SECOND time, independently of
+  // whatever its caller computed. Before it accepted a default, a command that
+  // had raised its own timeout silently got 30s here.
+  assert.equal(getGlobalOptions(timeoutCommand([]), 120_000).timeout, 120_000);
+  assert.equal(
+    getGlobalOptions(timeoutCommand(["--timeout", "5000"]), 120_000).timeout,
+    5_000,
+  );
 });
 
 test("the program default still applies when a command asks for none", () => {

@@ -1030,7 +1030,12 @@ function validateOpInput<TInput>(
 }
 
 /**
- * Default per-request timeout for hosted eval operations.
+ * Default deadline for a hosted eval operation.
+ *
+ * One timer covers the WHOLE operation, not each request inside it: the
+ * abort controller wraps the entire callback, which for a file sync is
+ * several round trips. (The message it raises says "Request timed out",
+ * which is its own small lie and is why this comment exists.)
  *
  * The program's `--timeout` defaults to 30s, which is right for what it was
  * written for: one MCP probe against a local server. A hosted eval call is not
@@ -3423,7 +3428,11 @@ export function registerEvalCommands(program: Command): void {
           command,
           options,
           ({ client, signal }, project) =>
-            listEvalSuitesOperation.execute(project, { client, signal })
+            listEvalSuitesOperation.execute(project, { client, signal }),
+          // `runCloudOp` resolves the options a second time, so without this
+          // it hands back the 30s probe default no matter what this command
+          // computed for itself.
+          { defaultTimeoutMs: EVAL_REQUEST_TIMEOUT_MS }
         );
         writeResult(result, globalOptions.format);
       }
@@ -3507,7 +3516,7 @@ export function registerEvalCommands(program: Command): void {
     .command("run")
     .description(
       "Start an eval run of an existing suite, or upload a versioned suite file and run it. " +
-        "Each request waits up to 120s (raise with the global --timeout <ms>); --wait-timeout bounds the RUN instead."
+        "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead."
     )
     .option("--suite <id-or-name>", "Eval suite name or ID")
     .option(
