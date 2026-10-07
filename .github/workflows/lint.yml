@@ -47,6 +47,7 @@ jobs:
         run: |
           node --test \
             .github/scripts/unpublished-versions.test.mjs \
+            .github/scripts/release-plan.test.mjs \
             .github/scripts/release-pr.test.mjs \
             .github/scripts/release-trigger.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs

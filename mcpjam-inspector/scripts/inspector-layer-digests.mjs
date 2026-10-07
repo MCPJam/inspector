@@ -9,10 +9,17 @@
 // defines the layer's contents, so the two can never disagree.
 import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
+import { bundleCodexAppServerBridge } from "./bundle-codex-appserver-bridge.mjs";
 import { bundleLocalHarnessLayer } from "./bundle-local-harness-layer.mjs";
 
 /** `{ [harnessId]: digest | null }`; `null` = the harness's bridge ships in its pack. */
 export async function computeInspectorLayerDigests() {
+  // The server modules read below import the Codex bridge bundle as well
+  // (`codex-appserver/local-identity.ts`), so it is generated first, in the
+  // order `npm run pretest` and the Dockerfile use. A caller that had only run
+  // `npm ci` — release.yml's contract job — failed with ERR_MODULE_NOT_FOUND
+  // after every platform had already passed (release 3.14.0).
+  await bundleCodexAppServerBridge();
   await bundleLocalHarnessLayer();
   const { inspectorLayerDigest } = await tsImport(
     "../server/utils/harness/local/inspector-layer-files.ts",

@@ -10,6 +10,8 @@
 //   claude-code/      the PATCHED Claude Code recipe, byte-identical to what a
 //                     hosted turn hands the framework
 //   codex-appserver/  the Codex app-server recipe
+//   cursor/           the Cursor recipe, whose CLI install is PINNED to one
+//                     checksummed build (`cursor-bootstrap.ts`)
 //   manifest.json     recipe identities, file digests, the toolchain pins and
 //                     `HARNESS_PINNED_VERSIONS`
 //   bake.mjs          the in-image installer/verifier (`scripts/harness-bake/bake.mjs`)
@@ -27,7 +29,7 @@
 // directory's CONTENTS to `/home/user/.harness-bootstrap/` and run `bake.mjs`
 // as the runtime user.
 //
-// Both recipes come from the harness REGISTRY, through the same
+// The recipes come from the harness REGISTRY, through the same
 // `getHarnessAdapter(id).createHarness(...)` call a hosted turn makes in
 // `run-harness-turn.ts`, so the bake follows whatever the hosted adapters build
 // (a wrapper added around a recipe is baked the moment the registry uses it).
@@ -93,6 +95,7 @@ const CLAUDE_CODE_PATCH_SENTINEL_CANDIDATES = [
   "gatewayModelOverrideSettingsFor",
   "strictMcpConfig: true",
   "mcpjamTypedTerminalError",
+  "mcpjamBackgroundDrainReducer",
 ];
 
 async function tsModule(path) {
@@ -100,6 +103,13 @@ async function tsModule(path) {
   return tsImport(path, { parentURL: import.meta.url, tsconfig: false });
 }
 
+/**
+ * The recipe's files as `{ name, content }`, `name` relative to the recipe
+ * directory. Most recipes are flat; the Cursor recipe also carries its CLI
+ * installer under `implementation/`, so a name may have path segments — but
+ * never an empty, `.` or `..` one, and never a backslash: the name is joined
+ * onto the directory the bake writes into.
+ */
 function recipeFiles(recipe) {
   const prefix = `${recipe.bootstrapDir}/`;
   return recipe.files.map((file) => {
@@ -107,10 +117,8 @@ function recipeFiles(recipe) {
     if (
       !file.path.startsWith(prefix) ||
       !name ||
-      name === "." ||
-      name === ".." ||
-      name.includes("/") ||
-      name.includes("\\")
+      name.includes("\\") ||
+      name.split("/").some((part) => part === "" || part === "." || part === "..")
     ) {
       throw new Error(
         `Unexpected ${recipe.harnessId} bootstrap path: ${file.path}`,
@@ -178,6 +186,10 @@ const HOSTED_HARNESS_ARGS = {
   codex: {
     modelId: "openai/gpt-5.5",
     auth: { CODEX_API_KEY: "bake", OPENAI_BASE_URL: "http://bake.invalid" },
+  },
+  cursor: {
+    auth: { CURSOR_API_KEY: "bake" },
+    mcpJson: { mcpServers: {} },
   },
 };
 
@@ -265,6 +277,7 @@ export async function resolveHarnessBake() {
     pnpm: bake.HARNESS_TEMPLATE_PNPM_VERSION,
   };
 
+  const registry = await loadHarnessRegistry();
   const { createClaudeCode } = await import("@ai-sdk/harness-claude-code");
   const vendorClaudeBootstrap = await createClaudeCode().getBootstrap();
   const vendorClaudeBridge =
@@ -302,6 +315,24 @@ export async function resolveHarnessBake() {
         platforms: Object.fromEntries(
           ["linux-x64", "linux-arm64"].map((key) => [key, codexChecksums[key]]),
         ),
+      },
+      sentinels: () => [],
+    },
+    {
+      loadRecipe: () => loadHostedRecipe("cursor"),
+      runtimeVersion: HARNESS_PINNED_VERSIONS.cursor,
+      vendor: {
+        kind: "cursor-cli",
+        version: registry.CURSOR_CLI_VERSION,
+        // Linux only: the template is a Linux box. Both architectures, so an
+        // arm64 CI image verifies as strictly as the amd64 template. The
+        // archive itself is checksummed inside the recipe's installer; the
+        // manifest records the same digests so the bake can assert the
+        // installer it ran is the one the inspector resolves.
+        platforms: {
+          "linux-x64": { archiveSha256: registry.CURSOR_CLI_CHECKSUMS.x64 },
+          "linux-arm64": { archiveSha256: registry.CURSOR_CLI_CHECKSUMS.arm64 },
+        },
       },
       sentinels: () => [],
     },
@@ -431,7 +462,9 @@ export async function writeHarnessBakeContext(outDir, resolved) {
     const dir = join(target, recipe.dir);
     mkdirSync(dir, { recursive: true });
     for (const file of recipe.contents) {
-      writeFileSync(join(dir, file.name), file.content);
+      const path = join(dir, file.name);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, file.content);
     }
   }
   writeFileSync(join(target, "bake.mjs"), bakeScript);

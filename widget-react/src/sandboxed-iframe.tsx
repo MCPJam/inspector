@@ -318,6 +318,13 @@ interface SandboxedIframeProps {
    */
   viewOriginLabel?: string;
   viewSubdomainsEnabled?: boolean;
+  /**
+   * Changing this reloads the guest document (the resource is sent to the
+   * proxy again) even when the payload is unchanged. The renderer bumps it
+   * for every new AppBridge: a guest initializes once per document, so a
+   * bridge that replaced another one never hears `ui/initialize` otherwise.
+   */
+  reloadKey?: number | string;
 }
 
 /**
@@ -356,6 +363,7 @@ export const SandboxedIframe = forwardRef<
     mountMode,
     viewOriginLabel,
     viewSubdomainsEnabled,
+    reloadKey,
   },
   ref
 ) {
@@ -545,6 +553,7 @@ export const SandboxedIframe = forwardRef<
         // Part of the render recipe: it decides how the proxy mounts the HTML,
         // so a change must re-send rather than leave the previous mount up.
         mountMode: mountMode ?? null,
+        reloadKey: reloadKey ?? null,
       }),
     [
       csp,
@@ -559,6 +568,7 @@ export const SandboxedIframe = forwardRef<
       sandboxAttrs,
       recordMode,
       mountMode,
+      reloadKey,
     ]
   );
 
