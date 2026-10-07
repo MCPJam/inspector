@@ -80,6 +80,13 @@ export function harnessBoxHeartbeatIntervalMs(
 
 /** Each touch gets its own deadline, well inside the beat. */
 const TOUCH_REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * A heartbeat stops itself after this long whatever happens. No turn runs this
+ * long (the backend's absolute ceilings are shorter), so this only ever fires
+ * for a holder whose `release()` was never reached — and a conversation box
+ * kept alive by a forgotten timer would otherwise never idle out.
+ */
+export const HARNESS_BOX_MAX_HEARTBEAT_MS = 4 * 60 * MINUTE_MS;
 /** Teardown deadline. Nothing waits on it, and the reaper takes any miss. */
 const RELEASE_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -164,6 +171,7 @@ export interface AcquireHarnessBoxOptions<Refusal> {
   /** Test seams. */
   touch?: typeof touchSandbox;
   heartbeatIntervalMs?: number;
+  maxHeartbeatMs?: number;
 }
 
 /**
@@ -199,6 +207,9 @@ export function holdHarnessBox(
     ...(options.touch ? { touch: options.touch } : {}),
     ...(options.heartbeatIntervalMs !== undefined
       ? { intervalMs: options.heartbeatIntervalMs }
+      : {}),
+    ...(options.maxHeartbeatMs !== undefined
+      ? { maxHeartbeatMs: options.maxHeartbeatMs }
       : {}),
   });
   let released: Promise<void> | null = null;
@@ -238,14 +249,25 @@ export function startHarnessBoxHeartbeat(args: {
   binding: TrustedHarnessSandboxBinding;
   intervalMs?: number;
   touch?: typeof touchSandbox;
+  maxHeartbeatMs?: number;
   signal?: AbortSignal;
 }): () => void {
   const intervalMs =
     args.intervalMs ?? harnessBoxHeartbeatIntervalMs(args.surface);
   const touch = args.touch ?? touchSandbox;
+  const stopAt =
+    Date.now() + (args.maxHeartbeatMs ?? HARNESS_BOX_MAX_HEARTBEAT_MS);
   let stopped = false;
   let inFlight = false;
   const timer = setInterval(() => {
+    if (Date.now() >= stopAt) {
+      logger.warn("[harness-box] heartbeat outlived its cap; stopping", {
+        surface: args.surface,
+        sandboxRowId: args.binding.sandboxRowId,
+      });
+      stop();
+      return;
+    }
     if (stopped || inFlight) return;
     inFlight = true;
     void (async () => {

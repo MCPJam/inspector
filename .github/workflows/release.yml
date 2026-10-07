@@ -50,6 +50,14 @@ concurrency:
 env:
   NODE_VERSION: "24.14.0"
 
+# Every Ubuntu job below runs on `vars.RELEASE_RUNNER` when it is set, else
+# `ubuntu-latest`. On the shared runners a release's short jobs (publish,
+# deploy, finalize) each queued behind pull-request CI — about 37 of release
+# 3.14.0's 91 minutes was waiting for a runner, not running. Point the
+# variable at a larger-runner label (Settings → Actions → Runners → New
+# GitHub-hosted runner; its own concurrency, not shared with PR CI) and the
+# release stops waiting. Unset, nothing changes.
+
 permissions:
   contents: write
   actions: read
@@ -67,7 +75,7 @@ jobs:
     # run ends green without publishing, and the newer commit's own checks
     # trigger the release again.
     if: inputs.trigger_sha == '' || inputs.trigger_sha == github.sha
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     outputs:
       publish_any: ${{ steps.plan.outputs.publish_any }}
       publish_evaluators: ${{ steps.plan.outputs.publish_evaluators }}
@@ -75,6 +83,7 @@ jobs:
       publish_cli: ${{ steps.plan.outputs.publish_cli }}
       publish_inspector: ${{ steps.plan.outputs.publish_inspector }}
       build_inspector_artifacts: ${{ steps.plan.outputs.build_inspector_artifacts }}
+      desktop_only: ${{ steps.plan.outputs.desktop_only }}
       inspector_version: ${{ steps.plan.outputs.inspector_version }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       scope: ${{ steps.plan.outputs.scope }}
@@ -230,71 +239,20 @@ jobs:
       # What ships is what `main` carries: every public package whose committed
       # version npm does not have yet. The version PR put those versions there.
       # Pending changesets belong to the NEXT release and play no part here.
+      # When npm has everything but the Inspector's GitHub release is missing
+      # (its desktop build failed after publishing), the plan is DESKTOP-ONLY:
+      # build the desktop apps and create the release, publish nothing. See
+      # .github/scripts/release-plan.mjs.
       - name: Compute release plan
         id: plan
         env:
           DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           node .github/scripts/unpublished-versions.mjs > "$RUNNER_TEMP/unpublished.json"
           cat "$RUNNER_TEMP/unpublished.json"
-          node <<'NODE'
-          const fs = require("node:fs");
-
-          const { releases: unpublished } = JSON.parse(
-            fs.readFileSync(`${process.env.RUNNER_TEMP}/unpublished.json`, "utf8")
-          );
-          const releases = new Map(unpublished.map((release) => [release.name, release]));
-
-          const selected = {
-            evaluators: releases.has("@mcpjam/evaluators"),
-            sdk: releases.has("@mcpjam/sdk"),
-            cli: releases.has("@mcpjam/cli"),
-            inspector: releases.has("@mcpjam/inspector"),
-          };
-
-          if (!selected.evaluators && !selected.sdk && !selected.cli && !selected.inspector) {
-            throw new Error(
-              "Nothing to release: every package version on main is already on npm. " +
-                "Start a release from Soundcheck, which opens the version PR, and merge it first."
-            );
-          }
-
-          if (
-            process.env.DEPLOY_WEBAPP === "true" &&
-            !selected.inspector
-          ) {
-            throw new Error(
-              "deploy_webapp=true requires an inspector release. To deploy production without cutting a release, dispatch deploy-webapp.yml directly."
-            );
-          }
-
-          // Only the backend dispatch payload reads this now; the version PR
-          // decides what ships.
-          const scope = !selected.inspector
-            ? "packages-only"
-            : selected.evaluators || selected.sdk || selected.cli
-              ? "full"
-              : "inspector-only";
-
-          const inspectorVersion =
-            releases.get("@mcpjam/inspector")?.newVersion ?? "";
-          const outputs = {
-            scope,
-            publish_any: String(selected.evaluators || selected.sdk || selected.cli || selected.inspector),
-            publish_evaluators: String(selected.evaluators),
-            publish_sdk: String(selected.sdk),
-            publish_cli: String(selected.cli),
-            publish_inspector: String(selected.inspector),
-            build_inspector_artifacts: String(selected.inspector),
-            inspector_version: inspectorVersion,
-            release_tag: inspectorVersion ? `v${inspectorVersion}` : "",
-          };
-
-          const outputFile = process.env.GITHUB_OUTPUT;
-          for (const [key, value] of Object.entries(outputs)) {
-            fs.appendFileSync(outputFile, `${key}=${value}\n`);
-          }
-          NODE
+          node .github/scripts/release-plan.mjs "$RUNNER_TEMP/unpublished.json"
 
       # The local-execution release gate. It refuses a build whose derived
       # OFFER is inconsistent with what it can serve — a platform advertised
@@ -313,7 +271,7 @@ jobs:
       # record relied on, from local-harness-pack-pipeline.yml) — signed by our
       # key is not enough on its own.
       - name: Local harness release consistency
-        if: fromJSON(steps.plan.outputs.publish_inspector)
+        if: fromJSON(steps.plan.outputs.build_inspector_artifacts)
         working-directory: mcpjam-inspector
         env:
           INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
@@ -352,7 +310,7 @@ jobs:
   # needs no extra step: the evidence is produced by the release itself.
   local-harness-evidence:
     needs: preflight
-    if: ${{ fromJSON(needs.preflight.outputs.publish_inspector) }}
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     uses: ./.github/workflows/local-harness-conformance.yml
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_desired_pack }}
@@ -360,7 +318,7 @@ jobs:
 
   local-harness-evidence-permitted:
     needs: preflight
-    if: ${{ fromJSON(needs.preflight.outputs.publish_inspector) && needs.preflight.outputs.permitted_harnesses != '' }}
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) && needs.preflight.outputs.permitted_harnesses != '' }}
     uses: ./.github/workflows/local-harness-conformance.yml
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_permitted_pack }}
@@ -372,10 +330,10 @@ jobs:
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      fromJSON(needs.preflight.outputs.publish_inspector) &&
+      fromJSON(needs.preflight.outputs.build_inspector_artifacts) &&
       needs.local-harness-evidence.result == 'success' &&
       (needs.local-harness-evidence-permitted.result == 'success' || needs.local-harness-evidence-permitted.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       id-token: write
@@ -466,7 +424,7 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.evals_action_changed == 'true' &&
       needs.evals-action-smoke.result != 'failure'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     concurrency:
       group: evals-action-release
@@ -518,43 +476,6 @@ jobs:
           git push --force origin refs/tags/evals-v1
           echo "Published $VERSION_TAG and moved evals-v1 to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
 
-  artifact-gate:
-    needs:
-      - preflight
-      - build-mac
-      - build-windows
-      - local-harness-contract
-    # Not when preflight stood down (see its `if`): there is nothing to gate,
-    # and the check below would fail a run that is meant to end green.
-    if: always() && needs.preflight.result != 'skipped'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require desktop artifact jobs when inspector is included
-        run: |
-          if [ "${{ needs.preflight.result }}" != "success" ]; then
-            echo "Preflight failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.preflight.outputs.build_inspector_artifacts }}" != "true" ]; then
-            exit 0
-          fi
-
-          if [ "${{ needs.build-mac.result }}" != "success" ]; then
-            echo "Mac artifact build failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.build-windows.result }}" != "success" ]; then
-            echo "Windows artifact build failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.local-harness-contract.result }}" != "success" ]; then
-            echo "The local harness runtime contract (conformance evidence for this layer × every selected pack) failed." >&2
-            exit 1
-          fi
-
   # Building and smoke-testing the npm tarballs needs nothing from the desktop
   # builds or the backend deploy, so it runs alongside them instead of behind
   # them. Only the `changeset publish` call itself has to wait for the backend
@@ -563,7 +484,7 @@ jobs:
   build-packages:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.publish_any) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -692,7 +613,7 @@ jobs:
   publish-packages:
     needs:
       - preflight
-      - artifact-gate
+      - local-harness-contract
       - build-packages
       - deploy-backend-prod
       - ask-mcpjam-smoke-staging
@@ -706,10 +627,20 @@ jobs:
     # normal failed-dependency propagation, so every other need is checked
     # explicitly below. Dropping the build-packages clause would let a failed
     # package build publish.
+    #
+    # A release that ships the Inspector publishes nothing unless the local
+    # harness runtime contract succeeded: the npm Inspector offers local
+    # execution too. It does NOT wait for the desktop builds — those are
+    # mostly Apple's notary queue (10–25 min in October 2026) and gate only
+    # the GitHub release (`finalize`). A desktop build that fails after this
+    # publishes is completed by the next run, which plans desktop-only.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.artifact-gate.result == 'success' &&
+      (
+        needs.preflight.outputs.publish_inspector != 'true' ||
+        needs.local-harness-contract.result == 'success'
+      ) &&
       needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       (
@@ -721,7 +652,7 @@ jobs:
         !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -826,7 +757,7 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       fromJSON(inputs.deploy_backend_prod)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     environment: backend-production
     steps:
       - name: Dispatch and wait for backend production deployment
@@ -957,11 +888,30 @@ jobs:
       - deploy-backend-prod
       - deploy-webapp
       - deploy-slack-app
+      - build-mac
+      - build-windows
+      - local-harness-contract
+    # The tag and the GitHub release wait for the desktop builds: releases are
+    # immutable, so the release is created once with every asset attached.
+    # npm and the webapp did not wait (see publish-packages). A desktop-only
+    # run (completing a release whose desktop build failed) publishes nothing,
+    # so publish-packages is skipped there and this runs anyway.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.publish-packages.result == 'success'
-    runs-on: ubuntu-latest
+      (
+        needs.publish-packages.result == 'success' ||
+        needs.preflight.outputs.desktop_only == 'true'
+      ) &&
+      (
+        needs.preflight.outputs.build_inspector_artifacts != 'true' ||
+        (
+          needs.build-mac.result == 'success' &&
+          needs.build-windows.result == 'success' &&
+          needs.local-harness-contract.result == 'success'
+        )
+      )
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

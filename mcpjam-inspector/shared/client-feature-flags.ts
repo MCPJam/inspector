@@ -34,6 +34,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcpjam-learning",
   "multi-account-connections-enabled",
   "platform-post-launch",
+  "plugin-extensions-enabled",
   "plugins-enabled",
   "pricing-feature-signin-required",
   "project-environments-enabled",

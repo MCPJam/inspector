@@ -163,6 +163,8 @@ export function MultiModelChatCard({
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
+    // A comparison column never shares the member's one personal computer.
+    comparePane: true,
     selectedServers,
     hostedContext,
     executionConfig: {

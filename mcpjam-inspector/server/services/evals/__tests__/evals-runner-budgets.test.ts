@@ -296,6 +296,24 @@ describe("provisionEvalSandbox — capacity", () => {
     expect(requests).toBe(1);
   });
 
+  it("names the run first, and the iteration alone for a single-case run", async () => {
+    const bodies: unknown[] = [];
+    global.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ sandboxId: "s1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    await provisionEvalSandbox(args);
+    await provisionEvalSandbox({ bearer: "token", iterationId: "i9" });
+    // A suite-run body is unchanged on the wire, key order included.
+    expect(JSON.stringify(bodies[0])).toBe(
+      JSON.stringify({ runId: "r1", iterationId: "i1" }),
+    );
+    expect(bodies[1]).toEqual({ iterationId: "i9" });
+  });
+
   it("hands back a non-capacity refusal immediately, without retrying", async () => {
     // A 409 is an ANSWER — no image pinned, attempt not running. Waiting on it
     // buys nothing and spends the iteration's clock.

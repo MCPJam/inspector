@@ -7,6 +7,8 @@ import { HostPicker } from "@/components/hosts/HostPicker";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
 import { SandboxImagePicker } from "@/components/computer/SandboxImagePicker";
+import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
+import { ProjectEnvironmentPluginsPicker } from "./ProjectEnvironmentPluginsPicker";
 import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
@@ -36,6 +38,7 @@ type EnvironmentDraft = {
   hostId: string | null;
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  pluginVersionIds: string[];
   /**
    * The environment's CREDENTIAL GRANT. Deliberately NOT flag-gated like skills
    * and sandbox images: there is no `secrets-enabled` flag, and a picker that
@@ -57,6 +60,7 @@ function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
     hostId: env.hostId,
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    pluginVersionIds: env.pluginVersionIds ?? [],
     secretSelection: env.secretSelection ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
   };
@@ -113,6 +117,9 @@ export function ProjectEnvironmentEditor({
   // control.
   const sandboxImagesEnabled = useSandboxImagesEnabled();
   const skillsEnabled = useSkillsEnabled();
+  const pluginsEnabled = usePluginsEnabled();
+  const samePlugins = (a: string[], b: string[]) =>
+    [...a].sort().join("\0") === [...b].sort().join("\0");
   const sandboxImages = useSandboxImages(
     sandboxImagesEnabled ? projectId : null,
   );
@@ -126,6 +133,7 @@ export function ProjectEnvironmentEditor({
           hostId: null,
           serverAttachmentId: null,
           skillSelection: null,
+          pluginVersionIds: [],
           secretSelection: null,
           computerEnvironmentId: null,
           ...initialDraft,
@@ -157,6 +165,11 @@ export function ProjectEnvironmentEditor({
           draft.skillSelection,
           environment.skillSelection ?? null,
         )) ||
+      (pluginsEnabled &&
+        !samePlugins(
+          draft.pluginVersionIds,
+          environment.pluginVersionIds ?? [],
+        )) ||
       !sameSecretSelection(
         draft.secretSelection,
         environment.secretSelection ?? null,
@@ -169,6 +182,7 @@ export function ProjectEnvironmentEditor({
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
       (skillsEnabled && draft.skillSelection !== null) ||
+      (pluginsEnabled && draft.pluginVersionIds.length > 0) ||
       draft.secretSelection !== null ||
       (sandboxImagesEnabled && draft.computerEnvironmentId !== null);
 
@@ -203,6 +217,7 @@ export function ProjectEnvironmentEditor({
             hostId: null,
             serverAttachmentId: null,
             skillSelection: null,
+            pluginVersionIds: [],
             // Dropped along with the rest: a grant naming the previous
             // project's secrets would be rejected at save, and holding it
             // would let a form submit ids the new project cannot resolve.
@@ -243,6 +258,9 @@ export function ProjectEnvironmentEditor({
           // shipping it then would contradict the fail-closed contract.
           ...(skillsEnabled && draft.skillSelection
             ? { skillSelection: draft.skillSelection }
+            : {}),
+          ...(pluginsEnabled && draft.pluginVersionIds.length
+            ? { pluginVersionIds: draft.pluginVersionIds }
             : {}),
           ...(draft.secretSelection
             ? { secretSelection: draft.secretSelection }
@@ -288,6 +306,14 @@ export function ProjectEnvironmentEditor({
           environment.skillSelection ?? null,
         )
           ? { skillSelection: draft.skillSelection }
+          : {}),
+        ...(pluginsEnabled &&
+        !samePlugins(draft.pluginVersionIds, environment.pluginVersionIds ?? [])
+          ? {
+              pluginVersionIds: draft.pluginVersionIds.length
+                ? draft.pluginVersionIds
+                : null,
+            }
           : {}),
         // NOT flag-gated, unlike the two fields around it — the picker is
         // always rendered, so the "hidden picker must omit the field" rule has
@@ -427,6 +453,17 @@ export function ProjectEnvironmentEditor({
           ) : null}
         </div>
       </div>
+
+      {pluginsEnabled ? (
+        <ProjectEnvironmentPluginsPicker
+          projectId={projectId}
+          value={draft.pluginVersionIds}
+          onChange={(pluginVersionIds) =>
+            setDraft((d) => ({ ...d, pluginVersionIds }))
+          }
+          disabled={readOnly}
+        />
+      ) : null}
 
       {skillsEnabled ? (
         <div className="space-y-1.5">

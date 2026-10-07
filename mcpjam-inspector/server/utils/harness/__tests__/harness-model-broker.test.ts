@@ -348,7 +348,7 @@ describe("harness box reservation", () => {
     });
   });
 
-  it("reserve names the pinned runtime version; an unpinned harness sends none", async () => {
+  it("reserve names the pinned runtime version for every baked harness", async () => {
     const bodies: any[] = [];
     mockFetch((_url, init) => {
       bodies.push(JSON.parse(String(init.body)));
@@ -369,7 +369,9 @@ describe("harness box reservation", () => {
       bearer: "t",
     });
     expect(bodies[0].harnessRuntimeVersion).toBe(HARNESS_PINNED_VERSIONS.codex);
-    expect("harnessRuntimeVersion" in bodies[1]).toBe(false);
+    expect(bodies[1].harnessRuntimeVersion).toBe(
+      HARNESS_PINNED_VERSIONS.cursor,
+    );
   });
 
   it("renews the same box claim and returns the new expiry", async () => {

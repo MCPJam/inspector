@@ -424,9 +424,11 @@ export function Thread({
           recorder={recorder}
           historyNoticeBeforeMessageId={historyNoticeBeforeMessageId}
         />
-        <InspectorWidgetHostProvider>
-          <WidgetSurfaceHost chatSessionId={chatSessionId} />
-        </InspectorWidgetHostProvider>
+        {widgetPolicy !== "placeholder" && (
+          <InspectorWidgetHostProvider>
+            <WidgetSurfaceHost chatSessionId={chatSessionId} />
+          </InspectorWidgetHostProvider>
+        )}
 
         {/* PR7 (§12.6) — an MCP App's App-initiated `tools/call` can return
             `input_required`; the same SDK MRTR driver that backs `callTool`
