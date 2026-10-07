@@ -390,6 +390,24 @@ describe("SharedSlackChannelCard", () => {
     }
   );
 
+  it("tells the invitee to check their email, without talking about a missing in-app link", () => {
+    mockUseQuery.mockReturnValue(
+      dto({
+        channel: {
+          status: "invite_sent",
+          invitedEmail: "sam@acme.com",
+          openUrl: null,
+        },
+      })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(screen.getByText(/Invite sent to sam@acme.com/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Check your email for Slack's invite.")
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/convenience/)).not.toBeInTheDocument();
+  });
+
   it("never promises an automatic resend for an expired invite", () => {
     for (const automaticInvitePending of [true, false]) {
       mockUseQuery.mockReturnValue(

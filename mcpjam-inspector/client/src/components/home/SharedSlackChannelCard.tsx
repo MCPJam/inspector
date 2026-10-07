@@ -369,8 +369,7 @@ export function SharedSlackChannelCard({
             {expiry ? `, expires ${expiry}` : ""}.
           </p>
           <p className="text-[11px] text-muted-foreground">
-            Check your email for Slack&apos;s invite — that is the official
-            path. The in-app link is a convenience when we have one.
+            Check your email for Slack&apos;s invite.
           </p>
           {channel.inviteUrl ? (
             <a
