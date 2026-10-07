@@ -705,6 +705,40 @@ describe("web chat-v2 — a host turn's active plugins", () => {
     );
   });
 
+  it("hands a harness turn its plugins as live plugins, never as an environment's set", async () => {
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: "host_1", hostStyle: "claude", harness: "claude-code" },
+    });
+    const response = await send();
+    expect(response.status).toBe(200);
+    const options = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+    expect(options.harness).toBe("claude-code");
+    expect(options.effectiveCapabilities).toBeUndefined();
+    expect(options.runtimeSkillsOverride).toBeUndefined();
+    expect(options.livePlugins.skills.map((skill: any) => skill.name)).toEqual([
+      "keycaps",
+    ]);
+    expect(
+      options.livePlugins.capabilities.pluginSkills.map(
+        (skill: any) => skill.ref,
+      ),
+    ).toEqual(["bits/keycaps"]);
+    expect(options.livePlugins.capabilities.pluginServerIds).toEqual([
+      "plugin-server-1",
+    ]);
+    expect(options.selectedServers).toEqual([
+      "body-server-1",
+      "plugin-server-1",
+    ]);
+  });
+
+  it("gives an emulated turn no live plugins (its skills ride the merged set)", async () => {
+    await send();
+    const options = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+    expect(options.livePlugins).toBeUndefined();
+  });
+
   it("adds a skills-only plugin's skills without touching the body's servers", async () => {
     const result = activeResult({
       servers: {

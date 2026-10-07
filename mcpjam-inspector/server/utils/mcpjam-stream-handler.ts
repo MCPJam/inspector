@@ -50,6 +50,7 @@ import {
 } from "./agent-failure-capture.js";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import type { LivePluginDelivery } from "./harness/skill-delivery.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
@@ -1017,6 +1018,15 @@ export interface MCPJamHandlerOptions {
    * launch re-resolves the environment, so a recorded version is provenance.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * A LIVE host turn's active plugins (harness side). Presence selects the
+   * `live_plus` skill source: the project-wide live fetch PLUS these plugin
+   * skills, with plugin files from the capability set and the project's
+   * standalone files from the project-wide query. Never set with
+   * `effectiveCapabilities`, which is an environment's and selects nothing on
+   * its own.
+   */
+  livePlugins?: LivePluginDelivery;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
    * secrets, and the ONLY thing the harness turn needs to fetch them.

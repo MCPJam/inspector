@@ -115,6 +115,7 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import type { LivePluginDelivery } from "./harness/skill-delivery.js";
 import {
   getHarnessAdapter,
   harnessUsesExternalAccount,
@@ -319,6 +320,12 @@ export interface WebChatTurnPersistContext {
    * resumed sandbox with stale plugin material ineligible.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * A LIVE host turn's active plugins, HARNESS side. Selects the harness's
+   * `live_plus` skill source explicitly (live project skills plus these
+   * plugin skills). Never set together with `effectiveCapabilities`.
+   */
+  livePlugins?: LivePluginDelivery;
   /**
    * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
    * project secrets.
@@ -1820,6 +1827,7 @@ export async function streamWebChatTurn(
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),
+    ...(persist.livePlugins ? { livePlugins: persist.livePlugins } : {}),
     ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
     // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
     // (even empty) means "this turn's secrets are already resolved".

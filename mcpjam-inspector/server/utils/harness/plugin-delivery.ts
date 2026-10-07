@@ -106,6 +106,13 @@ export function pluginVersionsFingerprint(
  * silently reduced tool set would surface only as the agent "not doing the
  * thing". Name the plugin and refuse the turn instead — the same all-or-nothing
  * rule the hosted proxy-token mint already applies.
+ *
+ * IMPLICIT plugin servers are the exception: a live host turn adds the
+ * project's active plugins without the user asking, and one that cannot be
+ * delivered skips ITS PLUGIN — every server of that version — rather than
+ * refusing the turn. The chat route already drops a plugin whose server failed
+ * to connect, so reaching this is a defense in depth, reported through
+ * `onPluginSkipped`.
  */
 export function selectDeliverableServerIds(args: {
   selectedServerIds: string[];
@@ -113,15 +120,40 @@ export function selectDeliverableServerIds(args: {
   hasLiveConfig: (serverId: string) => boolean;
   /** Plugin origin per server id (`pluginOriginByServerId`); may be empty. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
+  /** Plugin servers a live turn added implicitly (its active plugins). */
+  implicitPluginServerIds?: ReadonlySet<string>;
   onSkipped?: (serverId: string) => void;
+  /** Once per implicit plugin left out because a server had no connection. */
+  onPluginSkipped?: (plugin: RuntimePluginVersion) => void;
 }): string[] {
+  const isImplicit = (serverId: string) =>
+    args.implicitPluginServerIds?.has(serverId) === true;
+  // First, which implicit plugins cannot be delivered whole.
+  const skippedPlugins = new Map<string, RuntimePluginVersion>();
+  for (const serverId of args.selectedServerIds) {
+    const plugin = args.pluginOrigins?.[serverId];
+    if (!plugin || !isImplicit(serverId) || args.hasLiveConfig(serverId)) {
+      continue;
+    }
+    if (!skippedPlugins.has(plugin.pluginVersionId)) {
+      skippedPlugins.set(plugin.pluginVersionId, plugin);
+      args.onPluginSkipped?.(plugin);
+    }
+  }
   const deliverable: string[] = [];
   for (const serverId of args.selectedServerIds) {
+    const plugin = args.pluginOrigins?.[serverId];
+    if (
+      plugin &&
+      isImplicit(serverId) &&
+      skippedPlugins.has(plugin.pluginVersionId)
+    ) {
+      continue;
+    }
     if (args.hasLiveConfig(serverId)) {
       deliverable.push(serverId);
       continue;
     }
-    const plugin = args.pluginOrigins?.[serverId];
     if (plugin) {
       throw new Error(
         `Plugin "${plugin.name}" contributes MCP server ${serverId}, but it has no live connection for this turn — refusing to run the harness with missing plugin tools.`
@@ -130,6 +162,54 @@ export function selectDeliverableServerIds(args: {
     args.onSkipped?.(serverId);
   }
   return deliverable;
+}
+
+/**
+ * A capability set without some plugin versions — their servers, skills and
+ * version entries all leave together. Used when a live turn skips a plugin it
+ * could not deliver whole.
+ */
+export function withoutPluginVersions(
+  set: EffectiveCapabilitySet,
+  pluginVersionIds: ReadonlySet<string>,
+): EffectiveCapabilitySet {
+  if (pluginVersionIds.size === 0) return set;
+  const dropped = (plugin: RuntimePluginVersion | undefined) =>
+    plugin !== undefined && pluginVersionIds.has(plugin.pluginVersionId);
+  const servers = set.servers.filter((entry) => !dropped(entry.plugin));
+  const keptServerIds = new Set(servers.map((entry) => entry.serverId));
+  return {
+    ...set,
+    explicitServerIds: set.explicitServerIds.filter((id) =>
+      keptServerIds.has(id),
+    ),
+    pluginServerIds: set.pluginServerIds.filter((id) => keptServerIds.has(id)),
+    effectiveServerIds: set.effectiveServerIds.filter((id) =>
+      keptServerIds.has(id),
+    ),
+    servers,
+    pluginSkills: set.pluginSkills.filter((skill) => !dropped(skill.plugin)),
+    pluginVersions: set.pluginVersions.filter(
+      (version) => !pluginVersionIds.has(version.pluginVersionId),
+    ),
+  };
+}
+
+/**
+ * The skills fingerprint with the plugin dimension folded in.
+ *
+ * A live turn's skill set now includes plugin skills, so a change in which
+ * plugin versions ran — even one whose skills read identically — must change
+ * the hash that decides whether the box's skills are re-written. Empty
+ * versions leave the hash byte-identical, so a turn with no plugins keeps
+ * resuming exactly as before.
+ */
+export function skillsHashWithPlugins(
+  skillsHash: string,
+  versions: RuntimePluginVersion[],
+): string {
+  const plugins = pluginVersionsFingerprint(versions);
+  return plugins ? `${skillsHash}+plugins:${plugins}` : skillsHash;
 }
 
 /** Where a delivered plugin skill LANDED on the box, and which immutable plugin

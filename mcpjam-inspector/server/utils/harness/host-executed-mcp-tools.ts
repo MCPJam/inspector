@@ -118,6 +118,10 @@ export async function projectSelectedMcpServersAsHostTools(args: {
   /** Plugin origin per server id (INS-7): a plugin-contributed server with no
    *  live connection fails the turn instead of being silently skipped. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
+  /** A live turn's implicitly added plugin servers: one with no live
+   *  connection skips its plugin instead of failing the turn. */
+  implicitPluginServerIds?: ReadonlySet<string>;
+  onPluginSkipped?: (plugin: RuntimePluginVersion) => void;
   /** Per-server resolved `toolPolicy` decisions for this run. A server with a
    *  snapshot gets its calls gated IN-PROCESS before they reach the server. */
   toolPolicy?: Record<string, ToolPolicySnapshot>;
@@ -185,6 +189,10 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     selectedServerIds: args.selectedServerIds,
     hasLiveConfig: (id) => Boolean(args.manager.getServerConfig(id)),
     ...(args.pluginOrigins ? { pluginOrigins: args.pluginOrigins } : {}),
+    ...(args.implicitPluginServerIds
+      ? { implicitPluginServerIds: args.implicitPluginServerIds }
+      : {}),
+    ...(args.onPluginSkipped ? { onPluginSkipped: args.onPluginSkipped } : {}),
     onSkipped: (id) =>
       logger.warn(
         `[harness] selected server has no live config; skipping serverId=${id}`

@@ -2971,6 +2971,23 @@ chatV2.post("/", async (c) => {
           // file query cannot return a plugin skill's) and the pinned plugin
           // versions that fork an incompatible resumed sandbox.
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+          // A harness host turn's active plugins, under their OWN field: the
+          // harness then delivers its live project skills PLUS these (with
+          // their files), and an implicit plugin server it cannot deliver
+          // skips that plugin. Handing them over as `effectiveCapabilities`
+          // would read as an environment turn and deliver plugins alone.
+          ...(pluginCapabilities &&
+          activePluginTurn &&
+          resolvedExecution.harness
+            ? {
+                livePlugins: {
+                  skills: environmentRuntimeSkills({
+                    skills: activePluginTurn.skills,
+                  }),
+                  capabilities: pluginCapabilities,
+                },
+              }
+            : {}),
           // PROJECT SECRETS: the id only, never the resolved spec. The harness
           // turn fetches this environment's materialized secrets from Convex
           // with the END USER'S OWN bearer, so the backend decides which of

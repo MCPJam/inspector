@@ -118,6 +118,7 @@ import {
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
+  skillsHashWithPlugins,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import { participantSafeStudyError } from "../scenario-runtime-config.js";
@@ -190,7 +191,11 @@ import {
 } from "./external-account-credentials.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
-import { selectHarnessSkillSource } from "./skill-delivery.js";
+import {
+  composeLivePlusSkills,
+  selectHarnessSkillSource,
+  withoutLivePluginVersions,
+} from "./skill-delivery.js";
 import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
   handOffLegacySkillDirs,
@@ -289,6 +294,10 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   /** Plugin origin per server id (INS-7). A plugin-contributed server that
    *  can't be delivered fails the turn instead of being skipped. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
+  /** A live turn's implicitly added plugin servers: one that can't be
+   *  delivered skips its plugin instead of failing the turn. */
+  implicitPluginServerIds?: ReadonlySet<string>;
+  onPluginSkipped?: (plugin: RuntimePluginVersion) => void;
   /**
    * Per-server resolved `toolPolicy` decisions for this run. A server with a
    * snapshot gets a SEALED token (policy + credential in one opaque value) so
@@ -317,6 +326,8 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
     projectId,
     strategy,
     pluginOrigins,
+    implicitPluginServerIds,
+    onPluginSkipped,
     scopeStepUpCorrelationId,
     toolPolicy,
     evidenceScope,
@@ -325,6 +336,8 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
     selectedServerIds,
     hasLiveConfig: (id) => Boolean(manager.getServerConfig(id)),
     ...(pluginOrigins ? { pluginOrigins } : {}),
+    ...(implicitPluginServerIds ? { implicitPluginServerIds } : {}),
+    ...(onPluginSkipped ? { onPluginSkipped } : {}),
     onSkipped: (id) =>
       logger.warn(
         `[harness] selected server has no live config; skipping serverId=${id}`,
@@ -760,6 +773,7 @@ export async function runHarnessTurn(
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
+    livePlugins,
     environmentId,
     environmentUnresolvedReason,
     runtimeSecrets: runtimeSecretsOverride,
@@ -1467,9 +1481,30 @@ export async function runHarnessTurn(
           "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy",
         );
       }
+      // Plugin origin per server: an environment's pinned versions, or a live
+      // host turn's active plugins. A live turn's plugin servers were added
+      // implicitly, so one that cannot be delivered skips its plugin instead
+      // of refusing the turn; an environment's pins still refuse.
       const pluginServerOrigins = effectiveCapabilities
         ? pluginOriginByServerId(effectiveCapabilities)
-        : undefined;
+        : livePlugins
+          ? pluginOriginByServerId(livePlugins.capabilities)
+          : undefined;
+      const implicitPluginServerIds =
+        livePlugins && !effectiveCapabilities
+          ? new Set(livePlugins.capabilities.pluginServerIds)
+          : undefined;
+      const skippedLivePluginVersionIds = new Set<string>();
+      const onLivePluginSkipped = (plugin: RuntimePluginVersion) => {
+        skippedLivePluginVersionIds.add(plugin.pluginVersionId);
+        logger.warn(
+          "[harness] active plugin has a server with no live connection; skipping the plugin",
+          {
+            pluginId: plugin.pluginId,
+            pluginVersionId: plugin.pluginVersionId,
+          },
+        );
+      };
       // Member evidence is captured where a NATIVE runtime's MCP traffic
       // crosses MCPJam's local plane. A host-executed runtime (Codex) has no
       // such traffic — its relayed calls run below in this process, under the
@@ -1518,6 +1553,12 @@ export async function runHarnessTurn(
             ...(pluginServerOrigins
               ? { pluginOrigins: pluginServerOrigins }
               : {}),
+            ...(implicitPluginServerIds
+              ? {
+                  implicitPluginServerIds,
+                  onPluginSkipped: onLivePluginSkipped,
+                }
+              : {}),
           })
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
       const { mcpJson, keyToServerId } = proxyConfig;
@@ -1550,6 +1591,12 @@ export async function runHarnessTurn(
               connectionsByServerId: accountGroups,
               ...(pluginServerOrigins
                 ? { pluginOrigins: pluginServerOrigins }
+                : {}),
+              ...(implicitPluginServerIds
+                ? {
+                    implicitPluginServerIds,
+                    onPluginSkipped: onLivePluginSkipped,
+                  }
                 : {}),
               // No proxy on this path, so the run's `toolPolicy` is enforced
               // IN-PROCESS instead of by a sealed proxy token — same decision
@@ -1613,20 +1660,57 @@ export async function runHarnessTurn(
       // even EMPTY — so the live skills query is SKIPPED entirely and
       // `skillsHash` derives from the supplied artifacts. Legacy callers
       // (neither present) keep the live tri-state fetch unchanged.
+      //
+      // `live_plus` (a live host turn's active plugins) fetches like `live`
+      // and adds the plugin skills — but ONLY when that fetch succeeded: a
+      // failed fetch leaves the whole set unknown, so nothing new is delivered
+      // and nothing is reconciled (`runtimeSkills === null` below). A plugin
+      // the server delivery above had to skip leaves its skills behind too.
+      const livePluginsForTurn = livePlugins
+        ? withoutLivePluginVersions(livePlugins, skippedLivePluginVersionIds)
+        : undefined;
       const skillSource = selectHarnessSkillSource({
         pinnedHarnessSkills,
         runtimeSkillsOverride,
+        ...(livePluginsForTurn ? { livePlugins: livePluginsForTurn } : {}),
       });
       const skillsArePinned = skillSource.mode === "pinned";
       const skillsFetch =
-        skillSource.mode !== "live"
+        skillSource.mode === "pinned" || skillSource.mode === "environment"
           ? { ok: true as const, skills: skillSource.skills }
           : projectId && authHeader
           ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
           : { ok: true as const, skills: [] };
-      const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
+      const livePlusSkills =
+        skillSource.mode === "live_plus"
+          ? composeLivePlusSkills(
+              skillsFetch.ok ? skillsFetch.skills : null,
+              skillSource.plugins,
+            )
+          : undefined;
+      if (livePlusSkills && livePlusSkills.problems.length > 0) {
+        // Ids and codes only: a skill name is user-authored content.
+        logger.warn("[harness] plugin skills left out: box folder taken", {
+          problems: livePlusSkills.problems.map((problem) => ({
+            code: problem.code,
+            skillId: problem.skillId,
+          })),
+        });
+      }
+      const runtimeSkills = livePlusSkills
+        ? livePlusSkills.skills
+        : skillsFetch.ok
+          ? skillsFetch.skills
+          : null;
       const skillsHash =
-        runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
+        runtimeSkills === null
+          ? undefined
+          : skillSource.mode === "live_plus"
+            ? skillsHashWithPlugins(
+                skillsFingerprint(runtimeSkills),
+                skillSource.plugins.capabilities.pluginVersions,
+              )
+            : skillsFingerprint(runtimeSkills);
 
       // MATERIALIZED PROJECT SECRETS, taken from the CALLER — never fetched
       // here, and the difference is load-bearing rather than a wiring detail.
@@ -1831,7 +1915,9 @@ export async function runHarnessTurn(
         // still holds the previously delivered plugin material.
         ...(effectiveCapabilities
           ? { pluginVersions: effectiveCapabilities.pluginVersions }
-          : {}),
+          : livePluginsForTurn
+            ? { pluginVersions: livePluginsForTurn.capabilities.pluginVersions }
+            : {}),
         // ROTATION FORKS THE SESSION. A resumed harness session reattaches to a
         // bridge process that already holds its environment — the exact failure
         // the `ANTHROPIC_BASE_URL` compat bump above was minted for — so a
@@ -2814,6 +2900,74 @@ export async function runHarnessTurn(
               // since the root differs (Codex `.agents/skills`).
               const skillOrigins = deliveredPluginSkillOrigins({
                 set: effectiveCapabilities,
+                skillsBaseDir: skillsBaseDir!,
+                deliveredNameBySkillId: deliveredSkillNamesById,
+              });
+              if (skillOrigins.length > 0) {
+                logger.info("[harness] plugin skill origins", {
+                  harness: harnessAdapter.id,
+                  origins: skillOrigins,
+                });
+              }
+            }
+            // LIVE_PLUS: a live host turn's standalone skills AND its active
+            // plugins' skills, in ONE materialize pass — the writer prunes
+            // every delivered folder it is given no files for, so two passes
+            // would each delete the other's files. Standalone files come from
+            // the project-wide query (which cannot return a plugin skill's),
+            // plugin files from the capability set's signed URLs. If the
+            // project-wide query FAILS, only the plugin folders are touched:
+            // standalone files are left exactly as they are.
+            else if (
+              skillSource.mode === "live_plus" &&
+              livePlusSkills &&
+              deliveredSkills.length > 0
+            ) {
+              const deliveredPluginSet = {
+                ...skillSource.plugins.capabilities,
+                pluginSkills:
+                  skillSource.plugins.capabilities.pluginSkills.filter(
+                    (skill) => livePlusSkills.pluginSkillIds.has(skill.skillId),
+                  ),
+              };
+              const pluginFiles = capabilitySkillFiles(deliveredPluginSet);
+              const fileResult =
+                projectId && authHeader
+                  ? await fetchRuntimeSkillFiles(
+                      authHeader,
+                      projectId,
+                      executionScope,
+                    ).catch(() => ({ ok: false }) as const)
+                  : ({ ok: true, files: [] } as const);
+              await materializeSkillFiles({
+                session,
+                files: fileResult.ok
+                  ? [...fileResult.files, ...pluginFiles]
+                  : pluginFiles,
+                skillNamesById: fileResult.ok
+                  ? deliveredSkillNamesById
+                  : new Map(
+                      [...deliveredSkillNamesById].filter(([skillId]) =>
+                        livePlusSkills.pluginSkillIds.has(skillId),
+                      ),
+                    ),
+                skillsBase: skillsBaseDir!,
+                ...(uploadQuotaComputerId
+                  ? { computerId: uploadQuotaComputerId }
+                  : {}),
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              }).catch(() => {});
+              const pluginSkills =
+                pluginSkillDeliverySummary(deliveredPluginSet);
+              if (pluginSkills.length > 0) {
+                logger.info("[harness] delivered plugin skills", {
+                  boxKind: box?.kind ?? "local-native",
+                  boxId: computerId,
+                  skills: pluginSkills,
+                });
+              }
+              const skillOrigins = deliveredPluginSkillOrigins({
+                set: deliveredPluginSet,
                 skillsBaseDir: skillsBaseDir!,
                 deliveredNameBySkillId: deliveredSkillNamesById,
               });

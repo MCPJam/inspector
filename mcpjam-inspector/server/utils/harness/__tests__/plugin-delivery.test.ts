@@ -8,6 +8,8 @@ import {
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
+  skillsHashWithPlugins,
+  withoutPluginVersions,
 } from "../plugin-delivery";
 import { getHarnessAdapter } from "../registry";
 import type {
@@ -202,6 +204,87 @@ describe("selectDeliverableServerIds", () => {
       pluginOrigins: { srv_plugin: version() },
     });
     expect(ids).toEqual(["srv_plugin", "srv_host"]);
+  });
+
+  it("skips a live turn's IMPLICIT plugin whole when one of its servers has no connection", () => {
+    const onPluginSkipped = vi.fn();
+    const weather = version({ pluginVersionId: "pv_w", name: "weather" });
+    const maps = version({ pluginVersionId: "pv_m", name: "maps" });
+    const ids = selectDeliverableServerIds({
+      selectedServerIds: ["srv_host", "srv_w1", "srv_w2", "srv_m1"],
+      hasLiveConfig: (id) => id !== "srv_w2",
+      pluginOrigins: { srv_w1: weather, srv_w2: weather, srv_m1: maps },
+      implicitPluginServerIds: new Set(["srv_w1", "srv_w2", "srv_m1"]),
+      onPluginSkipped,
+    });
+    // Its live sibling goes too; the other plugin and the host's server stay.
+    expect(ids).toEqual(["srv_host", "srv_m1"]);
+    expect(onPluginSkipped).toHaveBeenCalledTimes(1);
+    expect(onPluginSkipped).toHaveBeenCalledWith(weather);
+  });
+
+  it("still refuses an environment's pinned plugin server even beside implicit ones", () => {
+    expect(() =>
+      selectDeliverableServerIds({
+        selectedServerIds: ["srv_pinned", "srv_implicit"],
+        hasLiveConfig: () => false,
+        pluginOrigins: {
+          srv_pinned: version({ pluginVersionId: "pv_p", name: "pinned" }),
+          srv_implicit: version({ pluginVersionId: "pv_i", name: "implicit" }),
+        },
+        implicitPluginServerIds: new Set(["srv_implicit"]),
+      }),
+    ).toThrow(/Plugin "pinned"/);
+  });
+});
+
+describe("skillsHashWithPlugins", () => {
+  it("is the plain skills hash when no plugin ran", () => {
+    expect(skillsHashWithPlugins("abc", [])).toBe("abc");
+  });
+
+  it("changes when the plugin versions change, even with identical skills", () => {
+    const one = skillsHashWithPlugins("abc", [
+      version({ pluginVersionId: "pv_1" }),
+    ]);
+    const two = skillsHashWithPlugins("abc", [
+      version({ pluginVersionId: "pv_2" }),
+    ]);
+    expect(one).not.toBe("abc");
+    expect(one).not.toBe(two);
+  });
+});
+
+describe("withoutPluginVersions", () => {
+  it("drops a version's servers, skills and entry together", () => {
+    const a = version({ pluginVersionId: "pv_a" });
+    const b = version({ pluginVersionId: "pv_b" });
+    const set = capabilities({
+      pluginServerIds: ["s_a", "s_b"],
+      effectiveServerIds: ["s_a", "s_b"],
+      servers: [
+        { serverId: "s_a", name: "a", source: "plugin", plugin: a },
+        { serverId: "s_b", name: "b", source: "plugin", plugin: b },
+      ],
+      pluginSkills: [
+        {
+          ref: "a/k",
+          skillId: "k_a",
+          name: "k",
+          description: "",
+          content: "",
+          aggregateHash: "",
+          files: [],
+          plugin: a,
+        },
+      ],
+      pluginVersions: [a, b],
+    });
+    const narrowed = withoutPluginVersions(set, new Set(["pv_a"]));
+    expect(narrowed.pluginServerIds).toEqual(["s_b"]);
+    expect(narrowed.effectiveServerIds).toEqual(["s_b"]);
+    expect(narrowed.pluginSkills).toEqual([]);
+    expect(narrowed.pluginVersions).toEqual([b]);
   });
 });
 

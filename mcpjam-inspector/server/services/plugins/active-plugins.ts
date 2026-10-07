@@ -321,6 +321,8 @@ export interface ActivePluginTurn {
   stripped: boolean;
   /** The plugin-only capability set (servers with origin, `<plugin>/<skill>`). */
   capabilities: EffectiveCapabilitySet;
+  /** The contributing plugins' skills as resolved (bodies, files, frontmatter). */
+  skills: ResolvedEnvironmentSkill[];
   /** Every skipped plugin a user would see as on (never `disabled`). */
   skipped: ActivePluginSkip[];
   /** Skip reasons the notice cannot name (a newer backend's), for logs. */
@@ -546,6 +548,7 @@ function buildTurn(args: {
     changesServers: args.stripped || hasServers,
     stripped: args.stripped,
     capabilities,
+    skills: projected.slice.skills ?? [],
     skipped: args.skipped,
     unknownSkipReasons: args.unknownSkipReasons,
     owners: args.owners,
