@@ -224,24 +224,31 @@ describe("process vitals sampler", () => {
     const [, payload] = event.mock.calls[0]!;
     if (process.platform === "win32") {
       expect(payload.openFdCount).toBeNull();
+      expect(payload.openFdError).toBe("ENOENT");
     } else {
       expect(payload.openFdCount).toBeGreaterThan(0);
+      expect(payload.openFdError).toBeNull();
     }
   });
 
-  // No fd table to list (Windows, a sandbox without /dev) must read as "not
-  // measured", never as zero open files — and must not cost the rest of the
-  // sample.
-  it("reports null, not zero, where /dev/fd cannot be listed", async () => {
+  // A listing that fails must read as "not measured", never as zero open
+  // files, and must not cost the rest of the sample. The errno travels with
+  // it: ENOENT is a platform with no fd table (Windows), while EMFILE/ENFILE
+  // is the very exhaustion this gauge exists to catch — opendir needs an fd
+  // too, so the sample taken at the worst moment is the one that fails.
+  it("reports null plus the errno where /dev/fd cannot be listed", async () => {
     const { flushProcessVitals } = await loadVitals([500 * MB]);
     vi.spyOn(fs, "readdirSync").mockImplementation(() => {
-      throw new Error("ENOENT");
+      throw Object.assign(new Error("too many open files in system"), {
+        code: "ENFILE",
+      });
     });
 
     flushProcessVitals(0);
 
     const [, payload] = event.mock.calls[0]!;
     expect(payload.openFdCount).toBeNull();
+    expect(payload.openFdError).toBe("ENFILE");
     expect(payload.heapUsedBytes).toBe(500 * MB);
   });
 });

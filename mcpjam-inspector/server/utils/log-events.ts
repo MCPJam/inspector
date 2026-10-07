@@ -538,8 +538,8 @@ export type SystemEventMap = {
    * Exists because INSPECTOR-ELECTRON-W3 crashed after 21 minutes with ZERO
    * breadcrumbs for the whole session: nothing recorded whether the heap ramped
    * or spiked, and the difference is the entire diagnosis. Every field is a
-   * number (or `null` for "not measured"), or a three-valued reason, so
-   * cardinality is fixed.
+   * number (or `null` for "not measured"), a three-valued reason, or an errno
+   * code, so cardinality is fixed.
    */
   "process.vitals": {
     reason: "startup" | "heap_step" | "heartbeat";
@@ -560,6 +560,7 @@ export type SystemEventMap = {
     tokenizerPeakChars: number;
     tokenizerOversizeSkips: number;
     openFdCount: number | null;
+    openFdError: string | null;
   };
   /**
    * Aggregated socket-level failure counters, one line per flush interval
