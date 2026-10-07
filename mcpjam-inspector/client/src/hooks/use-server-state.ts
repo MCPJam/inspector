@@ -353,8 +353,10 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     oauthConfig.resourceUrl = existingOAuthConfig.resourceUrl;
   }
   if (Object.keys(oauthConfig).length > 0) {
-    // Avoid persisting serialized OAuth configuration in cleartext browser storage.
-    // OAuth config persistence should be handled by dedicated OAuth flows/utilities.
+    localStorage.setItem(
+      `mcp-oauth-config-${formData.name}`,
+      serializeStoredOAuthConfig(oauthConfig),
+    );
   }
 
   if (formData.clientId) {
