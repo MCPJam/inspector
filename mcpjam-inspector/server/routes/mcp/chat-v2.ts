@@ -44,6 +44,16 @@ import {
 import { buildLiveEffectiveCapabilities } from "../../services/environments/effective-capabilities.js";
 import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
 import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  acquirePlaygroundHarnessBox,
+  describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
+  playgroundHarnessBoxReason,
+  playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+  releaseBoxWhenStreamEnds,
+} from "../../utils/harness/playground-box.js";
+import type { HarnessBox } from "../../utils/harness/harness-box.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import {
@@ -72,6 +82,7 @@ import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
+  harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -770,8 +781,18 @@ function streamDirectChatWithLiveTrace(options: {
 const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
+  // The conversation's disposable box, held for this turn when the Playground
+  // turn can't run on the member's personal computer (see playground-box.ts).
+  // Its heartbeat ends with the turn's stream; EVERY other way out of this
+  // handler (an early refusal, a throw) releases it in `finally`, so a box
+  // acquired for a turn that never started is not held for the heartbeat's
+  // 4-hour cap.
+  let playgroundHarnessBox: HarnessBox | undefined;
+  let playgroundHarnessBoxHandedOff = false;
   try {
     const body = (await readRequestJson(c)) as ChatV2Request & {
+      /** A Playground compare column: its harness gets a computer of its own. */
+      comparePane?: boolean;
       // Phase F: when the local inspector serves an owner-preview of a
       // scenario (the share-link surface running in /mcp), the client
       // passes the resolved scenario identity so persistence reads
@@ -1140,8 +1161,12 @@ chatV2.post("/", async (c) => {
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+            code: "FEATURE_NOT_SUPPORTED",
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: "model-unsupported",
           },
-          503,
+          422,
         );
       }
     }
@@ -1576,13 +1601,133 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422 when this turn's settings are the problem; 503 for an operator
+        // state (broker delivery off, no computers data plane).
+        const status = harnessUnavailableHttpStatus(availability.kind);
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+            ...(status === 422 ? { code: "FEATURE_NOT_SUPPORTED" } : {}),
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: availability.kind,
+          },
+          status,
+        );
+      }
+    }
+
+    // PLAYGROUND FALLBACK — after the availability check, so a turn refused
+    // there never boots a box. A harness that signs in with the member's own
+    // account (Cursor), and every compare column, runs on this conversation's
+    // disposable computer — never the personal one, which holds no credentials
+    // and is one machine however many columns ask. Same decision, same box
+    // holder and same refusals as the hosted route (`web/chat-v2.ts`).
+    const playgroundBoxReason = playgroundHarnessBoxReason({
+      harnessId: resolvedExecution.harness,
+      localExecution: Boolean(harnessExecutionTarget),
+      isScenarioSession,
+      comparePane: body.comparePane === true,
+    });
+    // Anonymous (no bearer) or project-less turns have no project to hold a box
+    // for and no personal computer to protect: they keep their existing path.
+    if (
+      playgroundBoxReason &&
+      resolvedExecution.harness &&
+      typeof body.projectId === "string" &&
+      requestAuthHeader
+    ) {
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        resolvedExecution.harness,
+        playgroundBoxReason,
+      );
+      if (unavailable) {
+        return c.json(
+          {
+            error: unavailable,
+            code: "SANDBOX_UNAVAILABLE",
+            reason: "not_a_data_plane",
           },
           503,
         );
       }
+      if (!body.chatSessionId) {
+        return c.json(
+          {
+            error: `This turn runs the ${resolvedExecution.harness} harness on a disposable computer, which belongs to one conversation, and this turn named none.`,
+            code: "NO_CHAT_SESSION_ID",
+          },
+          400,
+        );
+      }
+      // A client that signs in with the member's own account runs under a
+      // HIDDEN ad-hoc environment selecting the member's key — the grant the
+      // box carries (this route never targets an environment). Then the
+      // credential check the harness turn would fail, both BEFORE the box is
+      // booted, so a refused Cursor turn provisions nothing.
+      let playgroundEnvironmentId: string | undefined;
+      if (playgroundBoxReason === "credential") {
+        if (bodyHostId) {
+          const hidden = await resolvePlaygroundCredentialEnvironment({
+            bearer: requestAuthHeader,
+            projectId: body.projectId,
+            hostId: bodyHostId,
+            harnessId: resolvedExecution.harness,
+          });
+          if (!hidden.ok) {
+            return c.json(
+              {
+                error: hidden.message,
+                code: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+              },
+              hidden.status,
+            );
+          }
+          playgroundEnvironmentId = hidden.environmentId;
+        }
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: resolvedExecution.harness,
+          secretEnv: undefined,
+          bearer: requestAuthHeader,
+          projectId: body.projectId,
+          ...(playgroundEnvironmentId
+            ? { environmentId: playgroundEnvironmentId }
+            : {}),
+        });
+        if (credentialRefusal) {
+          return c.json(
+            {
+              error: credentialRefusal,
+              code: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+            },
+            409,
+          );
+        }
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: requestAuthHeader.replace(/^Bearer\s+/i, ""),
+        projectId: body.projectId,
+        chatSessionId: body.chatSessionId,
+        ...(playgroundEnvironmentId
+          ? { projectEnvironmentId: playgroundEnvironmentId }
+          : {}),
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (!acquired.ok) {
+        const described = describePlaygroundBoxRefusal(
+          resolvedExecution.harness,
+          playgroundBoxReason,
+          acquired.refusal,
+        );
+        return c.json(
+          {
+            error: described.message,
+            code: described.code ?? "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+          },
+          described.status,
+        );
+      }
+      playgroundHarnessBox = acquired.box;
     }
 
     // Built-in tools (e.g. web_search) bill MCPJam credits via a Convex
@@ -2320,7 +2465,7 @@ chatV2.post("/", async (c) => {
       const inboundAbortSignalMcp = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
 
-      return handleMCPJamFreeChatModel({
+      const turnResponse = await handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         modelId: String(modelDefinition.id),
@@ -2397,6 +2542,12 @@ chatV2.post("/", async (c) => {
         // capability, all re-verified by the availability gate before anything
         // spawns.
         ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
+        // The conversation's disposable box. Never alongside a local target.
+        ...(resolvedExecution.harness &&
+        playgroundHarnessBox &&
+        !harnessExecutionTarget
+          ? { harnessSandboxBinding: playgroundHarnessBox.binding }
+          : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).
@@ -2469,6 +2620,8 @@ chatV2.post("/", async (c) => {
             }
           : undefined,
       });
+      playgroundHarnessBoxHandedOff = true;
+      return releaseBoxWhenStreamEnds(turnResponse, playgroundHarnessBox);
     }
 
     // Org BYOK: when Convex is reachable, the request carries a projectId,
@@ -2859,6 +3012,7 @@ chatV2.post("/", async (c) => {
         : undefined,
     });
   } catch (error) {
+    // (The box, if one was acquired, is released in `finally` below.)
     // This catch wraps MCPJam's OWN request handling — config resolution,
     // backend dispatch, stream setup — not a hop into the user's MCP server,
     // so an unrecognized throw here is ours by default and the boundary
@@ -2879,6 +3033,8 @@ chatV2.post("/", async (c) => {
     return c.json({ error: "Unexpected error", origin }, 500, {
       "x-mcpjam-error-origin": origin,
     });
+  } finally {
+    if (!playgroundHarnessBoxHandedOff) await playgroundHarnessBox?.release();
   }
 });
 

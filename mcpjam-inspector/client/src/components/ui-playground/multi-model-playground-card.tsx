@@ -448,6 +448,8 @@ export function MultiModelPlaygroundCard({
     // its Apps' context, never another lane's or the single chat's.
     pluginWorkspace: laneWorkspaceForSession,
     pluginContextReferences: currentLaneContext,
+    // A comparison column never shares the member's one personal computer.
+    comparePane: true,
     selectedServers,
     usePageTools,
     hostedContext,
