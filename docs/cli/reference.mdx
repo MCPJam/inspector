@@ -2552,6 +2552,86 @@ Cases the model could not finish are not created. They come back under `skipped`
 
 ---
 
+## `cloud goals` commands
+
+Manage goals and their runs in your hosted MCPJam projects. Goals are the Swarms product: a goal is one persona pursuing a task against one or more environments; a goal run is what executing it produces. All `goals` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`. `journeys` is a deprecated alias for `goals`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud goals list`
+
+List the goals in a project.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud goals runs`
+
+List a goal's runs, newest first.
+
+| Flag | Description |
+|------|-------------|
+| `--goal-id <id>` | Goal ID (from `goals list`) |
+| `--journey <id>` | Deprecated alias for `--goal-id` |
+| `--project <id-or-name>` | Project name or ID |
+| `--cursor <cursor>` | Page cursor from a previous response |
+| `--limit <n>` | Items per page (1–200) |
+
+### `cloud goals status`
+
+Show one run's status, target rollups, and per-session attempts. Poll this after launching; `status` leaves `running` once every attempt has settled. A run someone stopped reports `failed` with `canceled: true`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Goal run ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud goals run`
+
+Launch a goal. Returns as soon as the run exists — poll `goals status` for progress.
+
+**Always send `--idempotency-key`.** A launch spends model credits, so a retry after a dropped response must not run the goal twice. Replaying a key returns the original run.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--goal-id <id>` | Yes | Goal ID to launch |
+| `--journey <id>` | No | Deprecated alias for `--goal-id` |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--idempotency-key <key>` | No | Retry key — replaying returns the original run instead of launching again |
+| `--swarm-run <id>` | No | Opaque id linking the sibling runs of one co-launched batch |
+| `--wave <id>` | No | Deprecated alias for `--swarm-run` |
+| `--environment <id>` | No | Fan out across this project environment instead of the goal's authored targets (repeatable) |
+| `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's allowance instead of your organization's credits). If the split differs the launch is refused with nothing created. Must be a whole number, 0 or more. |
+
+### `cloud goals cancel`
+
+Stop a running goal run. Idempotent — cancelling an already-cancelled run succeeds; a run that finished on its own conflicts instead.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Goal run ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud goals sessions`
+
+List the chat sessions a run produced, with readiness and goal scores.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Goal run ID |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--cursor <cursor>` | No | Page cursor from a previous response |
+| `--limit <n>` | No | Items per page (1–200) |
+
+---
+
 ## `mcp` command
 
 ### `mcp`
