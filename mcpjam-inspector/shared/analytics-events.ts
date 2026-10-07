@@ -471,7 +471,7 @@ export const ANALYTICS_EVENTS = {
   // How a connect, reconnect or OAuth completion ended — one per attempt, from
   // `lib/connect-outcome-telemetry.ts`. Props: outcome (success | failure |
   // timeout | cancelled), flow (connect | reconnect | background), hosted,
-  // transport, auth?, error_slug?, http_status?, duration_ms?. Never a server
+  // transport, error_slug?, http_status?, duration_ms?. Never a server
   // name, URL or error text.
   server_connect_outcome: { source: "client" },
   server_detail_modal_closed: { source: "client" },

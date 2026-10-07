@@ -87,14 +87,27 @@ export function createConnectOutcomeTracker(now: () => number = Date.now) {
           transport: isSuccess
             ? transportOf(action.config)
             : (attempt?.transport ?? null),
-          ...(isSuccess && action.useOAuth !== undefined
-            ? { auth: action.useOAuth ? "oauth" : "other" }
-            : {}),
           ...(!isSuccess && action.normalized?.slug
             ? { error_slug: action.normalized.slug }
             : {}),
           ...(typeof rawCode === "number" ? { http_status: rawCode } : {}),
           ...(attempt ? { duration_ms: now() - attempt.startedAt } : {}),
+        });
+        return;
+      }
+      case "DISCONNECT": {
+        // The user disconnected mid-attempt: the attempt goes silent (its op
+        // token is bumped), so this is how it ended. Not CONNECT_CANCELLED —
+        // a queue preemption fires that too and then re-runs the check.
+        const attempt = pending.get(action.name);
+        if (!attempt) return;
+        pending.delete(action.name);
+        track("server_connect_outcome", {
+          outcome: "cancelled",
+          flow: attempt.flow,
+          hosted: HOSTED_MODE,
+          transport: attempt.transport,
+          duration_ms: now() - attempt.startedAt,
         });
         return;
       }

@@ -41,7 +41,6 @@ describe("connect outcome telemetry", () => {
       flow: "connect",
       hosted: true,
       transport: "http",
-      auth: "oauth",
       duration_ms: 250,
     });
   });
@@ -91,6 +90,23 @@ describe("connect outcome telemetry", () => {
     const { dispatch } = setup();
     dispatch({ type: "CONNECT_FAILURE", name: "srv", error });
     expect(lastProps()).toMatchObject({ outcome: "cancelled" });
+  });
+
+  it("records a disconnect during an attempt as cancelled, and ignores one without", () => {
+    const { dispatch, advance } = setup();
+    dispatch({ type: "DISCONNECT", name: "srv" });
+    expect(trackMock).not.toHaveBeenCalled();
+    dispatch({ type: "RECONNECT_REQUEST", name: "srv", config });
+    advance(40);
+    dispatch({ type: "DISCONNECT", name: "srv" });
+    expect(trackMock).toHaveBeenCalledTimes(1);
+    expect(lastProps()).toEqual({
+      outcome: "cancelled",
+      flow: "reconnect",
+      hosted: true,
+      transport: "http",
+      duration_ms: 40,
+    });
   });
 
   it("emits nothing until an attempt ends, and never a name, URL or error text", () => {
