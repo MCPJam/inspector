@@ -15,8 +15,11 @@ Every option below opens the MCPJam Inspector. Pick one based on where your MCP 
   <Card title="Terminal" icon="terminal" href="/installation#terminal">
     `npx @mcpjam/inspector@latest`. Requires Node.js. HTTP/S and local STDIO.
   </Card>
-  <Card title="Desktop" icon="monitor" href="/installation#desktop-app">
-    macOS (`.dmg`) or Windows (`.exe`). No Node.js. HTTP/S and local STDIO.
+  <Card title="macOS" icon="laptop" href="/installation#desktop-app">
+    Desktop app (`.dmg`). No Node.js. HTTP/S and local STDIO.
+  </Card>
+  <Card title="Windows" icon="monitor" href="/installation#desktop-app">
+    Desktop app (`.exe` installer). No Node.js. HTTP/S and local STDIO.
   </Card>
   <Card title="Docker" icon="container" href="/installation#docker">
     Built from source. HTTP/S, plus STDIO servers that run inside the container.
@@ -24,7 +27,7 @@ Every option below opens the MCPJam Inspector. Pick one based on where your MCP 
 </CardGroup>
 
 - **Your server has a public HTTPS URL**: any option works. The web app needs no install.
-- **Your server runs on `localhost` or over STDIO**: use Terminal or Desktop. The web app can't reach it.
+- **Your server runs on `localhost` or over STDIO**: use Terminal or the macOS or Windows desktop app. The web app can't reach it.
 - **You want Inspector isolated in a container**: use Docker. Reach servers on your machine at `http://host.docker.internal:PORT`, and note that STDIO commands run inside the container, not on your machine.
 
 See [Installation](/installation#which-one-do-i-need) for the full comparison.
