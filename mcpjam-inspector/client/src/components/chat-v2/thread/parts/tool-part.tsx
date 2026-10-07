@@ -60,6 +60,7 @@ import {
 } from "@/lib/client-config-v2";
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
+import { HarnessAgentActivity } from "../harness-agent-activity";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
@@ -1071,6 +1072,15 @@ export function ToolPart({
       </div>
 
       <ToolResourceAttachments result={rawResultData} serverId={serverId} />
+      <HarnessAgentActivity
+        toolCallId={toolCallId}
+        toolState={state}
+        description={
+          typeof inputData?.description === "string"
+            ? inputData.description
+            : undefined
+        }
+      />
       {renderInlineImagePreview()}
 
       {isExpanded && (
