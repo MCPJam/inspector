@@ -50,6 +50,14 @@ concurrency:
 env:
   NODE_VERSION: "24.14.0"
 
+# Every Ubuntu job below runs on `vars.RELEASE_RUNNER` when it is set, else
+# `ubuntu-latest`. On the shared runners a release's short jobs (publish,
+# deploy, finalize) each queued behind pull-request CI — about 37 of release
+# 3.14.0's 91 minutes was waiting for a runner, not running. Point the
+# variable at a larger-runner label (Settings → Actions → Runners → New
+# GitHub-hosted runner; its own concurrency, not shared with PR CI) and the
+# release stops waiting. Unset, nothing changes.
+
 permissions:
   contents: write
   actions: read
@@ -67,7 +75,7 @@ jobs:
     # run ends green without publishing, and the newer commit's own checks
     # trigger the release again.
     if: inputs.trigger_sha == '' || inputs.trigger_sha == github.sha
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     outputs:
       publish_any: ${{ steps.plan.outputs.publish_any }}
       publish_evaluators: ${{ steps.plan.outputs.publish_evaluators }}
@@ -375,7 +383,7 @@ jobs:
       fromJSON(needs.preflight.outputs.publish_inspector) &&
       needs.local-harness-evidence.result == 'success' &&
       (needs.local-harness-evidence-permitted.result == 'success' || needs.local-harness-evidence-permitted.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       id-token: write
@@ -466,7 +474,7 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.evals_action_changed == 'true' &&
       needs.evals-action-smoke.result != 'failure'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     concurrency:
       group: evals-action-release
@@ -518,43 +526,6 @@ jobs:
           git push --force origin refs/tags/evals-v1
           echo "Published $VERSION_TAG and moved evals-v1 to $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
 
-  artifact-gate:
-    needs:
-      - preflight
-      - build-mac
-      - build-windows
-      - local-harness-contract
-    # Not when preflight stood down (see its `if`): there is nothing to gate,
-    # and the check below would fail a run that is meant to end green.
-    if: always() && needs.preflight.result != 'skipped'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require desktop artifact jobs when inspector is included
-        run: |
-          if [ "${{ needs.preflight.result }}" != "success" ]; then
-            echo "Preflight failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.preflight.outputs.build_inspector_artifacts }}" != "true" ]; then
-            exit 0
-          fi
-
-          if [ "${{ needs.build-mac.result }}" != "success" ]; then
-            echo "Mac artifact build failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.build-windows.result }}" != "success" ]; then
-            echo "Windows artifact build failed." >&2
-            exit 1
-          fi
-
-          if [ "${{ needs.local-harness-contract.result }}" != "success" ]; then
-            echo "The local harness runtime contract (conformance evidence for this layer × every selected pack) failed." >&2
-            exit 1
-          fi
-
   # Building and smoke-testing the npm tarballs needs nothing from the desktop
   # builds or the backend deploy, so it runs alongside them instead of behind
   # them. Only the `changeset publish` call itself has to wait for the backend
@@ -563,7 +534,7 @@ jobs:
   build-packages:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.publish_any) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -692,7 +663,9 @@ jobs:
   publish-packages:
     needs:
       - preflight
-      - artifact-gate
+      - build-mac
+      - build-windows
+      - local-harness-contract
       - build-packages
       - deploy-backend-prod
       - ask-mcpjam-smoke-staging
@@ -706,10 +679,23 @@ jobs:
     # normal failed-dependency propagation, so every other need is checked
     # explicitly below. Dropping the build-packages clause would let a failed
     # package build publish.
+    #
+    # The desktop and local-harness clause is what a separate `artifact-gate`
+    # job used to check. A 3-second job of its own cost a runner-queue wait
+    # on the critical path (12.8 min in release 3.14.0), so the same rule
+    # lives here: a release that ships the Inspector publishes nothing unless
+    # both desktop builds and the local harness runtime contract succeeded.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.artifact-gate.result == 'success' &&
+      (
+        needs.preflight.outputs.build_inspector_artifacts != 'true' ||
+        (
+          needs.build-mac.result == 'success' &&
+          needs.build-windows.result == 'success' &&
+          needs.local-harness-contract.result == 'success'
+        )
+      ) &&
       needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       (
@@ -721,7 +707,7 @@ jobs:
         !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -826,7 +812,7 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       fromJSON(inputs.deploy_backend_prod)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     environment: backend-production
     steps:
       - name: Dispatch and wait for backend production deployment
@@ -961,7 +947,7 @@ jobs:
       always() &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

@@ -22,6 +22,32 @@ describe("the layer digest helper", () => {
   });
 });
 
+describe("release critical path", () => {
+  it("gates publishing on the desktop builds and the local runtime contract without a job of its own", () => {
+    // A separate 3-second `artifact-gate` job queued for a runner on the
+    // critical path (12.8 min in 3.14.0); its rule lives in publish's `if`.
+    const { jobs } = workflow("release");
+    expect(jobs["artifact-gate"]).toBeUndefined();
+    const publish = jobs["publish-packages"];
+    expect(publish.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    const gate = String(publish.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' ) )",
+    );
+    // Nothing else may still wait on the removed job.
+    expect(JSON.stringify(jobs)).not.toContain("artifact-gate");
+  });
+
+  it("runs every Ubuntu release job on RELEASE_RUNNER when it is set", () => {
+    const { jobs } = workflow("release");
+    const ubuntu = Object.entries(jobs).filter(([, job]: [string, any]) => typeof job["runs-on"] === "string");
+    expect(ubuntu.length).toBeGreaterThan(0);
+    for (const [name, job] of ubuntu as Array<[string, any]>) {
+      expect(job["runs-on"], name).toBe("${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}");
+    }
+  });
+});
+
 describe("packs are part of starting a release", () => {
   it("brings every harness's pack up to date before the version PR opens", () => {
     const { jobs } = workflow("prepare-release");
@@ -222,9 +248,10 @@ describe("pack release boundaries", () => {
     expect(runs).toMatch(/check-local-harness-release\.mjs[\s\S]*--evidence[\s\S]*--contract/);
     expect(contract.steps.some((step: any) => String(step.uses).startsWith("actions/attest-build-provenance"))).toBe(true);
     expect(contract.permissions).toMatchObject({ "id-token": "write", attestations: "write" });
-    // No contract, no release: the artifact gate requires it, and the
-    // published release carries it.
-    expect(jobs["artifact-gate"].needs).toContain("local-harness-contract");
+    // No contract, no release: publishing requires it, and the published
+    // release carries it.
+    expect(jobs["publish-packages"].needs).toContain("local-harness-contract");
+    expect(jobs["publish-packages"].if).toMatch(/needs\.local-harness-contract\.result == 'success'/);
     const finalizeFiles = jobs.finalize.steps
       .filter((step: any) => step.with?.files)
       .map((step: any) => step.with.files)
