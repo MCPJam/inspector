@@ -1,3 +1,4 @@
+import { ToolResourceAttachments } from "@/components/host-workspace/file-actions";
 import {
   useEffect,
   useMemo,
@@ -1069,6 +1070,7 @@ export function ToolPart({
         </span>
       </div>
 
+      <ToolResourceAttachments result={rawResultData} serverId={serverId} />
       {renderInlineImagePreview()}
 
       {isExpanded && (

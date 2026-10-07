@@ -1,0 +1,15 @@
+{
+  "schema": "mcpjam.local-harness-pack-equivalence/1",
+  "harnessId": "codex",
+  "fingerprint": "sha256:a58114c5277b5c169e46d8ee61671de8fe5d622c03a9feca904909fd5a4b096e",
+  "packVersion": "1.0.2",
+  "digests": {
+    "darwin-arm64": "sha256:656894bb4e3bc0c0d7a2b078f8b38face49ee1bc495404d766d17b6c634d5087",
+    "darwin-x64": "sha256:02ece384d2ca957f902676c98226e6410b82ba0944678ef2de7135b8f4d61b92",
+    "linux-arm64": "sha256:488d021c89ba0228d4a9bf7842953cb0525c0a0891471fcd252a887b7dc97131",
+    "linux-x64": "sha256:002899b571a231bcbbe692ed8f24e4e2f7338cc69c5e9c683c580264aeac0ebd",
+    "win32-x64": "sha256:13a0fd3c3b0536c4e27cc35342707b65784d02c32d20aed530fa71af014daedf"
+  },
+  "commit": "e6cf005d1c94834a88f5f8e37eb70484aad41f2c",
+  "run": "https://github.com/MCPJam/inspector/actions/runs/37510041014"
+}

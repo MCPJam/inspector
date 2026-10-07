@@ -36,8 +36,13 @@ export function useWidgetHost(): WidgetHost {
   if (host === null) {
     throw new Error(
       "useWidgetHost must be used within a <WidgetHostProvider>. The inspector " +
-        "supplies the concrete host via its use-widget-host adapter.",
+        "supplies the concrete host via its use-widget-host adapter."
     );
   }
   return host;
+}
+
+/** Registration may retain a host before the permanent surface mounts. */
+export function useOptionalWidgetHost(): WidgetHost | null {
+  return useContext(WidgetHostContext);
 }

@@ -1,9 +1,77 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { computePackInputs } from "../../../../../scripts/check-local-harness-inputs.mjs";
 
 const workflowsDir = new URL("../../../../../../.github/workflows/", import.meta.url);
 const workflow = (name: string) => parse(readFileSync(new URL(`${name}.yml`, workflowsDir), "utf8"));
+
+describe("the layer digest helper", () => {
+  it("generates the Codex bridge bundle before anything that imports it", () => {
+    // release.yml's contract job runs only `npm ci` before computing layer
+    // digests; release 3.14.0 failed there with ERR_MODULE_NOT_FOUND after
+    // every platform had passed. The helper must not rely on its caller.
+    const source = readFileSync(new URL("../../../../../scripts/inspector-layer-digests.mjs", import.meta.url), "utf8");
+    const codex = source.indexOf("await bundleCodexAppServerBridge()");
+    const layer = source.indexOf("await bundleLocalHarnessLayer()");
+    const read = source.indexOf("inspector-layer-files.ts");
+    expect(codex).toBeGreaterThan(-1);
+    expect(codex).toBeLessThan(layer);
+    expect(layer).toBeLessThan(read);
+  });
+});
+
+describe("release critical path", () => {
+  it("publishes npm and the webapp without waiting for the desktop builds", () => {
+    // The desktop builds are mostly Apple's notary queue (10–25 min); they
+    // gate only the GitHub release. The local runtime contract still gates
+    // npm, which offers local execution too.
+    const { jobs } = workflow("release");
+    expect(jobs["artifact-gate"]).toBeUndefined();
+    const publish = jobs["publish-packages"];
+    expect(publish.needs).not.toContain("build-mac");
+    expect(publish.needs).not.toContain("build-windows");
+    expect(publish.needs).toContain("local-harness-contract");
+    const gate = String(publish.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.preflight.outputs.publish_inspector != 'true' || needs.local-harness-contract.result == 'success' )",
+    );
+    expect(gate).not.toContain("build-mac");
+  });
+
+  it("creates the immutable GitHub release only once every desktop asset exists, desktop-only included", () => {
+    const { jobs } = workflow("release");
+    const finalize = jobs.finalize;
+    expect(finalize.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    const gate = String(finalize.if).replace(/\s+/g, " ");
+    expect(gate).toContain(
+      "( needs.publish-packages.result == 'success' || needs.preflight.outputs.desktop_only == 'true' )",
+    );
+    expect(gate).toContain(
+      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' ) )",
+    );
+    // The plan comes from the tested script, and desktop-only is an output.
+    const preflight = jobs.preflight;
+    expect(preflight.outputs.desktop_only).toBe("${{ steps.plan.outputs.desktop_only }}");
+    const plan = preflight.steps.find((step: any) => step.id === "plan");
+    expect(plan.run).toContain("node .github/scripts/release-plan.mjs");
+    // A desktop-only run still proves the local runtime its desktop app offers.
+    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract"]) {
+      expect(String(jobs[job].if), job).toContain("build_inspector_artifacts");
+      expect(String(jobs[job].if), job).not.toContain("publish_inspector");
+    }
+  });
+
+  it("runs every Ubuntu release job on RELEASE_RUNNER when it is set", () => {
+    const { jobs } = workflow("release");
+    const ubuntu = Object.entries(jobs).filter(([, job]: [string, any]) => typeof job["runs-on"] === "string");
+    expect(ubuntu.length).toBeGreaterThan(0);
+    for (const [name, job] of ubuntu as Array<[string, any]>) {
+      expect(job["runs-on"], name).toBe("${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}");
+    }
+  });
+});
 
 describe("packs are part of starting a release", () => {
   it("brings every harness's pack up to date before the version PR opens", () => {
@@ -33,16 +101,63 @@ describe("packs are part of starting a release", () => {
     expect(steps[open].run).toMatch(/git add mcpjam-inspector\/scripts\/local-harness-pack-equivalence/);
   });
 
-  it("is the only thing that runs the pack pipeline: nothing publishes a pack on a push", () => {
+  it("runs the pack pipeline from a release and from the background prebuild only, one per harness at a time", () => {
     const callers = readdirSync(workflowsDir)
       .filter((name) => /\.ya?ml$/.test(name))
       .filter((name) =>
         Object.values(parse(readFileSync(new URL(name, workflowsDir), "utf8"))?.jobs ?? {}).some(
           (job: any) => job?.uses === "./.github/workflows/local-harness-pack-pipeline.yml",
         ),
-      );
-    expect(callers).toEqual(["prepare-release.yml"]);
+      )
+      .sort();
+    expect(callers).toEqual(["local-harness-pack-prebuild.yml", "prepare-release.yml"]);
     expect(Object.keys(workflow("prepare-release").on)).toEqual(["workflow_dispatch"]);
+    // One concurrency group per harness across both callers, never cancelled:
+    // the two never build the same pack at once.
+    const group = { group: "local-harness-pack-${{ matrix.harness }}", "cancel-in-progress": false };
+    expect(workflow("prepare-release").jobs.packs.concurrency).toEqual(group);
+    expect(workflow("local-harness-pack-prebuild").jobs.prebuild.concurrency).toEqual(group);
+  });
+
+  it("prebuilds in the background without ever reaching main or users", () => {
+    const prebuild = workflow("local-harness-pack-prebuild");
+    expect(prebuild.on.push.branches).toEqual(["main"]);
+    // It pins nothing: no pin artifacts collected, no PR, no push token.
+    const text = JSON.stringify(prebuild);
+    expect(text).not.toContain("local-harness-pin-");
+    expect(text).not.toContain("RELEASE_PUSH_TOKEN");
+    expect(text).not.toContain("apply-pins");
+    // It stands down while a release is being prepared, and while signing
+    // needs a person (a build waiting for approval would hold the harness's
+    // group, and the next release would queue behind it).
+    expect(prebuild.jobs.prebuild.if).toBe("needs.harnesses.outputs.release_in_progress == 'false'");
+    const guard = JSON.stringify(prebuild.jobs.harnesses);
+    expect(guard).toContain("prepare-release.yml");
+    expect(guard).toContain("required_reviewers");
+  });
+
+  it("prebuilds on a push that changes ANY declared pack input", async () => {
+    // A missed input still gets built — by the nightly run, or by the release
+    // itself — but later than it should. Codex's bootstrap lockfile was such a
+    // miss once.
+    const globToRegExp = (glob: string) =>
+      new RegExp(
+        `^${glob
+          .split("**")
+          .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"))
+          .join(".*")}$`,
+      );
+    const filters = (workflow("local-harness-pack-prebuild").on.push.paths as string[]).map(globToRegExp);
+    const { harnesses } = await computePackInputs();
+    const declared = new Set<string>(["package-lock.json"]); // pack-dependency-closure
+    for (const { inputs } of Object.values(harnesses)) {
+      for (const key of Object.keys(inputs)) {
+        // `recipe/*` are bytes emitted FROM declared sources, listed as well.
+        if (key === "pack-dependency-closure" || key.startsWith("recipe/")) continue;
+        declared.add(key);
+      }
+    }
+    expect([...declared].filter((path) => !filters.some((filter) => filter.test(path)))).toEqual([]);
   });
 
   it("never lets an approval of an older version PR cover new pins", () => {
@@ -158,9 +273,10 @@ describe("pack release boundaries", () => {
     expect(runs).toMatch(/check-local-harness-release\.mjs[\s\S]*--evidence[\s\S]*--contract/);
     expect(contract.steps.some((step: any) => String(step.uses).startsWith("actions/attest-build-provenance"))).toBe(true);
     expect(contract.permissions).toMatchObject({ "id-token": "write", attestations: "write" });
-    // No contract, no release: the artifact gate requires it, and the
-    // published release carries it.
-    expect(jobs["artifact-gate"].needs).toContain("local-harness-contract");
+    // No contract, no release: publishing requires it, and the published
+    // release carries it.
+    expect(jobs["publish-packages"].needs).toContain("local-harness-contract");
+    expect(jobs["publish-packages"].if).toMatch(/needs\.local-harness-contract\.result == 'success'/);
     const finalizeFiles = jobs.finalize.steps
       .filter((step: any) => step.with?.files)
       .map((step: any) => step.with.files)

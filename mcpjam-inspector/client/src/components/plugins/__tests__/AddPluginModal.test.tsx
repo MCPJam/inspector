@@ -13,6 +13,8 @@ import type { PluginImportPreview } from "@/lib/plugins/plugin-api-types";
 const h = vi.hoisted(() => ({
   row: { value: undefined as unknown },
   setupStatus: { value: undefined as unknown },
+  version: { value: undefined as unknown },
+  navigateApp: vi.fn(),
   startImport: vi.fn(),
   inspectImport: vi.fn(),
   commitImport: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock("@/hooks/usePluginImportApi", () => ({
     return h.row.value;
   },
   usePluginSetupStatus: () => h.setupStatus.value,
+  usePluginVersion: (id?: string | null) => (id ? h.version.value : undefined),
   usePluginImportActions: () => ({
     startImport: h.startImport,
     inspectImport: h.inspectImport,
@@ -37,6 +40,10 @@ vi.mock("@/hooks/usePluginImportApi", () => ({
   }),
 }));
 vi.mock("@/lib/analytics", () => ({ track: h.track }));
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  navigateApp: h.navigateApp,
+}));
 vi.mock("@/lib/plugins/folder-bundle", () => ({
   parsePluginBundleFromZip: h.parseZip,
   folderSelectionToPluginZip: vi.fn(),
@@ -44,6 +51,7 @@ vi.mock("@/lib/plugins/folder-bundle", () => ({
 }));
 
 import { AddPluginModal } from "../AddPluginModal";
+import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
 
 const preview: PluginImportPreview = {
   identity: { name: "demo", displayName: "Demo", version: "1.0.0" },
@@ -122,6 +130,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.row.value = undefined;
   h.setupStatus.value = undefined;
+  h.version.value = undefined;
   h.usedImportIds.length = 0;
   h.readBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
   h.parseZip.mockResolvedValue({ bundleHash: "aa11bb22cc33dd44", warnings: [] });
@@ -447,5 +456,80 @@ describe("AddPluginModal — retry repeats the chosen install mode", () => {
     expect(h.commitImport).toHaveBeenLastCalledWith("imp_1", {
       setActive: false,
     });
+  });
+});
+
+describe("AddPluginModal — onboarding after import (D5)", () => {
+  const installedRow = () =>
+    importRow({ status: "completed", pluginId: "pl_1", pluginVersionId: "pv_1" });
+  const versionWithOnboarding = {
+    pluginVersionId: "pv_1",
+    servers: [
+      { componentId: "c1", componentKey: "server:api", materializedServerId: "srv_1" },
+    ],
+    skills: [],
+    onboarding: { componentId: "s1", modelRef: "demo/onboarding" },
+  };
+
+  beforeEach(() => usePluginOnboardingIntentStore.getState().clear());
+
+  it("offers Maybe later / Set up for a plugin with an onboarding skill", async () => {
+    h.row.value = installedRow();
+    h.version.value = versionWithOnboarding;
+    const onClose = vi.fn();
+    render(<AddPluginModal isOpen onClose={onClose} projectId="p_1" />);
+    expect(screen.getByTestId("add-plugin-onboarding-prompt").textContent).toMatch(
+      /Demo is ready for use/,
+    );
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Maybe later" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Set up Demo" }));
+    const intent = usePluginOnboardingIntentStore.getState().intent;
+    expect(intent).toMatchObject({
+      projectId: "p_1",
+      serverIds: ["srv_1"],
+      pluginName: "Demo",
+      conversation: "new",
+    });
+    expect(onClose).toHaveBeenCalled();
+    // A Connect import runs setup in a new chat in the Playground.
+    expect(h.navigateApp).toHaveBeenCalledWith("/playground");
+  });
+
+  it("runs setup in the current chat when the import started inside one", () => {
+    h.row.value = installedRow();
+    h.version.value = versionWithOnboarding;
+    render(
+      <AddPluginModal
+        isOpen
+        onClose={vi.fn()}
+        projectId="p_1"
+        onboardingConversation="current"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Set up Demo" }));
+    expect(usePluginOnboardingIntentStore.getState().intent?.conversation).toBe(
+      "current",
+    );
+    expect(h.navigateApp).not.toHaveBeenCalled();
+  });
+
+  it("Maybe later closes without requesting onboarding", () => {
+    h.row.value = installedRow();
+    h.version.value = versionWithOnboarding;
+    const onClose = vi.fn();
+    render(<AddPluginModal isOpen onClose={onClose} projectId="p_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Maybe later" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+  });
+
+  it("keeps Done for plugins without an onboarding skill", () => {
+    h.row.value = installedRow();
+    h.version.value = { ...versionWithOnboarding, onboarding: undefined };
+    render(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />);
+    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+    expect(screen.queryByTestId("add-plugin-onboarding-prompt")).toBeNull();
   });
 });
