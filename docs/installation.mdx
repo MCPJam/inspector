@@ -114,6 +114,10 @@ A restart generates a new link. To keep one across restarts, set `MCPJAM_SESSION
 Keep access links private: they grant control of the local Inspector and its connected tools. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and `MCPJAM_LOCAL_BROWSER_ENABLED=false` if you do not need the local shell and browser tools.
 </Warning>
 
+<Info>
+**Plugin App file access:** Plugin Apps can open and save files on this machine only inside folders you explicitly allow. Set `MCPJAM_PLUGIN_LOCAL_FILE_ROOTS` to a JSON array of objects, each with `actorId`, `projectId`, `serverId`, and `root` (an absolute folder path), to grant access. When this variable is unset, any attempt by a plugin App to open a local file is refused and logged in the Logs panel, and files open read-only.
+</Info>
+
 ### Docker with Arguments
 
 You can pass command-line arguments to the Docker container:
