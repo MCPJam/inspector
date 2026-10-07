@@ -307,8 +307,8 @@ function PlanPriceDisplay({ label }: { label: string }) {
   const suffix = label.endsWith(PER_SEAT_MO_SUFFIX)
     ? PER_SEAT_MO_SUFFIX
     : label.endsWith(PER_MO_SUFFIX)
-    ? PER_MO_SUFFIX
-    : null;
+      ? PER_MO_SUFFIX
+      : null;
   const amount = suffix ? label.slice(0, -suffix.length) : label;
 
   return (
@@ -1237,10 +1237,15 @@ export function OrganizationBillingSection({
       billingConfigured &&
       billingStatus?.hasCustomer &&
       currentPlan !== "free" ? (
-        <TaxIdStatusSection
+        <ErrorBoundary
           key={organizationId}
-          organizationId={organizationId}
-        />
+          name="org_billing_tax_ids"
+          fallback={({ error, reset }) => (
+            <ErrorCard error={error} onRetry={reset} />
+          )}
+        >
+          <TaxIdStatusSection organizationId={organizationId} />
+        </ErrorBoundary>
       ) : null}
 
       {showCredits ? (
@@ -1356,12 +1361,12 @@ export function OrganizationBillingSection({
                               const priceLabel = isEnterprisePlan
                                 ? "Custom"
                                 : plan === "free"
-                                ? "$0"
-                                : formatCatalogPrice(
-                                    entry,
-                                    billingInterval,
-                                    planCatalog.currency,
-                                  );
+                                  ? "$0"
+                                  : formatCatalogPrice(
+                                      entry,
+                                      billingInterval,
+                                      planCatalog.currency,
+                                    );
                               const priceSubtext = isEnterprisePlan
                                 ? formatPerSeatCadence(
                                     plan,
@@ -1369,12 +1374,12 @@ export function OrganizationBillingSection({
                                     billingInterval,
                                   )
                                 : plan === "free"
-                                ? "No credit card required"
-                                : formatPerSeatCadence(
-                                    plan,
-                                    entry,
-                                    billingInterval,
-                                  );
+                                  ? "No credit card required"
+                                  : formatPerSeatCadence(
+                                      plan,
+                                      entry,
+                                      billingInterval,
+                                    );
                               const cancellationDateMs =
                                 billingStatus?.stripeCancelAt ??
                                 billingStatus?.stripeCurrentPeriodEnd ??

@@ -449,6 +449,34 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
+  it("contains a tax status render failure and lets the owner retry", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockListTaxIds
+      .mockResolvedValueOnce([
+        { id: "tax-bad", value: "DE123456789", status: "pending" },
+      ])
+      .mockResolvedValue([]);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          hasCustomer: true,
+        }),
+      }),
+    );
+    try {
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      const retry = await screen.findByRole("button", {
+        name: /try again|retry/i,
+      });
+      expect(screen.getByTestId("current-plan-panel")).toBeInTheDocument();
+      fireEvent.click(retry);
+      expect(await screen.findByText("No tax IDs added.")).toBeInTheDocument();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it.each([
     { plan: "free" as const, hasCustomer: false, visible: false },
     { plan: "free" as const, hasCustomer: true, visible: false },
