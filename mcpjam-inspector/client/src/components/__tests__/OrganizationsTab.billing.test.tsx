@@ -311,12 +311,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: (...args: unknown[]) => mockUseAuth(...args),
 }));
 
-const mockListTaxIds = vi.fn().mockResolvedValue([]);
-
 vi.mock("convex/react", () => ({
-  useAction: () => mockListTaxIds,
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: () => undefined,
+  // Credit balance still reaches this hook through the rendered billing tree.
   useQueries: () => ({}),
 }));
 
@@ -450,7 +448,7 @@ describe("OrganizationsTab billing", () => {
   });
 
   it.each(["plans", "billing"] as const)(
-    "%s keeps billing management without a tax verification card or requests",
+    "%s keeps billing management without a tax verification card",
     (section) => {
       mockUseOrganizationBilling.mockReturnValue(
         createBillingHookState({
@@ -464,7 +462,6 @@ describe("OrganizationsTab billing", () => {
       expect(
         screen.queryByRole("region", { name: "Tax ID verification" }),
       ).toBeNull();
-      expect(mockListTaxIds).not.toHaveBeenCalled();
       expect(
         screen.getByRole("button", { name: "Manage billing" }),
       ).toBeInTheDocument();

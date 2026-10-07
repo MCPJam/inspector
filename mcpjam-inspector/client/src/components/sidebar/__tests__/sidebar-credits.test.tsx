@@ -123,6 +123,25 @@ describe("SidebarCredits", () => {
     vi.useRealTimers();
   });
 
+  it.each([75, 100, 5])(
+    "shows credit balance at %s percent with a text warning only when low",
+    (percent) => {
+      balanceState = {
+        ...balanceState!,
+        freeDailyCreditsRemaining: percent * 3,
+      };
+      renderCredits();
+      const meter = screen.getByRole("progressbar", {
+        name: "Free daily credits",
+      });
+      expect(meter).toHaveAttribute("aria-valuetext", `${percent * 3} / 300`);
+      expect(meter).not.toHaveClass(
+        "[&_[data-slot=progress-indicator]]:bg-foreground/60",
+      );
+      expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
+    },
+  );
+
   it("keeps the current plan visible in the collapsed hover trigger", () => {
     renderCredits();
     expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent("Free");

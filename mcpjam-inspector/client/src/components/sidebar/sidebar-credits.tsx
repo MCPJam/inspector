@@ -178,14 +178,15 @@ export function SidebarCredits({
                         ? (monthlyRemaining / monthlyTotal) * 100
                         : 0
                       : balance.freeDailyCreditsTotal > 0
-                      ? (balance.freeDailyCreditsRemaining /
-                          balance.freeDailyCreditsTotal) *
-                        100
-                      : 0
+                        ? (balance.freeDailyCreditsRemaining /
+                            balance.freeDailyCreditsTotal) *
+                          100
+                        : 0
                     : 0
                 }
                 isLoading={isLoading}
                 showCoin
+                isCreditMeter
                 testId={
                   showMonthly ? "sidebar-usage-monthly" : "sidebar-usage-daily"
                 }
@@ -242,6 +243,8 @@ interface SidebarUsageRowProps {
   showBar?: boolean;
   /** Prefix the value with a coin icon — used for credit-balance amounts. */
   showCoin?: boolean;
+  /** Credit meters use the theme accent and a low-balance text warning. */
+  isCreditMeter?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
@@ -255,6 +258,7 @@ function SidebarUsageRow({
   testId,
   showBar = true,
   showCoin = false,
+  isCreditMeter = false,
   tooltip,
 }: SidebarUsageRowProps) {
   return (
@@ -303,7 +307,9 @@ function SidebarUsageRow({
             className={
               fillPercent <= 10
                 ? "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
-                : "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
+                : isCreditMeter
+                  ? "h-1.5 bg-muted"
+                  : "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
             }
             value={fillPercent}
             aria-label={label}
@@ -311,6 +317,9 @@ function SidebarUsageRow({
           />
         )
       ) : null}
+      {!isLoading && isCreditMeter && fillPercent <= 10 && (
+        <span className="text-xs text-foreground">Low credits</span>
+      )}
       {helperText && !isLoading ? (
         <span className="truncate text-[10px] leading-none text-muted-foreground">
           {helperText}

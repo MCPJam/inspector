@@ -664,10 +664,11 @@ describe("CreditBalanceCard", () => {
         render(<CreditBalanceCard />);
         const meter = screen.getByLabelText("Monthly credits remaining");
         expect(meter).toHaveAttribute("aria-valuenow", String(percent));
+        expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
         expect(meter).toHaveClass(
           percent <= 10
             ? "[&_[data-slot=progress-indicator]]:bg-destructive"
-            : "[&_[data-slot=progress-indicator]]:bg-primary",
+            : "bg-muted",
         );
       },
     );

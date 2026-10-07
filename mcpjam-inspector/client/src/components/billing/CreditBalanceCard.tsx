@@ -227,6 +227,7 @@ export function CreditBalanceCard({
             }
             isLoading={isLoading}
             showCoin
+            isCreditMeter
             testId="usage-monthly"
           />
         ) : (
@@ -254,6 +255,7 @@ export function CreditBalanceCard({
             }
             isLoading={isLoading}
             showCoin
+            isCreditMeter
             testId="usage-daily"
           />
         )}
@@ -510,6 +512,8 @@ interface UsageRowProps {
   testId?: string;
   /** Prefix the value with a coin icon — matches the credit-amount rows. */
   showCoin?: boolean;
+  /** Credit meters use the theme accent and a low-balance text warning. */
+  isCreditMeter?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
   /** Accessible label for the progress bar. Defaults to the daily usage label. */
@@ -525,6 +529,7 @@ function UsageRow({
   isLoading,
   testId,
   showCoin = false,
+  isCreditMeter = false,
   tooltip,
   ariaLabel,
   ariaValueText,
@@ -566,6 +571,9 @@ function UsageRow({
           )}
         </span>
       </div>
+      {!isLoading && isCreditMeter && fillPercent <= 10 && (
+        <span className="text-xs text-foreground">Low credits</span>
+      )}
       {isLoading ? (
         <Skeleton className="h-2 w-full rounded-full" />
       ) : (
@@ -576,8 +584,8 @@ function UsageRow({
           className={
             fillPercent <= 10
               ? "bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
-              : showCoin
-                ? "bg-muted [&_[data-slot=progress-indicator]]:bg-primary"
+              : isCreditMeter
+                ? "bg-muted"
                 : "bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
           }
           aria-valuetext={ariaValueText}
