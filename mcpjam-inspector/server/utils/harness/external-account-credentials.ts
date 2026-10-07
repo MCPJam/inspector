@@ -544,8 +544,7 @@ export async function resolveExternalAccountCredentialPlan(args: {
   environmentId?: string;
   environmentUnresolvedReason?: string;
   boxKind: "sandbox" | "computer";
-  /** The box that will run the turn, when one is already bound: it answers for
-   * its own scope instead of the member-only readers. */
+  /** The box's own row, when the turn is bound to one: it answers for itself. */
   sandboxRowId?: string;
 }): Promise<ExternalAccountCredentialPlan | undefined> {
   const required =
@@ -569,8 +568,6 @@ export async function resolveExternalAccountCredentialPlan(args: {
             ? { environmentUnresolvedReason: args.environmentUnresolvedReason }
             : {}),
           boxKind: args.boxKind,
-          // A box answers for itself: the member-only readers are the fallback
-          // for a persistent computer (and an older backend).
           ...(args.sandboxRowId ? { sandboxRowId: args.sandboxRowId } : {}),
           required: Object.fromEntries(
             unresolved.map((name) => [name, brokerBinding[name]!]),

@@ -479,6 +479,12 @@ export type HarnessCreateArgs = {
    */
   reasoningEffort?: ModelReasoningEffort;
   /**
+   * The permission mode this turn's runtime runs under, as the turn resolved
+   * it. An adapter may shape its runtime by it (Claude Code runs background
+   * tasks only under `allow-all`); absent means unknown, never permissive.
+   */
+  permissionMode?: HarnessV1PermissionMode;
+  /**
    * The command-sandbox policy an UNATTENDED local turn runs under (D2), set
    * only by the local arm from the compatibility manifest
    * (`localSandboxPolicyFor`). It is not a permission mode: the turn is
@@ -797,19 +803,27 @@ function memoizedBuiltinTools(
 // proxy, which normalizes its own per-protocol proxyBaseUrl.
 
 /**
- * CLI environment every Claude Code turn runs with, whatever its effort.
+ * CLI environment a Claude Code turn runs with, whatever its effort.
  *
- * Background tasks are off because a turn cannot carry one. The bridge ends
- * the turn on the CLI's first `result` and closes the query, so a subagent or
- * shell command the model sends to the background (`run_in_background`, or the
- * CLI auto-backgrounding a slow one) has nowhere to report: the model tells
- * the user "I'll let you know when it's ready" and the answer never reaches
- * the chat. Worse, the NEXT turn's resumed CLI first reports the stopped task
- * with an empty `result`, which ends that turn before it answers the user.
- * Off, the same subagent runs in the foreground and its answer comes back
- * inside the turn that asked for it.
+ * Background tasks run on `allow-all` turns only. The bridge's background
+ * drain (`claude-code-background-drain.ts`) holds such a turn open until its
+ * background agents report back, so the answer reaches the chat the way it
+ * does in stock Claude Code.
+ *
+ * Every other mode turns them off. Under `allow-reads` the main thread pauses
+ * for approval on any edit, and a paused turn's model lease is revoked, so
+ * the drain stops whatever runs in the background at the first approval:
+ * background work there would be cut off almost every time. Off, the same
+ * subagent runs in the foreground and its answer comes back inside the turn
+ * that asked for it. An unknown mode counts as not `allow-all`.
  */
-const CLAUDE_CODE_TURN_ENV = { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" };
+function claudeCodeTurnEnv(
+  permissionMode: HarnessV1PermissionMode | undefined,
+): Record<string, string> {
+  return permissionMode === "allow-all"
+    ? {}
+    : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" };
+}
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
@@ -887,7 +901,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   parseToolName: parseHarnessToolName,
   // No `model` here: the adapter no longer reads one at construction. The
   // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
-  createHarness({ auth, mcpJson, reasoningEffort }) {
+  createHarness({ auth, mcpJson, reasoningEffort, permissionMode }) {
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
     // local session swaps this bootstrap for the Inspector layer's
@@ -926,12 +940,15 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
             env: {
-              ...CLAUDE_CODE_TURN_ENV,
+              ...claudeCodeTurnEnv(permissionMode),
               CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
             },
           }
         : {
-            env: { ...CLAUDE_CODE_TURN_ENV, CLAUDE_CODE_EFFORT_LEVEL: "unset" },
+            env: {
+              ...claudeCodeTurnEnv(permissionMode),
+              CLAUDE_CODE_EFFORT_LEVEL: "unset",
+            },
           }),
     });
   },

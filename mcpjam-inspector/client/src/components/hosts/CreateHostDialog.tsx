@@ -28,11 +28,11 @@ import { useHostMutations } from "@/hooks/useClients";
 import {
   useCreateProjectSecret,
   useProjectSecrets,
+  useUpdateProjectSecret,
 } from "@/hooks/useProjectSecrets";
 import {
   externalAccountCredentialFor,
-  externalCredentialSecretSelection,
-  ExternalCredentialMissingError,
+  externalKeySetupFor,
 } from "@/shared/external-credential-selection";
 import { useProjectServers } from "@/hooks/useViews";
 import {
@@ -170,20 +170,19 @@ export function CreateHostDialog({
   );
   const projectSecrets = useProjectSecrets(projectId || null);
   const createProjectSecret = useCreateProjectSecret();
+  const updateProjectSecret = useUpdateProjectSecret();
   const [externalKey, setExternalKey] = useState("");
-  const needsExternalKey = useMemo(() => {
-    if (!externalCredential || !selectedTemplateInput) return false;
-    if (projectSecrets === undefined) return false;
-    try {
-      externalCredentialSecretSelection(
-        { harness: selectedTemplateInput.harness },
-        projectSecrets,
-      );
-      return false;
-    } catch (error) {
-      return error instanceof ExternalCredentialMissingError;
-    }
-  }, [externalCredential, projectSecrets, selectedTemplateInput]);
+  // Waits for the secrets rather than skipping the key step on a guess, and
+  // updates the creator's own row of that name (mis-bound or materialized)
+  // instead of creating a second one, which the per-owner name rule refuses.
+  const externalKeySetup = useMemo(
+    () =>
+      selectedTemplateInput
+        ? externalKeySetupFor(selectedTemplateInput.harness, projectSecrets)
+        : ({ state: "none" } as const),
+    [projectSecrets, selectedTemplateInput],
+  );
+  const needsExternalKey = externalKeySetup.state === "needed";
   const selectedTemplateLabel =
     (catalogState.status === "live"
       ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
@@ -201,7 +200,8 @@ export function CreateHostDialog({
     Boolean(name.trim()) &&
     !isSaving &&
     catalogState.status === "live" &&
-    Boolean(selectedTemplateInput);
+    Boolean(selectedTemplateInput) &&
+    externalKeySetup.state !== "loading";
 
   useEffect(() => {
     if (!isOpen) return;
@@ -246,19 +246,35 @@ export function CreateHostDialog({
       // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
-      if (needsExternalKey && externalCredential && externalKey.trim()) {
+      if (
+        externalKeySetup.state === "needed" &&
+        externalCredential &&
+        externalKey.trim()
+      ) {
         // Personal and brokered: the value reaches the egress proxy, never a
-        // box. A project admin can share it from Secrets for other people.
-        await createProjectSecret({
-          projectId,
-          name: externalCredential.env,
-          value: externalKey.trim(),
-          delivery: "brokered",
+        // box. Your own existing row of that name is fixed in place.
+        const binding = {
+          delivery: "brokered" as const,
           brokerHosts: [...externalCredential.binding.hosts],
           brokerHeader: externalCredential.binding.header,
           brokerTemplate: externalCredential.binding.template,
-          sharing: "user",
-        });
+        };
+        if (externalKeySetup.replaceSecretId) {
+          await updateProjectSecret({
+            projectId,
+            secretId: externalKeySetup.replaceSecretId,
+            value: externalKey.trim(),
+            ...binding,
+          });
+        } else {
+          await createProjectSecret({
+            projectId,
+            name: externalCredential.env,
+            value: externalKey.trim(),
+            ...binding,
+            sharing: "user",
+          });
+        }
         setExternalKey("");
       }
       // Capture available-server count for analytics (we don't attach
@@ -392,11 +408,16 @@ export function CreateHostDialog({
               onChange={(e) => setExternalKey(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Stored as a personal secret and delivered to runs by the egress
-              proxy, so it never enters a computer. To let teammates and
-              testers run this client, a project admin shares it from Secrets.
+              Stored as your personal secret and delivered to your runs by the
+              egress proxy, so it never enters a computer. Each teammate who
+              runs this client adds their own key.
             </p>
           </div>
+        )}
+        {externalCredential && externalKeySetup.state === "loading" && (
+          <p className="text-xs text-muted-foreground">
+            Checking for your {externalCredential.label}…
+          </p>
         )}
         {!HOSTED_MODE && selectedLocalHarness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
         {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
