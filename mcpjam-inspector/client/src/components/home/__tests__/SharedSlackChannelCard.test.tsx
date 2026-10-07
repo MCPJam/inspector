@@ -123,7 +123,7 @@ describe("SharedSlackChannelCard", () => {
       screen.getByText("Your Slack invite is on its way")
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Slack will email the invite to your organization owner/)
+      screen.getByText(/Slack will email the invite to this organization's owner/)
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Set up" })
@@ -167,6 +167,22 @@ describe("SharedSlackChannelCard", () => {
       "stale_claim",
       /We'll retry automatically/,
       /Channel setup was interrupted. Try again/,
+    ],
+    [
+      "invite_outcome_unknown",
+      /We'll keep looking for it automatically/,
+      /retry to look for it again/,
+    ],
+    ["rate_limited", /busy. We'll retry automatically/, /Try again in a minute/],
+    [
+      "invite_expired",
+      /We'll send a new one automatically/,
+      /Request a new one/,
+    ],
+    [
+      "unrecognized_code",
+      /shared Slack channel. We'll retry automatically/,
+      /shared Slack channel. Try again/,
     ],
   ])(
     "for %s, says we'll retry only while the worker owns the row",
@@ -219,7 +235,7 @@ describe("SharedSlackChannelCard", () => {
     );
     const logo = container.querySelector("img");
     const src = logo?.getAttribute("src");
-    expect(src).toMatch(/why-mcp\/slack\.png/);
+    expect(src).toMatch(/slack-mark\.png/);
     expect(src).not.toMatch(/slack_logo/);
     // Transparent: no tinted tile behind the logo.
     expect(logo?.parentElement?.className).not.toMatch(/\bbg-/);

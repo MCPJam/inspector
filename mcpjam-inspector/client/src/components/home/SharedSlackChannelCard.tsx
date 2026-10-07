@@ -7,7 +7,7 @@ import {
 } from "react";
 import { useAction, useQuery } from "convex/react";
 import { ExternalLink, Loader2 } from "lucide-react";
-import slackMark from "@/assets/why-mcp/slack.png";
+import slackMark from "@/assets/slack-mark.png";
 import { useSharedSlackChannelEnabled } from "@/hooks/useSharedSlackChannelEnabled";
 import { track } from "@/lib/analytics";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -105,11 +105,15 @@ function errorCopy(
     case "invite_declined":
       return "The Slack Connect invite was declined. Free Slack workspaces cannot accept Connect invites — contact support if that isn't the case.";
     case "invite_expired":
-      return "The Slack Connect invite expired. Request a new one.";
+      return retrying
+        ? "The Slack Connect invite expired. We'll send a new one automatically."
+        : "The Slack Connect invite expired. Request a new one.";
     case "provision_outcome_unknown":
       return "We couldn't confirm the shared channel was created. Contact support to finish setting it up.";
     case "invite_outcome_unknown":
-      return "We couldn't confirm Slack sent your invite. Check your email, or retry to look for it again. Retrying won't send a second invite.";
+      return retrying
+        ? "We couldn't confirm Slack sent your invite. Check your email. We'll keep looking for it automatically."
+        : "We couldn't confirm Slack sent your invite. Check your email, or retry to look for it again. Retrying won't send a second invite.";
     case "owner_changed":
       return retrying
         ? "Your organization's owner changed during setup. We'll retry and invite the new owner."
@@ -123,11 +127,15 @@ function errorCopy(
         ? "Channel setup was interrupted. We'll retry automatically."
         : "Channel setup was interrupted. Try again.";
     case "rate_limited":
-      return "Slack setup is busy. Try again in a minute.";
+      return retrying
+        ? "Slack setup is busy. We'll retry automatically."
+        : "Slack setup is busy. Try again in a minute.";
     case "possible_existing_channel":
       return "Your organization may already have a shared Slack channel with MCPJam, so we paused setup to avoid creating a second one. Our team will reach out to connect you.";
     default:
-      return "Could not set up the shared Slack channel. Try again.";
+      return retrying
+        ? "Could not set up the shared Slack channel. We'll retry automatically."
+        : "Could not set up the shared Slack channel. Try again.";
   }
 }
 
@@ -310,7 +318,8 @@ export function SharedSlackChannelCard({
             </p>
             <p className="text-[11px] text-muted-foreground">
               We&apos;re setting up a Slack Connect channel with the MCPJam
-              team. Slack will email the invite to your organization owner.
+              team. Slack will email the invite to this organization&apos;s
+              owner.
             </p>
           </div>
         </div>
