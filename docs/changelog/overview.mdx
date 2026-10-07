@@ -11,6 +11,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-10-07
 
+#### Changed
+
+- **Harness chats show their work as it happens** — Claude Code and Codex chats now surface more of what the agent is doing, with less clutter:
+
+  - **Tool cards say what they did.** A built-in tool card (bash, Read, Edit, Grep, and similar) now shows a step label after the tool name — for example, "bash  Search scheduleRetry" or "Read  app.ts". MCP tools, the Agent card, and question cards keep their plain headers.
+  - **Approval pills show what will literally run.** When a built-in call is waiting for approval, the pill shows the exact command or file path, not the model's description of it. MCP tool approvals are unchanged.
+  - **Codex's plan as a live checklist.** When Codex issues an `update_plan`, the reply shows a checklist with a "N of M done" summary. The checklist updates in place as steps complete.
+  - **Live command output on running cards.** While a Codex command is running, its card shows the last lines of output as they print. The full output still arrives as the tool result once the command finishes.
+  - **Failed calls settle as failed.** A built-in call that exits with an error (non-zero exit code, missing file) now shows its output and exit code on the card instead of staying in a "running" state indefinitely.
+
 #### Added
 
 - **Muse (Meta) connector readiness in `@mcpjam/sdk` 9.1.0** — `gatherMuseReadinessEvidence` and `gradeMuseReadiness` are a third directory-readiness publisher alongside Claude and OpenAI, graded against Meta's connector guidelines. The run has four lanes and two verdicts: `technicalStatus` (wire-only: HTTPS, redirects, tool-listing rules) and `status` (adds the §5 submission profile). `formatMuseClassificationSheet` renders the suggested Read / Write / Sensitive-write classification table §5.6 asks submitters to include in their documentation. See the [Muse readiness SDK reference](/sdk/reference/muse-readiness).
