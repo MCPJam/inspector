@@ -55,6 +55,16 @@ const INSUFFICIENT_BODY = JSON.stringify({
 });
 
 describe("isMCPJamModelLimitError", () => {
+  it("does not sell MCPJam credits for an Anthropic BYOK balance", () => {
+    const error = {
+      code: "provider_error",
+      message: "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.",
+      isRetryable: false,
+    };
+    expect(isMCPJamModelLimitError(error)).toBe(false);
+    expect(isMCPJamModelLimitError({ message: JSON.stringify(error) })).toBe(false);
+  });
+
   it("detects the canonical rate-limit code", () => {
     expect(isMCPJamModelLimitError({ code: "mcpjam_rate_limit" })).toBe(true);
   });
