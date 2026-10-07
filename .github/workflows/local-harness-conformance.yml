@@ -168,7 +168,9 @@ jobs:
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
       - name: Build shared contracts and adapter fixtures
-        run: npm run pretest -w @mcpjam/inspector
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
 
       - name: Run the local harness suite
         working-directory: mcpjam-inspector

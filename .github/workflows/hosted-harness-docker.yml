@@ -110,7 +110,9 @@ jobs:
       # Builds the shared contracts and generates the Codex bridge bundle the
       # bake reads (and refuses if stale).
       - name: Build shared contracts and adapter bundles
-        run: npm run pretest -w @mcpjam/inspector
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
 
       - name: Generate the harness bake context
         working-directory: mcpjam-inspector
