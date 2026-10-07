@@ -181,6 +181,9 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
   return {
     ...actual,
     playgroundHarnessBoxUnavailableReason: vi.fn((): string | null => null),
+    playgroundCredentialRefusal: vi.fn(
+      async (): Promise<string | null> => null,
+    ),
     acquirePlaygroundHarnessBox: vi.fn(async () => ({
       ok: true as const,
       box: {
@@ -224,6 +227,7 @@ vi.mock("../../../utils/computers/cloud-skill-tools.js", async () => {
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import {
   acquirePlaygroundHarnessBox,
+  playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
 } from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
@@ -1977,6 +1981,28 @@ describe("web routes — chat-v2 hosted mode", () => {
       const response = await post({ chatSessionId: undefined }, cursor);
       expect(response.status).toBe(400);
       expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+    });
+
+    it("a Cursor turn whose key is refused provisions NOTHING: the check runs before the box", async () => {
+      vi.mocked(playgroundCredentialRefusal).mockResolvedValueOnce(
+        "The Cursor harness requires a CURSOR_API_KEY project secret."
+      );
+      const response = await post({}, cursor);
+      expect(response.status).toBe(409);
+      expect(await response.text()).toMatch(/CURSOR_API_KEY/);
+      expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          harnessId: "cursor",
+          projectId: "project-1",
+        })
+      );
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
+
+    it("a compare column on Claude Code needs no credential check", async () => {
+      await post({ comparePane: true }, claudeCode);
+      expect(playgroundCredentialRefusal).not.toHaveBeenCalled();
     });
   });
 });
