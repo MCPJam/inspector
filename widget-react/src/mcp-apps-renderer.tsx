@@ -1,3 +1,9 @@
+import { useInitialRenderOutcome } from "./use-initial-render-outcome";
+import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
+import {
+  negotiateResourceDisplayModes,
+  type ResourceDisplayHints,
+} from "@mcpjam/sdk/widget-runtime";
 /**
  * MCPAppsRenderer - SEP-1865 MCP Apps Renderer
  *
@@ -14,6 +20,7 @@ import {
   useRef,
   useState,
   useEffect,
+  useContext,
   useLayoutEffect,
   useMemo,
   useCallback,
@@ -37,6 +44,7 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 // Framework-free runtime helpers shared with the inspector + eval harness.
 import {
   registerHostBridgeHandlers,
+  createHostAppBridge,
   LoggingTransport,
   extractMethod,
   stableStringifyJson,
@@ -49,16 +57,20 @@ import {
 } from "./widget-file-messages";
 import {
   useAppToolsRegistry,
+  useAppToolsRegistryApi,
   type AppToolDescriptor,
 } from "./app-tools-registry";
 import { readToolResultMeta } from "./tool-result-utils";
 import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
-import { useWidgetSurfaceStore } from "./widget-surface-store";
+import {
+  useWidgetSurfaceStoreApi,
+  type WidgetSurfaceStore,
+} from "./widget-surface-store";
 // The renderer reads its ambient ENV inputs, resolver fns, services, surface
 // flags, debug sink and injected chrome through the package's `useWidgetHost()`
 // context (supplied by the inspector's adapter via `<WidgetHostProvider>`). The
 // contract type-only symbols come from the package's `WidgetHost` module.
-import { useWidgetHost } from "./widget-host-context";
+import { useWidgetHost, useOptionalWidgetHost } from "./widget-host-context";
 import {
   type UiProtocol,
   type CspMode,
@@ -340,6 +352,8 @@ export interface MCPAppsRendererProps {
   ) => Promise<unknown>;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
+  /** Fixed initial-render outcome, without guest content or error text. */
+  onInitialRenderOutcome?: (outcome: "ready" | "error") => void;
   /**
    * Tier 2 recorder. When `recordMode` is on, the sandbox proxy injects a
    * recorder shim into the guest; `onRecorderStep` fires for each captured
@@ -455,6 +469,8 @@ export interface MCPAppsRendererProps {
    * way).
    */
   initialWidgetState?: unknown;
+  /** The workspace owns the rectangle and toolbar, independent of protocol display mode. */
+  hostManagedPresentation?: boolean;
   /** Minimal mode hides diagnostics and metadata surfaces */
   minimalMode?: boolean;
   /**
@@ -609,52 +625,83 @@ function getPersistentSurfaceId(props: MCPAppsRendererProps): string {
   return `mcp-app:${hashSurfaceIdentity(identity)}`;
 }
 
-const pendingSurfaceReleaseTimers = new Map<string, number>();
-const pendingAnchorClearTimers = new Map<string, number>();
+const surfaceTimers = new WeakMap<
+  WidgetSurfaceStore,
+  {
+    release: Map<string, number>;
+    anchor: Map<string, number>;
+  }
+>();
+function timersFor(store: WidgetSurfaceStore) {
+  let timers = surfaceTimers.get(store);
+  if (!timers) {
+    timers = { release: new Map(), anchor: new Map() };
+    surfaceTimers.set(store, timers);
+  }
+  return timers;
+}
 
 function getSurfaceRegistrationKey(surfaceId: string, toolCallId: string) {
   return `${surfaceId}\0${toolCallId}`;
 }
 
-function cancelPendingAnchorClear(surfaceId: string, toolCallId: string) {
+function cancelPendingAnchorClear(
+  store: WidgetSurfaceStore,
+  surfaceId: string,
+  toolCallId: string
+) {
   const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
-  const timer = pendingAnchorClearTimers.get(key);
+  const timer = timersFor(store).anchor.get(key);
   if (timer === undefined) return;
   window.clearTimeout(timer);
-  pendingAnchorClearTimers.delete(key);
+  timersFor(store).anchor.delete(key);
 }
 
-function scheduleAnchorClear(surfaceId: string, toolCallId: string) {
+function scheduleAnchorClear(
+  store: WidgetSurfaceStore,
+  surfaceId: string,
+  toolCallId: string
+) {
   const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
-  const existing = pendingAnchorClearTimers.get(key);
+  const existing = timersFor(store).anchor.get(key);
   if (existing !== undefined) window.clearTimeout(existing);
   const timer = window.setTimeout(() => {
-    pendingAnchorClearTimers.delete(key);
-    useWidgetSurfaceStore.getState().setAnchor(surfaceId, toolCallId, null);
+    timersFor(store).anchor.delete(key);
+    store.getState().setAnchor(surfaceId, toolCallId, null);
   }, 0);
-  pendingAnchorClearTimers.set(key, timer);
+  timersFor(store).anchor.set(key, timer);
 }
 
-function cancelPendingSurfaceRelease(surfaceId: string, toolCallId: string) {
+function cancelPendingSurfaceRelease(
+  store: WidgetSurfaceStore,
+  surfaceId: string,
+  toolCallId: string
+) {
   const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
-  const timer = pendingSurfaceReleaseTimers.get(key);
+  const timer = timersFor(store).release.get(key);
   if (timer === undefined) return;
   window.clearTimeout(timer);
-  pendingSurfaceReleaseTimers.delete(key);
+  timersFor(store).release.delete(key);
 }
 
-function scheduleSurfaceRelease(surfaceId: string, toolCallId: string) {
+function scheduleSurfaceRelease(
+  store: WidgetSurfaceStore,
+  surfaceId: string,
+  toolCallId: string
+) {
   const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
-  const existing = pendingSurfaceReleaseTimers.get(key);
+  const existing = timersFor(store).release.get(key);
   if (existing !== undefined) window.clearTimeout(existing);
   const timer = window.setTimeout(() => {
-    pendingSurfaceReleaseTimers.delete(key);
-    useWidgetSurfaceStore.getState().releaseRegistration(surfaceId, toolCallId);
+    timersFor(store).release.delete(key);
+    store.getState().releaseRegistration(surfaceId, toolCallId);
   }, 0);
-  pendingSurfaceReleaseTimers.set(key, timer);
+  timersFor(store).release.set(key, timer);
 }
 
 function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
+  const surfaceStore = useWidgetSurfaceStoreApi();
+  const host = useOptionalWidgetHost();
   const surfaceId = useMemo(
     () => getPersistentSurfaceId(props),
     [props.chatSessionId, props.resourceUri, props.serverId, props.toolCallId]
@@ -662,18 +709,23 @@ function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
-    cancelPendingAnchorClear(surfaceId, props.toolCallId);
-    cancelPendingSurfaceRelease(surfaceId, props.toolCallId);
+    cancelPendingAnchorClear(surfaceStore, surfaceId, props.toolCallId);
+    cancelPendingSurfaceRelease(surfaceStore, surfaceId, props.toolCallId);
     return () => {
-      scheduleSurfaceRelease(surfaceId, props.toolCallId);
+      scheduleSurfaceRelease(surfaceStore, surfaceId, props.toolCallId);
     };
-  }, [surfaceId, props.toolCallId]);
+  }, [surfaceStore, surfaceId, props.toolCallId]);
 
   useLayoutEffect(() => {
-    cancelPendingAnchorClear(surfaceId, props.toolCallId);
-    cancelPendingSurfaceRelease(surfaceId, props.toolCallId);
-    const store = useWidgetSurfaceStore.getState();
-    store.upsertRegistration(surfaceId, props.toolCallId, props);
+    cancelPendingAnchorClear(surfaceStore, surfaceId, props.toolCallId);
+    cancelPendingSurfaceRelease(surfaceStore, surfaceId, props.toolCallId);
+    const store = surfaceStore.getState();
+    store.upsertRegistration(
+      surfaceId,
+      props.toolCallId,
+      props,
+      host ?? undefined
+    );
     store.setAnchor(surfaceId, props.toolCallId, anchorRef.current);
   });
 
@@ -681,15 +733,13 @@ function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
     (node: HTMLDivElement | null) => {
       anchorRef.current = node;
       if (node === null) {
-        scheduleAnchorClear(surfaceId, props.toolCallId);
+        scheduleAnchorClear(surfaceStore, surfaceId, props.toolCallId);
         return;
       }
-      cancelPendingAnchorClear(surfaceId, props.toolCallId);
-      useWidgetSurfaceStore
-        .getState()
-        .setAnchor(surfaceId, props.toolCallId, node);
+      cancelPendingAnchorClear(surfaceStore, surfaceId, props.toolCallId);
+      surfaceStore.getState().setAnchor(surfaceId, props.toolCallId, node);
     },
-    [surfaceId, props.toolCallId]
+    [surfaceStore, surfaceId, props.toolCallId]
   );
 
   return (
@@ -750,6 +800,7 @@ export function MCPAppsRendererSurface({
   onCallTool,
   onAppToolInvocationChange,
   onWidgetStateChange,
+  onInitialRenderOutcome,
   recordMode,
   onRecorderStep,
   onRecorderReady,
@@ -777,6 +828,7 @@ export function MCPAppsRendererSurface({
   injectedOpenAiCompatCapabilities: initialInjectedOpenAiCompatCapabilities,
   initialWidgetState,
   minimalMode = false,
+  hostManagedPresentation = false,
   persistentSurfaceId,
   persistentSurfaceInitialToolCallId,
 }: MCPAppsRendererProps) {
@@ -908,6 +960,12 @@ export function MCPAppsRendererSurface({
   // re-mints them with a new expiry for the same object; keying replay
   // identity on the object (not the URL) keeps that from reloading the widget.
   // The URL itself still drives the fetch, so a fresh link is what gets read.
+  const hasOwnedMessage = !!host.services.sendMessage;
+  const ownedMessageRef = useRef(host.services.sendMessage);
+  ownedMessageRef.current = host.services.sendMessage;
+  const hasOwnedModelContext = !!host.services.updateModelContext;
+  const ownedModelContextRef = useRef(host.services.updateModelContext);
+  ownedModelContextRef.current = host.services.updateModelContext;
   const artifactCacheKey = host.services.artifactCacheKey;
   const cachedWidgetHtmlKey = cachedWidgetHtmlUrl
     ? artifactCacheKey?.(cachedWidgetHtmlUrl) ?? cachedWidgetHtmlUrl
@@ -1049,80 +1107,58 @@ export function MCPAppsRendererSurface({
   // always a non-empty array (see `extractHostDisplayModes` fallbacks)
   // so the only way intersection is empty is when the playground asks
   // for modes the simulated host doesn't advertise.
-  // SEP-1865: after `ui/initialize` the view declares
-  // `appCapabilities.availableDisplayModes` — the modes it can render in.
-  // The host uses this to narrow what it ADVERTISES to the view in
-  // `HostContext.availableDisplayModes`, NOT to coerce the current
-  // display mode. A widget that only renders in fullscreen (e.g. a
-  // canvas-heavy app) is expected to call `ui/request-display-mode`
-  // itself after init — the host won't auto-switch the user out of the
-  // mode they (or the parent) picked. Coercing here was a real
-  // regression: every tool call snapped to fullscreen the moment the
-  // widget initialized.
+  // After `ui/initialize` the view declares
+  // `appCapabilities.availableDisplayModes`. A mode outside the negotiated
+  // set cannot be advertised or rendered. The explicit resource preference is
+  // applied only while loading a new resource, never on hide/reopen.
+  const [resourceDisplayHints, setResourceDisplayHints] = useState<
+    ResourceDisplayHints | undefined
+  >();
+  const resourceDisplayHintsRef = useRef<ResourceDisplayHints | undefined>(
+    undefined
+  );
+  resourceDisplayHintsRef.current = resourceDisplayHints;
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >(undefined);
 
-  // Host-supported modes only. Drives the current-mode clamp and the
-  // `ui/request-display-mode` handler — both of which must stay
-  // independent of the app's declaration so the user-visible mode is
-  // never auto-coerced.
-  const effectiveAvailableDisplayModes = useMemo(() => {
+  // Negotiate before mounting from resource metadata, then narrow with the
+  // initialized App. Neither declaration can widen the host's supported modes.
+  const hostAvailableDisplayModes = useMemo(() => {
     const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
-    const hostIntersection = matrixModes.filter((m) =>
-      configuredAvailableDisplayModes.includes(m as DisplayMode)
+    const intersection = matrixModes.filter((mode) =>
+      configuredAvailableDisplayModes.includes(mode as DisplayMode)
     );
-    const baseHostModes =
-      hostIntersection.length > 0 ? hostIntersection : matrixModes;
-    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
-      return baseHostModes;
-    }
-    const appIntersection = baseHostModes.filter((m) =>
-      appSupportedDisplayModes.includes(m as DisplayMode)
-    );
-    // SEP-1865: when the intersection is empty (the app advertises modes
-    // the host doesn't support at all) we fall back to host-supported
-    // rather than advertising nothing — the renderer will still clamp
-    // the actual mode to the host's set, and the empty case is a
-    // misconfigured app the host can't render anyway.
-    return appIntersection.length > 0 ? appIntersection : baseHostModes;
+    return intersection.length ? intersection : matrixModes;
   }, [
     earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
     configuredAvailableDisplayModes,
-    appSupportedDisplayModes,
   ]);
-
-  // Advertised intersection — published in `HostContext.availableDisplayModes`
-  // so the view knows which modes the host will honor on
-  // `requestDisplayMode`. Falls back to host modes when the app
-  // declaration is absent or the intersection would be empty
-  // (a misconfigured app that doesn't overlap the host shouldn't
-  // make the host advertise nothing).
-  const advertisedAvailableDisplayModes = useMemo(() => {
-    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
-      return effectiveAvailableDisplayModes;
-    }
-    const intersection = effectiveAvailableDisplayModes.filter((m) =>
-      appSupportedDisplayModes.includes(m as DisplayMode)
-    );
-    return intersection.length > 0
-      ? intersection
-      : effectiveAvailableDisplayModes;
-  }, [effectiveAvailableDisplayModes, appSupportedDisplayModes]);
+  const hostAvailableDisplayModesRef = useRef(hostAvailableDisplayModes);
+  hostAvailableDisplayModesRef.current = hostAvailableDisplayModes;
+  const effectiveAvailableDisplayModes = useMemo(
+    () =>
+      negotiateResourceDisplayModes(
+        hostAvailableDisplayModes as DisplayMode[],
+        resourceDisplayHints,
+        appSupportedDisplayModes
+      ),
+    [hostAvailableDisplayModes, resourceDisplayHints, appSupportedDisplayModes]
+  );
+  const advertisedAvailableDisplayModes = effectiveAvailableDisplayModes;
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = environment.playgroundCapabilities;
+  const configuredCapabilities =
+    draftHostContext?.deviceCapabilities &&
+    typeof draftHostContext.deviceCapabilities === "object" &&
+    !Array.isArray(draftHostContext.deviceCapabilities)
+      ? (draftHostContext.deviceCapabilities as {
+          hover?: boolean;
+          touch?: boolean;
+        })
+      : undefined;
   const deviceCapabilities = useMemo(() => {
-    const configuredCapabilities =
-      draftHostContext?.deviceCapabilities &&
-      typeof draftHostContext.deviceCapabilities === "object" &&
-      !Array.isArray(draftHostContext.deviceCapabilities)
-        ? (draftHostContext.deviceCapabilities as {
-            hover?: boolean;
-            touch?: boolean;
-          })
-        : undefined;
-
     if (configuredCapabilities) {
       return {
         hover: configuredCapabilities.hover ?? true,
@@ -1133,23 +1169,28 @@ export function MCPAppsRendererSurface({
     return isPlaygroundActive
       ? playgroundCapabilities
       : { hover: true, touch: false };
-  }, [draftHostContext, isPlaygroundActive, playgroundCapabilities]);
+  }, [
+    configuredCapabilities?.hover,
+    configuredCapabilities?.touch,
+    isPlaygroundActive,
+    playgroundCapabilities?.hover,
+    playgroundCapabilities?.touch,
+  ]);
 
   // Get safe area insets from playground store (SEP-1865)
   const playgroundSafeAreaInsets = environment.playgroundSafeAreaInsets;
+  const configuredSafeAreaInsets =
+    draftHostContext?.safeAreaInsets &&
+    typeof draftHostContext.safeAreaInsets === "object" &&
+    !Array.isArray(draftHostContext.safeAreaInsets)
+      ? (draftHostContext.safeAreaInsets as {
+          top?: number;
+          right?: number;
+          bottom?: number;
+          left?: number;
+        })
+      : undefined;
   const safeAreaInsets = useMemo(() => {
-    const configuredSafeAreaInsets =
-      draftHostContext?.safeAreaInsets &&
-      typeof draftHostContext.safeAreaInsets === "object" &&
-      !Array.isArray(draftHostContext.safeAreaInsets)
-        ? (draftHostContext.safeAreaInsets as {
-            top?: number;
-            right?: number;
-            bottom?: number;
-            left?: number;
-          })
-        : undefined;
-
     if (configuredSafeAreaInsets) {
       return {
         top: configuredSafeAreaInsets.top ?? 0,
@@ -1162,7 +1203,17 @@ export function MCPAppsRendererSurface({
     return isPlaygroundActive
       ? playgroundSafeAreaInsets
       : { top: 0, right: 0, bottom: 0, left: 0 };
-  }, [draftHostContext, isPlaygroundActive, playgroundSafeAreaInsets]);
+  }, [
+    configuredSafeAreaInsets?.top,
+    configuredSafeAreaInsets?.right,
+    configuredSafeAreaInsets?.bottom,
+    configuredSafeAreaInsets?.left,
+    isPlaygroundActive,
+    playgroundSafeAreaInsets?.top,
+    playgroundSafeAreaInsets?.right,
+    playgroundSafeAreaInsets?.bottom,
+    playgroundSafeAreaInsets?.left,
+  ]);
 
   // Get device type from playground store for platform derivation (SEP-1865)
   const playgroundDeviceType = environment.playgroundDeviceType;
@@ -1255,6 +1306,34 @@ export function MCPAppsRendererSurface({
   );
   const lastForcedDisplayModeRef = useRef<DisplayMode | null>(null);
 
+  // A host-given fullscreen rectangle (e.g. a side-panel tab) instead of the
+  // window. Contained device previews keep their own fullscreen.
+  const fullscreenPlacement = useContext(WidgetFullscreenPlacementContext);
+  const placedFullscreen =
+    !hostManagedPresentation &&
+    effectiveDisplayMode === "fullscreen" &&
+    !(
+      isPlaygroundActive &&
+      (playgroundDeviceType === "mobile" || playgroundDeviceType === "tablet")
+    ) &&
+    !!fullscreenPlacement?.rect;
+  const fullscreenPlacementRef = useRef(fullscreenPlacement);
+  fullscreenPlacementRef.current = fullscreenPlacement;
+  const placedExitRef = useRef(() => {});
+  placedExitRef.current = () => {
+    userPreferInlineRef.current = true;
+    setDisplayMode("inline");
+  };
+  const fullscreenLabel = serverName?.trim() || serverId.trim() || "App";
+  useEffect(() => {
+    if (!placedFullscreen) return;
+    fullscreenPlacementRef.current?.onEnter?.({
+      label: fullscreenLabel,
+      exit: () => placedExitRef.current(),
+    });
+    return () => fullscreenPlacementRef.current?.onLeave?.();
+  }, [placedFullscreen, fullscreenLabel]);
+
   useEffect(() => {
     if (requestedDisplayMode === effectiveDisplayMode) {
       lastForcedDisplayModeRef.current = null;
@@ -1272,6 +1351,7 @@ export function MCPAppsRendererSurface({
   const [isReady, setIsReady] = useState(false);
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  useInitialRenderOutcome(isReady, loadError !== null, onInitialRenderOutcome);
   // First CSP violation reported by the sandbox proxy for the current bytes.
   // Kept locally (the debug sink is write-only) so a View that never boots
   // because its own resources were blocked can say so instead of rendering
@@ -1517,6 +1597,7 @@ export function MCPAppsRendererSurface({
     hasRenderedLiveRef.current = false;
     liveRenderIdentityRef.current = null;
     setWidgetHtml(null);
+    setResourceDisplayHints(undefined);
     setBridgeTransportReady(false);
     setLoadedCspMode(null);
     setLoadedInjectOpenAiCompat(null);
@@ -1590,6 +1671,7 @@ export function MCPAppsRendererSurface({
   const [appToolsBridgeIdState, setAppToolsBridgeIdState] = useState<
     string | null
   >(null);
+  const appToolsRegistry = useAppToolsRegistryApi();
   const pendingAppToolCalls = useAppToolsRegistry((s) =>
     appToolsBridgeIdState
       ? s.pendingControllers.get(appToolsBridgeIdState)?.size ?? 0
@@ -1620,6 +1702,8 @@ export function MCPAppsRendererSurface({
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
+  const onReadResourceV2Ref = useRef(host.services.readResourceV2);
+  const hasResourceReadV2 = Boolean(host.services.readResourceV2);
   const onAppToolInvocationChangeRef = useRef(onAppToolInvocationChange);
   const appToolInvocationSequenceRef = useRef(0);
   const onRequestPipRef = useRef(onRequestPip);
@@ -1850,6 +1934,7 @@ export function MCPAppsRendererSurface({
         mimeTypeWarning: warning,
         mimeTypeValid: valid,
         prefersBorder,
+        resourceDisplayHints: resourceHints,
         declaredDomain: serverDeclaredDomain,
         viewOriginLabel: serverViewOriginLabel,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
@@ -1927,6 +2012,21 @@ export function MCPAppsRendererSurface({
       // doesn't reload (and wipe) this iframe — see the fetch-effect guard.
       hasRenderedLiveRef.current = true;
       liveRenderIdentityRef.current = liveRenderIdentityKey;
+      const allowed = negotiateResourceDisplayModes(
+        hostAvailableDisplayModesRef.current,
+        resourceHints
+      );
+      if (allowed.length === 0) {
+        setLoadError("This App has no supported display mode");
+        return false;
+      }
+      setResourceDisplayHints(resourceHints);
+      if (
+        resourceHints?.preferredDisplayMode &&
+        allowed.includes(resourceHints.preferredDisplayMode)
+      ) {
+        setDisplayMode(resourceHints.preferredDisplayMode);
+      }
       setWidgetHtml(html);
       setWidgetCsp(csp);
       // New bytes are going on screen, so a violation still held here was
@@ -2217,7 +2317,7 @@ export function MCPAppsRendererSurface({
           if (!isLive()) return;
 
           const appVersion = bridge.getAppVersion();
-          await useAppToolsRegistry.getState().registerInstance({
+          await appToolsRegistry.getState().registerInstance({
             bridgeId,
             chatSessionId,
             parentToolCallId: toolCallIdRef.current,
@@ -2235,7 +2335,7 @@ export function MCPAppsRendererSurface({
             getIframeElement,
           });
           if (!isLive()) {
-            useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+            appToolsRegistry.getState().unregisterInstance(bridgeId);
             return;
           }
           needsRefresh =
@@ -2250,7 +2350,7 @@ export function MCPAppsRendererSurface({
         appToolsListInFlightBridgeIdsRef.current.delete(bridgeId);
       }
     },
-    [chatSessionId, logWidgetDebug]
+    [appToolsRegistry, chatSessionId, logWidgetDebug]
   );
 
   // Widget debug store
@@ -3209,6 +3309,7 @@ export function MCPAppsRendererSurface({
   useLayoutEffect(() => {
     onSendFollowUpRef.current = onSendFollowUp;
     onCallToolRef.current = onCallTool;
+    onReadResourceV2Ref.current = host.services.readResourceV2;
     onAppToolInvocationChangeRef.current = onAppToolInvocationChange;
     onRequestPipRef.current = onRequestPip;
     onExitPipRef.current = onExitPip;
@@ -3230,6 +3331,7 @@ export function MCPAppsRendererSurface({
   }, [
     onSendFollowUp,
     onCallTool,
+    host.services.readResourceV2,
     onAppToolInvocationChange,
     onRequestPip,
     onExitPip,
@@ -3285,6 +3387,16 @@ export function MCPAppsRendererSurface({
             // up the new intersection and the post-init `setHostContext`
             // effect will publish `host-context-changed` with the updated
             // `availableDisplayModes` (matrix-gated by hostContextChanged).
+            const negotiated = negotiateResourceDisplayModes(
+              hostAvailableDisplayModesRef.current,
+              resourceDisplayHintsRef.current,
+              declaredAppModes
+            );
+            if (negotiated.length === 0) {
+              setLoadError("This App has no supported display mode");
+              void b.close();
+              return;
+            }
             setAppSupportedDisplayModes(declaredAppModes);
             // If the guest re-initialized (e.g. an SDK-based app completing
             // its own handshake after the openai-compat shim already
@@ -3318,9 +3430,19 @@ export function MCPAppsRendererSurface({
               }
             }
           },
+          ...(hasOwnedMessage
+            ? {
+                onSendMessage: async (params: unknown) => {
+                  const send = ownedMessageRef.current;
+                  if (!send) throw new Error("App message unavailable");
+                  return await send(params);
+                },
+              }
+            : {}),
           onSendFollowUp: (text) => {
             onSendFollowUpRef.current?.(text);
           },
+          onOpenAppLink: host.services.openAppLink,
           onOpenLink: (url) => {
             window.open(url, "_blank", "noopener,noreferrer");
           },
@@ -3349,6 +3471,13 @@ export function MCPAppsRendererSurface({
             );
             return result.content;
           },
+          onReadResourceV2: hasResourceReadV2
+            ? (params, extra) => {
+                const read = onReadResourceV2Ref.current;
+                if (!read) throw new Error("Resource executor unavailable");
+                return read(params, extra);
+              }
+            : undefined,
           onListResources: async (params) => {
             return host.services.listResources(
               serverIdRef.current,
@@ -3514,6 +3643,18 @@ export function MCPAppsRendererSurface({
 
             return { mode: actualMode };
           },
+          ...(hasOwnedModelContext
+            ? {
+                onUpdateModelContextV2: async (
+                  _id: string,
+                  params: unknown
+                ) => {
+                  const update = ownedModelContextRef.current;
+                  if (!update) throw new Error("App model context unavailable");
+                  return update(params);
+                },
+              }
+            : {}),
           onUpdateModelContext: (
             ctxToolCallId,
             { content, structuredContent }
@@ -3653,7 +3794,10 @@ export function MCPAppsRendererSurface({
       setIsReady,
       logWidgetDebug,
       refreshAppProvidedTools,
+      hasResourceReadV2,
       effectiveHostCapabilitiesKey,
+      hasOwnedModelContext,
+      hasOwnedMessage,
     ]
   );
 
@@ -3698,20 +3842,21 @@ export function MCPAppsRendererSurface({
     // another host (e.g. ChatGPT) override this via
     // `mcpProfile.apps.uiInitialize.hostInfo`; backend soft-validates
     // name+version when set so the cast below is safe.
-    const bridge = new AppBridge(
-      null,
-      resolvedBridgeHostInfo,
-      {
-        ...effectiveHostCapabilities,
-        sandbox: {
-          csp: effectiveSandbox.csp,
-          permissions: effectiveSandbox.permissions,
-        },
+    const bridge = createHostAppBridge({
+      hostInfo: resolvedBridgeHostInfo,
+      hostCapabilities: effectiveHostCapabilities,
+      sandbox: {
+        csp: effectiveSandbox.csp,
+        permissions: effectiveSandbox.permissions,
       },
-      { hostContext: hostContextRef.current ?? {} }
-    );
+      hostContext: hostContextRef.current ?? {},
+    });
 
     registerBridgeHandlers(bridge);
+    const releaseExtensions = host.services.configureAppBridge?.(
+      bridge,
+      effectiveHostCapabilities
+    );
     bridgeRef.current = bridge;
     const pendingRpcMethods = new Map<string | number, string>();
 
@@ -3797,6 +3942,11 @@ export function MCPAppsRendererSurface({
 
     return () => {
       isActive = false;
+      try {
+        releaseExtensions?.();
+      } catch {
+        logWidgetDebug("host-to-ui", "debug/extension-cleanup-error", {});
+      }
       logWidgetDebug("host-to-ui", "debug/bridge-connect-cleanup", {
         wasReady: isReadyRef.current,
       });
@@ -3807,7 +3957,7 @@ export function MCPAppsRendererSurface({
       // is closed, any in-flight `useChat.onToolCall` dispatch resolves
       // to null in `useAppToolsRegistry.resolve()`.
       if (appToolsBridgeIdRef.current) {
-        useAppToolsRegistry
+        appToolsRegistry
           .getState()
           .unregisterInstance(appToolsBridgeIdRef.current);
         appToolsListedBridgeIdsRef.current.delete(appToolsBridgeIdRef.current);
@@ -3858,6 +4008,7 @@ export function MCPAppsRendererSurface({
     // ui/initialize changes — switching to a template that overrides
     // hostInfo (e.g. ChatGPT) is observable to the View.
     resolvedBridgeHostInfoKey,
+    host.services.configureAppBridge,
   ]);
 
   useEffect(() => {
@@ -4310,9 +4461,16 @@ export function MCPAppsRendererSurface({
     isFullscreen && !!openInAppUrl && !isMobilePlaygroundMode;
 
   const containerClassName = (() => {
+    if (hostManagedPresentation)
+      return "relative h-full min-h-0 w-full bg-background flex flex-col";
     if (isFullscreen) {
       if (isContainedFullscreenMode) {
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
+      }
+      // Placed in a host panel's rectangle: one layer above that panel,
+      // which in a narrow window is itself laid over the chat at z-40.
+      if (placedFullscreen) {
+        return "fixed z-50 bg-background flex flex-col";
       }
       return "fixed inset-0 z-40 w-full h-full bg-background flex flex-col";
     }
@@ -4340,11 +4498,12 @@ export function MCPAppsRendererSurface({
   const canTransitionHeight =
     !isFullscreen && effectiveDisplayModeRef.current === effectiveDisplayMode;
   const iframeStyle: CSSProperties = {
-    height: isFullscreen
-      ? "100%"
-      : isPip
-      ? PIP_MAX_HEIGHT
-      : lastInlineHeightRef.current,
+    height:
+      hostManagedPresentation || isFullscreen
+        ? "100%"
+        : isPip
+        ? PIP_MAX_HEIGHT
+        : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
     backgroundColor:
@@ -4366,7 +4525,10 @@ export function MCPAppsRendererSurface({
   // Suppress the empty bordered box while the blocked-App notice stands in
   // for it — otherwise the notice renders *below* the blank box it explains.
   const showHostChrome =
-    !isFullscreen && matrixGatedPrefersBorder && !showCspBlockedNotice;
+    !hostManagedPresentation &&
+    !isFullscreen &&
+    matrixGatedPrefersBorder &&
+    !showCspBlockedNotice;
   const hostChromeStyle: CSSProperties | undefined = showHostChrome
     ? {
         backgroundColor: mergedStyleVariables["--color-background-primary"],
@@ -4436,79 +4598,103 @@ export function MCPAppsRendererSurface({
   return (
     <div
       className={containerClassName}
+      style={
+        placedFullscreen && fullscreenPlacement?.rect
+          ? {
+              inset: "auto",
+              top: fullscreenPlacement.rect.top,
+              left: fullscreenPlacement.rect.left,
+              width: fullscreenPlacement.rect.width,
+              height: fullscreenPlacement.rect.height,
+            }
+          : undefined
+      }
+      data-mcp-app-fullscreen-placed={placedFullscreen || undefined}
       data-mcp-app-persistent-initial-tool-call-id={
         persistentSurfaceInitialToolCallId
       }
       data-mcp-app-persistent-surface-id={persistentSurfaceId}
     >
-      {((isFullscreen && isContainedFullscreenMode) ||
-        (isPip && isMobilePlaygroundMode)) && (
-        <>
-          <button
-            onClick={() => {
-              userPreferInlineRef.current = true;
-              setDisplayMode("inline");
-              if (isPip) {
-                onExitPip?.(pipWidgetId ?? displayWidgetId);
-              }
-              // onExitFullscreen is called within setDisplayMode when leaving fullscreen
-            }}
-            className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-          {showOpenInAppButton && (
-            <button
-              onClick={handleOpenInApp}
-              className="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
-              aria-label={`Open in ${openInAppLabel}`}
-              title={`Open in ${openInAppLabel}`}
-            >
-              <ExternalLink className="w-4 h-4" />
-            </button>
-          )}
-        </>
-      )}
-
-      {isFullscreen && !isContainedFullscreenMode && (
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
-          <div />
-          <div className="font-medium text-sm text-muted-foreground min-w-0 max-w-[40vw] truncate">
-            {openInAppLabel}
-          </div>
-          <div className="flex items-center justify-end gap-2 min-w-0">
-            {showOpenInAppButton && (
-              <button
-                onClick={handleOpenInApp}
-                className="inline-flex items-center justify-center gap-1.5 h-8 max-w-[16rem] rounded-full border border-border/60 px-2 sm:px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-                aria-label={`Open in ${openInAppLabel}`}
-                title={`Open in ${openInAppLabel}`}
-              >
-                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline min-w-0 truncate">
-                  Open in {openInAppLabel}
-                </span>
-              </button>
-            )}
+      {!hostManagedPresentation &&
+        ((isFullscreen && isContainedFullscreenMode) ||
+          (isPip && isMobilePlaygroundMode)) && (
+          <>
             <button
               onClick={() => {
                 userPreferInlineRef.current = true;
                 setDisplayMode("inline");
-                if (ownsPipDisplayMode) {
+                if (isPip) {
                   onExitPip?.(pipWidgetId ?? displayWidgetId);
                 }
+                // onExitFullscreen is called within setDisplayMode when leaving fullscreen
               }}
-              className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Exit fullscreen"
+              className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+              aria-label="Close"
             >
               <X className="w-5 h-5" />
             </button>
-          </div>
-        </div>
-      )}
+            {showOpenInAppButton && (
+              <button
+                onClick={handleOpenInApp}
+                className="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+                aria-label={`Open in ${openInAppLabel}`}
+                title={`Open in ${openInAppLabel}`}
+              >
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            )}
+          </>
+        )}
 
-      {isPip && !isMobilePlaygroundMode && (
+      {!hostManagedPresentation &&
+        isFullscreen &&
+        !isContainedFullscreenMode && (
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
+            <div />
+            <div className="font-medium text-sm text-muted-foreground min-w-0 max-w-[40vw] truncate">
+              {openInAppLabel}
+            </div>
+            <div className="flex items-center justify-end gap-2 min-w-0">
+              {showOpenInAppButton && (
+                <button
+                  onClick={handleOpenInApp}
+                  className="inline-flex items-center justify-center gap-1.5 h-8 max-w-[16rem] rounded-full border border-border/60 px-2 sm:px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                  aria-label={`Open in ${openInAppLabel}`}
+                  title={`Open in ${openInAppLabel}`}
+                >
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline min-w-0 truncate">
+                    Open in {openInAppLabel}
+                  </span>
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  userPreferInlineRef.current = true;
+                  setDisplayMode("inline");
+                  if (ownsPipDisplayMode) {
+                    onExitPip?.(pipWidgetId ?? displayWidgetId);
+                  }
+                  if (placedFullscreen) fullscreenPlacement?.onExit?.();
+                }}
+                className={
+                  placedFullscreen && fullscreenPlacement?.exitLabel
+                    ? "rounded-lg px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+                    : "p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                }
+                aria-label="Exit fullscreen"
+              >
+                {placedFullscreen && fullscreenPlacement?.exitLabel ? (
+                  fullscreenPlacement.exitLabel
+                ) : (
+                  <X className="w-5 h-5" />
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+      {!hostManagedPresentation && isPip && !isMobilePlaygroundMode && (
         <button
           onClick={() => {
             userPreferInlineRef.current = true;

@@ -1,3 +1,4 @@
+import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { cloneTraceValue } from "../../utils/live-chat-trace-stream";
 import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
 import {
@@ -362,6 +363,7 @@ export async function driveLocalEvalTurn(
     );
   }
 
+  const appContext = browser.getModelContext?.();
   await browser.dismissCarriedWidget();
   acc.conversationMessages.push({ role: "user", content: promptTurn.prompt });
   acc.activePromptInputMessages = [...acc.conversationMessages];
@@ -398,7 +400,10 @@ export async function driveLocalEvalTurn(
   const handle = runDirectChatTurn({
     llmModel: admittedModel ?? llmModel,
     modelId: test.model,
-    messageHistory: acc.activePromptInputMessages,
+    messageHistory: appendPluginModelContext(
+      acc.activePromptInputMessages,
+      appContext
+    ),
     traceStartedAt: runStartedAt,
     // PR2 (flagged): append recorded model-visible widget interactions as a
     // per-turn system-prompt addendum so the model reasons over them — reusing

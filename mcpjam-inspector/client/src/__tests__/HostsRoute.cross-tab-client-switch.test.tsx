@@ -2,6 +2,8 @@ import { act, cleanup, render } from "@testing-library/react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useExtensionDiscovery } from "../components/host-workspace/use-extension-discovery";
+import type { ThreadAppApi } from "../components/host-workspace/thread-app-api";
 import { usePreviewedHostId } from "../hooks/use-previewed-client-id";
 import {
   resetAutoConnectAttempts,
@@ -18,14 +20,16 @@ import { ServerActionsProvider } from "../state/server-actions-context";
  * Inspector tab. Client configuration (`/hosts/:hostId`) used to re-assert its
  * URL's client whenever that value differed, so a second tab that picked
  * another client was overwritten, re-picked, overwritten again… Each flip was a
- * client switch for every other tab: a reconnect of every connected server and
- * a "Reconnected 1 server." toast. This walks the same tabs through one switch
- * and back and counts all of it.
+ * client switch for every other tab: a reconnect of every connected server, a
+ * "Reconnected 1 server." toast, a re-keyed App owner (closing open Apps) and a
+ * fresh entrypoint discovery. This walks the same tabs through one switch and
+ * back and counts all of it.
  */
 const PROJECT_ID = "project-cross-tab";
 const CHATGPT_ID = "kd7n2m5xq9b3tv6yz1r4s0hc";
 const CODEX_ID = "w972jy2ak59yymb7s8f12kmgvs8c6xnr";
 const SERVER = "pinned";
+const SERVER_ID = "srv-pinned";
 const PREVIEWED_KEY = "mcp-previewed-host-id";
 
 const mocks = vi.hoisted(() => ({
@@ -177,13 +181,15 @@ function ClientConfigurationTab({
 
 interface PlaygroundLedger {
   reconnects: Array<{ server: string; asClient: string | null }>;
+  discoveries: Array<{ hostId: string; serverId: string }>;
+  revisions: Record<string, number>;
   clients: Array<string | null>;
 }
 
 /**
  * A Playground tab, wired the way the real one is: auto-connect is scoped to
- * the previewed client, and a reconnect gives the server a new connection
- * epoch.
+ * the previewed client, the App owner (and so entrypoint discovery) is keyed by
+ * it, and a reconnect gives the server a new connection epoch.
  */
 function PlaygroundTab({ ledger }: { ledger: PlaygroundLedger }) {
   const [hostId] = usePreviewedHostId(PROJECT_ID);
@@ -232,18 +238,58 @@ function PlaygroundTab({ ledger }: { ledger: PlaygroundLedger }) {
   return (
     <AppStateProvider appState={appState}>
       <ServerActionsProvider actions={actions}>
-        <PlaygroundCenter hostId={hostId} />
+        <PlaygroundCenter
+          hostId={hostId}
+          ledger={ledger}
+          connection={status === "connected" ? String(connectedAt) : undefined}
+        />
       </ServerActionsProvider>
     </AppStateProvider>
   );
 }
 
-function PlaygroundCenter({ hostId }: { hostId: string | null }) {
+function PlaygroundCenter({
+  hostId,
+  ledger,
+  connection,
+}: {
+  hostId: string | null;
+  ledger: PlaygroundLedger;
+  connection: string | undefined;
+}) {
   useAutoConnectProjectServers({
     projectId: PROJECT_ID,
     hostScopeKey: hostId,
     serverNames: [SERVER],
   });
+  const api = useMemo(
+    () =>
+      hostId
+        ? ({
+            discoverServer: async (serverId: string) => {
+              ledger.discoveries.push({ hostId, serverId });
+              return {
+                entries: [],
+                mentions: { available: false },
+                mentionsReported: true,
+              };
+            },
+          } as unknown as ThreadAppApi)
+        : null,
+    [hostId, ledger],
+  );
+  const servers = useMemo(
+    () => [
+      {
+        serverId: SERVER_ID,
+        name: SERVER,
+        ...(connection ? { connection } : {}),
+      },
+    ],
+    [connection],
+  );
+  const discovery = useExtensionDiscovery(api, servers);
+  ledger.revisions = discovery.revisions;
   return null;
 }
 
@@ -252,7 +298,7 @@ function Tabs({ children }: { children: ReactNode }) {
 }
 
 function newLedger(): PlaygroundLedger {
-  return { reconnects: [], clients: [] };
+  return { reconnects: [], discoveries: [], revisions: {}, clients: [] };
 }
 
 /** Let effects, storage events and the fake reconnects settle. */
@@ -355,7 +401,7 @@ describe("Client configuration — a client picked in another tab", () => {
 });
 
 describe("one client switch across tabs", () => {
-  it("reconnects each server once and shows one toast per switch", async () => {
+  it("reconnects each server once, refreshes discovery once and shows one toast per switch", async () => {
     acrossTabs = true;
     const playground = newLedger();
     // Tab 1: the Playground on ChatGPT. Tabs 2 and 3: Client configuration,
@@ -369,6 +415,9 @@ describe("one client switch across tabs", () => {
     );
     await settle();
     expect(playground.reconnects).toHaveLength(0);
+    expect(playground.discoveries).toEqual([
+      { hostId: CHATGPT_ID, serverId: SERVER_ID },
+    ]);
     previewedWrites = 0;
 
     // Tab 3 picks the Codex client.
@@ -392,6 +441,15 @@ describe("one client switch across tabs", () => {
       "Reconnected 1 server.",
       expect.anything(),
     );
+    // The new owner reads its entrypoints, then refreshes once after the
+    // reconnect — never a read per flip.
+    const codexReads = playground.discoveries.filter(
+      (read) => read.hostId === CODEX_ID,
+    );
+    expect(codexReads.length).toBeGreaterThanOrEqual(1);
+    expect(codexReads.length).toBeLessThanOrEqual(2);
+    expect(playground.revisions[SERVER_ID] ?? 0).toBeLessThanOrEqual(1);
+    const readsAfterSwitch = playground.discoveries.length;
 
     // And back to ChatGPT, from the same tab.
     await act(async () => {
@@ -409,6 +467,9 @@ describe("one client switch across tabs", () => {
     expect(mocks.toastLoading).toHaveBeenCalledTimes(2);
     expect(mocks.toastSuccess).toHaveBeenCalledTimes(2);
     expect(mocks.toastError).not.toHaveBeenCalled();
+    expect(playground.discoveries.length - readsAfterSwitch).toBeLessThanOrEqual(
+      2,
+    );
   });
 
   it("does not reconnect when the client's settings are saved without switching", async () => {
@@ -442,5 +503,6 @@ describe("one client switch across tabs", () => {
     expect(previewedWrites).toBe(0);
     expect(playground.reconnects).toHaveLength(0);
     expect(mocks.toastLoading).not.toHaveBeenCalled();
+    expect(playground.discoveries).toHaveLength(1);
   });
 });

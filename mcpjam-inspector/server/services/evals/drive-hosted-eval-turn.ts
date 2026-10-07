@@ -1,3 +1,4 @@
+import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -540,6 +541,7 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
+  const appContext = browser.getModelContext?.();
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -767,7 +769,7 @@ export async function driveHostedEvalTurn(
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
     turnResult = await runAssistantTurn({
-      messages: inputMessages,
+      messages: appendPluginModelContext(inputMessages, appContext),
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
       // in as `modelId`. The engine reads `modelDefinition.id` for the wire
