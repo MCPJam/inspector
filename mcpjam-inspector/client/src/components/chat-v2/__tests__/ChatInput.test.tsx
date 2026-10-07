@@ -7,6 +7,13 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
+import { useState } from "react";
+import { act } from "@testing-library/react";
+import {
+  __resetComposerFormStore,
+  registerComposerForm,
+  useComposerFormStore,
+} from "@/components/elicitation/composer-form-store";
 import {
   ScenarioHostStyleProvider,
   ScenarioHostThemeProvider,
@@ -91,8 +98,14 @@ vi.mock("../chat-input/context", () => ({
   ContextSystemPromptUsage: () => null,
 }));
 
+const promptsPopover = vi.hoisted(() => ({
+  props: null as null | Record<string, any>,
+}));
 vi.mock("../chat-input/prompts/mcp-prompts-popover", () => ({
-  PromptsPopover: () => <div data-testid="prompts-popover" />,
+  PromptsPopover: (props: Record<string, any>) => {
+    promptsPopover.props = props;
+    return <div data-testid="prompts-popover" />;
+  },
   isMCPPromptsRequested: () => false,
 }));
 
@@ -1347,29 +1360,37 @@ describe("ChatInput", () => {
       expect(screen.getByTestId("effort-control-trigger")).toBeInTheDocument();
     });
 
-    it("stays visible in compare mode, showing the lead card's level", () => {
+    it("hides in compare mode with multiple models picked", () => {
       render(
         <ChatInput
           {...defaultProps}
           {...effortProps}
           multiModelEnabled
-          selectedModels={[defaultModel, { ...defaultModel, id: "gpt-5" }]}
-        />
+          selectedModels={[
+            defaultModel,
+            { ...defaultModel, id: "gpt-5" },
+            { ...defaultModel, id: "gpt-6" },
+          ]}
+        />,
       );
-      const trigger = screen.getByTestId("effort-control-trigger");
-      expect(trigger).toHaveAccessibleName("Reasoning effort: High");
+      expect(
+        screen.queryByTestId("effort-control-trigger"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("model-selector")).toBeInTheDocument();
     });
 
-    it("stays visible in compare mode with one model picked", () => {
+    it("hides in compare mode with one model picked", () => {
       render(
         <ChatInput
           {...defaultProps}
           {...effortProps}
           multiModelEnabled
           selectedModels={[defaultModel]}
-        />
+        />,
       );
-      expect(screen.getByTestId("effort-control-trigger")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("effort-control-trigger"),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -1443,6 +1464,27 @@ describe("ChatInput", () => {
       expect(onDisconnectServer).toHaveBeenCalledWith("connectedSrv");
       // Selection is derived from connectivity now — no manual toggle write.
       expect(onServerToggle).not.toHaveBeenCalled();
+    });
+
+    it("lists servers by plain name with no App launcher menus", () => {
+      const launcher = vi.fn(() => <button type="button">Open App</button>);
+      render(
+        <ChatInput
+          {...defaultProps}
+          allServerConfigs={serverConfigs}
+          selectedServers={["connectedSrv"]}
+          onDisconnectServer={vi.fn()}
+          onReconnectServer={vi.fn()}
+          // A stale caller passing the removed prop renders nothing extra.
+          {...({ serverNameMenus: { connectedSrv: launcher } } as object)}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      expect(screen.getByText("connectedSrv")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open App" })).toBeNull();
+      expect(launcher).not.toHaveBeenCalled();
     });
 
     it("clicking Connect on a disconnected server reconnects it without writing selection", () => {
@@ -1780,6 +1822,224 @@ describe("ChatInput", () => {
       fireEvent.keyDown(textarea(), { key: "ArrowUp", shiftKey: true });
 
       expect(onChange).not.toHaveBeenCalled();
+    });
+  });
+  describe("extension form card", () => {
+    const mentions = {
+      scope: "scope",
+      workspaceId: "chat-a",
+      search: vi.fn(async () => []),
+      select: vi.fn(),
+    };
+    afterEach(() => __resetComposerFormStore());
+
+    it("hides the composer while a form is pending and restores the draft", () => {
+      const view = render(
+        <ChatInput {...defaultProps} value="my draft" mentions={mentions} />
+      );
+      const region = screen.getByTestId("composer-form-region");
+      expect(region).not.toBeVisible();
+      expect(screen.getByDisplayValue("my draft")).toBeVisible();
+      // The slot exists before any form arrives, so the card never flashes
+      // as a modal first.
+      expect(useComposerFormStore.getState().slots).toHaveLength(1);
+
+      let releaseFirst!: () => void;
+      act(() => {
+        releaseFirst = registerComposerForm({
+          id: "one",
+          workspaceId: "chat-a",
+          serverName: "Parts Library",
+          cancel: vi.fn(),
+        });
+        registerComposerForm({
+          id: "two",
+          workspaceId: "chat-a",
+          serverName: "Bits Local",
+          cancel: vi.fn(),
+        });
+        registerComposerForm({
+          id: "elsewhere",
+          workspaceId: "chat-b",
+          serverName: "Other Chat",
+          cancel: vi.fn(),
+        });
+      });
+      expect(region).toBeVisible();
+      expect(screen.getByDisplayValue("my draft")).not.toBeVisible();
+      const status = screen.getByTestId("composer-form-status");
+      expect(status).toHaveTextContent("Parts Library requests information");
+      expect(status).toHaveTextContent("Bits Local requests information");
+      expect(status).toHaveTextContent("Waiting for your answer · 1 more waiting");
+      expect(status).not.toHaveTextContent("Other Chat");
+
+      act(() => releaseFirst());
+      expect(status).toHaveTextContent("Waiting for your answer");
+      expect(status).not.toHaveTextContent("more waiting");
+      act(() => __resetComposerFormStore());
+      view.rerender(
+        <ChatInput {...defaultProps} value="my draft" mentions={mentions} />
+      );
+      expect(screen.getByDisplayValue("my draft")).toBeVisible();
+    });
+
+    it("takes forms in the composer with mentions off", () => {
+      // Mentions are off by default for the ChatGPT client; forms are not.
+      render(
+        <ChatInput {...defaultProps} value="my draft" formWorkspaceId="chat-a" />
+      );
+      const region = screen.getByTestId("composer-form-region");
+      const slots = useComposerFormStore.getState().slots;
+      expect(slots).toHaveLength(1);
+      expect(slots[0]!.workspaceId).toBe("chat-a");
+      // The card is portaled into the composer, never a modal fallback.
+      expect(region.contains(slots[0]!.element)).toBe(true);
+      act(() => {
+        registerComposerForm({
+          id: "one",
+          workspaceId: "chat-a",
+          serverName: "Parts Library",
+          cancel: vi.fn(),
+        });
+      });
+      expect(region).toBeVisible();
+      expect(screen.getByDisplayValue("my draft")).not.toBeVisible();
+    });
+
+    it("renders no form region without an extension workspace", () => {
+      render(<ChatInput {...defaultProps} />);
+      expect(screen.queryByTestId("composer-form-region")).toBeNull();
+    });
+  });
+  describe("two-step mentions", () => {
+    const plugin = { serverId: "bits", name: "Bits & Bolts Local" };
+    const item = {
+      serverId: "bits",
+      toolName: "find_parts",
+      item: {
+        type: "resource" as const,
+        resourceUri: "fixture://cap",
+        title: "Joystick cap",
+      },
+    };
+    function Stateful({ select }: { select: ReturnType<typeof vi.fn> }) {
+      const [value, setValue] = useState("");
+      return (
+        <ChatInput
+          {...defaultProps}
+          value={value}
+          onChange={setValue}
+          mentions={{
+            scope: "composer",
+            workspaceId: "chat-a",
+            plugins: vi.fn(async () => [plugin]),
+            search: vi.fn(async () => [item]),
+            select,
+          }}
+        />
+      );
+    }
+    const type = (text: string) => {
+      const box = screen.getByRole("textbox");
+      fireEvent.change(box, { target: { value: text } });
+    };
+    const mention = () => promptsPopover.props?.mentions;
+
+    it("picks a plugin, then searches it with spaces until a result is picked", () => {
+      const select = vi.fn();
+      render(<Stateful select={select} />);
+      type("Check @bi");
+      expect(mention()).toMatchObject({
+        token: { start: 6, end: 9, query: "bi" },
+        scopedTo: null,
+      });
+      act(() => mention().onPickPlugin(plugin, mention().token));
+      expect(screen.getByRole("textbox")).toHaveValue("Check @");
+      expect(screen.getByTestId("mention-plugin-pill")).toHaveTextContent(
+        "Bits & Bolts Local",
+      );
+      type("Check @joystick cap");
+      expect(mention()).toMatchObject({
+        token: { start: 6, end: 19, query: "joystick cap" },
+        scopedTo: plugin,
+      });
+      act(() => mention().composer.select(item, mention().token));
+      expect(select).toHaveBeenCalledWith(item, {
+        start: 6,
+        end: 19,
+        query: "joystick cap",
+      });
+      expect(screen.getByRole("textbox")).toHaveValue("Check ");
+      expect(screen.queryByTestId("mention-plugin-pill")).toBeNull();
+      expect(mention()).toBeUndefined();
+    });
+
+    it("Escape leaves the scoped search and keeps the typed text", () => {
+      render(<Stateful select={vi.fn()} />);
+      type("@pa");
+      act(() => mention().onPickPlugin(plugin, mention().token));
+      type("@part");
+      fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+      expect(screen.getByRole("textbox")).toHaveValue("@part");
+      expect(screen.queryByTestId("mention-plugin-pill")).toBeNull();
+      expect(mention()).toBeUndefined();
+    });
+  });
+  describe("App context chips", () => {
+    it("shows one Context chip per App with a removable row per block", async () => {
+      const removeAll = vi.fn();
+      const removeRow = vi.fn();
+      const parts = {
+        id: "parts-app",
+        title: "Parts",
+        serverName: "Bits & Bolts",
+        removeAll,
+      };
+      render(
+        <ChatInput
+          {...defaultProps}
+          contextAttachments={[
+            { id: "mention:0", title: "Joystick cap", description: "Bits" },
+            {
+              id: "a",
+              title: "Current view",
+              group: parts,
+              block: { kind: "text", detail: "Inspecting in mm." },
+              remove: removeRow,
+            },
+            {
+              id: "b",
+              title: "Joystick reference",
+              group: parts,
+              block: { kind: "resource_link", detail: "mcp://parts/joystick" },
+              remove: vi.fn(),
+            },
+            {
+              id: "c",
+              title: "View",
+              group: { id: "viewer", title: "Viewer" },
+              block: { kind: "image", format: "PNG" },
+              remove: vi.fn(),
+            },
+          ]}
+        />
+      );
+      expect(screen.getAllByTestId("context-group-chip")).toHaveLength(2);
+      // Mentions keep their own chip.
+      expect(screen.getByText("Joystick cap")).toBeInTheDocument();
+      expect(screen.queryByText("Current view")).toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Parts context, 2 items" })
+      );
+      expect(await screen.findByText("Current view")).toBeInTheDocument();
+      expect(screen.getByText("Inspecting in mm.")).toBeInTheDocument();
+      expect(screen.getByText("mcp://parts/joystick")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Remove Current view" }));
+      expect(removeRow).toHaveBeenCalledTimes(1);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove all Parts context" })
+      );
+      expect(removeAll).toHaveBeenCalledTimes(1);
     });
   });
 });

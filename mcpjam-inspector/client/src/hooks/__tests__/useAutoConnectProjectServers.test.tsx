@@ -13,6 +13,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   hosted: false,
+  toastDismiss: vi.fn(),
   toastError: vi.fn(),
   toastLoading: vi.fn(() => "reconnect-toast"),
   toastSuccess: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/lib/config", async (importOriginal) => ({
 
 vi.mock("sonner", () => ({
   toast: {
+    dismiss: mocks.toastDismiss,
     error: mocks.toastError,
     loading: mocks.toastLoading,
     success: mocks.toastSuccess,
@@ -99,6 +101,7 @@ describe("useAutoConnectProjectServers", () => {
     mocks.hosted = false;
     resetAutoConnectAttempts();
     localStorage.removeItem("mcpjam-auto-connect-servers");
+    mocks.toastDismiss.mockClear();
     mocks.toastError.mockClear();
     mocks.toastLoading.mockClear();
     mocks.toastSuccess.mockClear();
@@ -453,6 +456,116 @@ describe("useAutoConnectProjectServers", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Reconnected 2 servers.", {
       id: "reconnect-toast",
     });
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("keeps one toast when the client switches again before the reconnects settle", async () => {
+    const ensureServersReady = vi.fn();
+    const pending: Array<() => void> = [];
+    const reconnectServer = vi.fn(
+      () => new Promise<void>((resolve) => pending.push(resolve)),
+    );
+    const appState = {
+      servers: { alpha: { name: "alpha", connectionStatus: "connected" } },
+    } as any;
+
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-reconnect-flips",
+          hostScopeKey,
+          serverNames: [],
+        }),
+      {
+        initialProps: { hostScopeKey: "host-a" },
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      },
+    );
+    await flushMicrotasks();
+
+    rerender({ hostScopeKey: "host-b" });
+    await flushMicrotasks();
+    rerender({ hostScopeKey: "host-a" });
+    await flushMicrotasks();
+    rerender({ hostScopeKey: "host-b" });
+    await flushMicrotasks();
+
+    // Each switch still re-handshakes as the client it switched to…
+    expect(reconnectServer).toHaveBeenCalledTimes(3);
+    // …but the later switches take over the first switch's toast.
+    expect(mocks.toastLoading).toHaveBeenNthCalledWith(
+      1,
+      "Reconnecting 1 server…",
+    );
+    expect(mocks.toastLoading).toHaveBeenNthCalledWith(
+      2,
+      "Reconnecting 1 server…",
+      { id: "reconnect-toast" },
+    );
+    expect(mocks.toastLoading).toHaveBeenNthCalledWith(
+      3,
+      "Reconnecting 1 server…",
+      { id: "reconnect-toast" },
+    );
+
+    // The superseded batches settle without a word; only the last reports.
+    pending[0]();
+    pending[1]();
+    await flushMicrotasks();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    pending[2]();
+    await flushMicrotasks();
+    expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Reconnected 1 server.", {
+      id: "reconnect-toast",
+    });
+
+    // A later switch, after that settled, gets a fresh toast.
+    rerender({ hostScopeKey: "host-c" });
+    await flushMicrotasks();
+    expect(mocks.toastLoading).toHaveBeenNthCalledWith(
+      4,
+      "Reconnecting 1 server…",
+    );
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("closes the reconnect toast when an in-flight batch is reset", async () => {
+    const ensureServersReady = vi.fn();
+    const pending: Array<() => void> = [];
+    const reconnectServer = vi.fn(
+      () => new Promise<void>((resolve) => pending.push(resolve)),
+    );
+    const appState = {
+      servers: { alpha: { name: "alpha", connectionStatus: "connected" } },
+    } as any;
+
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-reset-in-flight",
+          hostScopeKey,
+          serverNames: [],
+        }),
+      {
+        initialProps: { hostScopeKey: "host-a" },
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      },
+    );
+    await flushMicrotasks();
+    rerender({ hostScopeKey: "host-b" });
+    await flushMicrotasks();
+    expect(mocks.toastLoading).toHaveBeenCalledWith("Reconnecting 1 server…");
+
+    resetAutoConnectAttempts("proj-reset-in-flight");
+    expect(mocks.toastDismiss).toHaveBeenCalledWith("reconnect-toast");
+
+    // The dropped batch settles without reopening a toast.
+    pending[0]();
+    await flushMicrotasks();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 

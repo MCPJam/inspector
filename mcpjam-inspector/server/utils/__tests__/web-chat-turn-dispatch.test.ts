@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const handlers = vi.hoisted(() => ({
-  mcpjamFree: vi.fn(async () => new Response("mcpjam")),
+  mcpjamFree: vi.fn(async (_options: unknown) => new Response("mcpjam")),
   hostedOrg: vi.fn(async () => new Response("org-hosted")),
   localOrg: vi.fn(async () => new Response("org-local")),
 }));
@@ -119,29 +119,90 @@ describe("streamWebChatTurn model dispatch", () => {
     vi.unstubAllEnvs();
   });
 
-  it.each([false, true])("forwards local chat workload and stops on refusal (%s)", async (refused) => {
-    const config = await import("../org-model-config.js");
-    const orchestration = await import("../chat-v2-orchestration.js");
+  it("adds fresh owned context to the actual user turn", async () => {
     const conversion = await import("../mcp-tool-result-model-output.js");
-    vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({ ok: true, key: "ollama" });
-    vi.mocked(config.isLocalRuntimeEligible).mockReturnValueOnce(true);
-    vi.mocked(orchestration.prepareChatV2).mockResolvedValueOnce({
-      allTools: { search: { description: "search", inputSchema: {} } },
-      enhancedSystemPrompt: "", scrubMessages: (m: unknown[]) => m,
-    } as never);
+    const { pluginModelContextMessage } = await import(
+      "../../../shared/plugin-model-context.js"
+    );
     vi.mocked(conversion.convertToMcpjamModelMessages).mockResolvedValueOnce([
-      { role: "user", content: [{ type: "image", image: "private-image" }] },
+      { role: "user", content: "actual question" },
     ]);
-    if (refused) vi.mocked(config.resolveOrgProviderRuntime).mockRejectedValueOnce(new Error("tools unsupported"));
-    else vi.mocked(config.resolveOrgProviderRuntime).mockResolvedValueOnce({ runtimeLocation: "local", provider: { providerKey: "ollama", baseUrl: "http://localhost:11434", modelIds: ["llama3"] } });
-    const pending = streamWebChatTurn(args({ id: "llama3", provider: "ollama", hosted: false }, null) as never);
-    if (refused) await expect(pending).rejects.toThrow("tools unsupported");
-    else await pending;
-    expect(config.resolveOrgProviderRuntime).toHaveBeenLastCalledWith("p1", "ollama", "llama3", expect.anything(), {
-      modelWorkload: { purpose: "chat", hasTools: true, hasUserImages: true },
-    });
-    expect(handlers.localOrg).toHaveBeenCalledTimes(refused ? 0 : 1);
+    const pluginContext = pluginModelContextMessage([
+      {
+        instanceId: "owned",
+        generation: 1,
+        updateId: "accepted",
+        content: [{ type: "text", text: "current selection" }],
+      },
+    ]);
+    await streamWebChatTurn(
+      args({ id: "openai/gpt-5-nano", provider: "openai" }, null, {
+        pluginContext,
+      }) as never,
+    );
+    const sent = handlers.mcpjamFree.mock.calls[0]?.[0] as {
+      messages: unknown;
+    };
+    expect(JSON.stringify(sent.messages)).toContain("actual question");
+    expect(JSON.stringify(sent.messages)).toContain("current selection");
   });
+
+  it.each([false, true])(
+    "forwards local chat workload and stops on refusal (%s)",
+    async (refused) => {
+      const config = await import("../org-model-config.js");
+      const orchestration = await import("../chat-v2-orchestration.js");
+      const conversion = await import("../mcp-tool-result-model-output.js");
+      vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({
+        ok: true,
+        key: "ollama",
+      });
+      vi.mocked(config.isLocalRuntimeEligible).mockReturnValueOnce(true);
+      vi.mocked(orchestration.prepareChatV2).mockResolvedValueOnce({
+        allTools: { search: { description: "search", inputSchema: {} } },
+        enhancedSystemPrompt: "",
+        scrubMessages: (m: unknown[]) => m,
+      } as never);
+      vi.mocked(conversion.convertToMcpjamModelMessages).mockResolvedValueOnce([
+        { role: "user", content: [{ type: "image", image: "private-image" }] },
+      ]);
+      if (refused)
+        vi.mocked(config.resolveOrgProviderRuntime).mockRejectedValueOnce(
+          new Error("tools unsupported"),
+        );
+      else
+        vi.mocked(config.resolveOrgProviderRuntime).mockResolvedValueOnce({
+          runtimeLocation: "local",
+          provider: {
+            providerKey: "ollama",
+            baseUrl: "http://localhost:11434",
+            modelIds: ["llama3"],
+          },
+        });
+      const pending = streamWebChatTurn(
+        args(
+          { id: "llama3", provider: "ollama", hosted: false },
+          null,
+        ) as never,
+      );
+      if (refused) await expect(pending).rejects.toThrow("tools unsupported");
+      else await pending;
+      expect(config.resolveOrgProviderRuntime).toHaveBeenLastCalledWith(
+        "p1",
+        "ollama",
+        "llama3",
+        expect.anything(),
+        {
+          modelWorkload: {
+            purpose: "chat",
+            hasTools: true,
+            hasUserImages: true,
+          },
+        },
+      );
+      expect(handlers.localOrg).toHaveBeenCalledTimes(refused ? 0 : 1);
+    },
+  );
 
   it("routes a BARE MCPJam-hosted id + provider to the MCPJam path (harness runs)", async () => {
     await streamWebChatTurn(
@@ -191,14 +252,17 @@ describe("streamWebChatTurn model dispatch", () => {
   it.each([
     [{ id: "gpt-5-nano", provider: "openai", hosted: false }],
     [{ id: "gpt-4.1-mini-custom", provider: "openai" }],
-  ])("refuses a harness turn on a BYOK model (%o) instead of emulating", async (model) => {
-    await expect(streamWebChatTurn(args(model) as never)).rejects.toThrow(
-      /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/,
-    );
-    expect(handlers.hostedOrg).not.toHaveBeenCalled();
-    expect(handlers.localOrg).not.toHaveBeenCalled();
-    expect(handlers.mcpjamFree).not.toHaveBeenCalled();
-  });
+  ])(
+    "refuses a harness turn on a BYOK model (%o) instead of emulating",
+    async (model) => {
+      await expect(streamWebChatTurn(args(model) as never)).rejects.toThrow(
+        /This host runs the claude-code harness, which isn't available: the Claude Code harness only runs MCPJam-provided models/,
+      );
+      expect(handlers.hostedOrg).not.toHaveBeenCalled();
+      expect(handlers.localOrg).not.toHaveBeenCalled();
+      expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+    },
+  );
 
   describe("the saved selection decides the rail (routingSelection)", () => {
     const none = { provider: "none", model: "none" } as const;

@@ -34,7 +34,7 @@ const bakedMarker = JSON.stringify({
   harnessId: "claude-code",
   identity: ID,
   bakeId: "abc123def456",
-  versions: { "claude-code": "2.1.245", node: "24.20.0", pnpm: "10.18.1" },
+  versions: { "claude-code": "2.1.245", node: "24.20.0", pnpm: "12.8.1" },
 });
 
 function fakeProvider(opts: { cwd?: string; files: Record<string, string> }) {
@@ -116,7 +116,7 @@ describe("observeHarnessBootstrap", () => {
       bootstrapDir: ".harness-bootstrap/claude-code",
       identity: ID,
       bakeId: "abc123def456",
-      bakedVersions: "claude-code@2.1.245,node@24.20.0,pnpm@10.18.1",
+      bakedVersions: "claude-code@2.1.245,node@24.20.0,pnpm@12.8.1",
     });
     // A hit costs nothing extra: no manifest probe.
     expect(fake.reads).not.toContain(HARNESS_BAKE_MANIFEST_PATH);
@@ -267,7 +267,7 @@ describe("logHarnessBootstrapOnFailure", () => {
     });
     const observed = observeHarnessBootstrap(fake.provider);
     await frameworkBootstrap(observed, { installFails: true }).catch(() => {});
-    await logHarnessBootstrapOnFailure(observed, "2.1.245");
+    await logHarnessBootstrapOnFailure(observed, "2.1.245", "claude-code");
     expect(logged.info).toHaveBeenCalledTimes(1);
     expect(logged.info).toHaveBeenCalledWith(
       expect.stringMatching(
@@ -280,6 +280,8 @@ describe("logHarnessBootstrapOnFailure", () => {
         harnessBakeOnBox: "present",
         harnessRecipeIdentity: ID,
         harnessRuntimePinned: "2.1.245",
+        // Groups with the turn's `[harness] turn failed` line per harness.
+        harnessId: "claude-code",
       }),
     );
   });

@@ -48,7 +48,7 @@ const TOOL_NAME_LENGTH: ClaudeCheckDefinition = {
 
 const TOOL_TITLE_PRESENT: ClaudeCheckDefinition = {
   id: "claude.tools.title-present",
-  title: "Every tool carries a human-readable title",
+  title: "Every tool carries a title annotation",
   lane: "directory-policy",
   class: "required",
   source: claudePolicySource("review-criteria", "§Tools → Titles"),
@@ -215,12 +215,15 @@ function freeStringDispatch(tool: Tool): string | undefined {
 }
 
 /**
- * The tool's display name, in the precedence MCP defines: top-level `title`,
- * then `annotations.title`, then the raw `name` (which the caller handles).
+ * The title Claude's directory reads: `annotations.title`, and only that.
+ *
+ * MCP also allows a top-level `title` and gives it display precedence, so a
+ * tool titled only there is spec-valid — but the directory listing does not
+ * read it and flags the tool "Missing title annotation". This lane grades the
+ * directory, not the spec, so accepting either spelling would pass a server
+ * the directory flags on every tool.
  */
-function toolTitle(tool: Tool): string | undefined {
-  const fromTool = (tool as { title?: unknown }).title;
-  if (typeof fromTool === "string") return fromTool;
+function annotationTitle(tool: Tool): string | undefined {
   const annotations = tool.annotations as { title?: unknown } | undefined;
   return typeof annotations?.title === "string" ? annotations.title : undefined;
 }
@@ -353,14 +356,14 @@ export function runClaudeToolChecks(
         ),
   );
 
-  const untitled = tools.filter((tool) => !toolTitle(tool)?.trim());
+  const untitled = tools.filter((tool) => !annotationTitle(tool)?.trim());
   findings.push(
     untitled.length === 0
       ? satisfied(TOOL_TITLE_PRESENT, stamp)
       : violated(
           TOOL_TITLE_PRESENT,
           stamp,
-          "Give each tool a `title` (or `annotations.title`) — Claude shows it to users in place of the raw tool name.",
+          "Set `annotations.title` on each tool — Claude shows it to users in place of the raw tool name, and its directory does not read a top-level `title`.",
           { tools: untitled.map((tool) => tool.name) },
         ),
   );

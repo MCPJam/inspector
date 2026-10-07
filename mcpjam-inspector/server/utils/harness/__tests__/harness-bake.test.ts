@@ -102,15 +102,18 @@ const CLAUDE_AUTH = {
   ANTHROPIC_BASE_URL: "http://x",
 };
 const CODEX_AUTH = { CODEX_API_KEY: "x", OPENAI_BASE_URL: "http://x" };
+const CURSOR_AUTH = { CURSOR_API_KEY: "x" };
 
 /** The hosted runtimes exactly as `run-harness-turn` builds them. */
 function hostedHarnesses(): Record<
-  "claude-code" | "codex",
+  "claude-code" | "codex" | "cursor",
   HarnessWithBootstrap
 > {
   const claude = getHarnessAdapter("claude-code")
     .createHarness as unknown as CreateHarness;
   const codex = getHarnessAdapter("codex")
+    .createHarness as unknown as CreateHarness;
+  const cursor = getHarnessAdapter("cursor")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": claude({
@@ -119,6 +122,7 @@ function hostedHarnesses(): Record<
       mcpJson: { mcpServers: {} },
     }),
     codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH }),
+    cursor: cursor({ auth: CURSOR_AUTH, mcpJson: { mcpServers: {} } }),
   };
 }
 
@@ -128,12 +132,14 @@ function hostedHarnesses(): Record<
  * them may reach the recipe, or one template could not cover every turn.
  */
 function hostedHarnessVariants(): Record<
-  "claude-code" | "codex",
+  "claude-code" | "codex" | "cursor",
   HarnessWithBootstrap[]
 > {
   const claude = getHarnessAdapter("claude-code")
     .createHarness as unknown as CreateHarness;
   const codex = getHarnessAdapter("codex")
+    .createHarness as unknown as CreateHarness;
+  const cursor = getHarnessAdapter("cursor")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": [
@@ -156,6 +162,16 @@ function hostedHarnessVariants(): Record<
         sandboxPolicy: HOSTED_APPROVAL_SANDBOX_POLICY,
       }),
     ],
+    cursor: [
+      cursor({
+        auth: { CURSOR_API_KEY: "a-different-key" },
+        mcpJson: {
+          mcpServers: {
+            probe: { type: "http", url: "https://example.invalid/mcp" },
+          },
+        },
+      }),
+    ],
   };
 }
 
@@ -170,7 +186,7 @@ type HarnessBakeLock = {
 };
 
 describe("harnessRecipeIdentity", () => {
-  it.each(["claude-code", "codex"] as const)(
+  it.each(["claude-code", "codex", "cursor"] as const)(
     "is the identity the real framework checks for (%s)",
     async (id) => {
       const harness = hostedHarnesses()[id];
@@ -181,7 +197,7 @@ describe("harnessRecipeIdentity", () => {
     },
   );
 
-  it("bakes exactly the hosted Claude Code and Codex app-server recipes", async () => {
+  it("bakes exactly the hosted Claude Code, Codex app-server and Cursor recipes", async () => {
     const harnesses = hostedHarnesses();
     const dirs = await Promise.all(
       Object.values(harnesses).map(
@@ -191,7 +207,7 @@ describe("harnessRecipeIdentity", () => {
     expect([...dirs].sort()).toEqual([...HARNESS_BAKED_BOOTSTRAP_DIRS].sort());
   });
 
-  it.each(["claude-code", "codex"] as const)(
+  it.each(["claude-code", "codex", "cursor"] as const)(
     "does not depend on the turn's settings (%s)",
     async (id) => {
       const base = harnessRecipeIdentity(
@@ -271,7 +287,7 @@ describe("harness-bake.lock.json", () => {
 });
 
 describe("the toolchain pins", () => {
-  it("are the toolchain the local packs and conformance run on", () => {
+  it("share node with the toolchain the local packs and conformance run on", () => {
     const toolchain = JSON.parse(
       readFileSync(
         join(PACKAGE_ROOT, "scripts/local-harness-toolchain.json"),
@@ -279,7 +295,14 @@ describe("the toolchain pins", () => {
       ),
     );
     expect(HARNESS_TEMPLATE_NODE_VERSION).toBe(toolchain.node);
-    expect(HARNESS_TEMPLATE_PNPM_VERSION).toBe(toolchain.pnpm);
+  });
+
+  it("pin a pnpm that installs the recipes within a 1 GiB box", () => {
+    // pnpm 10 is OOM-killed extracting the native binaries on a 1 GiB box;
+    // see HARNESS_TEMPLATE_PNPM_VERSION. Major 12 or later.
+    expect(
+      Number(HARNESS_TEMPLATE_PNPM_VERSION.split(".")[0]),
+    ).toBeGreaterThanOrEqual(12);
   });
 
   it("pin the providers' pnpm fallback too", () => {
@@ -396,6 +419,7 @@ describe("the generated bake context", () => {
     ).toEqual({
       "claude-code": HARNESS_PINNED_VERSIONS["claude-code"],
       codex: HARNESS_PINNED_VERSIONS.codex,
+      cursor: HARNESS_PINNED_VERSIONS.cursor,
     });
     expect(manifest.bakeRoot).toBe("/home/user/.harness-bootstrap");
     expect(manifest.runtimeUser).toBe("user");
