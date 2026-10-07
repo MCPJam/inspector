@@ -160,6 +160,7 @@ import type {
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
+  PlatformMuseReadinessStartBody,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,
   PlatformReadinessRun,
@@ -3186,6 +3187,31 @@ export class PlatformApiClient {
         serverId
       )}/readiness-runs/openai`,
       { body: { ...pickReadinessStartBody(params), submissionMode } },
+      options
+    );
+  }
+
+  /**
+   * Start a Muse (Meta) connector readiness run.
+   *
+   * Free, and only ever free: Muse has no AI observations, so the body has no
+   * field that can spend.
+   */
+  startMuseReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformMuseReadinessStartBody,
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks — see `startClaudeReadinessRun`.
+    const { projectId, serverId, idempotencyKey } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId
+      )}/readiness-runs/muse`,
+      { body: pickReadinessStartBody({ idempotencyKey }) },
       options
     );
   }

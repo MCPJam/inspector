@@ -129,6 +129,12 @@ export interface MuseReadinessRunContext {
 }
 
 export interface MuseReadinessResult {
+  /**
+   * Discriminator, as on OpenAI's result. Muse's lanes, findings and stages
+   * share their shape with the other publishers', so a consumer switching on
+   * shape would render a Muse grade under somebody else's name.
+   */
+  readinessKind: "muse-directory-readiness";
   /** The `submission-ready` rollup — the one verdict a surface leads with. */
   status: MuseLaneStatus;
   /** The `technical-preflight` rollup, answerable without a profile. */
@@ -158,6 +164,18 @@ export function rollUpMuseStage(
   stage: MuseReadinessStage
 ): MuseLaneStatus {
   return rollUpDirectoryLaneStatus(lanes, MUSE_STAGE_LANES[stage]);
+}
+
+/** Whether a value is a Muse readiness result, by its discriminator. */
+export function isMuseReadinessResult(
+  value: unknown
+): value is MuseReadinessResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { readinessKind?: unknown }).readinessKind ===
+      "muse-directory-readiness"
+  );
 }
 
 /** Whether a finding can DECIDE a lane. */
