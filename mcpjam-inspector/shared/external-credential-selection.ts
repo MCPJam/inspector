@@ -218,3 +218,42 @@ export function externalCredentialSecretSelection(
     `Add your ${spec.label} (${spec.env}) before using Cursor: this client signs in with your own Cursor account.`,
   );
 }
+
+/**
+ * What a client-creation form must do about the key a client of this harness
+ * signs in with.
+ *
+ *  - `none`     — the harness needs no key, or the creator already has a usable
+ *                 one of their own.
+ *  - `loading`  — the secrets have not loaded yet. Creating now would skip the
+ *                 key step on a guess, so the form waits.
+ *  - `needed`   — the creator must paste their key. `replaceSecretId` names
+ *                 their OWN existing row of that name (mis-bound, or
+ *                 materialized), which the form updates in place: a personal
+ *                 name is unique per owner, so creating a second one would fail.
+ */
+export type ExternalKeySetup =
+  | { state: "none" }
+  | { state: "loading" }
+  | { state: "needed"; replaceSecretId?: string };
+
+export function externalKeySetupFor(
+  harness: string | null | undefined,
+  secrets: readonly ExternalCredentialSecret[] | undefined,
+): ExternalKeySetup {
+  const spec = externalAccountCredentialFor(harness ?? undefined);
+  if (!spec) return { state: "none" };
+  if (secrets === undefined) return { state: "loading" };
+  try {
+    externalCredentialSecretSelection({ harness }, secrets);
+    return { state: "none" };
+  } catch (error) {
+    if (!(error instanceof ExternalCredentialMissingError)) throw error;
+  }
+  const own = secrets.find(
+    (secret) => secret.name === spec.env && secret.sharing === "user",
+  );
+  return own
+    ? { state: "needed", replaceSecretId: own.secretId }
+    : { state: "needed" };
+}

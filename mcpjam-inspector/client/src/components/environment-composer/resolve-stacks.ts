@@ -78,6 +78,8 @@ export type ComposerResolveErrorCode =
   | "ADHOC_UNAVAILABLE"
   /** A Cursor client with no usable `CURSOR_API_KEY` to grant. */
   | "MISSING_CREDENTIAL"
+  /** A client's settings could not be read, so its credential can't be checked. */
+  | "CLIENT_UNREADABLE"
   | "BACKEND_REJECTED";
 
 export class ComposerResolveError extends Error {
@@ -474,9 +476,11 @@ export async function resolveComposerEnvironments(args: {
     // types it `string?` and Convex rejects an explicit null at the validator.
     // Same for inherit-cell `modelId`.
     // A client that signs in with the customer's own account needs its key
-    // granted by the environment it runs in. Looked up once per client; a
-    // client whose harness is unknown (no loader, or it failed) is treated as
-    // having none, the same as before this existed.
+    // granted by the environment it runs in. Looked up once per client. With
+    // no loader at all the harness is unknown and the client is treated as
+    // having none, as before this existed; a loader that FAILS is refused,
+    // because a Cursor cell minted on that guess would carry no key and be
+    // refused at its first turn with nothing pointing back here.
     const credentialGrantByHost = new Map<
       string,
       { mode: "explicit"; secretIds: string[] } | undefined
@@ -487,7 +491,10 @@ export async function resolveComposerEnvironments(args: {
         try {
           harness = await loadHostHarness(hostId);
         } catch {
-          harness = null;
+          throw new ComposerResolveError(
+            "CLIENT_UNREADABLE",
+            "Couldn't read one of these clients' settings to check whether it needs a key. Try again.",
+          );
         }
       }
       try {
