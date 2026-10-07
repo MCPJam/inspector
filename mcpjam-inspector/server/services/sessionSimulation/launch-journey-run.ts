@@ -123,6 +123,9 @@ export interface LaunchJourneyRunResult {
 
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
 
+/** The backend's refusal for a hosted harness target with a broken image pin. */
+const JOURNEY_TARGET_IMAGE_UNAVAILABLE = "JOURNEY_TARGET_IMAGE_UNAVAILABLE";
+
 /**
  * Every character a renderer may break a line on — not just `\n`. `String.trim`
  * strips these at the ends but not in the middle, so a body carrying `\r` or a
@@ -156,11 +159,16 @@ const LINE_BREAK = /[\r\n\f\u2028\u2029]/;
  * runs inside is already a failure and a parse error here would replace a
  * useful message with a 500.
  */
-export function launchFailureMessage(err: SwarmAgentError): string {
+export function launchFailureMessage(
+  err: SwarmAgentError,
+  /** Replaces the generic sentence when the caller knows the refusal's code. */
+  fallbackOverride?: string,
+): string {
   const fallback =
-    err.status === 402
+    fallbackOverride ??
+    (err.status === 402
       ? "This launch would exceed your organization's credit limit."
-      : "This journey can't be launched.";
+      : "This journey can't be launched.");
   const raw = err.bodyText?.trim();
   if (!raw) return fallback;
 
@@ -364,16 +372,27 @@ export async function launchJourneyRun(
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
       const details = launchFailureDetails(err);
+      // A hosted harness target whose pinned image cannot boot refuses the
+      // whole launch. The backend's sentence names the target, and passes
+      // through when it fits; a long client or environment name can push it
+      // past the passthrough bound, and the generic fallback would then drop
+      // the one thing the launcher needs to know: which fix applies.
+      const message = launchFailureMessage(
+        err,
+        details?.code === JOURNEY_TARGET_IMAGE_UNAVAILABLE
+          ? "A target in this launch pins a computer image that can't boot. " +
+              "Fix that image, or remove the target, then launch again."
+          : undefined,
+      );
       const modelError = environmentModelRequiredError({
         data: {
           code: details?.code,
-          message: launchFailureMessage(err),
+          message,
           details,
         },
       });
       const routeError =
-        modelError ??
-        new WebRouteError(err.status, code, launchFailureMessage(err), details);
+        modelError ?? new WebRouteError(err.status, code, message, details);
       // The wave fan-out and every generic client read `Retry-After` to decide
       // WHEN to come back; the 429 alone only says "not now". The backend's
       // daily launch cap sends the UTC roll and its burst brake sends the

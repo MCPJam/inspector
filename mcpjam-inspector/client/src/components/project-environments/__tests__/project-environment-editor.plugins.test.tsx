@@ -24,8 +24,8 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 vi.mock("@/hooks/usePluginsEnabled", () => ({
   usePluginsEnabled: () => flags.plugins,
 }));
-vi.mock("@/hooks/useComputersEnabled", () => ({
-  useComputersEnabled: () => false,
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => false,
 }));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => true,

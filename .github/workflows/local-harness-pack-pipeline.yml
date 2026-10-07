@@ -3,8 +3,10 @@
 #   plan → build/adopt/finish-draft → conformance → pin intent
 #                   ↘ equivalent → equivalence record intent
 #
-# Called by `prepare-release.yml`, once per harness, before it opens the
-# version PR. The pipeline writes nothing to main: each harness hands the
+# Called by `local-harness-pack-prebuild.yml` in the background when a pack
+# input lands on main (so the pack exists before anyone releases), and by
+# `prepare-release.yml`, once per harness, before it opens the version PR —
+# which adopts what the prebuild published. The pipeline writes nothing to main: each harness hands the
 # release a `local-harness-pin-<harness>` artifact (a pin, an equivalence
 # record, or "up to date"), and prepare-release applies every one of them to
 # the version branch — so the version PR carries the versions AND the packs
