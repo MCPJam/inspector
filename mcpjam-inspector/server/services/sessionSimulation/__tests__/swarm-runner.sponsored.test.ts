@@ -313,6 +313,59 @@ describe("sponsored swarm conversations: the org spend cap is scoped to credit-f
     ]);
   });
 
+  it("keeps a credit-stop abort's cause when its last refusal was busy and runs the sponsored sibling", async () => {
+    let creditStarted!: () => void;
+    const creditInFlight = new Promise<void>((resolve) => {
+      creditStarted = resolve;
+    });
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.targetId === A.targetId) {
+        await creditInFlight;
+        return { outcome: "rate_limited", errorMessage: SPEND_CAP };
+      }
+      if (adapter.runtime.sponsorship) return { outcome: "succeeded" };
+      creditStarted();
+      await new Promise<void>((resolve) => {
+        if (adapter.abortSignal.aborted) resolve();
+        else
+          adapter.abortSignal.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+      });
+      return {
+        outcome: "failed",
+        errorMessage: "MCPJam could not reserve spending capacity.",
+        errorRefusal: { code: "spending_reservation_busy", httpStatus: 503 },
+      };
+    });
+
+    await startJourneyRun(
+      opts({
+        hosts: [A, B],
+        sessionsPerTarget: 2,
+        sessionFunding: [
+          ...funding(A.targetId, "credits", "credits"),
+          ...funding(B.targetId, "credits", "starter"),
+        ],
+      }) as never,
+    );
+
+    expect(
+      terminals().find((t) => t.targetId === B.targetId && t.sessionIdx === 0),
+    ).toMatchObject({ status: "rate_limited", errorCode: "spend_cap_exceeded" });
+    expect(
+      terminals().find((t) => t.targetId === B.targetId && t.sessionIdx === 1),
+    ).toMatchObject({ status: "succeeded" });
+    expect(
+      finalizePendingAttemptsMock.mock.calls.map((c) => c[2]),
+    ).not.toContainEqual(
+      expect.objectContaining({
+        targetId: B.targetId,
+        fundingScope: "sponsored",
+      }),
+    );
+  });
+
   it("still stops the whole run when no conversation in it is sponsored", async () => {
     parkSponsoredUntilCapTrips();
 
