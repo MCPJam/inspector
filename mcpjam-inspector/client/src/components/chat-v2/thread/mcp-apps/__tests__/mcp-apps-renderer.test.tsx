@@ -131,10 +131,16 @@ vi.mock("sonner", () => ({ toast: { info: vi.fn(), dismiss: vi.fn() } }));
 vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
 
 // ── Module mocks ───────────────────────────────────────────────────────────
-vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
-  AppBridge: mockAppBridgeCtor,
-  PostMessageTransport: mockPostMessageTransport,
-}));
+vi.mock(
+  "@modelcontextprotocol/ext-apps/app-bridge",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@modelcontextprotocol/ext-apps/app-bridge")
+    >()),
+    AppBridge: mockAppBridgeCtor,
+    PostMessageTransport: mockPostMessageTransport,
+  }),
+);
 
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
 // The renderer relocated to @mcpjam/widget-react imports `./sandboxed-iframe`
