@@ -175,9 +175,11 @@ jobs:
               filename === "package-lock.json" ||
               filename === ".changeset/config.json";
 
+            // A rename's old path counts too: moving a file out of a build
+            // input changes the build.
             const touched = (diff.files ?? [])
-              .map((f) => f.filename)
-              .filter(isMcpRelevant);
+              .flatMap((f) => [f.filename, f.previous_filename])
+              .filter((filename) => filename && isMcpRelevant(filename));
 
             if (touched.length > 0) {
               core.setFailed(
