@@ -407,17 +407,18 @@ const formatMCPJamModelLimit = (
 });
 
 function summarizeEmptyModelResponse(message: unknown): FormattedError | null {
+  const sentinel =
+    "Backend step returned no content (stream error or empty response)";
   if (
     typeof message !== "string" ||
-    !message.startsWith(
-      "Backend step returned no content (stream error or empty response)",
-    ) ||
-    !message.includes(
-      "the model emitted no text, no reasoning and no tool call",
-    ) ||
-    !/\(finishReason: (?:none reported|stop|tool-calls|error|other|unknown)\)/.test(
-      message,
-    )
+    !message.startsWith(sentinel) ||
+    (message !== sentinel &&
+      (!message.includes(
+        "the model emitted no text, no reasoning and no tool call",
+      ) ||
+        !/\(finishReason: (?:none reported|stop|tool-calls|error|other|unknown)\)/.test(
+          message,
+        )))
   )
     return null;
   return {

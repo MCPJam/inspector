@@ -56,6 +56,27 @@ describe("formatErrorMessage — opaque upstream payloads", () => {
     },
   );
 
+  it.each([false, true])(
+    "summarizes the bare hosted-turn sentinel (structured: %s)",
+    (structured) => {
+      const message =
+        "Backend step returned no content (stream error or empty response)";
+      const formatted = formatErrorMessage(
+        new Error(
+          structured
+            ? JSON.stringify({ message, code: "provider_empty_response" })
+            : message,
+        ),
+      );
+      expect(formatted).toMatchObject({
+        message: "The model returned no response. Please try again.",
+        code: "provider_empty_response",
+        isRetryable: true,
+      });
+      expect(formatted?.details).toContain(message);
+    },
+  );
+
   it.each(["length", "content-filter"])(
     "keeps the specific %s explanation",
     (reason) => {
