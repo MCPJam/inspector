@@ -50,6 +50,7 @@ import {
   playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
   releaseBoxWhenStreamEnds,
 } from "../../utils/harness/playground-box.js";
 import type { HarnessBox } from "../../utils/harness/harness-box.js";
@@ -1649,16 +1650,39 @@ chatV2.post("/", async (c) => {
           400,
         );
       }
-      // The credential check the harness turn would fail, run BEFORE the box
-      // is booted, so a refused Cursor turn provisions nothing. This route
-      // resolves no project secrets and no environment, so it asks exactly
-      // what `runHarnessTurn` would.
+      // A client that signs in with the member's own account runs under a
+      // HIDDEN ad-hoc environment selecting the member's key — the grant the
+      // box carries (this route never targets an environment). Then the
+      // credential check the harness turn would fail, both BEFORE the box is
+      // booted, so a refused Cursor turn provisions nothing.
+      let playgroundEnvironmentId: string | undefined;
       if (playgroundBoxReason === "credential") {
+        if (bodyHostId) {
+          const hidden = await resolvePlaygroundCredentialEnvironment({
+            bearer: requestAuthHeader,
+            projectId: body.projectId,
+            hostId: bodyHostId,
+            harnessId: resolvedExecution.harness,
+          });
+          if (!hidden.ok) {
+            return c.json(
+              {
+                error: hidden.message,
+                code: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+              },
+              hidden.status,
+            );
+          }
+          playgroundEnvironmentId = hidden.environmentId;
+        }
         const credentialRefusal = await playgroundCredentialRefusal({
           harnessId: resolvedExecution.harness,
           secretEnv: undefined,
           bearer: requestAuthHeader,
           projectId: body.projectId,
+          ...(playgroundEnvironmentId
+            ? { environmentId: playgroundEnvironmentId }
+            : {}),
         });
         if (credentialRefusal) {
           return c.json(
@@ -1674,6 +1698,9 @@ chatV2.post("/", async (c) => {
         bearer: requestAuthHeader.replace(/^Bearer\s+/i, ""),
         projectId: body.projectId,
         chatSessionId: body.chatSessionId,
+        ...(playgroundEnvironmentId
+          ? { projectEnvironmentId: playgroundEnvironmentId }
+          : {}),
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (!acquired.ok) {

@@ -1493,6 +1493,23 @@ describe("resolveComposerEnvironments — a client that signs in with its own ac
     ).rejects.toMatchObject({ code: "MISSING_CREDENTIAL" });
   });
 
+  it("refuses, never guesses, when a client's harness can't be read", async () => {
+    const ensure = ensureReturning(["env-cursor"]);
+    await expect(
+      resolveComposerEnvironments({
+        ...base,
+        state: compose(["cursor-host"]),
+        liveEnvironments: [],
+        ensureAdhocEnvironments: ensure,
+        loadHostHarness: async () => {
+          throw new Error("network down");
+        },
+        projectSecrets: [cursorKey()],
+      }),
+    ).rejects.toMatchObject({ code: "CLIENT_UNREADABLE" });
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
   it("leaves every other client exactly as it was: no harness read result, no grant", async () => {
     const ensure = ensureReturning(["env-plain"]);
     await resolveComposerEnvironments({

@@ -5,6 +5,7 @@ import {
   bindingDeliversCredential,
   externalAccountCredentialFor,
   externalCredentialSecretSelection,
+  externalKeySetupFor,
   type ExternalCredentialSecret,
 } from "../external-credential-selection";
 
@@ -198,5 +199,49 @@ describe("bindingDeliversCredential", () => {
         spec,
       ),
     ).toBe(true);
+  });
+});
+
+describe("externalKeySetupFor (the client-creation key step)", () => {
+  it("asks for nothing when the harness needs no key, or the creator has one", () => {
+    expect(externalKeySetupFor("claude-code", undefined)).toEqual({
+      state: "none",
+    });
+    expect(externalKeySetupFor("cursor", [secret()])).toEqual({
+      state: "none",
+    });
+  });
+
+  it("waits while the secrets load instead of skipping the step", () => {
+    expect(externalKeySetupFor("cursor", undefined)).toEqual({
+      state: "loading",
+    });
+  });
+
+  it("asks for a new key when the creator has none of their own", () => {
+    expect(externalKeySetupFor("cursor", [])).toEqual({ state: "needed" });
+    // Another member's shared key is not theirs to use or to fix.
+    expect(
+      externalKeySetupFor("cursor", [secret({ sharing: "project" })]),
+    ).toEqual({ state: "needed" });
+  });
+
+  it("fixes the creator's own mis-bound or materialized row in place, never a duplicate", () => {
+    expect(
+      externalKeySetupFor("cursor", [
+        secret({ secretId: "mine", brokerHosts: ["example.com"] }),
+      ]),
+    ).toEqual({ state: "needed", replaceSecretId: "mine" });
+    expect(
+      externalKeySetupFor("cursor", [
+        secret({
+          secretId: "mine-materialized",
+          delivery: "materialized",
+          brokerHosts: undefined,
+          brokerHeader: undefined,
+          brokerTemplate: undefined,
+        }),
+      ]),
+    ).toEqual({ state: "needed", replaceSecretId: "mine-materialized" });
   });
 });

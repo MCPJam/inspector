@@ -183,6 +183,7 @@ import {
   playgroundCredentialRefusal,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
 } from "../../utils/harness/playground-box.js";
 import {
   isSandboxNoticeReason,
@@ -2058,6 +2059,36 @@ chatV2.post("/", async (c) => {
           { reason: "NO_CHAT_SESSION_ID" },
         );
       }
+      // The environment whose grant the box carries: the turn's own when it
+      // targets one; otherwise, for a client that signs in with the member's
+      // own account, a HIDDEN ad-hoc environment selecting the member's key
+      // (the environments UI is off, so a client turn is the normal case).
+      // Refused here, before any box, when the member has no usable key.
+      let playgroundEnvironmentId =
+        environmentSpec?.environmentRef.environmentId;
+      if (
+        playgroundBoxReason === "credential" &&
+        !playgroundEnvironmentId &&
+        executionTarget.kind === "host"
+      ) {
+        const hidden = await resolvePlaygroundCredentialEnvironment({
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          hostId: executionTarget.hostId,
+          harnessId: resolvedExecution.harness,
+        });
+        if (!hidden.ok) {
+          throw new WebRouteError(
+            hidden.status,
+            hidden.status === 409
+              ? ErrorCode.CONFLICT
+              : ErrorCode.INTERNAL_ERROR,
+            hidden.message,
+            { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+          );
+        }
+        playgroundEnvironmentId = hidden.environmentId;
+      }
       // The credential check the harness turn would fail, run BEFORE the box
       // is booted: a refused Cursor turn must not pay for a box first. Same
       // function and inputs as `runHarnessTurn`'s own check.
@@ -2067,8 +2098,8 @@ chatV2.post("/", async (c) => {
           secretEnv,
           bearer: bearerToken,
           projectId: hostedBody.projectId,
-          ...(environmentSpec
-            ? { environmentId: environmentSpec.environmentRef.environmentId }
+          ...(playgroundEnvironmentId
+            ? { environmentId: playgroundEnvironmentId }
             : {}),
         });
         if (credentialRefusal) {
@@ -2081,11 +2112,8 @@ chatV2.post("/", async (c) => {
         bearer: bearerToken,
         projectId: hostedBody.projectId,
         chatSessionId: hostedBody.chatSessionId,
-        ...(environmentSpec
-          ? {
-              projectEnvironmentId:
-                environmentSpec.environmentRef.environmentId,
-            }
+        ...(playgroundEnvironmentId
+          ? { projectEnvironmentId: playgroundEnvironmentId }
           : {}),
         signal: c.req.raw.signal as AbortSignal | undefined,
       });

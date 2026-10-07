@@ -95,6 +95,7 @@ const CLAUDE_CODE_PATCH_SENTINEL_CANDIDATES = [
   "gatewayModelOverrideSettingsFor",
   "strictMcpConfig: true",
   "mcpjamTypedTerminalError",
+  "mcpjamBackgroundDrainReducer",
 ];
 
 async function tsModule(path) {
