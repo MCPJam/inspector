@@ -126,6 +126,14 @@ The Apps Extension tab contains two independent capability matrices that never c
 4. Open the focus panel to drill into protocol or MCP App settings.
 5. Click **Save**.
 
+### Cursor client setup
+
+The Cursor client runs the real Cursor CLI on your own Cursor account. When you create a Cursor client and your project has no usable `CURSOR_API_KEY`, the create dialog asks for your key before saving. The key is stored as your personal brokered secret and delivered to your runs by the egress proxy — it never enters the sandbox directly.
+
+Each team member who runs a Cursor client adds their own key. A project-shared key is never used for Cursor: the CLI trades the key for a session token inside the sandbox, so only your own personal key is accepted. If your key is missing or mis-bound, the dialog shows an error naming what to fix; you can also add or update it under **Project Settings → Secrets**.
+
+Cursor clients are not available in User Testing studies, because participants cannot supply their own Cursor account credentials.
+
 <Note>
   The **Auto-connect** switch in the Connect tab header is project-wide: it
   connects every project server for you in this browser, whichever Client is
