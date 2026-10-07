@@ -7,6 +7,12 @@ vi.mock("convex/react", () => ({
     testCases: [],
     iterations: [],
   })),
+  // The full run is read on selection (useSelectedRun), not taken from the
+  // commit group's summary row.
+  useQueries: (queries: { selectedRun?: { args: { runId: string } } }) =>
+    queries.selectedRun
+      ? { selectedRun: makeRun({ _id: queries.selectedRun.args.runId }) }
+      : {},
 }));
 
 vi.mock("../use-suite-data", () => ({
