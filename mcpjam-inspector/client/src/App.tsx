@@ -1054,16 +1054,40 @@ export function HostsRoute() {
     toast.error("That client no longer exists. It may have been deleted.");
   }, [urlHostState, idShapedHostId, navigate]);
 
+  // The client this page last made the project's previewed client. Cleared
+  // when the URL leaves it, so arriving at it again (from the list or another
+  // client) selects it again.
+  const persistedUrlHostIdRef = useRef<string | null>(null);
+
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so surfaces reading `hostsTabSelectedHostId` stay aligned.
+  //
+  // The previewed client is written ONCE per arrival, never re-asserted. That
+  // value is shared by every tab of the project (localStorage), so a page
+  // that wrote its URL's client back whenever the value differed fought any
+  // other tab that picked a different client: two Client configuration tabs
+  // on different clients flipped it forever, and every flip was a client
+  // switch for every open tab (a reconnect of each server, a toast, App
+  // owners closed and rediscovered). A client picked elsewhere after this
+  // page opened stands; this canvas keeps showing its URL's client.
   useEffect(() => {
     if (hostsTabSelectedHostId !== openableHostId) {
       setHostsTabSelectedHostId(openableHostId);
     }
-    if (persistableHostId && previewedHostId !== persistableHostId) {
-      setPreviewedHostId(persistableHostId);
+    if (persistableHostId) {
+      if (persistedUrlHostIdRef.current !== persistableHostId) {
+        persistedUrlHostIdRef.current = persistableHostId;
+        if (previewedHostId !== persistableHostId) {
+          setPreviewedHostId(persistableHostId);
+        }
+      }
+    } else if (persistedUrlHostIdRef.current !== idShapedHostId) {
+      // Left that client (the list, or another id still loading). A host list
+      // reloading under the same URL keeps it, so it is not selected twice.
+      persistedUrlHostIdRef.current = null;
     }
   }, [
+    idShapedHostId,
     openableHostId,
     persistableHostId,
     hostsTabSelectedHostId,
