@@ -592,16 +592,18 @@ export function SwarmLiveStreamPane({
   // no message, so the stream's text alone cannot tell the two apart. A busy
   // reservation is a third thing: MCPJam's own wait, with no provider involved.
   // Until the row lands the live event decides it, by the code it carries
-  // beside the humanized sentence, and by the sentence when it did not.
+  // beside the humanized sentence, and by the sentence when it did not. Every
+  // reading of the failure below goes by that one code, so a pane that is ahead
+  // of its row words the session the way the row will.
+  const errorCode = attempt?.errorCode ?? live?.errorCode;
   const rateLimitInfo =
     outcome === "rate_limited"
       ? humanizeSwarmAttemptError(
           attempt?.errorMessage ?? live?.errorMessage ?? null,
-          attempt?.errorCode,
+          errorCode,
         )
       : null;
-  const rateLimitCode =
-    attempt?.errorCode ?? live?.errorCode ?? rateLimitInfo?.code;
+  const rateLimitCode = errorCode ?? rateLimitInfo?.code;
   const providerRateLimit =
     rateLimitInfo &&
     !isAccountLimit(rateLimitInfo.message, rateLimitCode) &&
@@ -620,7 +622,7 @@ export function SwarmLiveStreamPane({
     outcome === "failed" || outcome === "rate_limited"
       ? humanizeSwarmAttemptError(
           attempt?.errorMessage ?? live?.errorMessage,
-          attempt?.errorCode,
+          errorCode,
         )
       : null;
 
@@ -682,7 +684,7 @@ export function SwarmLiveStreamPane({
             variant="inline"
             error={describeSwarmAttemptFailure(
               attempt?.errorMessage ?? live?.errorMessage,
-              attempt?.errorCode,
+              errorCode,
               providerLabelForModelId(convexSession?.modelId),
             )}
           />

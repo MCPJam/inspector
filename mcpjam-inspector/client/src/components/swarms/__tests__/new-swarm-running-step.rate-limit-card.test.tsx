@@ -465,6 +465,11 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     expect(
       screen.queryByTestId("swarm-live-pane-rate-limit"),
     ).not.toBeInTheDocument();
+    // The failure card reads the same code: MCPJam's own busy sentence, not the
+    // raw wording the event happened to carry.
+    expect(screen.getByTestId("swarm-live-pane-failure")).toHaveTextContent(
+      "temporarily busy",
+    );
   });
 
   it("still names the provider when the live event's code is the generic one", async () => {
