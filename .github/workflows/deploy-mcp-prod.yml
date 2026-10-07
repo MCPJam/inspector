@@ -191,16 +191,16 @@ jobs:
               `differs only in non-MCP paths — safe to promote.`
             );
 
-  # The candidate itself, evaluated. `--server mcpjam-mcp-staging` points the
-  # suite file's cases at the staging worker, which is what is about to be
-  # promoted — the same file that monitors production nightly, so the two can
-  # never drift into two different definitions of "working".
+  # The candidate itself, evaluated. The staging suite file targets the staging
+  # worker, which is what is about to be promoted. Production is monitored by a
+  # sibling file whose cases a drift test keeps identical, so the two can never
+  # become two different definitions of "working".
   eval-gate:
     needs: verify-staging
     if: ${{ !inputs.skip_eval_gate }}
     uses: ./.github/workflows/mcp-dogfood-evals.yml
     with:
-      server: mcpjam-mcp-staging
+      suite_file: .mcpjam/evals/mcpjam-mcp.yaml
     secrets: inherit
 
   deploy:
