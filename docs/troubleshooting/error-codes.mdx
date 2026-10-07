@@ -711,6 +711,14 @@ needs buying.
 - Run the session again once your other sessions have finished.
 - Start fewer sessions at once if it keeps happening.
 
+### MCPJam temporarily busy
+
+A swarm session can stop with a message like **MCPJam is temporarily busy reserving spending capacity**. This is a concurrency wait on MCPJam's side: the spending reservation could not be secured because too many sessions were starting at once, so the model was never called. No credits were spent and no credit prompt opens for it.
+
+**Next steps**
+- Retry the session. The condition is transient and resolves on its own.
+- If it recurs frequently, reduce the number of sessions running in parallel.
+
 ### Provider failed fallback not permitted
 
 `provider/fallback_prohibited`
