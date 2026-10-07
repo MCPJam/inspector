@@ -70,6 +70,8 @@ import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionC
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { Badge } from "@mcpjam/design-system/badge";
+import { PluginSettingsSection } from "@/components/plugins/PluginSettingsSection";
 
 export type ServerDetailTab =
   | "settings"
@@ -81,6 +83,8 @@ export type ServerDetailTab =
   | "history";
 
 interface ServerDetailModalProps {
+  /** A project server; see {@link PluginServerDetailModalProps} for a plugin's. */
+  plugin?: undefined;
   extensionSettingsScope?: ThreadAppScope | null;
   isOpen: boolean;
   onClose: () => void;
@@ -119,7 +123,130 @@ interface ServerDetailModalProps {
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
-export function ServerDetailModal({
+/** A server an installed plugin adds, opened from its card or a permalink. */
+export interface PluginServerDetail {
+  pluginId: string;
+  /** What the plugin's card is labelled with. */
+  pluginLabel: string;
+  /** The materialized server, or null for a plugin with no server to name. */
+  serverId: string | null;
+  serverName: string;
+}
+
+/**
+ * A plugin's server is not a browser connection and its configuration belongs
+ * to the plugin's version, so its details are its Settings tab alone: the
+ * plugin's versions, setup and lifecycle, plus the server's own extension
+ * settings when it declares any.
+ */
+interface PluginServerDetailModalProps {
+  plugin: PluginServerDetail;
+  isOpen: boolean;
+  onClose: () => void;
+  /** The Convex project id. */
+  projectId?: string | null;
+  extensionSettingsScope?: ThreadAppScope | null;
+}
+
+export function ServerDetailModal(
+  props: ServerDetailModalProps | PluginServerDetailModalProps
+) {
+  return props.plugin ? (
+    <PluginServerDetailModal {...props} />
+  ) : (
+    <ProjectServerDetailModal {...props} />
+  );
+}
+
+function PluginServerDetailModal({
+  plugin,
+  isOpen,
+  onClose,
+  projectId = null,
+  extensionSettingsScope = null,
+}: PluginServerDetailModalProps) {
+  const settings = useServerSettingsAvailability(
+    isOpen ? extensionSettingsScope : null,
+    plugin.serverId
+  );
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        translate="no"
+        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+        }}
+        data-testid="plugin-server-detail-modal"
+      >
+        <DialogHeader>
+          {/* No connect switch: plugin servers connect on every message. The
+              Plugin section below says whether chats run the plugin now. */}
+          <DialogTitle className="flex items-center gap-2 min-w-0 pr-6">
+            <span className="truncate">{plugin.serverName}</span>
+            <Badge
+              variant="secondary"
+              className="flex-shrink-0 text-[10px] font-normal"
+            >
+              from {plugin.pluginLabel}
+            </Badge>
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            The plugin that adds this server: its versions, setup and lifecycle.
+          </DialogDescription>
+        </DialogHeader>
+        <Tabs value="settings" className="flex min-h-0 flex-col">
+          <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
+            <TabsTrigger
+              value="settings"
+              className="min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm"
+            >
+              Settings
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent
+            value="settings"
+            className="mt-4 max-h-[60vh] overflow-y-auto pl-1 pr-2"
+          >
+            <PluginSettingsSection
+              projectId={projectId}
+              pluginId={plugin.pluginId}
+              focusServerId={plugin.serverId}
+              onUninstalled={onClose}
+            />
+            {isOpen &&
+            extensionSettingsScope &&
+            plugin.serverId &&
+            (settings.available || settings.failed) ? (
+              <div className="mt-4 border-t border-border/60 pt-4">
+                {settings.failed ? (
+                  <div role="alert" className="space-y-2">
+                    <p>Settings could not be loaded.</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={settings.retry}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : (
+                  <ServerSettingsPanel
+                    scope={extensionSettingsScope}
+                    serverId={plugin.serverId}
+                    serverName={plugin.serverName}
+                  />
+                )}
+              </div>
+            ) : null}
+          </TabsContent>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProjectServerDetailModal({
   isOpen,
   extensionSettingsScope = null,
   onClose,

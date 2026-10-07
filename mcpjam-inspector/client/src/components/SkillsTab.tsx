@@ -62,6 +62,18 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
+import {
+  PluginSkillDetail,
+  PluginSkillsSection,
+  type PluginSkillSelection,
+} from "./skills/PluginSkills";
+import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
+
+/** The plugin a `?plugin=` permalink names (a skills-only plugin's page). */
+function readFocusPluginId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("plugin");
+}
 
 interface SkillsTabProps {
   /** Convex project id — required to address the project skill store. */
@@ -158,6 +170,16 @@ export function SkillsTab({
     projectId: isCloudMode && !cloudUnavailable && projectId ? projectId : null,
   });
   const [skills, setSkills] = useState<SkillListItem[]>([]);
+  // Installed plugins' skills: one more read-only source in the list. While
+  // one is open the right pane is its detail, and the project-store selection
+  // below stays as it was underneath.
+  const pluginsEnabled = usePluginsEnabled();
+  const showPluginSkills = pluginsEnabled && !!projectId;
+  const [pluginSkill, setPluginSkill] = useState<PluginSkillSelection | null>(
+    null
+  );
+  const [pluginSkillCount, setPluginSkillCount] = useState(0);
+  const [focusPluginId] = useState(readFocusPluginId);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [fetchingSkills, setFetchingSkills] = useState(false);
@@ -436,6 +458,7 @@ export function SkillsTab({
   const handleSelectSkill = (name: string) => {
     // Back to the project store — clear the server-origin marker so the
     // name-keyed effects resume.
+    setPluginSkill(null);
     setServerSkillUri(null);
     setSelectedSkillName(name);
     setSelectedFilePath("SKILL.md");
@@ -478,6 +501,7 @@ export function SkillsTab({
       });
       // Set BEFORE the name, so the name-keyed effects see the marker on the
       // very render that would otherwise fire them.
+      setPluginSkill(null);
       setServerSkillUri(skill.skillUri);
       setSelectedSkillName(skill.name);
       setSelectedFilePath("SKILL.md");
@@ -508,6 +532,7 @@ export function SkillsTab({
   );
 
   const handleSelectFile = (skillName: string, filePath: string) => {
+    setPluginSkill(null);
     setServerSkillUri(null);
     if (skillName !== selectedSkillName) {
       setSelectedSkillName(skillName);
@@ -536,7 +561,10 @@ export function SkillsTab({
   // `listIsSettling` covers a listing that has not answered yet — offering
   // "upload your first skill" in that window would be a claim about a store we
   // are still reading, and it would flash away the moment the rows land.
-  const listIsEmpty = skills.length === 0 && serverSkills.count === 0;
+  const listIsEmpty =
+    skills.length === 0 &&
+    serverSkills.count === 0 &&
+    (!showPluginSkills || pluginSkillCount === 0);
   const listIsSettling = fetchingSkills || serverSkills.pending;
 
   return (
@@ -561,7 +589,9 @@ export function SkillsTab({
                     there), but a badge next to a list is read as the length of
                     that list, not as the size of a namespace. */}
                 <Badge variant="secondary" className="text-xs font-mono">
-                  {skills.length + serverSkills.count}
+                  {skills.length +
+                    serverSkills.count +
+                    (showPluginSkills ? pluginSkillCount : 0)}
                 </Badge>
               </div>
               {/* Upload and the Local/Cloud toggle act on the project store,
@@ -624,7 +654,7 @@ export function SkillsTab({
                       skillFiles={skillFiles}
                       loadingSkills={fetchingSkills}
                       loadingFiles={loadingFiles}
-                      selectedSkillName={selectedSkillName}
+                      selectedSkillName={pluginSkill ? "" : selectedSkillName}
                       selectedFilePath={selectedFilePath}
                       onSelectSkill={handleSelectSkill}
                       onSelectFile={handleSelectFile}
@@ -644,6 +674,16 @@ export function SkillsTab({
                     onOpenSkill={handleOpenServerSkill}
                     onListingChange={handleServerSkillsChange}
                   />
+                  {/* Installed plugins' skills, each row naming its plugin. */}
+                  {showPluginSkills && projectId ? (
+                    <PluginSkillsSection
+                      projectId={projectId}
+                      selectedSkillId={pluginSkill?.skillId ?? null}
+                      focusPluginId={focusPluginId}
+                      onOpenSkill={setPluginSkill}
+                      onCountChange={setPluginSkillCount}
+                    />
+                  ) : null}
                   {/* Placeholders for the WHOLE list, so they render only when
                       the whole list is empty — and BELOW the rows, so nothing
                       can sit above them. The project store's own empty state
@@ -691,7 +731,13 @@ export function SkillsTab({
         {/* Right Panel - File Content */}
         <ResizablePanel defaultSize={75} minSize={50}>
           <div className="h-full flex flex-col bg-background">
-            {selectedSkillName && selectedSkill ? (
+            {pluginSkill && projectId ? (
+              <PluginSkillDetail
+                projectId={projectId}
+                skill={pluginSkill}
+                onDetached={() => void fetchSkills()}
+              />
+            ) : selectedSkillName && selectedSkill ? (
               <>
                 {/* Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-4">
