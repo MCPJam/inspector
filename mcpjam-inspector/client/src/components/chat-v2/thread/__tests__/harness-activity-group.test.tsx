@@ -112,7 +112,7 @@ describe("HarnessActivityGroup", () => {
       />,
     );
 
-  it("a finished run is one summary row; open it for the calls, open a call for its card", () => {
+  it("a finished run is one summary row; open it for each call's card", () => {
     renderGroup([
       tool("a", "bash", { command: "npm test" }),
       tool("b", "read", { file_path: "/w/app.ts" }),
@@ -120,18 +120,13 @@ describe("HarnessActivityGroup", () => {
     ]);
     expect(screen.getByText("Ran a command, read 2 files")).toBeInTheDocument();
     expect(screen.getByText("1 failed")).toBeInTheDocument();
-    expect(screen.queryAllByTestId("harness-activity-row")).toHaveLength(0);
+    expect(screen.queryByTestId("card-a")).toBeNull();
 
     fireEvent.click(screen.getByText("Ran a command, read 2 files"));
-    const rows = screen.getAllByTestId("harness-activity-row");
-    expect(rows.map((row) => row.textContent)).toEqual([
-      "Runnpm test",
-      "Readapp.ts",
-      "Readb.tsFailed",
-    ]);
-    expect(screen.queryByTestId("card-b")).toBeNull();
-    fireEvent.click(screen.getByText("app.ts"));
-    expect(screen.getByTestId("card-b")).toBeInTheDocument();
+    // The cards themselves, in order: each says what its call did.
+    expect(
+      ["card-a", "card-b", "card-c"].map((id) => screen.getByTestId(id)),
+    ).toHaveLength(3);
   });
 
   it("while a call runs, the row names it and shows its live output", () => {

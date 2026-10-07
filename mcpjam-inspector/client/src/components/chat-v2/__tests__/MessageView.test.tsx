@@ -924,8 +924,8 @@ describe("MessageView", () => {
       // The folded calls' own cards render only when opened.
       expect(screen.queryByTestId("part-tool-bash")).toBeNull();
       fireEvent.click(screen.getByText("Ran a command, read a file"));
-      fireEvent.click(screen.getByText("ls"));
       expect(screen.getByTestId("part-tool-bash")).toBeInTheDocument();
+      expect(screen.getByTestId("part-tool-read")).toBeInTheDocument();
     });
   });
 

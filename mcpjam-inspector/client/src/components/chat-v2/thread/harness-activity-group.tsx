@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Check, ChevronDown, Loader2, X } from "lucide-react";
+import { Check, ChevronDown, Loader2 } from "lucide-react";
 import type { DynamicToolUIPart, ToolUIPart, UITools } from "ai";
 import {
   Collapsible,
@@ -78,63 +78,10 @@ function LiveOutputTail({ toolCallId }: { toolCallId: string | undefined }) {
   );
 }
 
-function ActivityRow({
-  part,
-  open,
-  onToggle,
-  children,
-}: {
-  part: AnyToolPart;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  const info = getToolInfo(part);
-  const label = describeHarnessToolStep(info.toolName, info.input);
-  const running = !isSettled(info.toolState);
-  const failed = info.toolState === "output-error";
-  return (
-    <li data-testid="harness-activity-row">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 text-left hover:text-foreground"
-      >
-        <span className="shrink-0 text-foreground">{label.verb}</span>
-        {label.detail && (
-          <span
-            className={cn(
-              "min-w-0 truncate text-muted-foreground",
-              label.code && "font-mono",
-            )}
-            title={label.title}
-          >
-            {label.detail}
-          </span>
-        )}
-        {failed ? (
-          <span className="inline-flex shrink-0" title={info.errorText}>
-            <X className="h-3 w-3 text-destructive" aria-hidden="true" />
-            <span className="sr-only">Failed</span>
-          </span>
-        ) : running ? (
-          <Loader2
-            className="h-3 w-3 shrink-0 animate-spin text-muted-foreground"
-            aria-label="Running"
-          />
-        ) : null}
-      </button>
-      {running && <LiveOutputTail toolCallId={info.toolCallId} />}
-      {open && <div className="mt-1 mb-2">{children}</div>}
-    </li>
-  );
-}
-
 /**
  * A run of a harness's built-in tool calls as one row: "Ran 2 commands, read
  * 3 files". While a call runs, the row names it and shows its live output;
- * open it to see every call, and open a call to see its full card.
+ * open it to see each call's card, which says what that call did.
  */
 export function HarnessActivityGroup({
   parts,
@@ -144,7 +91,6 @@ export function HarnessActivityGroup({
   renderPart: (part: AnyToolPart) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [openRows, setOpenRows] = useState<ReadonlySet<string>>(new Set());
   const infos = parts.map((part) => getToolInfo(part));
   const current = [...infos]
     .reverse()
@@ -158,14 +104,6 @@ export function HarnessActivityGroup({
   const currentLabel = current
     ? describeHarnessToolStep(current.toolName, current.input)
     : undefined;
-
-  const toggleRow = (id: string) =>
-    setOpenRows((rows) => {
-      const next = new Set(rows);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   return (
     <Collapsible
@@ -218,23 +156,15 @@ export function HarnessActivityGroup({
           aria-hidden="true"
         />
       </CollapsibleTrigger>
-      {!open && current && <LiveOutputTail toolCallId={current.toolCallId} />}
+      {current && <LiveOutputTail toolCallId={current.toolCallId} />}
       <CollapsibleContent>
-        <ol className="mt-2 ml-[6px] space-y-0.5 border-l border-border/60 pl-3">
-          {parts.map((part, index) => {
-            const id = infos[index]!.toolCallId ?? `row-${index}`;
-            return (
-              <ActivityRow
-                key={id}
-                part={part}
-                open={openRows.has(id)}
-                onToggle={() => toggleRow(id)}
-              >
-                {renderPart(part)}
-              </ActivityRow>
-            );
-          })}
-        </ol>
+        <div className="mt-2 ml-[6px] space-y-2 border-l border-border/60 pl-3">
+          {parts.map((part, index) => (
+            <div key={infos[index]!.toolCallId ?? `call-${index}`}>
+              {renderPart(part)}
+            </div>
+          ))}
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );

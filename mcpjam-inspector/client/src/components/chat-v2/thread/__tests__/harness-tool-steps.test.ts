@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeHarnessToolStep,
+  harnessToolTarget,
   isHarnessActivityToolName,
   summarizeHarnessActivity,
 } from "../harness-tool-steps";
@@ -165,5 +166,27 @@ describe("activity", () => {
         },
       ]),
     ).toBe("Read a file");
+  });
+});
+
+describe("harnessToolTarget", () => {
+  it("is what literally runs or changes, never the model's description", () => {
+    expect(
+      harnessToolTarget("bash", {
+        command: "rm -rf build",
+        description: "Clean up",
+        commandActions: [{ type: "unknown", command: "rm -rf build" }],
+      }),
+    ).toBe("rm -rf build");
+    expect(harnessToolTarget("Edit", { file_path: "/w/a.ts" })).toBe("/w/a.ts");
+    expect(
+      harnessToolTarget("fileChange", {
+        changes: [{ path: "/w/a.ts" }, { path: "/w/b.ts" }],
+      }),
+    ).toBe("/w/a.ts, /w/b.ts");
+    expect(harnessToolTarget("WebFetch", { url: "https://x.dev" })).toBe(
+      "https://x.dev",
+    );
+    expect(harnessToolTarget("TodoWrite", { todos: "x" })).toBeUndefined();
   });
 });

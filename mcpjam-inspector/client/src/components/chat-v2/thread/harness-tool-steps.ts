@@ -262,3 +262,38 @@ export function summarizeHarnessActivity(
   const text = phrases.join(", ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+/**
+ * What a built-in call literally acts on: the command line, the file path,
+ * the pattern. For approvals, where the user must see what will run, not the
+ * model's own description of it.
+ */
+export function harnessToolTarget(
+  toolName: string,
+  input?: Record<string, unknown>,
+): string | undefined {
+  switch (toolName.toLowerCase()) {
+    case "bash":
+      return stringField(input, "command", "cmd");
+    case "read":
+    case "write":
+    case "edit":
+    case "multiedit":
+      return stringField(input, "file_path", "path");
+    case "notebookedit":
+      return stringField(input, "notebook_path");
+    case "filechange": {
+      const paths = editedPaths(input);
+      return paths.length > 0 ? paths.join(", ") : undefined;
+    }
+    case "grep":
+    case "glob":
+      return stringField(input, "pattern");
+    case "webfetch":
+      return stringField(input, "url");
+    case "websearch":
+      return stringField(input, "query");
+    default:
+      return undefined;
+  }
+}
