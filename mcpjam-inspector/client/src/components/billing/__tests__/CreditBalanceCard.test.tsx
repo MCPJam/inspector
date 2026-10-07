@@ -75,8 +75,8 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: evalQuotaLoadingState,
     isAtLimit: Boolean(
       evalQuotaState &&
-        evalQuotaState.allowed !== null &&
-        evalQuotaState.used >= evalQuotaState.allowed,
+      evalQuotaState.allowed !== null &&
+      evalQuotaState.used >= evalQuotaState.allowed,
     ),
   }),
 }));
@@ -305,7 +305,9 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Compare plans for more monthly credits and top-ups" }),
+      screen.getByRole("link", {
+        name: "Compare plans for more monthly credits and top-ups",
+      }),
     ).toHaveAttribute("href", "/organizations/org-1/plans");
     window.history.replaceState({}, "", "/");
   });
@@ -651,6 +653,24 @@ describe("CreditBalanceCard", () => {
       ).not.toBeInTheDocument();
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
     });
+
+    it.each([75, 100, 5])(
+      "renders the monthly credit meter at %s percent",
+      (percent) => {
+        balanceState = {
+          ...balanceState!,
+          monthlyAllowanceRemaining: (18000 * percent) / 100,
+        };
+        render(<CreditBalanceCard />);
+        const meter = screen.getByLabelText("Monthly credits remaining");
+        expect(meter).toHaveAttribute("aria-valuenow", String(percent));
+        expect(meter).toHaveClass(
+          percent <= 10
+            ? "[&_[data-slot=progress-indicator]]:bg-destructive"
+            : "[&_[data-slot=progress-indicator]]:bg-primary",
+        );
+      },
+    );
 
     it("keeps reset timing in the monthly credit tooltip", async () => {
       render(<CreditBalanceCard pricingVersion="v1" />);

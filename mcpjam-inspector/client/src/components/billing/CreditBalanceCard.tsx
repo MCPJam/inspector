@@ -208,8 +208,8 @@ export function CreditBalanceCard({
               isLoading || !balance
                 ? null
                 : hasRollover
-                ? `${monthlyRemaining.toLocaleString()} credits remaining`
-                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining`
+                  ? `${monthlyRemaining.toLocaleString()} credits remaining`
+                  : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} remaining`
             }
             fillPercent={
               isLoading || meterCapacity <= 0
@@ -235,8 +235,8 @@ export function CreditBalanceCard({
               isLoading
                 ? "Credits"
                 : balance?.platformFreeBudgetExhausted
-                ? "Free allowance temporarily unavailable"
-                : "Free daily credits"
+                  ? "Free allowance temporarily unavailable"
+                  : "Free daily credits"
             }
             rightText={
               isLoading || !balance
@@ -576,7 +576,9 @@ function UsageRow({
           className={
             fillPercent <= 10
               ? "bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
-              : "bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
+              : showCoin
+                ? "bg-muted [&_[data-slot=progress-indicator]]:bg-primary"
+                : "bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
           }
           aria-valuetext={ariaValueText}
         />
