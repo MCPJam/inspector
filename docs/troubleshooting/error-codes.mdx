@@ -708,6 +708,8 @@ not.
 - **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
 - Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
 
+> **BYOK provider balance errors are separate.** If your own API key's account runs out of credits, the chat surface shows the provider's error message directly (for example, "Your Anthropic API account has insufficient credits"). The MCPJam credit top-up dialog does not appear for those errors — buying MCPJam credits cannot fix a balance issue on your provider account. See [Provider error (BYOK balance)](#provider-error-byok-balance) for next steps.
+
 **Swarm and Eval runs**
 
 When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run, or one per swarm when a swarm launches several runs at once. Completed results are preserved. Buying credits does not automatically restart the run — start a new run once credits are available.
