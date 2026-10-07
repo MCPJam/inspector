@@ -91,4 +91,21 @@ describe("ConformanceHistory", () => {
     );
     expect(startRun).not.toHaveBeenCalled();
   });
+
+  it("keeps the empty state compact so the suites below stay visible", () => {
+    useQueryMock.mockReturnValue({
+      page: [],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" serverId="srv_1" />);
+
+    // The history sits in a shrink-0 container above the suites; a
+    // viewport-height empty state pushed them out of view.
+    const emptyState = screen
+      .getByText("No conformance runs yet")
+      .closest(".flex.items-center.justify-center");
+    expect(emptyState).not.toBeNull();
+    expect(emptyState!.className).not.toMatch(/100vh/);
+  });
 });
