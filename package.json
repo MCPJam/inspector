@@ -48,6 +48,8 @@
     "claude-policy:check": "node scripts/sync-claude-policy-manifest.mjs --check",
     "openai-policy:sync": "node scripts/sync-openai-policy-manifest.mjs",
     "openai-policy:check": "node scripts/sync-openai-policy-manifest.mjs --check",
+    "muse-policy:sync": "node scripts/sync-muse-policy-manifest.mjs",
+    "muse-policy:check": "node scripts/sync-muse-policy-manifest.mjs --check",
     "release:status": "changeset status",
     "release:version": "changeset version",
     "release:publish": "changeset publish",

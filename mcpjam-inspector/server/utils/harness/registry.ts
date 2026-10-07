@@ -803,7 +803,8 @@ function memoizedBuiltinTools(
 // proxy, which normalizes its own per-protocol proxyBaseUrl.
 
 /**
- * CLI environment a Claude Code turn runs with, whatever its effort.
+ * CLI environment a Claude Code turn runs with, whatever its effort: the
+ * model pins below, and whether background tasks run.
  *
  * Background tasks run on `allow-all` turns only. The bridge's background
  * drain (`claude-code-background-drain.ts`) holds such a turn open until its
@@ -819,10 +820,48 @@ function memoizedBuiltinTools(
  */
 function claudeCodeTurnEnv(
   permissionMode: HarnessV1PermissionMode | undefined,
+  modelId: string,
 ): Record<string, string> {
-  return permissionMode === "allow-all"
-    ? {}
-    : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" };
+  return {
+    ...claudeCodeModelPins(modelId),
+    ...(permissionMode === "allow-all"
+      ? {}
+      : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
+  };
+}
+
+const CLAUDE_CODE_MODEL_FAMILIES = ["haiku", "sonnet", "opus"] as const;
+
+/**
+ * Every model Claude Code picks for ITSELF resolves to the turn's model.
+ *
+ * Besides the model it is given, the CLI reaches for its family aliases on
+ * its own: plan mode switches to the `sonnet` alias (CLI 2.1.245 sends
+ * `claude-sonnet-5` right after `EnterPlanMode`, even on a Haiku turn), and
+ * background functionality and the `Explore` subagent use `haiku`. The
+ * turn's model lease admits only the model the user picked (plus that
+ * model's own alias), so each of those calls was refused with
+ * `403 Model not allowed for this lease`, ending the turn.
+ *
+ * Pinning the OTHER families' aliases (`ANTHROPIC_DEFAULT_<FAMILY>_MODEL`) to
+ * the turn's canonical id sends those calls to the chosen model — the one
+ * the lease admits exactly and the user is billed for. The chosen family's
+ * own alias is left alone, so the main model keeps its existing path (the
+ * bridge's Gateway model overrides). An id outside the three families pins
+ * all three.
+ */
+function claudeCodeModelPins(modelId: string): Record<string, string> {
+  const native = toClaudeCodeModel(modelId);
+  const family = CLAUDE_CODE_MODEL_FAMILIES.find(
+    (candidate) =>
+      native === candidate || native?.startsWith(`claude-${candidate}-`),
+  );
+  const pins: Record<string, string> = {};
+  for (const candidate of CLAUDE_CODE_MODEL_FAMILIES) {
+    if (candidate === family) continue;
+    pins[`ANTHROPIC_DEFAULT_${candidate.toUpperCase()}_MODEL`] = modelId;
+  }
+  return pins;
 }
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
@@ -901,7 +940,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   parseToolName: parseHarnessToolName,
   // No `model` here: the adapter no longer reads one at construction. The
   // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
-  createHarness({ auth, mcpJson, reasoningEffort, permissionMode }) {
+  createHarness({ modelId, auth, mcpJson, reasoningEffort, permissionMode }) {
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
     // local session swaps this bootstrap for the Inspector layer's
@@ -940,13 +979,13 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
             env: {
-              ...claudeCodeTurnEnv(permissionMode),
+              ...claudeCodeTurnEnv(permissionMode, modelId),
               CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
             },
           }
         : {
             env: {
-              ...claudeCodeTurnEnv(permissionMode),
+              ...claudeCodeTurnEnv(permissionMode, modelId),
               CLAUDE_CODE_EFFORT_LEVEL: "unset",
             },
           }),
