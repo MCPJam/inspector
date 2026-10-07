@@ -4,29 +4,40 @@ We ship an MCP server: the Cloudflare Worker in `mcp/`, serving
 `mcp.mcpjam.com`. This is how we evaluate it with our own product, so that the
 eval surfaces a customer uses are surfaces we use first.
 
-## The suite lives in this repository
+## Two suite files, one set of questions
 
-`.mcpjam/evals/mcpjam-mcp.yaml` is the suite. It is the only place the cases
-are authored.
+`.mcpjam/evals/` holds two:
 
-Running it syncs the file into a hosted suite named **mcpjam-mcp dogfood**, in
-the project **MCPJam MCP dogfood**. That hosted suite is **CI-owned**: the
-file's `suite.id` claims it, and the app refuses to edit it. A hand edit comes
-back as
+| File | Targets | Job |
+|---|---|---|
+| `mcpjam-mcp.yaml` | `mcpjam-mcp-staging` | the promotion gate, evaluating the candidate before it ships |
+| `mcpjam-mcp-production.yaml` | `mcpjam-mcp` | the nightly monitor, saying whether what is live drifted |
+
+**Edit cases only in `mcpjam-mcp.yaml`.** `dogfood-suite-drift.test.ts` fails if
+the two files' `cases:` blocks differ by a byte, so the production copy cannot
+quietly start measuring something else. Everything above `cases:` is allowed to
+differ, and must: identity, target, prose.
+
+**Why not one file retargeted per run.** A file-owned suite always carries an
+environment, and `eval run --server` against one is refused outright with
+`ENVIRONMENT_SERVERS_NOT_OVERRIDABLE`. That refusal is right rather than
+inconvenient: a suite's run history is only comparable within one target, so one
+suite spanning two servers would corrupt every baseline comparison.
+
+**`suite.id` is the ownership token and the two are not interchangeable.** Each
+claims the hosted suite already bound to its server. Swap them and a file points
+at a suite bound to the other environment, so the run goes to the wrong server
+and still reports green. Need a fresh suite? Mint a new id rather than reuse one.
+
+Running either file syncs it into its hosted suite, which is **CI-owned**: a
+hand edit in the app comes back as
 
 ```
 CI_OWNED_SUITE_READ_ONLY — This suite is managed by CI. Edit the test file in
-your repository and run it again, or duplicate the suite to get an editable
-copy.
+your repository and run it again, or duplicate the suite to get an editable copy.
 ```
 
-So there is one copy of the truth. To change a case, edit the YAML and merge;
-the next run carries it. To experiment without merging, duplicate the suite in
-the app and edit the copy.
-
-`suite.id` is the ownership token. Change it and the file no longer owns the
-suite it created — it will try to claim a suite that is not its own and be
-refused. Treat that line as permanent.
+So there is one copy of the truth. To change a case, edit the YAML and merge.
 
 ## Running it by hand
 
@@ -74,11 +85,21 @@ Two deliberate choices, both written into the file:
 
 ## Things that will trip you up
 
-- **It targets production.** `mcp.mcpjam.com`, because that is the server this
-  project holds a consented OAuth connection for. Staging would be the better
-  target — a pre-deploy gate beats a post-deploy alarm — but the staging worker
-  trusts a different AuthKit tenant than the staging API, so nothing can hold a
-  working credential for it yet. When that is fixed it is a one-line change.
+- **Staging needs three things that are easy to forget.** Its worker must point
+  at the same AuthKit tenant the staging backend uses, that tenant must have
+  `https://mcp-staging.mcpjam.com/mcp` registered as an MCP resource indicator,
+  and `staging.mcpjam.com/api/v1/*` must stay bypassed in Cloudflare Access so
+  the worker can reach the platform API. Miss the last one and every tool call
+  fails with `INTERNAL_ERROR: The MCPJam API returned a non-JSON response
+  (200)`, which is Access's login page arriving where JSON was expected.
+- **Check which server a run actually used.** `eval run --format json` reports
+  `launch.targets[].servers`. A file pointed at a suite bound to the other
+  environment still passes — against the wrong server. A green run on the wrong
+  target is worse than a red one.
+- **Re-running after an infrastructure change needs a fresh idempotency key.**
+  `--notes` is excluded from the key, so an unchanged file and knobs returns the
+  run it already started and you read a stale verdict believing it is new. Pass
+  `--idempotency-key <unique>`; the workflow derives one per run attempt.
 - **Read a negative case's failure before believing it.** On a client with
   progressive tool discovery, the catalog meta-tools (`search_mcp_tools`,
   `load_mcp_tools`) still count as tool calls, so a negative case can fail for
