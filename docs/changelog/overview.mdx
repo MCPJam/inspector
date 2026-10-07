@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-07
+
+#### Changed
+
+- **Claude Code background agents now report back inside the same turn (hosted, evals, swarms)** — when a Claude Code turn runs without tool-approval pauses (the default for hosted chat, evals, and swarms), background agents are now enabled and the turn waits for them to finish before it closes. Their answer lands in the same reply instead of being lost. Turns that pause for approvals keep background tasks off and run subagents in the foreground, as before. A Stop or a request deadline during the wait keeps the answer that was already delivered rather than discarding it, and a background task stopped by an earlier turn no longer leaves the next reply empty.
+
 ### 2026-10-06
 
 #### Added
