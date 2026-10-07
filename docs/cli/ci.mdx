@@ -516,6 +516,8 @@ Either `eval run --wait` or `eval gate` already fails the job on its own — the
 </Warning>
 
 <Note>
+**Two different clocks, and they are easy to confuse.** `--timeout` bounds a single HTTP request and defaults to 120s for hosted eval commands; `--wait-timeout` bounds how long `--wait` waits for the RUN to finish. A slow sync is the first; a long-running suite is the second. Syncing a suite file is several round trips — it resolves the project, validates every tool reference against the live server, writes the cases and launches — so on a cold runner it is the one that can bind.
+
 `eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
