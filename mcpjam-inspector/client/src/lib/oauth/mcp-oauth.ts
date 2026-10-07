@@ -2744,11 +2744,14 @@ export async function initiateOAuth(
       }
       automaticRegistrationOverrideReason =
         "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.";
-      authorizationPlan = await resolveOAuthExecutionPlan(provider, fetchFn, {
-        ...options,
-        registrationMode: "dcr",
-        registrationStrategy: undefined,
-      });
+      // Discovery already established that this automatic plan can use DCR.
+      // Switch only the selected strategy instead of planning again from the
+      // full OAuth options object, which may include credentials that must not
+      // flow into persisted plan metadata.
+      authorizationPlan = {
+        ...authorizationPlan,
+        registrationStrategy: "dcr",
+      };
     }
     traceAuthorizationPlan = authorizationPlan;
     if (
