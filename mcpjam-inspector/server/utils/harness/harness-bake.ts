@@ -102,9 +102,21 @@ export const HARNESS_TEMPLATE_PNPM_VERSION = "12.8.1";
  * without pnpm — a custom environment image, an old template — got whatever
  * pnpm was current, which is how pnpm 11 reached hosted turns. The baked
  * template already has this exact version, so on it this is `command -v` only.
+ *
+ * ROOT-OWNED PREFIX. An image that installs Node from the distro — the desktop
+ * template among them — leaves npm's global prefix to root while the box runs
+ * as `user`, so a plain global install is refused (npm exits 243) and the
+ * harness never starts. The fallback installs with the user's own rights when
+ * the prefix is writable and through `sudo -n` otherwise. `-n` never prompts:
+ * a box without passwordless sudo fails with the install's own error instead
+ * of hanging the turn.
  */
 export function harnessPnpmGuardCommand(): string {
-  return `command -v pnpm || npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`;
+  const install = `npm install -g pnpm@${HARNESS_TEMPLATE_PNPM_VERSION}`;
+  return (
+    `command -v pnpm || { if [ -w "$(npm config get prefix)/lib/node_modules" ]; ` +
+    `then ${install}; else sudo -n ${install}; fi; }`
+  );
 }
 
 /** The recipe shape the framework hashes (`HarnessV1Bootstrap`). */
