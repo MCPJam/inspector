@@ -623,6 +623,24 @@ Your LLM provider rejected the API key for this request.
 - Add or update your API key under **Settings → LLM Providers**.
 - Verify the key in the provider's dashboard.
 
+### Provider error (BYOK balance)
+
+`provider_error`
+
+The LLM provider rejected the request and returned its own error message. When you are using your own API key (BYOK), the chat surface shows the provider's message directly — for example:
+
+> Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.
+
+This error is specific to your provider account. MCPJam credits cannot resolve it, and the MCPJam credit top-up dialog does not appear for this code.
+
+**Likely causes**
+- Your provider API account has run out of credits or has a zero balance.
+- The request was rejected by the provider for a billing or account reason.
+
+**Next steps**
+- Add credits to your account on the provider's own dashboard (for example, [console.anthropic.com](https://console.anthropic.com) for Anthropic, [platform.openai.com](https://platform.openai.com) for OpenAI).
+- Or switch to a different API key under **Settings → LLM Providers**.
+
 ### Provider not allowlisted
 
 `provider/not_allowlisted`
