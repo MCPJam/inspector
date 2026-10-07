@@ -86,6 +86,21 @@ async function github(path, token) {
   return res.json();
 }
 
+/**
+ * Every item of a paginated list endpoint. `get` fetches one page; a page
+ * shorter than the page size is the last one.
+ */
+export async function allPages(path, get) {
+  const items = [];
+  for (let page = 1; ; page++) {
+    const batch = await get(`${path}?per_page=100&page=${page}`);
+    items.push(...batch);
+    if (batch.length < 100) {
+      return items;
+    }
+  }
+}
+
 async function mergedSince(repo, base, since, token) {
   const merged = [];
   for (let page = 1; ; page++) {
@@ -124,9 +139,10 @@ async function main() {
   for (const listed of await mergedSince(repo, base, since, token)) {
     // The list endpoint omits `merged_by`; only the single-PR read has it.
     const pr = await github(`/repos/${repo}/pulls/${listed.number}`, token);
-    const reviews = await github(
-      `/repos/${repo}/pulls/${pr.number}/reviews?per_page=100`,
-      token,
+    // An approval past the first page still counts.
+    const reviews = await allPages(
+      `/repos/${repo}/pulls/${pr.number}/reviews`,
+      (path) => github(path, token),
     );
     merges.push({
       number: pr.number,
