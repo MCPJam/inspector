@@ -298,13 +298,15 @@ function extractErrorMessage(body: any, fallback: string): string {
     return fallback;
   }
 
-  return (
-    body.error_description ||
-    body.error ||
-    body.message ||
-    body.statusText ||
-    fallback
-  );
+  // Non-OAuth servers often nest the error ({ error: { code, message } });
+  // only a string may reach flow state, which the UI renders and trims.
+  const message = [
+    body.error_description,
+    body.error,
+    body.message,
+    body.statusText,
+  ].find((value) => typeof value === "string" && value);
+  return message ?? fallback;
 }
 
 // The only issuer policy error codes the flow state ever echoes; anything

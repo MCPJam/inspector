@@ -2910,6 +2910,19 @@ describe("createXAAStateMachine discovery guards", () => {
     expect(getState().error).toMatch(/does not identify/i);
   });
 
+  it("keeps the flow error a string when a failure body nests its error object", async () => {
+    const { machine, getState } = driveDiscovery(async () => ({
+      status: 404,
+      statusText: "",
+      headers: {},
+      body: { error: { code: 404, status: "NOT_FOUND" } },
+      ok: false,
+    }));
+    await machine.runAll();
+    expect(getState().currentStep).toBe("discover_resource_metadata");
+    expect(getState().error).toBe("Resource metadata request failed with 404");
+  });
+
   it("treats a trailing slash and query as part of the resource identity", async () => {
     const serverUrl = "https://mcp.example.com/mcp/?tenant=acme";
     const externalUrls: string[] = [];
