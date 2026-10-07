@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-07
+
+#### Fixed
+
+- **Claude Code turns no longer fail when Claude Code switches models on its own** — a Claude Code turn on Haiku (or any model) no longer ends with "Model not allowed for this lease" when Claude Code internally picks a different model — for example, entering plan mode on a Haiku turn caused the CLI to send a Sonnet request, which the turn's lease refused. Every model Claude Code selects for itself (plan mode, background work, the Explore subagent) now resolves to the model you selected for the turn.
+
 ### 2026-10-06
 
 #### Added
