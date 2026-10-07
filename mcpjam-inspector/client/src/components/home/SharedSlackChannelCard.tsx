@@ -103,7 +103,7 @@ function errorCopy(
     case "not_configured":
       return "Slack Connect is not configured on this deployment.";
     case "invite_declined":
-      return "The Slack Connect invite was declined. Free Slack workspaces cannot accept Connect invites — contact support if that isn't the case.";
+      return "The Slack Connect invite was declined. Free Slack workspaces need to upgrade or start a trial to accept it. Contact support if your Slack is already on a paid plan.";
     case "invite_expired":
       return retrying
         ? "The Slack Connect invite expired. We'll send a new one automatically."

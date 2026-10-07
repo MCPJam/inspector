@@ -395,6 +395,18 @@ describe("SharedSlackChannelCard", () => {
     }
   );
 
+  it("explains a declined invite: free Slack needs an upgrade or trial, not that it can never accept", () => {
+    mockUseQuery.mockReturnValue(
+      dto({ channel: { status: "invite_declined", openUrl: null } })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.getByText(/need to upgrade or start a trial to accept it/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/cannot accept/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
   it("says the team will reach out when setup is paused, without promising an email", () => {
     mockUseQuery.mockReturnValue(
       dto({
