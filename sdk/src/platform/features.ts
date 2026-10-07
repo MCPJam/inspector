@@ -32,6 +32,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "local-browser",
   "sandboxes",
   "computers",
+  "plugin-extensions",
   "sandbox-images",
   "browser",
   "hosted-browser",
@@ -62,6 +63,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "local-browser": "Local Browser",
   sandboxes: "Swarms and studies",
   computers: "Computers",
+  "plugin-extensions": "Plugin extensions",
   "sandbox-images": "Sandbox images",
   browser: "Browser",
   "hosted-browser": "Hosted Browser",
@@ -152,7 +154,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   resume_trace_destination: "trace-destinations",
   backfill_trace_destination: "trace-destinations",
   list_trace_destination_backfills: "trace-destinations",
-  // Agent Plugins.
+  // Agent Plugins. Running a plugin's extensions (`plugin-extensions`)
+  // happens in chat, not through an operation.
   list_project_plugins: "plugins",
   get_plugin_version: "plugins",
   // GitHub checks for eval suites.
