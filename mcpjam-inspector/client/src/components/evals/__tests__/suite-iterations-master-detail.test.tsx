@@ -33,8 +33,8 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 
 vi.mock("../test-template-editor", () => ({
-  TestTemplateEditor: ({ readOnly, openCompareIterationId, onRunCase }: any) => (
-    <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId}>
+  TestTemplateEditor: ({ readOnly, openCompareIterationId, onRunCase, evalRunsDisabledReason }: any) => (
+    <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} data-run-block={evalRunsDisabledReason}>
       <button onClick={() => onRunCase("case-1", {
         suiteOverride: { _id: "suite-1", environmentIds: ["one-run"] },
         iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
@@ -899,6 +899,22 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
       "checkout-flow",
     );
     expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it.each(["quota", "sandbox", "pending"])("passes the %s block to the case editor", (block) => {
+    const reason = block === "quota" ? "Eval iteration limit reached." :
+      block === "sandbox" ? "Cloud sandboxes are unavailable." : "A run is already starting.";
+    if (block === "sandbox") cloudState.ephemeralAvailable = false;
+    renderOverview({
+      evaluateCaseEditor: true,
+      ...(block === "quota" ? { evalRunsDisabledReason: reason } : {}),
+      ...(block === "sandbox" ? { suite: { ...baseSuite, environment: { servers: [], computerEnvironmentId: "img-1" } } } : {}),
+      ...(block === "pending" ? { rerunningSuiteId: "suite-1" } : {}),
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    expect(screen.getByTestId("case-workspace").getAttribute("data-run-block")).toMatch(
+      block === "sandbox" ? /can't run MCPJam cloud sandboxes/ : reason,
+    );
   });
 
   it("forwards ephemeral case setup to the suite runner with only that case", async () => {

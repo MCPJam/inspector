@@ -74,6 +74,7 @@ vi.mock("@/components/evaluate/suite-run-review", () => ({
       <div role="dialog" aria-label="Setup Run">
         <span>{props.caseTitle}</span>
         <output data-testid="suite-run-cases">{JSON.stringify(props.cases.map((item: any) => item._id))}</output>
+        <output data-testid="case-run-block">{props.disabledReason}</output>
         <button onClick={async () => {
           try {
             await props.onStart({ ...props.suite, environmentIds: ["one-run", "second-client"] }, {
@@ -1052,6 +1053,22 @@ describe("TestTemplateEditor run view from route", () => {
         {...props}
       />,
     );
+
+  it.each(["Eval iteration limit reached.", "Cloud sandboxes are unavailable."])(
+    "passes the shared block to case setup and refuses its launch: %s", async (evalRunsDisabledReason) => {
+      const user = userEvent.setup();
+      activeCaseDoc = goldenCaseDoc;
+      const onRunCase = vi.fn();
+      renderGoldenCase({ onRunCase, evalRunsDisabledReason });
+      await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+      expect(screen.getByTestId("case-run-block")).toHaveTextContent(evalRunsDisabledReason);
+      // The mock intentionally calls onStart even while blocked to exercise the callback guard.
+      await user.click(screen.getByRole("button", { name: "Run test case" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(evalRunsDisabledReason);
+      expect(onRunCase).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    },
+  );
 
   it.each([false, true])("launches case setup through the suite's ephemeral launcher with observeFirst=%s", async (observeFirst) => {
     const user = userEvent.setup();

@@ -416,6 +416,8 @@ interface TestTemplateEditorProps {
    * end to end; a quick run cannot be graded. Absent on a surface that cannot
    * launch one, and Run test then does not render.
    */
+  /** Shared quota, sandbox, or launch-in-progress block from the suite view. */
+  evalRunsDisabledReason?: string | null;
   onRunCase?: (
     caseId: string,
     opts?: CaseRunLaunchOptions,
@@ -1027,6 +1029,7 @@ export function TestTemplateEditor({
   simpleCaseEditor = false,
   observeFirst = false,
   onRunCase,
+  evalRunsDisabledReason,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -2144,6 +2147,8 @@ export function TestTemplateEditor({
     }) => {
       const caseId = currentTestCase?._id;
       if (!onRunCase || !caseId || isDraft) return;
+      if (launch && evalRunsDisabledReason)
+        throw new Error(evalRunsDisabledReason);
       setRunTestPending(true);
       try {
         if (hasUnsavedChanges) {
@@ -2168,6 +2173,7 @@ export function TestTemplateEditor({
     },
     [
       onRunCase,
+      evalRunsDisabledReason,
       currentTestCase?._id,
       isDraft,
       hasUnsavedChanges,
@@ -4511,6 +4517,7 @@ export function TestTemplateEditor({
                       environments={projectEnvironmentViews}
                       hostNamesById={hostNamesById}
                       disabledReason={
+                        evalRunsDisabledReason ??
                         saveDisabledTooltip ??
                         (isDraft ? "Save the test case before running." : null)
                       }
