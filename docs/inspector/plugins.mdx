@@ -5,7 +5,7 @@ icon: "package"
 ---
 
 <Note>
-Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account. Importing a plugin requires **project admin** — it creates shared executable capabilities, so it carries the same bar as managing shared OAuth connections. Project members can view installed plugins; the feature flag only controls whether the surface appears, never who may import.
+Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry only appears when the feature is active for your account. Importing a plugin requires **project admin** — it creates shared executable capabilities, so it carries the same bar as managing shared OAuth connections. Project members can view installed plugins; the feature flag only controls whether the surface appears, never who may import.
 </Note>
 
 A **plugin** is an [Agent Plugins 1.0](https://agent-plugins.org) bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
@@ -211,40 +211,9 @@ Click a plugin skill row to open its read-only detail, which shows:
 - **Plugin settings** — a link to the plugin's server Settings (or an inline Plugin section for a skills-only plugin with no servers).
 - **Detach as copy** — creates an independent, editable copy of the skill in your project store (project admins only).
 
-## Removed: plugin group card
-
-### Plugin group card
-
-The card shows the plugin's name and a rolled-up health badge:
-
-| Badge | Meaning |
-|-------|---------|
-| Ready | All components of the active revision are ready to use |
-| Needs auth | At least one component requires authorization before its first tool call |
-| Local runtime | At least one component runs only from a local MCPJam process |
-| Computer required | At least one component runs only inside a Project Computer |
-| No active revision | The plugin is installed but no revision has been made active |
-| Disabled | The plugin has been disabled |
-| Checking… | Setup status is still loading |
-
-Click the card header to expand it and see the active revision's components:
-
-- **Revision ID** — the short content-addressed identity of the active bundle.
-- **MCP servers** — each server's key, transport, placement, and readiness.
-- **Skills** — model references for each declared skill, namespaced as `<plugin-name>/<skill-name>`.
-- **Unsupported components** — a count of the same inert components the import preview itemizes. Only the count appears here; the per-component keys and reasons are shown at import time.
-- **Other revisions** — ready revisions of the same plugin that are not currently active. Click **Activate** next to a revision to make it the active one.
-
-### Plugin actions
-
-Click the **⋮** menu on a plugin card to:
-
-- **Disable / Enable** — temporarily disable a plugin without uninstalling it.
-- **Uninstall** — soft-uninstall the plugin. Revisions already used by runs and sessions are preserved so existing history stays reproducible. Uninstall is blocked while a live environment still pins one of the plugin's versions.
-
 ## Credential setup
 
-After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
+After installing a plugin, each MCP server component that requires credentials shows its readiness in the server card's status indicator and in the Settings panel. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values in the server's Settings under **Setup** — MCPJam never reads or stores credential values from the bundle itself.
 
 ## Plugins in Playground chat
 
@@ -252,7 +221,7 @@ When your project has at least one installed plugin with an active revision, the
 
 **What you see in the composer**
 
-Plugin servers appear in the server list inside the **Options** panel (the **+** button in the chat input) as on and read-only, labelled with the plugin's name. They are not part of your manual server selection and cannot be toggled off here — to change whether a plugin runs, disable or uninstall it from the Plugins section on the Connect tab.
+Plugin servers appear in the server list inside the **Options** panel (the **+** button in the chat input) as on and read-only, labelled with the plugin's name. They are not part of your manual server selection and cannot be toggled off here — to change whether a plugin runs, disable or uninstall it from the plugin server card on the Servers tab.
 
 **Skipped plugins**
 
