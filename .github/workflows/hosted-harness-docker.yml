@@ -108,9 +108,13 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       # Builds the shared contracts and generates the Codex bridge bundle the
-      # bake reads (and refuses if stale).
+      # bake reads (and refuses if stale). The SDK first: the browser harness
+      # bundle in `pretest` pulls in widget-react, which resolves `@mcpjam/sdk`
+      # subpaths from dist (as in local-harness-conformance.yml).
       - name: Build shared contracts and adapter bundles
-        run: npm run pretest -w @mcpjam/inspector
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
 
       - name: Generate the harness bake context
         working-directory: mcpjam-inspector
