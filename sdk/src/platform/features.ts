@@ -23,7 +23,7 @@
  * Feature keys. The backend's gated feature keys (`GatedFeatureKey` in
  * mcpjam-backend `convex/lib/featureGates.ts`), copied by hand, plus the
  * features the platform reports without a server-side gate of that name:
- * `github-checks`, `plugins` and `scheduled-evals`. No operation is hidden by
+ * `github-checks` and `scheduled-evals`. No operation is hidden by
  * `scheduled-evals`: its one write, `set_eval_suite_schedule`, must stay
  * available so a schedule can always be turned off.
  */
@@ -33,6 +33,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "sandboxes",
   "computers",
   "plugin-extensions",
+  "plugins",
   "sandbox-images",
   "browser",
   "hosted-browser",
@@ -43,6 +44,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "cursor-harness",
   "org-registry",
   "shared-slack-channel",
+  "automatic-paid-slack",
   "trace-destinations",
   "grading-engine-mode",
   "description-experiments",
@@ -51,7 +53,6 @@ export const PLATFORM_FEATURE_KEYS = [
   "unified-share-evals",
   "unified-share-conformance",
   "github-checks",
-  "plugins",
   "scheduled-evals",
 ] as const;
 
@@ -64,6 +65,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   sandboxes: "Swarms and studies",
   computers: "Computers",
   "plugin-extensions": "Plugin extensions",
+  plugins: "Agent Plugins",
   "sandbox-images": "Sandbox images",
   browser: "Browser",
   "hosted-browser": "Hosted Browser",
@@ -74,6 +76,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "cursor-harness": "The Cursor CLI host runtime",
   "org-registry": "The registry directory",
   "shared-slack-channel": "Shared Slack channels",
+  "automatic-paid-slack": "Automatic Slack onboarding",
   "trace-destinations": "Trace destinations",
   "grading-engine-mode": "The grading engine",
   "description-experiments": "Description experiments",
@@ -82,7 +85,6 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "unified-share-evals": "Eval run sharing",
   "unified-share-conformance": "Conformance run sharing",
   "github-checks": "GitHub checks",
-  plugins: "Agent Plugins",
   "scheduled-evals": "Scheduled evals",
 };
 
@@ -110,6 +112,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   // Conformance and directory readiness.
   start_claude_readiness_run: "conformance",
   start_openai_readiness_run: "conformance",
+  start_muse_readiness_run: "conformance",
   get_readiness_report: "conformance",
   start_conformance_run: "conformance",
   get_conformance_run: "conformance",
