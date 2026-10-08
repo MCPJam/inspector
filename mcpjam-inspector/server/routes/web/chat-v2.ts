@@ -1312,9 +1312,26 @@ chatV2.post("/", async (c) => {
     // plugins, so the project's pool is delivered beside the environment's own
     // union, exactly as a client turn delivers it. It widens nothing: the pool
     // is read with the caller's own bearer, which a client turn does anyway.
-    const includeProjectSkills =
+    //
+    // The body only ASKS. It is honored only when the resolved spec says the
+    // row is ad-hoc: a named environment chose its skills, and a request must
+    // not be able to add the project's pool to it. A backend too old to say
+    // (`environmentOrigin` absent) is treated as named.
+    const requestedProjectSkills =
       executionTarget.kind === "environment" &&
       (rawBody as Record<string, unknown>).includeProjectSkills === true;
+    const includeProjectSkills =
+      requestedProjectSkills && environmentSpec?.environmentOrigin === "adhoc";
+    if (requestedProjectSkills && !includeProjectSkills) {
+      logger.warn(
+        "[chat-v2] includeProjectSkills ignored: not an ad-hoc environment",
+        {
+          environmentId: environmentSpec?.environmentRef.environmentId ?? null,
+          projectId: hostedBody.projectId ?? null,
+          environmentOrigin: environmentSpec?.environmentOrigin ?? null,
+        },
+      );
+    }
     const cloudSkillsEnabled =
       (!environmentServers || includeProjectSkills) &&
       shouldEnableCloudSkillTools({
