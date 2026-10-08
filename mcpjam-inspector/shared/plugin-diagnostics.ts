@@ -98,7 +98,7 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   INSTANCE_TOOL_UNAVAILABLE:
     "The server no longer lists the tool this App needs.",
   INSTANCE_UI_UNAVAILABLE:
-    "The server didn't return a usable App UI (missing ui:// resource, wrong MIME type, or larger than 1 MB).",
+    "The server didn't return a usable App UI (missing ui:// resource, wrong MIME type, or larger than 5 MB).",
   INSTANCE_CONTEXT_UNAVAILABLE:
     "Model context isn't available for this App (the client has it turned off, or the App has closed).",
   INSTANCE_CONTEXT_SEQUENCE_DENIED:
