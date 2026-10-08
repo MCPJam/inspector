@@ -3145,7 +3145,7 @@ const publicCaseBodyShape = {
   /** Policy-v2 ONLY. See {@link assertCasePolicyFieldsSupported}. */
   passThreshold: z.number().min(0).max(1).optional(),
   isNegative: z.boolean().optional(),
-  scenario: z.string().optional(),
+  scenario: z.string().min(1).nullable().optional(),
   /**
    * Optional analytics label. Omitted preserves it on PATCH; `null` clears it.
    * `createCaseSchema` narrows this to the stored (string-only) form below.
