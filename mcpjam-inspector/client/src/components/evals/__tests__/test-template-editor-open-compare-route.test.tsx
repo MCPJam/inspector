@@ -48,7 +48,8 @@ const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const runEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const mockTraceViewer = vi.hoisted(() => vi.fn());
-const flagMock = vi.hoisted(() => vi.fn(() => false));
+const flagMock = vi.hoisted(() => vi.fn<() => boolean | undefined>(() => false));
+const mockLiveRecorder = vi.hoisted(() => vi.fn());
 const getGuestBearerTokenMock = vi.hoisted(() =>
   vi.fn().mockResolvedValue("guest-token"),
 );
@@ -144,19 +145,29 @@ vi.mock("../eval-live-chat-panel", () => ({
   EvalLiveChatPanel: (props: {
     initialPrompt?: string;
     recorder?: { onRecorderStep?: (event: unknown) => void };
-  }) => (
-    <div data-testid="live-recording-panel">
-      {props.initialPrompt}
-      <button onClick={() => props.recorder?.onRecorderStep?.({
-        promptIndex: 0,
-        toolName: "browse-store",
-        toolCallId: "live-tool-call",
-        step: { kind: "click", target: { role: { role: "button", name: "Electronics" } } },
-      })}>
-        Record a category click
-      </button>
-    </div>
-  ),
+  }) => {
+    mockLiveRecorder(props);
+    return (
+      <div data-testid="live-recording-panel">
+        {props.initialPrompt}
+        <button
+          onClick={() =>
+            props.recorder?.onRecorderStep?.({
+              promptIndex: 0,
+              toolName: "browse-store",
+              toolCallId: "live-tool-call",
+              step: {
+                kind: "click",
+                target: { role: { role: "button", name: "Electronics" } },
+              },
+            })
+          }
+        >
+          Record a category click
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock("../trace-viewer", () => ({
@@ -422,6 +433,122 @@ describe("TestTemplateEditor run view from route", () => {
         });
       },
     );
+  });
+
+  it.each([false, undefined])(
+    "hides recording while the flag is %s, including record drafts",
+    async (flag) => {
+      flagMock.mockReturnValue(flag);
+      renderWithProviders(
+        <TestTemplateEditor
+          simpleCaseEditor
+          suiteIterations={[]}
+          suiteId="suite-1"
+          selectedTestCaseId="draft:record"
+          connectedServerNames={new Set(["srv"])}
+          projectId={null}
+          availableModels={[]}
+        />,
+      );
+      expect(
+        await screen.findByRole("textbox", { name: "What does the user ask?" }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Start recording" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Record", exact: true }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("live-recording-panel"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name: "Add assertion or action",
+          exact: true,
+        }),
+      ).toBeEnabled();
+      expect(
+        screen.getByRole("textbox", { name: "Expected outcome" }),
+      ).toBeVisible();
+    },
+  );
+
+  it.each([false, undefined, true])(
+    "gates the legacy Record button when the flag is %s",
+    async (flag) => {
+      flagMock.mockReturnValue(flag);
+      renderWithProviders(
+        <TestTemplateEditor
+          suiteIterations={[]}
+          suiteId="suite-1"
+          selectedTestCaseId="case-1"
+          connectedServerNames={new Set(["srv"])}
+          projectId={null}
+          availableModels={[]}
+        />,
+      );
+      expect(
+        await screen.findByRole("heading", { name: "T", exact: true }),
+      ).toBeVisible();
+      const recordButton = screen.queryByRole("button", {
+        name: "Record",
+        exact: true,
+      });
+      if (flag === true) {
+        expect(recordButton).toBeVisible();
+      } else {
+        expect(recordButton).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it("stops active recording when the flag turns off and ignores late captures", async () => {
+    flagMock.mockReturnValue(true);
+    const editor = () => (
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[]}
+      />
+    );
+    const { rerender } = renderWithProviders(editor());
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Start recording" }),
+    );
+    expect(await screen.findByTestId("live-recording-panel")).toBeVisible();
+    const oldRecorder = mockLiveRecorder.mock.calls.at(-1)?.[0].recorder;
+    flagMock.mockReturnValue(false);
+    rerender(
+      <PreferencesStoreProvider
+        themeMode="light"
+        themePreset="default"
+        hostStyle="claude"
+      >
+        {editor()}
+      </PreferencesStoreProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("live-recording-panel"),
+      ).not.toBeInTheDocument(),
+    );
+    act(() =>
+      oldRecorder.onRecorderStep({
+        promptIndex: 0,
+        toolName: "browse-store",
+        toolCallId: "late-call",
+        step: { kind: "click", target: { testId: "late-button" } },
+      }),
+    );
+    expect(screen.queryByText("Interact")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Start recording" }),
+    ).not.toBeInTheDocument();
   });
 
   it("starts recording after viewing history, saves captured actions, and stops on close", async () => {

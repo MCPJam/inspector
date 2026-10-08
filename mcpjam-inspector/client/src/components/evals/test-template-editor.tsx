@@ -27,6 +27,7 @@ import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { useEvalsStartRecordingEnabled } from "@/hooks/useEvalsStartRecordingEnabled";
 import { mintCaseId } from "@mcpjam/sdk/contract";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
@@ -1160,7 +1161,11 @@ export function TestTemplateEditor({
   // (EvalLiveChatPanel) so the user clicks live widgets instead of viewing a
   // frozen trace. No grading — the eval runner is out of this path. Past-run
   // review (`replayIteration`) still wins, so opening a run shows its trace.
-  const [liveRecordMode, setLiveRecordMode] = useState<boolean>(false);
+  const recordingEnabled = useEvalsStartRecordingEnabled();
+  const recordingEnabledRef = useRef(recordingEnabled);
+  recordingEnabledRef.current = recordingEnabled;
+  const [recordingRequested, setLiveRecordMode] = useState<boolean>(false);
+  const liveRecordMode = recordingEnabled && recordingRequested;
   const [inspectIterationId, setInspectIterationId] = useState<string | null>(
     null,
   );
@@ -1185,6 +1190,20 @@ export function TestTemplateEditor({
   // A pending assert-mode pick: the element the user clicked, awaiting a choice
   // of what to check. Null when the chooser is closed.
   const [pendingPick, setPendingPick] = useState<AssertPick | null>(null);
+  useEffect(() => {
+    if (!recordingEnabled) {
+      setLiveRecordMode(false);
+      setPendingPick(null);
+    }
+  }, [recordingEnabled]);
+  const handleStartRecording = useCallback(() => {
+    if (!recordingEnabled) return;
+    setReplayIteration(null);
+    setInspectIterationId(null);
+    setShowSpecOverride(false);
+    setCaptureMode("record");
+    setLiveRecordMode(true);
+  }, [recordingEnabled]);
   /** Concurrent compare `handleRunCompare` calls; used only for global `isRunningCompare`. */
   const compareHandlesInFlightRef = useRef(0);
   /**
@@ -2473,6 +2492,7 @@ export function TestTemplateEditor({
   // callback.
   const handleAssertPickConfirm = useCallback(
     (assertion: StepAssertion) => {
+      if (!recordingEnabledRef.current) return;
       setPendingPick((pick) => {
         if (!pick) return null;
         appendWidgetStepToTurn(pick.promptIndex, {
@@ -2492,6 +2512,7 @@ export function TestTemplateEditor({
   // is dropped (the user adds that prompt to the test first — Phase 2b).
   const handleRecorderStep = useCallback(
     (event: RecorderStepEvent) => {
+      if (!recordingEnabledRef.current) return;
       const turnIndex = event.promptIndex;
       const authoredTurns = groupStepsIntoTurns(
         editFormStepsRef.current,
@@ -2538,12 +2559,13 @@ export function TestTemplateEditor({
   // step; `handleRecorderStep` files it into the widget's turn. No armed target —
   // live mode records every widget in the session.
   const previewRecorder = useMemo<RecorderProps | undefined>(() => {
+    if (!recordingEnabled) return undefined;
     return {
       recordCapable: true,
       onRecorderStep: handleRecorderStep,
       onRecorderReady: handleRecorderReady,
     };
-  }, [handleRecorderStep, handleRecorderReady]);
+  }, [recordingEnabled, handleRecorderStep, handleRecorderReady]);
 
   // Pre-run Preview: render the forming spec through the SAME chat surface as a
   // real run (synthesized trace: prompt + expected tool calls), so the editor's
@@ -4696,7 +4718,7 @@ export function TestTemplateEditor({
                         onOverride={onOpenCaseChecks}
                       />
                     )}
-                  {useWorkspace ? null : (
+                  {useWorkspace || !recordingEnabled ? null : (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -5064,13 +5086,9 @@ export function TestTemplateEditor({
                       validationAttempted={simpleValidationAttempted}
                       recording={liveRecordMode}
                       recordEntryPrimary={draftKind === "record"}
-                      onStartRecording={() => {
-                        setReplayIteration(null);
-                        setInspectIterationId(null);
-                        setShowSpecOverride(false);
-                        setCaptureMode("record");
-                        setLiveRecordMode(true);
-                      }}
+                      onStartRecording={
+                        recordingEnabled ? handleStartRecording : undefined
+                      }
                       onStopRecording={() => setLiveRecordMode(false)}
                       onAddCheck={() => setCaptureMode("assert")}
                       stepStatusById={workspaceStepStatusById}
@@ -5183,13 +5201,9 @@ export function TestTemplateEditor({
                       validationAttempted={simpleValidationAttempted}
                       recording={liveRecordMode}
                       recordEntryPrimary={draftKind === "record"}
-                      onStartRecording={() => {
-                        setReplayIteration(null);
-                        setInspectIterationId(null);
-                        setShowSpecOverride(false);
-                        setCaptureMode("record");
-                        setLiveRecordMode(true);
-                      }}
+                      onStartRecording={
+                        recordingEnabled ? handleStartRecording : undefined
+                      }
                       onStopRecording={() => setLiveRecordMode(false)}
                       onAddCheck={() => setCaptureMode("assert")}
                       overlay={workspaceOverlay}
