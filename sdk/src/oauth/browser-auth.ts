@@ -283,27 +283,40 @@ function buildWellKnownPath(
     : `/.well-known/${wellKnownPrefix}${normalizedPath}`;
 }
 
-/** Matches the hosted proxy's own bound on a redirect chain. */
+/**
+ * Mirrors `MAX_OAUTH_PROXY_REDIRECTS` in `oauth-proxy.ts`, the cap the local
+ * proxy applies when it follows redirects itself. Under `httpsOnly` the proxy
+ * returns the first 3xx before that cap is reached, so on the hosted path this
+ * is the only bound on the chain.
+ */
 const MAX_METADATA_DISCOVERY_REDIRECTS = 5;
 
 const METADATA_REDIRECT_STATUSES: ReadonlySet<number> = new Set([
   301, 302, 303, 307, 308,
 ]);
 
+type MetadataRedirect =
+  | { kind: "follow"; url: URL }
+  | { kind: "refused"; reason: string };
+
 /**
- * Where a well-known metadata answer redirects to, or undefined when it is not
- * a redirect this discovery should follow.
+ * What to do with a well-known metadata answer that redirects, or undefined
+ * when it is not a redirect (or has no `Location`) and should be returned as is.
  *
- * A native `fetch` follows these on its own, so they only reach here when the
- * fetch is the hosted proxy, which answers `redirect: "manual"` by design (it
- * validates one hop per call). Every follow-up hop goes back through the same
- * `fetchFn`, so the proxy still vets each destination. An HTTPS document is
- * never followed down to plain HTTP.
+ * A native `fetch` follows these on its own; the case that motivated this is
+ * the hosted proxy, which answers `redirect: "manual"` by design (it validates
+ * one hop per call), but any manual-redirect `fetchFn` lands here too. Every
+ * follow-up hop goes back through the same `fetchFn`, so the proxy still vets
+ * each destination. An HTTPS document is never followed down to plain HTTP.
+ *
+ * The proxy's chain rule (a later hop may be private only if hop 1 was) is not
+ * carried across hops here. That is safe because `httpsOnly`, the only mode
+ * that forces `redirect: "manual"`, also forces `allowPrivateNetwork: false`.
  */
 function metadataRedirectTarget(
   response: Response,
   currentUrl: URL,
-): URL | undefined {
+): MetadataRedirect | undefined {
   if (!METADATA_REDIRECT_STATUSES.has(response.status)) return undefined;
   const location = response.headers.get("location");
   if (!location) return undefined;
@@ -311,15 +324,24 @@ function metadataRedirectTarget(
   try {
     nextUrl = new URL(location, currentUrl);
   } catch {
-    return undefined;
+    return {
+      kind: "refused",
+      reason: `Refused redirect to ${location}: not a valid URL`,
+    };
   }
   if (nextUrl.protocol !== "https:" && nextUrl.protocol !== "http:") {
-    return undefined;
+    return {
+      kind: "refused",
+      reason: `Refused redirect to ${nextUrl.protocol} URL: metadata discovery only follows HTTP(S)`,
+    };
   }
   if (currentUrl.protocol === "https:" && nextUrl.protocol !== "https:") {
-    return undefined;
+    return {
+      kind: "refused",
+      reason: `Refused redirect to ${nextUrl.href}: metadata discovery never downgrades HTTPS to HTTP`,
+    };
   }
-  return nextUrl;
+  return { kind: "follow", url: nextUrl };
 }
 
 async function tryMetadataDiscovery(
@@ -334,15 +356,22 @@ async function tryMetadataDiscovery(
   let currentUrl = url;
   for (let redirectCount = 0; ; redirectCount += 1) {
     const response = await fetchWithCorsRetry(currentUrl, headers, fetchFn);
-    const nextUrl =
-      response && redirectCount < MAX_METADATA_DISCOVERY_REDIRECTS
-        ? metadataRedirectTarget(response, currentUrl)
-        : undefined;
-    if (!response || !nextUrl) {
+    const redirect = response
+      ? metadataRedirectTarget(response, currentUrl)
+      : undefined;
+    if (!response || !redirect) {
       return response;
     }
     await response.text().catch(() => {});
-    currentUrl = nextUrl;
+    if (redirect.kind === "refused") {
+      throw new Error(`HTTP ${response.status}: ${redirect.reason}`);
+    }
+    if (redirectCount >= MAX_METADATA_DISCOVERY_REDIRECTS) {
+      throw new Error(
+        `HTTP ${response.status}: Stopped after ${MAX_METADATA_DISCOVERY_REDIRECTS} redirects; last Location was ${redirect.url.href}`,
+      );
+    }
+    currentUrl = redirect.url;
   }
 }
 

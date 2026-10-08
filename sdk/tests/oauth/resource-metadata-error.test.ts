@@ -1,4 +1,7 @@
-import { discoverOAuthProtectedResourceMetadata } from "../../src/oauth/browser-auth.js";
+import {
+  discoverOAuthMetadata,
+  discoverOAuthProtectedResourceMetadata,
+} from "../../src/oauth/browser-auth.js";
 import {
   describeResourceMetadataRequestFailure,
   isResourceMetadataNotImplemented,
@@ -180,6 +183,47 @@ describe("discoverOAuthProtectedResourceMetadata failure messages", () => {
       );
     });
 
+    // A path-relative value resolves differently against the issuer and against
+    // the hop that answered, so this one pins which base is used.
+    it("resolves a path-relative Location against the current hop", async () => {
+      const fetchFn = vi.fn(async (url: string | URL) =>
+        String(url).endsWith("/prm.json")
+          ? Response.json(metadata)
+          : redirect("prm.json")
+      );
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+      ).resolves.toEqual(metadata);
+      expect(fetchFn).toHaveBeenLastCalledWith(
+        new URL(
+          "https://mcp.example.com/.well-known/oauth-protected-resource/prm.json"
+        ),
+        expect.anything()
+      );
+    });
+
+    it("falls back to the root when a redirect ends in a 404", async () => {
+      const fetchFn = vi.fn(async (url: string | URL) => {
+        const href = String(url);
+        if (href.endsWith("/.well-known/oauth-protected-resource/mcp")) {
+          return redirect("https://docs.example.com/missing");
+        }
+        if (href.startsWith("https://docs.example.com/")) {
+          return new Response("", { status: 404 });
+        }
+        return Response.json(metadata);
+      });
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+      ).resolves.toEqual(metadata);
+      expect(fetchFn).toHaveBeenLastCalledWith(
+        new URL("https://mcp.example.com/.well-known/oauth-protected-resource"),
+        expect.anything()
+      );
+    });
+
     it("follows the redirect of an explicit resource_metadata URL", async () => {
       const fetchFn = vi.fn(async (url: string | URL) =>
         String(url) === "https://mcp.example.com/prm"
@@ -207,8 +251,34 @@ describe("discoverOAuthProtectedResourceMetadata failure messages", () => {
           fetchFn
         )
       ).rejects.toThrow(
-        "HTTP 302 trying to load well-known OAuth protected resource metadata."
+        "HTTP 302: Refused redirect to http://mcp.example.com/prm: metadata discovery never downgrades HTTPS to HTTP"
       );
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      [
+        "javascript:alert(1)",
+        "HTTP 302: Refused redirect to javascript: URL: metadata discovery only follows HTTP(S)",
+      ],
+      [
+        "data:application/json,{}",
+        "HTTP 302: Refused redirect to data: URL: metadata discovery only follows HTTP(S)",
+      ],
+      [
+        "http://[",
+        "HTTP 302: Refused redirect to http://[: not a valid URL",
+      ],
+    ])("refuses a Location of %s and says why", async (location, message) => {
+      const fetchFn = vi.fn(async () => redirect(location));
+
+      await expect(
+        discoverOAuthProtectedResourceMetadata(
+          SERVER_URL,
+          { resourceMetadataUrl: "https://mcp.example.com/prm" },
+          fetchFn
+        )
+      ).rejects.toThrow(message);
       expect(fetchFn).toHaveBeenCalledTimes(1);
     });
 
@@ -225,7 +295,7 @@ describe("discoverOAuthProtectedResourceMetadata failure messages", () => {
           fetchFn
         )
       ).rejects.toThrow(
-        "HTTP 302 trying to load well-known OAuth protected resource metadata."
+        "HTTP 302: Stopped after 5 redirects; last Location was https://mcp.example.com/loop/6"
       );
       expect(fetchFn).toHaveBeenCalledTimes(6);
     });
@@ -260,5 +330,32 @@ describe("discoverOAuthProtectedResourceMetadata failure messages", () => {
     await expect(
       discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
     ).resolves.toEqual(metadata);
+  });
+});
+
+describe("discoverOAuthMetadata redirects", () => {
+  it("follows a redirect to the authorization server metadata", async () => {
+    const metadata = {
+      issuer: "https://auth.example.com",
+      authorization_endpoint: "https://auth.example.com/authorize",
+      token_endpoint: "https://auth.example.com/token",
+      response_types_supported: ["code"],
+    };
+    const fetchFn = vi.fn(async (url: string | URL) =>
+      String(url).startsWith("https://login.example.com/")
+        ? Response.json(metadata)
+        : new Response("", {
+            status: 301,
+            headers: {
+              location:
+                "https://login.example.com/.well-known/oauth-authorization-server",
+            },
+          })
+    );
+
+    await expect(
+      discoverOAuthMetadata("https://auth.example.com", undefined, fetchFn)
+    ).resolves.toEqual(metadata);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });
