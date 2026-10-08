@@ -15,6 +15,8 @@ const { childProcessIntegration, onUncaughtExceptionIntegration } = vi.hoisted(
 
 vi.mock("@sentry/electron/main", () => ({
   childProcessIntegration,
+}));
+vi.mock("@sentry/node", () => ({
   onUncaughtExceptionIntegration,
 }));
 
@@ -29,7 +31,7 @@ import {
 
 describe("childProcessIntegrationOptions", () => {
   it("promotes the crash-shaped reasons the SDK leaves as breadcrumbs", () => {
-    // @sentry/electron 5.12 defaults `events` to abnormal-exit,
+    // @sentry/electron 7 defaults `events` to abnormal-exit,
     // launch-failed and integrity-failure only. crashed/oom are
     // exactly the ones a desktop user experiences as "the app broke".
     const { events } = childProcessIntegrationOptions();
@@ -96,7 +98,7 @@ describe("crashReportingIntegrations", () => {
   });
 
   it("leaves the native minidump integration in place", () => {
-    // sentryMinidumpIntegration is default-on in 5.12; native crash upload
+    // sentryMinidumpIntegration is default-on in @sentry/electron 7; native crash upload
     // needs no wiring from us, and removing it would lose real crashes.
     const result = crashReportingIntegrations([{ name: "SentryMinidump" }]);
     expect(result.some((i) => i.name === "SentryMinidump")).toBe(true);
