@@ -54,6 +54,10 @@ vi.mock("../owned-mrtr.js", async (original) => {
     ) => ({ ...actual.createOwnedPluginMrtr(deps), collector: f.collector }),
   };
 });
+vi.mock("../receipt-store.js", async (original) => ({
+  ...(await original<typeof import("../receipt-store.js")>()),
+  createPluginInvocationReceiptPort: () => undefined,
+}));
 const identity = () => ({
   serverId: "server",
   credentialId: "saved-credential",
@@ -115,6 +119,8 @@ vi.mock("../../../routes/web/auth.js", () => ({
 import { admitPluginWorkspace } from "../admission";
 import { createPluginRequestRuntime } from "../request-runtime";
 import { pluginConnectionPool } from "../connection-pool";
+import { createModelMrtrAdapter } from "../model-mrtr";
+import { PluginInvocationError } from "../invocation";
 
 const formSchema = {
   type: "object" as const,
@@ -247,6 +253,13 @@ async function serveModern(): Promise<Served> {
     const server = new McpServer(
       { name: "modern-form-fixture", version: "1.0.0" },
       { capabilities: { tools: {} } },
+    );
+    server.registerTool(
+      "search",
+      { description: "Returns a part without elicitation." },
+      async () => ({
+        content: [{ type: "text" as const, text: "part_joystick" }],
+      }),
     );
     server.registerTool(
       "app",
@@ -419,5 +432,61 @@ describe("an unpinned (Auto) plugin client's form claims on the wire", () => {
     expect(result.content[0]?.text).toBe("form:modern");
     expect(f.collector).toHaveBeenCalledOnce();
     await live.release();
+  });
+});
+
+describe("model adapter joined to a real modern MCP server", () => {
+  it("executes an ordinary modern tool and retains an inner host refusal without repeating it", async () => {
+    served = await serveModern();
+    f.url = served.url;
+    const admission = await admitPluginWorkspace({
+      projectId: "project",
+      bearer: "fixture",
+      descriptor: { version: 1, workspaceId: "workspace" },
+    });
+    const adapter = createModelMrtrAdapter({
+      c: { req: { raw: { signal: new AbortController().signal } } } as Context,
+      admission,
+      bearer: "fixture",
+      identity: {
+        actorId: "actor",
+        projectId: "project",
+        workspaceId: "workspace",
+        subject: "subject",
+      },
+      hostId: "host",
+      hostRevision: pluginHostBindingDigest(host),
+      serverIds: ["server"],
+    });
+    // Original chat manager, distinct from the adapter's admission connection.
+    const manager = new MCPClientManager({}, { lazyConnect: true });
+    f.managers.push(manager);
+    await manager.connectToServer("server", { url: f.url, timeout: 10000 });
+    await manager.listTools("server");
+    expect(manager.getInitializationInfo("server")?.protocolVersion).toBe(
+      "2026-07-28",
+    );
+    const run = vi.fn(() => manager.executeTool("server", "search", {}));
+    const execution = {
+      serverKey: "server",
+      toolName: "search",
+      toolCallId: randomUUID(),
+      input: {},
+    };
+    await expect(adapter.execute(execution, run)).resolves.toMatchObject({
+      content: [{ type: "text", text: "part_joystick" }],
+    });
+    await adapter.execute(execution, run);
+    expect(run).toHaveBeenCalledOnce();
+    const refused = { ...execution, toolCallId: randomUUID() };
+    const fail = vi.fn(async () => {
+      throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
+    });
+    for (let attempt = 0; attempt < 2; attempt++)
+      await expect(adapter.execute(refused, fail)).rejects.toMatchObject({
+        code: "CONTINUATION_PROTOCOL_DENIED",
+        outcomeUnknown: true,
+      });
+    expect(fail).toHaveBeenCalledOnce();
   });
 });

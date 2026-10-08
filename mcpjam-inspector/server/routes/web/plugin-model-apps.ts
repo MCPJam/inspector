@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 import { z } from "zod";
 import {
   pluginContextRemovalIndexSchema,
@@ -91,7 +92,7 @@ export function pluginModelAppRoutes(ports: {
         const widgetContent = widgetResourceContent(content, listingMeta);
         if (
           !widgetContent.mimeTypeValid ||
-          Buffer.byteLength(widgetContent.html) > 1024 * 1024
+          Buffer.byteLength(widgetContent.html, "utf8") > PLUGIN_APP_UI_MAX_BYTES
         )
           throw denied();
         const fresh = await runtime.resolve(record.toolName, signal);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   chatPluginFormPlan,
+  pluginModelMrtrEnabled,
   chatPluginToolExecutor,
 } from "../chat-v2-plugin-forms.js";
 
@@ -153,12 +154,83 @@ describe("which plugin executor a model tool call takes", () => {
     })!;
     await expect(modernOnly(execution("auto"), run)).resolves.toBe("plain");
     const legacy = async () => "legacy";
-    expect(
+    await expect(
       chatPluginToolExecutor({
         legacy,
         pinFor: () => undefined,
         negotiatedVersion: () => undefined,
-      }),
-    ).toBe(legacy);
+      })!(execution("auto"), run),
+    ).resolves.toBe("legacy");
+  });
+});
+
+describe("plugin model MRTR readiness independent of standard elicitation", () => {
+  const ready = {
+    emulated: true,
+    workspace: true,
+    forms: true,
+    serviceCredential: true,
+    elicitationHandshake: true,
+    mrtrHandshake: true,
+  };
+  it("supports plugin-only forms with no standard elicitation declaration", () => {
+    expect(pluginModelMrtrEnabled(ready)).toBe(true);
+  });
+  it.each(Object.keys(ready))("fails closed without %s", (key) => {
+    expect(pluginModelMrtrEnabled({ ...ready, [key]: false })).toBe(false);
+  });
+  it("does not infer Forms permission from an absent profile", () => {
+    expect(pluginModelMrtrEnabled({ ...ready, forms: undefined })).toBe(false);
+  });
+  it("never sends a modern server to legacy when MRTR cannot be installed", async () => {
+    const legacy = vi.fn();
+    const run = vi.fn(async () => "ordinary result");
+    const execute = chatPluginToolExecutor({
+      legacy,
+      pinFor: () => undefined,
+      negotiatedVersion: () => "2026-07-28",
+    })!;
+    expect(
+      await execute(
+        {
+          serverKey: "remote",
+          toolName: "search",
+          toolCallId: "call",
+          input: {},
+        },
+        run,
+      ),
+    ).toBe("ordinary result");
+    expect(run).toHaveBeenCalledOnce();
+    expect(legacy).not.toHaveBeenCalled();
+  });
+  it("reports the original failure once without letting diagnostics replace it", async () => {
+    const failure = new Error("host refusal");
+    const onFailure = vi.fn(() => {
+      throw new Error("log unavailable");
+    });
+    const execute = chatPluginToolExecutor({
+      modern: {
+        serverIds: ["remote"],
+        execute: async () => {
+          throw failure;
+        },
+      },
+      pinFor: () => undefined,
+      negotiatedVersion: () => "2026-07-28",
+      onFailure,
+    })!;
+    await expect(
+      execute(
+        {
+          serverKey: "remote",
+          toolName: "search",
+          toolCallId: "call",
+          input: {},
+        },
+        vi.fn(),
+      ),
+    ).rejects.toBe(failure);
+    expect(onFailure).toHaveBeenCalledOnce();
   });
 });

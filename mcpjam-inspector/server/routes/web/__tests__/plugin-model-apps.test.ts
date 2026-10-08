@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   release: vi.fn(),
   read: vi.fn(),
   runtime: vi.fn(),
+  html: "<p>app</p>",
+  mimeTypeValid: true,
 }));
 vi.mock("../../../services/plugin-host/request-runtime.js", () => ({
   createPluginRequestRuntime: mocks.runtime,
@@ -15,7 +17,10 @@ vi.mock("../../../services/plugin-host/request-invocation.js", () => ({
   invokePluginRequest: mocks.invoke,
 }));
 vi.mock("../../../utils/widget-resource-content.js", () => ({
-  widgetResourceContent: () => ({ html: "<p>app</p>", mimeTypeValid: true }),
+  widgetResourceContent: () => ({
+    html: mocks.html,
+    mimeTypeValid: mocks.mimeTypeValid,
+  }),
 }));
 vi.mock("../../../utils/ui-resource-meta.js", () => ({
   canSkipListingLookup: () => true,
@@ -51,7 +56,10 @@ const meta = { ui: { resourceUri: "ui://app" } };
 function fixture() {
   const result = modelApps.publish(
     { content: [] },
-    { ...source, owner: { ...source.owner, instanceId: crypto.randomUUID() } } as never,
+    {
+      ...source,
+      owner: { ...source.owner, instanceId: crypto.randomUUID() },
+    } as never,
     "pickFile",
     "source-revision",
     meta,
@@ -93,6 +101,8 @@ function fixture() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.html = "<p>app</p>";
+  mocks.mimeTypeValid = true;
   mocks.read.mockResolvedValue({
     contents: [{ uri: "ui://app", text: "<p>app</p>" }],
   });
@@ -110,6 +120,23 @@ beforeEach(() => {
   });
 });
 describe("saved-server model App resource route", () => {
+  it.each([
+    ["above the old 1 MiB limit", "a".repeat(1024 * 1024 + 1), true, 200],
+    ["exactly 5 MiB", "a".repeat(5 * 1024 * 1024), true, 200],
+    ["over 5 MiB in UTF-8 bytes", "é".repeat(2621441), true, 403],
+    ["invalid MIME", "<p>app</p>", false, 403],
+  ])("uses the common UI bound: %s", async (_name, html, valid, status) => {
+    mocks.html = html;
+    mocks.mimeTypeValid = valid;
+    const f = fixture();
+    try {
+      expect((await f.request()).status).toBe(status);
+      expect(mocks.release).toHaveBeenCalledOnce();
+    } finally {
+      modelApps.close(f.token, actor);
+    }
+  });
+
   it("loads only the original saved server through admitted request runtime", async () => {
     const fixtureData = fixture();
     const response = await fixtureData.request();

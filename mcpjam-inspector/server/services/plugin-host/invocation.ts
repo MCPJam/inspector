@@ -3,6 +3,8 @@ import {
   INVOCATION_RECEIPT_MAX_ROUNDS,
 } from "../../../shared/plugin-invocation-receipts.js";
 import { createHash, randomBytes } from "node:crypto";
+import { logger } from "../../utils/logger.js";
+import { scrubLogPayload } from "../../utils/log-scrubber.js";
 import type {
   DurableInvocationReceipt,
   PluginInvocationReceiptPort,
@@ -242,7 +244,9 @@ export const pluginRetainedResults = new PluginRetainedResultBudget();
 /** A JSON-RPC error response is the server's authoritative answer: the call
  * is known to have failed. Local transport failures (timeouts, closed or
  * unsent connections, malformed results) leave the outcome unknown. */
-export function classifyPluginToolFailure(error: unknown): "failed" | "unknown" {
+export function classifyPluginToolFailure(
+  error: unknown,
+): "failed" | "unknown" {
   const code =
     error && typeof error === "object"
       ? (error as { code?: unknown }).code
@@ -272,6 +276,41 @@ export class PluginInvocationError extends Error {
   ) {
     super(code);
     this.name = "PluginInvocationError";
+  }
+}
+
+/** Keep a known host cause without asserting that a dispatched effect failed.
+ * `outcomeUnknown` still prevents replay, including after receipt recovery. */
+function unknownInvocationFailure(error: unknown): never {
+  if (error instanceof PluginInvocationError) {
+    const failure = new PluginInvocationError(error.code, true);
+    failure.diagnostics = error.diagnostics;
+    throw failure;
+  }
+  throw new PluginInvocationError("INVOCATION_OUTCOME_UNKNOWN", true);
+}
+
+function logInvocationFailure(error: unknown, dispatched: boolean) {
+  try {
+    logger.debug(
+      "[plugin-invocation] failure",
+      scrubLogPayload({
+        dispatched,
+        name:
+          error instanceof Error
+            ? scrubLogPayload(error.name).slice(0, 96)
+            : "NonError",
+        message:
+          error instanceof Error
+            ? scrubLogPayload(error.message).slice(0, 1000)
+            : "Non-error thrown",
+        ...(error instanceof PluginInvocationError
+          ? { code: error.code.slice(0, 96) }
+          : {}),
+      }),
+    );
+  } catch {
+    /* Diagnostics cannot change an accepted effect. */
   }
 }
 
@@ -631,7 +670,10 @@ export class AuthorizedToolInvoker {
   ) {
     const saved = this.ports.receipts
       ? await awaitOwned(signal ?? new AbortController().signal, () =>
-          this.ports.receipts!.read(invocationId, signal ?? new AbortController().signal),
+          this.ports.receipts!.read(
+            invocationId,
+            signal ?? new AbortController().signal,
+          ),
         )
       : null;
     const last = saved?.legs.at(-1);
@@ -643,8 +685,7 @@ export class AuthorizedToolInvoker {
       continuations: new Map(),
     };
     this.restore(recovered, saved!);
-    if (recovered.revision !== receipt.revision)
-      fail("AUTHORIZATION_CHANGED");
+    if (recovered.revision !== receipt.revision) fail("AUTHORIZATION_CHANGED");
     return this.replay(origin, params, receipt, recovered.result, signal);
   }
 
@@ -815,6 +856,7 @@ export class AuthorizedToolInvoker {
             error instanceof PluginContinuationTerminal &&
             !controller.signal.aborted &&
             !this.closed;
+          logInvocationFailure(error, dispatched);
           this.observation(
             invocationId,
             dispatched && !terminal ? "call-unknown" : "call-denied",
@@ -829,7 +871,7 @@ export class AuthorizedToolInvoker {
               dispatched && !terminal,
               controller.signal,
             );
-          if (dispatched && !terminal) fail("INVOCATION_OUTCOME_UNKNOWN", true);
+          if (dispatched && !terminal) unknownInvocationFailure(error);
           throw error;
         }
       })
@@ -950,7 +992,8 @@ export class AuthorizedToolInvoker {
         if (!unknown && !/^[A-Z0-9_]{1,96}$/.test(leg.errorCode ?? ""))
           fail("RECEIPT_STORE_INVALID");
         const code =
-          !unknown && /^[A-Z0-9_]{1,96}$/.test(leg.errorCode ?? "")
+          ["failed", "unknown", "unavailable"].includes(leg.state) &&
+          /^[A-Z0-9_]{1,96}$/.test(leg.errorCode ?? "")
             ? leg.errorCode!
             : "INVOCATION_OUTCOME_UNKNOWN";
         result = Promise.reject(new PluginInvocationError(code, unknown));
@@ -1090,11 +1133,12 @@ export class AuthorizedToolInvoker {
           writerHash,
           round,
           state: dispatched && !known ? "unknown" : "failed",
-          errorCode: !dispatched
-            ? code
-            : known
-              ? "TOOL_CALL_FAILED"
-              : "INVOCATION_OUTCOME_UNKNOWN",
+          errorCode:
+            !dispatched || error instanceof PluginInvocationError
+              ? code
+              : known
+                ? "TOOL_CALL_FAILED"
+                : "INVOCATION_OUTCOME_UNKNOWN",
         },
         signal,
       );
@@ -1305,6 +1349,7 @@ export class AuthorizedToolInvoker {
     } catch (error) {
       // A cancelled/revoked owner cannot deliver a result or safely retry a
       // write. Only an authoritative server failure is a known outcome.
+      logInvocationFailure(error, dispatched);
       let known = false;
       if (
         dispatched &&
@@ -1331,7 +1376,7 @@ export class AuthorizedToolInvoker {
         receipt.retryable = true;
         throw error;
       }
-      if (!known) fail("INVOCATION_OUTCOME_UNKNOWN", true);
+      if (!known) unknownInvocationFailure(error);
       throw error;
     }
   }

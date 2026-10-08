@@ -1,3 +1,7 @@
+import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
+import { hasServiceCredential } from "../../services/service-credential.js";
+import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
+import { describePluginError } from "../../../shared/plugin-diagnostics.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
 import {
   readOwnedTurnContext,
@@ -9,6 +13,7 @@ import { parseMrtrChatResumeRequest } from "@/shared/mrtr-continuation";
 import { installedFormClientCapabilities } from "../../services/plugin-host/owned-legacy.js";
 import {
   chatPluginFormPlan,
+  pluginModelMrtrEnabled,
   chatPluginToolExecutor,
 } from "./chat-v2-plugin-forms.js";
 import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
@@ -1410,6 +1415,13 @@ chatV2.post("/", async (c) => {
       }
     }
 
+    const pluginWorkspace = parsePluginWorkspaceDescriptor(
+      body.pluginWorkspace,
+    );
+    const pluginExtensions = hostRuntimeConfig
+      ? resolvePluginExtensions(hostRuntimeConfig as Parameters<typeof resolvePluginExtensions>[0])
+      : undefined;
+
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
     // `resolveElicitationGate` for why scenario turns must not read the body.
@@ -1436,10 +1448,10 @@ chatV2.post("/", async (c) => {
     });
 
     // ── Hosted MRTR (input_required, §12.5) gate + resume parse ─────────────
-    // MRTR suspend/resume rides the SAME elicitation capability (a round embeds
-    // `elicitation/create`), so it is enabled only alongside elicitation (both
-    // handlers present → legacy + MRTR both work) AND on its own version
-    // handshake so a stale browser fails fast. Emulated MCPJam engine only:
+    // Standard elicitation and saved OpenAI plugin Forms are independent
+    // declarations. Either installed consumer can drive MRTR; both require
+    // the browser version handshake so stale clients fail closed. The plugin
+    // workspace is admitted below before a manager is created. Emulated only:
     // BYOK (AI-SDK-owned loop) and harness (separate MCP plane) do not route a
     // suspend through this manager, so registering the collector there could
     // strand a round. `respectToolVisibility` is preserved across the retry
@@ -1452,9 +1464,18 @@ chatV2.post("/", async (c) => {
       .hostedMrtrVersion;
     const mrtrEnabled =
       isEmulatedMcpjam &&
-      elicitationEnabled &&
-      hostDeclaresElicitation(effectiveClientCapabilities) &&
-      rawMrtrVersion === HOSTED_MRTR_VERSION;
+      rawMrtrVersion === HOSTED_MRTR_VERSION &&
+      ((elicitationEnabled &&
+        hostDeclaresElicitation(effectiveClientCapabilities)) ||
+        pluginModelMrtrEnabled({
+          emulated: isEmulatedMcpjam,
+          workspace: !!pluginWorkspace && !isScenarioSession,
+          forms: pluginExtensions?.capabilities.forms,
+          serviceCredential: hasServiceCredential(),
+          elicitationHandshake:
+            hostedBody.hostedElicitationVersion === HOSTED_ELICITATION_VERSION,
+          mrtrHandshake: rawMrtrVersion === HOSTED_MRTR_VERSION,
+        }));
 
     const rawMrtrResume = (rawBody as Record<string, unknown>).mrtrResume;
     const mrtrResumeRequest = parseMrtrResumeRequest(rawMrtrResume);
@@ -1599,9 +1620,6 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    const pluginWorkspace = parsePluginWorkspaceDescriptor(
-      body.pluginWorkspace,
-    );
     let modelPluginAdmission:
       | import("../../services/plugin-host/admission.js").PluginWorkspaceAdmission
       | undefined;
@@ -1616,9 +1634,6 @@ chatV2.post("/", async (c) => {
     let modelMrtr: ReturnType<typeof createModelMrtrAdapter> | undefined;
     // The client's OpenAI plugin extensions setting decides whether the OpenAI
     // form extensions are advertised or handled at all.
-    const pluginExtensions = hostRuntimeConfig
-      ? resolvePluginExtensions(hostRuntimeConfig as Parameters<typeof resolvePluginExtensions>[0])
-      : undefined;
     // Emulated and Codex harness turns (whose MCP tools run here, in process)
     // take the same plugin executor; see `chatPluginFormPlan`.
     const pluginPins =
@@ -1667,6 +1682,25 @@ chatV2.post("/", async (c) => {
         legacy: legacyExecutor,
         pinFor: pluginPinFor,
         negotiatedVersion: (serverId) => pluginNegotiatedVersion(serverId),
+        onFailure: (execution, error) => {
+          // Suspensions are control flow. Stable host errors are diagnostics,
+          // never fabricated tools/call responses or raw upstream payloads.
+          if (!(error instanceof PluginInvocationError)) return;
+          rpcCollector?.rpcLogger({
+            direction: "receive",
+            serverId: execution.serverKey,
+            message: {
+              jsonrpc: "2.0",
+              method: `plugin-extensions/${error.code}`,
+              params: {
+                level: "error",
+                code: error.code,
+                description: describePluginError(error.code) ?? error.code,
+                outcomeUnknown: error.outcomeUnknown,
+              },
+            },
+          });
+        },
       });
     }
 
