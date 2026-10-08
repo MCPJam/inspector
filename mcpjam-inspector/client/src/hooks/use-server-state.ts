@@ -2985,9 +2985,7 @@ export function useServerState({
       const finishDiagnostic = startDesktopOperation("oauth_callback");
       const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
-        HOSTED_MODE &&
-        isAuthenticated &&
-        hostedCallbackContext?.surface === "project";
+        HOSTED_MODE && hostedCallbackContext?.surface === "project";
       const suppressErrorToast =
         hostedCallbackContext?.suppressErrorToast === true;
       const suppressSuccessToast =

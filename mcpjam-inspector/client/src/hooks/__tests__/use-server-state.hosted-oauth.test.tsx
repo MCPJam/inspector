@@ -719,6 +719,66 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
+  it("completes a hosted guest project callback through the server session", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=guest-code&state=guest-state",
+    );
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: null,
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      sessionId: "oauth-session-1",
+      accessScope: "project_member",
+      returnPath: "#servers",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+    });
+
+    renderHook(() =>
+      useServerState({
+        appState: { servers: {}, selectedMultipleServers: [] } as any,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: false,
+        hasSignedInUser: false,
+        currentUserId: null,
+        oauthProjectIds: new Set(["ws_1"]),
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: {} as any,
+        effectiveActiveProjectId: "ws_1",
+        activeProjectServersFlat: [],
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "project",
+          initiatingUserId: null,
+          sessionId: "oauth-session-1",
+        }),
+        "guest-code",
+        expect.objectContaining({ callbackState: "guest-state" }),
+      );
+    });
+  });
+
   it("discards a late first-run OAuth completion after Cancel", async () => {
     markFirstRunServerChoiceStarted("asana");
     writeHostedOAuthPendingMarker({

@@ -863,7 +863,7 @@ jobs:
         if: always()
         uses: actions/github-script@v9
         env:
-          PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
+          PREVIEW_URL: ${{ env.PUBLIC_PREVIEW_ORIGIN }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}
           HEALTH_OUTCOME: ${{ steps.final_health.outcome }}
           PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
