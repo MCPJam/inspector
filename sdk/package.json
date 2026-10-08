@@ -181,7 +181,7 @@
     "tsx": "^4.23.15",
     "typescript": "^5.3.3",
     "typescript-eslint": "^8.70.1",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "5.0.106",

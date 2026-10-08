@@ -97,7 +97,7 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation((_servers, options) => {
+    MCPClientManager: vi.fn().mockImplementation(function (_servers, options) {
       emitConstructorRpcLogMock(options?.rpcLogger);
       return {
         disconnectAllServers: disconnectAllServersMock,

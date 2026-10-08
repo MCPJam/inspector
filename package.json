@@ -60,7 +60,8 @@
     "@google/design.md": "0.4.0",
     "@types/dagre": "^0.7.54",
     "concurrently": "^10.0.5",
-    "@changesets/changelog-github": "^1.0.1"
+    "@changesets/changelog-github": "^1.0.1",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "react-force-graph-2d": "^1.29.2"

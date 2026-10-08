@@ -285,13 +285,16 @@ function deferredFetch() {
 
 /** Open a session through the real action, with `fetch` stubbed. */
 async function openSession(session: WebMcpSessionPublic = SESSION) {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify(session), { status: 201 }),
-  );
+  const fetchSpy = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(JSON.stringify(session), { status: 201 }));
   await useWebmcpInspectorStore.getState().startSession("https://shop.test/");
   // The stream is a fetch body and the frame socket's nonce is a request, so
   // neither transport exists at the turn `startSession` resolves on.
   for (let i = 0; i < 20; i++) await Promise.resolve();
+  // fetch is the setup's global mock, and a test's own spyOn returns that same
+  // mock, so drop the opening calls or they count against the test.
+  fetchSpy.mockClear();
   return FakeEventSource.instances.at(-1)!;
 }
 
