@@ -42,6 +42,8 @@ const {
   runUnifiedAssistantTurnMock,
   persistChatSessionToConvexMock,
   getToolsMock,
+  acquirePlaygroundHarnessBoxMock,
+  releaseBoxMock,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
@@ -54,6 +56,18 @@ const {
   runUnifiedAssistantTurnMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   getToolsMock: vi.fn(),
+  acquirePlaygroundHarnessBoxMock: vi.fn(),
+  releaseBoxMock: vi.fn(),
+}));
+
+// The box is the conversation's throwaway machine: a harness turn here binds
+// it and never resolves a persistent computer. Only the acquisition is faked.
+vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../utils/harness/playground-box.js")
+  >()),
+  acquirePlaygroundHarnessBox: (...args: unknown[]) =>
+    acquirePlaygroundHarnessBoxMock(...args),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -250,6 +264,14 @@ beforeEach(() => {
     sessionDocId: "cs_1",
     version: 1,
   });
+  releaseBoxMock.mockResolvedValue(undefined);
+  acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+    ok: true,
+    box: {
+      binding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
+      release: releaseBoxMock,
+    },
+  });
 });
 
 afterEach(() => {
@@ -285,6 +307,57 @@ describe("host targeting dispatches the real harness", () => {
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
     expect(body.hostId).toBe(HOST);
+  });
+
+  it("binds the conversation's throwaway box to a harness turn and releases it", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT,
+        harness: "claude-code",
+        projectEnvironmentId: ENVIRONMENT,
+      }),
+    );
+    // The box reaches the engine as the harness's sandbox binding, so
+    // `resolveHarnessSandbox` (the persistent computer) is never asked.
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harnessSandboxBinding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
+      }),
+    );
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the turn, before any model call, when no box can be had", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+      ok: false,
+      refusal: { status: 429, error: "limit reached", code: "user_terminal_cap" },
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(429);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("an emulated turn acquires no box", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({}));
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ harnessSandboxBinding: expect.anything() }),
+    );
   });
 
   it("runs the harness an explicit hostId names, using the host's own servers", async () => {

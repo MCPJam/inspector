@@ -1,23 +1,28 @@
 /**
- * The Playground's disposable-computer fallback.
+ * The Playground's throwaway-computer path.
  *
- * A Playground harness turn runs on the member's own computer. That machine is
- * the one place a conversation's files persist across sessions, and it is also
- * the one place a project's credentials never go: a personal computer is
+ * Every CLOUD harness turn runs on a disposable, per-conversation box: killed
+ * after 30 idle minutes, capped at 4 hours of age, and limited to 4 live boxes
+ * per user and 12 per org. There is no persistent machine in this path, so a
+ * Claude Code / Codex / Cursor client needs only its own harness flag.
+ *
+ * Why a box rather than the member's personal computer: a personal computer is
  * reused, attached to several hosts, and has no stable binding to an
- * environment. So two kinds of turn cannot run there and take a disposable,
- * per-conversation box instead:
+ * environment, so a project's credentials never go there. The reasons a turn
+ * takes a box:
  *
- *   `credential` — the harness authenticates on the customer's own account
+ *   `credential`   — the harness authenticates on the customer's own account
  *     (Cursor). Its key reaches only a box the project provisioned.
- *   `compare`    — a compare column. Every column runs the same host at the
- *     same time; sharing one personal computer would have them overwrite each
- *     other's files, so each column gets its own conversation's box.
+ *   `compare`      — a compare column. Every column runs the same host at the
+ *     same time; each gets its own conversation's box so they cannot overwrite
+ *     each other's files.
+ *   `conversation` — every other cloud harness turn (a plain Claude Code or
+ *     Codex turn). The conversation's box is its machine.
  *
- * Everything else — a plain Claude Code or Codex turn — is untouched, and so is
- * a LOCAL harness, which runs on the member's own machine and is never given a
- * box. This module owns the decision and the acquisition; the two chat routes
- * only ask it.
+ * A LOCAL harness (npx / Electron) runs on the member's own machine and is never
+ * given a box; neither is a scenario session (its own box path) or a turn with
+ * no harness. This module owns the decision and the acquisition; the chat
+ * routes only ask it.
  */
 import { logger } from "../logger.js";
 import {
@@ -45,7 +50,7 @@ import {
 } from "@/shared/external-credential-selection";
 import { getHarnessAdapter, harnessUsesExternalAccount } from "./registry.js";
 
-export type PlaygroundBoxReason = "credential" | "compare";
+export type PlaygroundBoxReason = "credential" | "compare" | "conversation";
 
 /** Why this turn needs a machine of its own — or null when it does not. */
 export function playgroundHarnessBoxReason(args: {
@@ -62,7 +67,7 @@ export function playgroundHarnessBoxReason(args: {
   }
   if (harnessUsesExternalAccount(args.harnessId)) return "credential";
   if (args.comparePane) return "compare";
-  return null;
+  return "conversation";
 }
 
 export interface PlaygroundBoxRefusal {
@@ -229,6 +234,8 @@ export async function acquirePlaygroundHarnessBox(args: {
   chatSessionId: string;
   /** The project environment whose secrets the box holds, when one is chosen. */
   projectEnvironmentId?: string;
+  /** The turn's harness id; the backend gates the box on its own flag. */
+  harness?: string;
   signal?: AbortSignal;
 }): Promise<AcquireHarnessBoxResult<PlaygroundBoxRefusal>> {
   const acquired = await acquireHarnessBox<PlaygroundBoxRefusal>({
@@ -246,6 +253,7 @@ export async function acquirePlaygroundHarnessBox(args: {
           ...(args.projectEnvironmentId
             ? { projectEnvironmentId: args.projectEnvironmentId }
             : {}),
+          ...(args.harness ? { harness: args.harness } : {}),
           ...(args.signal ? { signal: args.signal } : {}),
         });
       } catch (error) {
@@ -315,9 +323,13 @@ export function playgroundHarnessBoxUnavailableReason(
 }
 
 function subjectFor(harness: string, reason: PlaygroundBoxReason): string {
-  return reason === "credential"
-    ? `The ${harness} harness signs in with your own account, so it runs on a disposable computer for this conversation`
-    : `Compare columns each run the ${harness} harness on a disposable computer of their own`;
+  if (reason === "credential") {
+    return `The ${harness} harness signs in with your own account, so it runs on a disposable computer for this conversation`;
+  }
+  if (reason === "compare") {
+    return `Compare columns each run the ${harness} harness on a disposable computer of their own`;
+  }
+  return `The ${harness} harness runs on a disposable computer for this conversation`;
 }
 
 /**

@@ -39,9 +39,11 @@ const turn = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("playgroundHarnessBoxReason", () => {
-  it("leaves a plain cloud harness turn on the personal computer", () => {
-    expect(playgroundHarnessBoxReason(turn())).toBeNull();
-    expect(playgroundHarnessBoxReason(turn({ harnessId: "codex" }))).toBeNull();
+  it("gives a plain cloud harness turn the conversation's box", () => {
+    expect(playgroundHarnessBoxReason(turn())).toBe("conversation");
+    expect(playgroundHarnessBoxReason(turn({ harnessId: "codex" }))).toBe(
+      "conversation",
+    );
   });
 
   it("sends a harness that signs in with the member's own account to a box", () => {

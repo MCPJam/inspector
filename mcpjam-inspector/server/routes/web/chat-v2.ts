@@ -2254,6 +2254,7 @@ chatV2.post("/", async (c) => {
         ...(playgroundEnvironmentId
           ? { projectEnvironmentId: playgroundEnvironmentId }
           : {}),
+        harness: resolvedExecution.harness,
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (!acquired.ok) {

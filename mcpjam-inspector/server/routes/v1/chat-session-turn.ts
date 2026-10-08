@@ -128,6 +128,12 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
+  acquirePlaygroundHarnessBox,
+  describePlaygroundBoxRefusal,
+  playgroundHarnessBoxUnavailableReason,
+} from "../../utils/harness/playground-box.js";
+import type { HarnessBox } from "../../utils/harness/harness-box.js";
+import {
   assertHarnessDispatchable,
   assertHostPointerAgreement,
   engineLabel,
@@ -1262,6 +1268,11 @@ async function handleTurn(c: Context): Promise<Response> {
    * keep the lease and let the TTL expire it.
    */
   let modelCallStarted = false;
+  /**
+   * The conversation's throwaway box, held for a harness turn. Released in the
+   * `finally` (idempotent), which leaves the box for the next turn.
+   */
+  let conversationBox: HarnessBox | undefined;
   const abortController = new AbortController();
   const requestSignal = c.req.raw.signal;
   const onRequestAbort = () => abortController.abort();
@@ -1855,6 +1866,56 @@ async function handleTurn(c: Context): Promise<Response> {
     let lastEngineError:
       { message: string; code?: string; httpStatus?: number } | undefined;
 
+    // A cloud harness turn runs on this conversation's THROWAWAY box, the same
+    // box the Playground gives it (keyed by the runtime chat session id), and
+    // never on a persistent computer: no `resolveHarnessSandbox`, no
+    // `projectComputers` row. Acquired before the model call so a refused box
+    // spends nothing.
+    if (engine.kind === "harness") {
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        engine.harness,
+        "conversation",
+      );
+      if (unavailable) {
+        return v1Error(c, "FEATURE_NOT_SUPPORTED", unavailable, {
+          reason: "NOT_A_DATA_PLANE",
+        });
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: authHeader.replace(/^Bearer\s+/i, ""),
+        projectId,
+        chatSessionId: runtimeChatSessionId,
+        ...(pins.environmentId
+          ? { projectEnvironmentId: pins.environmentId }
+          : {}),
+        harness: engine.harness,
+        signal: abortController.signal,
+      });
+      if (!acquired.ok) {
+        const described = describePlaygroundBoxRefusal(
+          engine.harness,
+          "conversation",
+          acquired.refusal,
+        );
+        return v1Error(
+          c,
+          described.status === 429 || described.status === 503
+            ? "RATE_LIMITED"
+            : described.status === 403
+              ? "FORBIDDEN"
+              : described.status === 409
+                ? "CONFLICT"
+                : "INTERNAL_ERROR",
+          described.message,
+          {
+            reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+            ...(described.code ? { code: described.code } : {}),
+          },
+        );
+      }
+      conversationBox = acquired.box;
+    }
+
     // Past this line the turn may have spent. See `modelCallStarted`.
     if (executionOwnerToken)
       await new BrowserSessionService().agentRequest("begin_model", {
@@ -1890,6 +1951,9 @@ async function handleTurn(c: Context): Promise<Response> {
       // strategy is how a sandbox ends up pointed at the wrong manager.
       ...(engine.kind === "harness"
         ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
+        : {}),
+      ...(engine.kind === "harness" && conversationBox
+        ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
       // The ENVIRONMENT's resolved skills, for the harness that will write them
       // into its sandbox. Without this `selectHarnessSkillSource` falls to its
@@ -2317,6 +2381,7 @@ async function handleTurn(c: Context): Promise<Response> {
     throw error;
   } finally {
     clearTimeout(wallClock);
+    await conversationBox?.release();
     if (browserOutbox)
       await flushBrowserEvidence(browserOutbox);
 
