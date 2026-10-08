@@ -145,4 +145,4 @@ jobs:
         run: |
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "Scheduled container scan failed: ${{ matrix.image }}" \
-            --body "The weekly Trivy scan of the ${{ matrix.image }} image failed — likely a new fixable CRITICAL in a base image (bump NODE_VERSION or the relevant base tag), or a broken build. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            --body "The weekly Trivy scan of the ${{ matrix.image }} image failed — likely a new fixable CRITICAL in a base image (bump NODE_VERSION or the relevant base tag; for npm's bundled dependencies, re-evaluate the npm pin and overlays in the Dockerfiles), or a broken build. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
