@@ -1,3 +1,4 @@
+import { HOSTED_MODE } from "@/lib/config";
 import { toast } from "@/lib/toast";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import type { ActivePluginSkipReason } from "@/lib/plugins/active-plugins-types";
@@ -19,6 +20,8 @@ export interface PluginNoticePlugin {
   name: string;
   displayName: string | null;
   reason: ActivePluginSkipReason;
+  /** For a `placement` skip: where the component would have run. */
+  placement?: "local" | "computer";
 }
 
 /**
@@ -67,9 +70,24 @@ function noticeLabel(plugin: PluginNoticePlugin): string {
   return plugin.displayName?.trim() || plugin.name;
 }
 
+/**
+ * A chat never starts a plugin's local process on its own; in a build that
+ * could, the member is told that is why, not that it cannot run here.
+ */
+function placementCopy(plugin: PluginNoticePlugin): string {
+  if (plugin.placement === "computer") {
+    return "it runs in a computer and isn't started automatically";
+  }
+  return HOSTED_MODE
+    ? REASON_COPY.placement
+    : "it runs on this computer and isn't started automatically";
+}
+
 function describeSkip(plugin: PluginNoticePlugin): string {
   const reason =
-    REASON_COPY[plugin.reason] ?? "it couldn't load for this message";
+    plugin.reason === "placement"
+      ? placementCopy(plugin)
+      : (REASON_COPY[plugin.reason] ?? "it couldn't load for this message");
   return `${noticeLabel(plugin)} was skipped: ${reason}.`;
 }
 

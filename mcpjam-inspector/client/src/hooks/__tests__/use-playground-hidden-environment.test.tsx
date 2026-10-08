@@ -5,6 +5,10 @@ import type { ActivePluginRow } from "@/lib/plugins/active-plugins-types";
 const state = vi.hoisted(() => ({
   plugins: [] as ActivePluginRow[],
   activePluginsProjectIds: [] as Array<string | null | undefined>,
+  activePluginsVenues: [] as Array<string | undefined>,
+  activeLoading: false,
+  activeFailed: false,
+  pluginsEnabled: true,
   isMember: true as boolean | undefined,
   secrets: undefined as unknown,
   secretsProjectIds: [] as Array<string | null | undefined>,
@@ -17,15 +21,23 @@ vi.mock("@/hooks/useActivePlugins", async (importOriginal) => {
     await importOriginal<typeof import("@/hooks/useActivePlugins")>();
   return {
     ...actual,
-    activePluginsRuntimeVenue: () => "hosted",
-    useActivePlugins: (projectId: string | null | undefined) => {
+    // A desktop build: the deployment's own venue is local. The hidden
+    // composition must not use it.
+    activePluginsRuntimeVenue: () => "local",
+    useActivePlugins: (
+      projectId: string | null | undefined,
+      options?: { runtimeVenue?: string },
+    ) => {
       state.activePluginsProjectIds.push(projectId);
-      const plugins = projectId ? state.plugins : [];
+      state.activePluginsVenues.push(options?.runtimeVenue);
+      const answered = projectId && !state.activeLoading && !state.activeFailed;
+      const plugins = answered ? state.plugins : [];
       return {
         plugins,
         activePlugins: plugins.filter((plugin) => plugin.status === "active"),
         activeServers: actual.activePluginServers(plugins),
-        isLoading: false,
+        isLoading: !!projectId && state.activeLoading,
+        failed: !!projectId && state.activeFailed,
       };
     },
   };
@@ -35,6 +47,9 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({
   useIsMemberActor: () => state.isMember,
+}));
+vi.mock("@/hooks/usePluginsEnabled", () => ({
+  usePluginsEnabled: () => state.pluginsEnabled,
 }));
 vi.mock("@/hooks/useProjectSecrets", () => ({
   useProjectSecrets: (projectId: string | null | undefined) => {
@@ -46,9 +61,20 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({ query: state.query }),
 }));
 
-import { usePlaygroundHiddenEnvironment } from "../use-playground-hidden-environment";
+import {
+  HIDDEN_ENVIRONMENT_WAIT_MS,
+  usePlaygroundHiddenEnvironment,
+} from "../use-playground-hidden-environment";
 
 const PROJECT_ID = "j57abcdefghijklmnopqrstuvwxyz012";
+
+const PROPS_FOR_PENDING = {
+  projectId: PROJECT_ID,
+  eligible: true,
+  hostId: "host_1",
+  harnessId: null,
+  hostResolved: true,
+};
 
 function plugin(
   id: string,
@@ -96,6 +122,10 @@ describe("usePlaygroundHiddenEnvironment", () => {
   beforeEach(() => {
     state.plugins = [];
     state.activePluginsProjectIds = [];
+    state.activePluginsVenues = [];
+    state.activeLoading = false;
+    state.activeFailed = false;
+    state.pluginsEnabled = true;
     state.isMember = true;
     state.secrets = undefined;
     state.secretsProjectIds = [];
@@ -254,6 +284,135 @@ describe("usePlaygroundHiddenEnvironment", () => {
     state.plugins = [plugin("bits")];
     render({ harnessId: "claude-code" });
     expect(state.secretsProjectIds.every((id) => id === null)).toBe(true);
+  });
+
+  describe("only remote components, in every build", () => {
+    it("reads the plugins for the hosted venue even where this build is local", () => {
+      state.plugins = [plugin("bits")];
+      render();
+      expect(state.activePluginsVenues.at(-1)).toBe("hosted");
+    });
+
+    it("pins a remote plugin and skips a local one, which the chat names", async () => {
+      // What the hosted-venue read answers for a plugin with a stdio
+      // component: skipped as `placement`, never active.
+      state.plugins = [
+        plugin("local", {
+          status: "skipped",
+          reason: "placement",
+          componentKey: "server",
+          servers: [
+            {
+              serverId: "srv_local",
+              name: "local-server",
+              componentKey: "server",
+              placement: "local",
+            },
+          ],
+        }),
+        plugin("bits"),
+      ];
+      const { result } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
+        "ver_bits",
+      ]);
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+      // Still listed, so the chat can say why it was skipped.
+      expect(
+        result.current.plugins.find((row) => row.pluginId === "plg_local"),
+      ).toMatchObject({ status: "skipped", reason: "placement" });
+    });
+
+    it("never pins a local component, even if a read called it active", async () => {
+      state.plugins = [
+        plugin("local", {
+          servers: [
+            {
+              serverId: "srv_local",
+              name: "local-server",
+              componentKey: "server",
+              placement: "local",
+            },
+          ],
+        }),
+      ];
+      const { result } = render();
+      expect(result.current.wanted).toBe(false);
+      await Promise.resolve();
+      expect(state.ensure).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("before the plugin read has answered", () => {
+    it("holds sends on a cold load until it answers, then composes", async () => {
+      state.isMember = undefined;
+      state.plugins = [plugin("bits")];
+      const { result, rerender } = render();
+      // Wanted with nothing composed: the chat hook holds the send.
+      expect(result.current.wanted).toBe(true);
+      expect(result.current.environmentId).toBeNull();
+      expect(result.current.failed).toBe(false);
+
+      state.isMember = true;
+      state.activeLoading = true;
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.wanted).toBe(true);
+      expect(result.current.environmentId).toBeNull();
+      await Promise.resolve();
+      expect(state.ensure).not.toHaveBeenCalled();
+
+      state.activeLoading = false;
+      rerender(PROPS_FOR_PENDING);
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+    });
+
+    it("lets sends go once the read answers that there are no plugins", () => {
+      state.activeLoading = true;
+      const { result, rerender } = render();
+      expect(result.current.wanted).toBe(true);
+      state.activeLoading = false;
+      rerender(PROPS_FOR_PENDING);
+      expect(result.current.wanted).toBe(false);
+      expect(result.current.failed).toBe(false);
+    });
+
+    it("does not wait without the plugins flag", () => {
+      state.pluginsEnabled = false;
+      state.isMember = undefined;
+      expect(render().result.current.wanted).toBe(false);
+    });
+
+    it("stops waiting after the bound and says the plugins couldn't load", () => {
+      vi.useFakeTimers();
+      try {
+        state.activeLoading = true;
+        const { result, rerender } = render();
+        expect(result.current.wanted).toBe(true);
+        act(() => {
+          vi.advanceTimersByTime(HIDDEN_ENVIRONMENT_WAIT_MS);
+        });
+        expect(result.current.wanted).toBe(false);
+        expect(result.current.failed).toBe(true);
+
+        // A late answer still counts.
+        state.activeLoading = false;
+        state.plugins = [plugin("bits")];
+        rerender(PROPS_FOR_PENDING);
+        expect(result.current.wanted).toBe(true);
+        expect(result.current.failed).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("runs as a client turn, saying so, when the read fails", () => {
+      state.activeFailed = true;
+      const { result } = render();
+      expect(result.current.wanted).toBe(false);
+      expect(result.current.failed).toBe(true);
+    });
   });
 
   describe("recover", () => {
