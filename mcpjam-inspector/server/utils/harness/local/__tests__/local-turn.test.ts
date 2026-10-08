@@ -436,6 +436,22 @@ describe("local lane state lifetime", () => {
     await result.prepared.discardState();
   });
 
+  it("lands composer attachments in the session's own state, never the workspace", async () => {
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    if (!result.ok) throw new Error(result.message);
+    const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][])[0][0] as any;
+    const attachments = join(providerArgs.sessionStateDir, "attachments");
+    // Inside the state root the session's file API is confined to, and
+    // outside the user's checkout.
+    expect(result.prepared.attachmentsDir).toEqual({
+      writeDir: toAdapterPath(attachments),
+      agentDir: attachments,
+    });
+    expect(providerArgs.workspacePath).toEqual(expect.any(String));
+    expect(attachments.startsWith(providerArgs.workspacePath)).toBe(false);
+    await result.prepared.discardState();
+  });
+
   it("records each bridge start against the pack it ran on — the signal that rolls a bad update back", async () => {
     const { noteRuntimeLaunch } = await import("../runtime-install.js");
     const result = await prepareLocalHarnessTurn(turnArgs());
