@@ -17,6 +17,7 @@ import { EnvironmentToolsPane } from "./panes/EnvironmentToolsPane";
 import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
 import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
+import { PlaygroundAppsSection } from "./PlaygroundAppsSection";
 import { cn } from "@/lib/utils";
 
 type LeftRailTab = "sessions" | "tools";
@@ -54,6 +55,8 @@ export function PlaygroundLeftRail({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
+      {/* Global plugin Apps (nothing when extensions are off). */}
+      <PlaygroundAppsSection />
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
         <TabButton
           icon={Hammer}

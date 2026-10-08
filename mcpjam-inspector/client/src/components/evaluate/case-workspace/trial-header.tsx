@@ -9,7 +9,11 @@ import { cn } from "@/lib/utils";
 import { summarizeTrialChain } from "../stage-trial-model";
 import { groupCaseIterations } from "../../evals/runs/group-case-iterations";
 import { CaseRunsHistory } from "../../evals/runs/case-runs-history";
-import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../../evals/types";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import {
   trialActivity,
@@ -44,7 +48,7 @@ export function TrialHeader({
   run?: Pick<EvalSuiteRun, "status" | "goalCompletionStatus"> | null;
   judgeCase?: { status?: string } | null;
   iterations: EvalIteration[];
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: EvalSuiteRunListItem[];
   hostNamesById?: Map<string, string | null>;
   defaultHostLabel?: string | null;
   hasHostAttachments?: boolean;

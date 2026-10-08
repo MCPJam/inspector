@@ -5,6 +5,8 @@
  */
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
+import { patchClaudeCodeBackgroundDrain } from "./claude-code-background-drain.js";
+import { patchClaudeCodeSubagentSteps } from "./claude-code-subagent-steps.js";
 
 export function createClaudeCodeHarness(
   settings?: Parameters<typeof createClaudeCode>[0],
@@ -17,7 +19,9 @@ export function createClaudeCodeHarness(
 
 /* ── Claude Code bridge patches ────────────────────────────────────────────
  *
- * Two groups survive on the `@ai-sdk/harness-claude-code@1.0.x` stable line.
+ * Groups B and C survive on the `@ai-sdk/harness-claude-code@1.0.x` stable
+ * line; Group D (background drain) lives in `claude-code-background-drain.ts`
+ * and Group E (a subagent's steps) in `claude-code-subagent-steps.ts`.
  * A third — injecting `parent_tool_use_id: null` into the outbound user message
  * — was RETIRED at the stable bump: the adapter's own `toUserMessage` now sets
  * it, and re-applying ours would have written the key twice.
@@ -374,6 +378,14 @@ function patchClaudeCodeBridgeContent(content: string): string {
       patched = patched.replace(needle, replacement);
     }
   }
+
+  // Group D: the turn stays open until its background agents report back.
+  // After Group B, whose result fallback it extends.
+  patched = patchClaudeCodeBackgroundDrain(patched);
+
+  // Group E: a subagent's tool calls reach the UI as raw parts, never the
+  // transcript. Inside the sub-agent guard, which still returns.
+  patched = patchClaudeCodeSubagentSteps(patched);
 
   /* The adapter now sets `parent_tool_use_id` itself. If a future version drops
    * it again the sub-agent guard silently stops filtering, so fail loudly

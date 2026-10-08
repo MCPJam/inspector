@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { runClientIdentity } from "../evals/helpers";
+import { isSubsetRerunRun, runClientIdentity } from "../evals/helpers";
 import {
   groupProjectRuns,
   projectRunRollup,
@@ -16,11 +16,14 @@ import {
 import type { ProjectRunRow } from "../evals/project-runs-table";
 import { isActiveRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
-import type { EvalSuiteOverviewEntry } from "../evals/types";
+import type {
+  EvalSuiteRunListItem,
+  EvalSuiteOverviewEntry,
+} from "../evals/types";
 
 export function buildSuiteHealth(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
   suiteId: string,
   clientKey: string,
 ) {
@@ -30,7 +33,13 @@ export function buildSuiteHealth(
     .flatMap((launch) => {
       const members = launch.runs.filter((row) => {
         const run = details.get(row._id)?.run;
-        return run && runClientIdentity(run).key === clientKey;
+        // A subset rerun's pass rate is biased by its selection: it is never
+        // a point on the suite's health trend or part of its average.
+        return (
+          run &&
+          !isSubsetRerunRun(run) &&
+          runClientIdentity(run).key === clientKey
+        );
       });
       // The detail's status too: the chart draws from the previous snapshot
       // while a refresh is in flight, so a run that just finished can still
@@ -94,7 +103,7 @@ export function SuiteHealth({
   onSelectRun,
 }: {
   rows: ProjectRunRow[];
-  details: Map<string, ProjectRunHistoryDetail>;
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>;
   /** Enough has loaded to draw something. */
   complete: boolean;
   /** More runs exist than the chart has read. */

@@ -656,6 +656,63 @@ describe("saved client model selection", () => {
     });
   });
 
+  it("refuses a STORED legacy selection: it means own key only, never the MCPJam key", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({ source: "legacy", modelId })
+    );
+    const selected = input();
+    const error = await createSavedClientRunner(
+      selected,
+      new AbortController().signal
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnsupportedModelSelectionError);
+    expect(error).toMatchObject({ source: "legacy", modelId });
+    expect(String((error as Error).message)).toContain("own provider key");
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
+  });
+
+  it("applies a backfilled hosted selection and drops its origin marker", async () => {
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelSelection: {
+          modelId,
+          source: "hosted",
+          settings: { temperature: 0.3 },
+          fallback: { provider: "none", model: "none" },
+        },
+        modelSelectionOrigin: "backfill",
+      },
+    });
+    const { executor } = await run();
+    expect(executor.getTemperature()).toBe(0.3);
+    expect(JSON.stringify(executor.getHostSnapshot())).not.toContain(
+      "modelSelectionOrigin"
+    );
+  });
+
+  it("reads the model from the selection when the response omits modelId", async () => {
+    const saved = detail();
+    const { modelId: _omitted, ...configWithoutModelId } = saved.config as {
+      modelId?: string;
+    } & Record<string, unknown>;
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...configWithoutModelId,
+        modelSelection: {
+          modelId,
+          source: "hosted",
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    } as typeof saved);
+    const snapshot = (await run()).executor.getHostSnapshot();
+    expect(snapshot).toMatchObject({ model: `mcpjam/${modelId}` });
+  });
+
   it("refuses the whole run through runWithClient too", async () => {
     vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
       withSelection({
@@ -714,6 +771,61 @@ describe("saved client model selection", () => {
     expect(hosted).toEqual(bare);
     expect(hosted).toMatchObject({ model: `mcpjam/${modelId}` });
     expect(JSON.stringify(hosted)).not.toContain("modelSelection");
+  });
+
+  it("applies a hosted selection's reasoning effort instead of deleting it with the selection", async () => {
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelId: "anthropic/claude-opus-4.7",
+        modelSelection: {
+          modelId: "anthropic/claude-opus-4.7",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    });
+    const { executor } = await run();
+    // The runner applies it (and so drops the temperature it would replace).
+    expect(
+      (executor as unknown as { getReasoningEffort(): string }).getReasoningEffort()
+    ).toBe("high");
+  });
+
+  it("a saved effort on a model with no effort control refuses before any spend", async () => {
+    // The mcpjam-hosted runner only serves Claude and GPT-5, both of which take
+    // an effort; an unsupported one must be an error, never a silent default.
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelId: "anthropic/claude-3-5-haiku-20241022",
+        modelSelection: {
+          modelId: "anthropic/claude-3-5-haiku-20241022",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    });
+    await expect(run()).rejects.toThrow(/not supported/);
+  });
+
+  it("a saved selection temperature beats the host default", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "hosted",
+        settings: { temperature: 0.1 },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const { executor } = await run();
+    expect(executor.getTemperature()).toBe(0.1);
   });
 
   it("leaves a client without a selection unchanged", async () => {

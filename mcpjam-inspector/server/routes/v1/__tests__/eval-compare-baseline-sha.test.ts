@@ -34,12 +34,14 @@ const { convexQueryMock, convexActionMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    action: convexActionMock,
-    mutation: vi.fn(),
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      action: convexActionMock,
+      mutation: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({

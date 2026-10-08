@@ -31,7 +31,7 @@
 
 import { modelWorkloadFor } from "./model-workload.js";
 import type { ToolSet } from "ai";
-import type { Harness, ModelSelection } from "@mcpjam/sdk";
+import type { Harness, RequestedModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
 import {
   assertOrgModelAllowed,
@@ -46,7 +46,11 @@ import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import { getHarnessAdapter } from "./harness/registry.js";
 import { buildLocalExecutionRecord } from "./local-execution-record.js";
-import { ModelResolutionRefusalError } from "./model-resolution-local.js";
+import {
+  backendModelSelection,
+  ModelResolutionRefusalError,
+} from "./model-resolution-local.js";
+import { forwardableSelection } from "./selection-rail.js";
 import {
   reasoningEffortProviderOptions,
   type EffectiveModelSettings,
@@ -102,20 +106,38 @@ export interface ResolveTurnRuntimeArgs {
   /** Per-run attribution stamped onto the local-BYOK usage record. */
   attribution?: TurnRunAttribution;
   /**
-   * The saved selection behind `modelDefinition`, already checked with
-   * `backendModelSelection()` (so never `local`). Sent as the body's
-   * `modelSelection` only on the rail it names: a `hosted` one on `/stream`,
-   * an `org` one on `/stream/org` and `/stream/org/resolve`. The backend
-   * re-resolves it and records it as the requested selection.
+   * The saved selection behind `modelDefinition`. It DECIDES THE RAIL
+   * (`decideTurnRail`, `selection-rail.ts`):
+   *
+   *   - `hosted` → MCPJam `/stream`;
+   *   - `org` → the org connection (`/stream/org`, or its local runtime);
+   *   - `local` and a STORED legacy selection → the own-key path (the org's
+   *     connection for the model's provider), never MCPJam credits — this
+   *     surface holds no key of the caller's own machine;
+   *   - absent → today's hosted-list check, unchanged.
+   *
+   * Sent as the body's `modelSelection` only on the rail it names: a `hosted`
+   * one on `/stream`, an `org` one on `/stream/org` and `/stream/org/resolve`
+   * (validated first). The backend re-resolves it and records it as the
+   * requested selection. A `local` or legacy one is never sent.
    */
-  modelSelection?: ModelSelection;
+  modelSelection?: RequestedModelSelection;
+  /**
+   * Per-step output-token ceiling for an MCPJam-hosted step (`/stream`): the
+   * backend holds credits against it. Sent on that rail ONLY, and never to a
+   * harness host (its model broker clamps `max_tokens` without touching the
+   * thinking budget). Nothing in this repo shows `/stream/org` or the direct
+   * engine reading it, so a BYOK turn keeps its own limits.
+   */
+  maxOutputTokens?: number;
   /**
    * The settings this turn runs with, already resolved once by
    * `resolveEffectiveModelSettings` (per-run override > saved selection >
    * host defaults). `temperature` is what the caller hands the engine; a
    * `reasoningEffort` is applied HERE, where the rail is known: provider
-   * options on the direct engine, the forwarded selection on `/stream`, and
-   * refused on `/stream/org` (which does not apply one). Both are recorded
+   * options on the direct engine, the forwarded selection on `/stream`, and the
+   * selection (or a top-level field) on `/stream/org`, which maps it per org
+   * provider. Both are recorded
    * on the local-runtime execution record.
    */
   settings?: EffectiveModelSettings;
@@ -172,14 +194,18 @@ export async function resolveTurnRuntime(
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
     modelWorkload: modelWorkloadFor(args),
-    ...(args.modelSelection?.source === "org"
-      ? { modelSelection: args.modelSelection }
-      : {}),
+    // The WHOLE selection: it decides the source, and the resolver forwards
+    // only an `org` one to `/stream/org/resolve`.
+    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
   });
+  // Validated (and normalized) before it rides on any body; a `local` or
+  // legacy selection is never forwarded.
+  const forwarded = backendModelSelection(
+    forwardableSelection(args.modelSelection),
+  );
   const hostedSelection =
-    args.modelSelection?.source === "hosted" ? args.modelSelection : undefined;
-  const orgSelection =
-    args.modelSelection?.source === "org" ? args.modelSelection : undefined;
+    forwarded?.source === "hosted" ? forwarded : undefined;
+  const orgSelection = forwarded?.source === "org" ? forwarded : undefined;
 
   // --- Local-runtime org BYOK → direct engine ---
   if (
@@ -386,23 +412,33 @@ export async function resolveTurnRuntime(
 
   // --- MCPJam-provided → hosted `/stream` ---
   if (resolution.source === "mcpjam") {
-    // `/stream` applies a reasoning effort from the forwarded selection; an
-    // effort that selection does not carry could not reach the provider.
+    // `/stream` applies a reasoning effort from the forwarded selection, or the
+    // top-level `reasoningEffort` field, which it prefers. A per-run effort the
+    // selection does not carry (a chat turn's own, an override) rides as that
+    // field instead of being refused.
     const effort = args.settings?.reasoningEffort;
-    if (effort && hostedSelection?.settings?.reasoningEffort !== effort) {
-      throw new ModelResolutionRefusalError([
-        {
-          code: "capability_missing",
-          reason: `reasoning effort "${effort}" cannot be applied to ${modelId} on this route`,
-          evidence: { setting: "reasoningEffort", route: "hosted" },
-        },
-      ]);
-    }
+    const topLevelEffort =
+      effort && hostedSelection?.settings?.reasoningEffort !== effort
+        ? { reasoningEffort: effort }
+        : undefined;
+    // Never for a harness host: its model broker clamps `max_tokens` to a
+    // ceiling without touching the model's thinking budget, so one below the
+    // broker's own default can make every thinking turn fail. Held here, where
+    // the body is built, rather than left to whatever `runHarnessTurn` happens
+    // to read out of `extraBodyFields` today.
+    const outputCeiling = args.harness ? undefined : args.maxOutputTokens;
     const hostedExtraBodyFields =
-      args.extraBodyFields || hostedSelection
+      args.extraBodyFields ||
+      hostedSelection ||
+      topLevelEffort ||
+      outputCeiling !== undefined
         ? {
             ...(args.extraBodyFields ?? {}),
+            ...(outputCeiling !== undefined
+              ? { maxOutputTokens: outputCeiling }
+              : {}),
             ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+            ...(topLevelEffort ?? {}),
           }
         : undefined;
     return {
@@ -430,17 +466,6 @@ export async function resolveTurnRuntime(
     resolution.orgRuntime?.runtimeLocation === "cloud"
       ? resolution.orgRuntime.providerKey
       : undefined;
-  if (args.settings?.reasoningEffort) {
-    // `/stream/org` applies a saved selection's temperature, not an effort:
-    // refuse rather than run the connection without it.
-    throw new ModelResolutionRefusalError([
-      {
-        code: "capability_missing",
-        reason: `reasoning effort "${args.settings.reasoningEffort}" cannot be applied on an organization cloud connection; remove it from the saved model or run the connection on the local runtime`,
-        evidence: { setting: "reasoningEffort", route: "orgCloud" },
-      },
-    ]);
-  }
   if (providerKey === undefined) {
     // Defensive: an unexpected runtime shape (neither local nor cloud) — the
     // old dispatcher fell through to the engine branch, which would then fail
@@ -461,6 +486,13 @@ export async function resolveTurnRuntime(
         providerKey,
         ...(args.serverIds?.length ? { serverIds: args.serverIds } : {}),
         ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        // `/stream/org` maps the effort per org provider (and refuses one it
+        // cannot map), reading the selection's; a per-run effort the selection
+        // does not carry rides as the top-level field, which wins over it.
+        ...(args.settings?.reasoningEffort &&
+        orgSelection?.settings?.reasoningEffort !== args.settings.reasoningEffort
+          ? { reasoningEffort: args.settings.reasoningEffort }
+          : {}),
       },
       ...(args.harness ? { harness: args.harness } : {}),
     },

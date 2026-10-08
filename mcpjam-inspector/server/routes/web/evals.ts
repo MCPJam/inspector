@@ -1,4 +1,4 @@
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { anyUnattendedLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -20,8 +20,6 @@ import {
 } from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
-import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
-import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
   callerContextFromHono,
@@ -142,27 +140,6 @@ const hostedReplayRunSchema = z.object({
   passCriteria: passCriteriaSchema.optional(),
 });
 
-const hostedTraceRepairStartSchema = z.discriminatedUnion("scope", [
-  z.object({
-    scope: z.literal("suite"),
-    suiteId: z.string().min(1),
-    sourceRunId: z.string().min(1),
-    modelApiKeys: z.record(z.string(), z.string()).optional(),
-  }),
-  z.object({
-    scope: z.literal("case"),
-    suiteId: z.string().min(1),
-    sourceRunId: z.string().min(1),
-    sourceIterationId: z.string().min(1),
-    testCaseId: z.string().min(1),
-    modelApiKeys: z.record(z.string(), z.string()).optional(),
-  }),
-]);
-
-const hostedTraceRepairStopSchema = z.object({
-  jobId: z.string().min(1),
-});
-
 evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, false));
 
 evals.post("/run", async (c) =>
@@ -193,7 +170,7 @@ evals.post("/run", async (c) =>
             createConvexClient(bearer),
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-              ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
+              ...((await anyUnattendedLocalHarness(c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
               projectId: rawBody.projectId,
               environmentId: rawBody.environmentId,
             },
@@ -242,7 +219,7 @@ evals.post("/run", async (c) =>
       try {
         prepared = await prepareEvalRun(manager, {
           ...body,
-          ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
+          ...((await anyUnattendedLocalHarness(c.req.header("authorization"), typeof rawBody.projectId === "string" ? rawBody.projectId : undefined)) ? { runtimeVenue: "local" as const } : {}),
           convexAuthToken,
           ...(preflightEnvironment
             ? { resolvedEnvironment: preflightEnvironment }
@@ -301,7 +278,7 @@ async function resolveEnvironmentOnRawBody(
       createConvexClient(await getConvexBearerForRequest(c)),
       {
         serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-              ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), args.projectId)) ? { runtimeVenue: "local" as const } : {}),
+              ...((await anyUnattendedLocalHarness(c.req.header("authorization"), args.projectId)) ? { runtimeVenue: "local" as const } : {}),
         projectId: args.projectId,
         environmentId: args.environmentId,
       },
@@ -402,7 +379,7 @@ evals.post("/run-test-case", async (c) => {
     async (manager, body) =>
       runEvalTestCaseWithManager(manager, {
         ...body,
-        ...((await shouldUseLocalHarness("claude-code", c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
+        ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
         // The DELEGATED JWT: the run's Convex calls use this bearer, and an
         // `sk_` API key 401s Convex's query and action surfaces.
         convexAuthToken: await getConvexBearerForRequest(c),
@@ -640,63 +617,6 @@ evals.post("/generate-negative-tests", async (c) => {
     },
   );
 });
-
-evals.post("/trace-repair/start", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(
-      hostedTraceRepairStartSchema,
-      await readJsonBody(c),
-    );
-    const convexAuthToken = assertBearerToken(c);
-    const convexClient = createConvexClient(convexAuthToken);
-    const start = await convexClient.mutation(
-      "traceRepair:startTraceRepairJob" as any,
-      {
-        testSuiteId: body.suiteId,
-        sourceRunId: body.sourceRunId,
-        scope: body.scope,
-        targetTestCaseId: body.scope === "case" ? body.testCaseId : undefined,
-        targetSourceIterationId:
-          body.scope === "case" ? body.sourceIterationId : undefined,
-      },
-    );
-    const shouldSpawnWorker =
-      start.shouldSpawnWorker !== false &&
-      (start.shouldSpawnWorker === true || start.existing !== true);
-    if (shouldSpawnWorker) {
-      void runTraceRepairJob({
-        convexClient,
-        convexAuthToken,
-        jobId: start.jobId,
-        modelApiKeys: body.modelApiKeys,
-      }).catch((err) => {
-        logger.error("[trace-repair] background job failed", err, {
-          jobId: start.jobId,
-        });
-      });
-    }
-    return {
-      success: true,
-      jobId: start.jobId,
-      existing: Boolean(start.existing),
-    };
-  }),
-);
-
-evals.post("/trace-repair/stop", async (c) =>
-  handleRoute(c, async () => {
-    const body = parseWithSchema(
-      hostedTraceRepairStopSchema,
-      await readJsonBody(c),
-    );
-    const convexAuthToken = assertBearerToken(c);
-    const convexClient = createConvexClient(convexAuthToken);
-    await convexClient.mutation("traceRepair:stopTraceRepairJob" as any, {
-      jobId: body.jobId,
-    });
-    return { success: true };
-  }),
-);
 
 evals.post("/replay-run", async (c) =>
   handleRoute(

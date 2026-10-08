@@ -7,10 +7,10 @@ import {
   getApiContextRevision,
 } from "@/lib/apis/web/context";
 import { useAggregatedTools } from "@/hooks/use-aggregated-tools";
-import { listTools } from "@/lib/apis/mcp-tools-api";
+import { listToolsForServers } from "@/lib/apis/mcp-tools-api";
 
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
-  listTools: vi.fn(),
+  listToolsForServers: vi.fn(),
 }));
 
 /**
@@ -130,8 +130,20 @@ describe("useApiContext — publishes only real changes", () => {
   });
 
   it("does not loop tools/list when the caller re-renders with equal values", async () => {
-    vi.mocked(listTools).mockImplementation(async ({ serverId }) => ({
-      tools: [{ name: `${serverId}_tool`, inputSchema: { type: "object" } }],
+    // One batch request per fetch (PLB-158); the loop this guards against
+    // still shows up as extra calls.
+    vi.mocked(listToolsForServers).mockImplementation(async (serverIds) => ({
+      results: Object.fromEntries(
+        serverIds.map((serverId) => [
+          serverId,
+          {
+            tools: [
+              { name: `${serverId}_tool`, inputSchema: { type: "object" } },
+            ],
+          },
+        ]),
+      ),
+      errors: {},
     }));
 
     const { result, rerender } = renderHook(() => {
@@ -147,12 +159,12 @@ describe("useApiContext — publishes only real changes", () => {
       expect(result.current.flat).toHaveLength(2);
     });
     await settle();
-    const callsAfterLoad = vi.mocked(listTools).mock.calls.length;
+    const callsAfterLoad = vi.mocked(listToolsForServers).mock.calls.length;
 
     rerender();
     rerender();
     await settle();
 
-    expect(listTools).toHaveBeenCalledTimes(callsAfterLoad);
+    expect(listToolsForServers).toHaveBeenCalledTimes(callsAfterLoad);
   });
 });

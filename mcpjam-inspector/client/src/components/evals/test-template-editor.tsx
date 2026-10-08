@@ -1,3 +1,5 @@
+import { useSelectedRun } from "./use-selected-run";
+import type { EvalSuiteRunListItem } from "./types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
   loadEvalToolMetadata,
@@ -26,6 +28,7 @@ import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { mintCaseId } from "@mcpjam/sdk/contract";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
   Circle,
   Code2,
@@ -114,6 +117,7 @@ import {
   ensureLocalEnvironmentServers,
   planQuickRunTargets,
   quickRunClientIds,
+  quickRunEnvironmentSelection,
   resolveQuickRunEnvironments,
 } from "./environment-quick-run";
 import { isHostedMode } from "@/lib/apis/mode-client";
@@ -220,10 +224,17 @@ import {
   resolveIterationModelValue,
   resolveLatestCompareRunId,
   resolveModelOptionLabel,
+  caseModelEntriesForCompareValues,
+  caseModelEntriesUnchanged,
+  quickRunKey,
+  quickRunModelValue,
 } from "./compare-playground-helpers";
+import { modelTarget } from "@/lib/model-target";
+import { modelTargetLabel } from "@/lib/environment-label";
 import type {
   CompareRunRecord,
   EditorMode,
+  EvalCase,
   EvalIteration,
   EvalSuiteRun,
   RunColumnTab,
@@ -278,7 +289,10 @@ import {
 import { coverageDetailByStage } from "../evaluate/case-scorecard/case-coverage";
 import { groupCaseIterations } from "./runs/group-case-iterations";
 import { useSuggestedScorers } from "../evaluate/case-scorecard/suggested-from-run-section";
-import { CaseRunSetup } from "../evaluate/case-workspace/case-run-setup";
+import {
+  CaseRunSetup,
+  type CaseRunPick,
+} from "../evaluate/case-workspace/case-run-setup";
 import {
   caseHasOwnAssertion,
   initialToolsChoice,
@@ -384,7 +398,7 @@ interface TestTemplateEditorProps {
    * Suite runs for the current suite — used by the Runs tab to show which
    * host produced each batch (via `namedHostId` on suite runs).
    */
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: EvalSuiteRunListItem[];
   /**
    * Renders the case as a SPINE — numbered actions with their checks nested
    * under the action each one follows — instead of the form plus the Steps
@@ -1001,7 +1015,7 @@ export function TestTemplateEditor({
   projectId,
   availableModels,
   suiteIterations,
-  suiteRuns = [],
+  suiteRuns: listedSuiteRuns = [],
   onExportDraft,
   onContinueInChat,
   onSelectTab,
@@ -1057,7 +1071,13 @@ export function TestTemplateEditor({
       _meta?: Record<string, unknown>;
     }>
   >([]);
+  // Quick-run picks, keyed by `quickRunKey`: a model value, plus its effort
+  // when it runs at one (Sonnet·Low and Sonnet·High are two picks).
   const [selectedModelValues, setSelectedModelValues] = useState<string[]>([]);
+  // The selection behind each pick key that has one.
+  const [quickRunSelections, setQuickRunSelections] = useState<
+    Record<string, ModelSelection>
+  >({});
   const [compareRunRecords, setCompareRunRecords] = useState<
     Record<string, CompareRunRecord>
   >({});
@@ -1261,6 +1281,24 @@ export function TestTemplateEditor({
       .filter((iteration) => iteration.testCaseId === selectedTestCaseId)
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
+
+  const tracedRunId = [
+    replayIteration,
+    routeCompareAnchorIteration,
+    ...recentIterations,
+    lastSavedIteration,
+  ].find(
+    (iteration): iteration is EvalIteration =>
+      !!iteration && !!(iteration.blob || iteration.chatSessionId),
+  )?.suiteRunId;
+  const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
+  const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
+  const suiteRuns = useMemo(
+    () => detailRun
+      ? [detailRun, ...listedSuiteRuns.filter((run) => run._id !== detailRun._id)]
+      : listedSuiteRuns,
+    [detailRun, listedSuiteRuns],
+  );
 
   const suite = useQuery(
     "testSuites:getTestSuite" as any,
@@ -1522,24 +1560,9 @@ export function TestTemplateEditor({
    * traced iteration the drill-in would fall back to.
    */
   const openTrialRun = useMemo(() => {
-    const runId =
-      replayIteration?.suiteRunId ??
-      [
-        routeCompareAnchorIteration,
-        ...recentIterations,
-        lastSavedIteration,
-      ].find(
-        (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
-      )?.suiteRunId;
-    if (!runId) return null;
-    return suiteRuns.find((run) => run._id === runId) ?? null;
-  }, [
-    replayIteration,
-    routeCompareAnchorIteration,
-    recentIterations,
-    lastSavedIteration,
-    suiteRuns,
-  ]);
+    if (!tracedRunId) return null;
+    return suiteRuns.find((run) => run._id === tracedRunId) ?? null;
+  }, [tracedRunId, suiteRuns]);
 
   const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({
@@ -2813,17 +2836,19 @@ export function TestTemplateEditor({
       return;
     }
 
-    const nextModels = buildSelectedCompareModels(modelValues);
-
-    const currentModels: Array<{ provider: string; model: string }> =
-      currentTestCase.models ?? [];
-    const modelsUnchanged =
-      currentModels.length === nextModels.length &&
-      currentModels.every(
-        (model, index) =>
-          model.provider === nextModels[index]?.provider &&
-          model.model === nextModels[index]?.model,
-      );
+    const currentModels: EvalCase["models"] = currentTestCase.models ?? [];
+    // Saved entries keep their selections (efforts, and two entries of one
+    // model); only newly picked models are built from the catalog row.
+    const nextModels = caseModelEntriesForCompareValues(
+      modelValues,
+      currentModels,
+      (modelValue) => buildSelectedCompareModels([modelValue])[0]!,
+    );
+    // Selection-aware: an effort-only edit is a change.
+    const modelsUnchanged = caseModelEntriesUnchanged(
+      currentModels,
+      nextModels,
+    );
 
     if (!hasUnsavedChanges && modelsUnchanged) {
       return;
@@ -2875,6 +2900,35 @@ export function TestTemplateEditor({
       ),
     [modelOptions],
   );
+  // Run labels for the picks: the model's label, plus only what tells one
+  // model's picks apart ("Sonnet 4.5 · High" beside "Sonnet 4.5 · Low").
+  const compareLabelByValue = useMemo(() => {
+    const targets = selectedModelValues.map((key) =>
+      modelTarget(parseModelValue(key).model, quickRunSelections[key]),
+    );
+    const labels: Record<string, string> = { ...modelLabelByValue };
+    selectedModelValues.forEach((key, index) => {
+      labels[key] = modelTargetLabel(
+        targets[index]!,
+        targets.filter((_, other) => other !== index),
+        () =>
+          resolveModelOptionLabel(quickRunModelValue(key), modelLabelByValue),
+      );
+    });
+    return labels;
+  }, [modelLabelByValue, quickRunSelections, selectedModelValues]);
+  const handleQuickRunPicksChange = useCallback((picks: CaseRunPick[]) => {
+    const keys: string[] = [];
+    const selections: Record<string, ModelSelection> = {};
+    for (const { modelValue, selection } of picks) {
+      const key = quickRunKey(modelValue, selection);
+      if (keys.includes(key)) continue;
+      keys.push(key);
+      if (key !== modelValue && selection) selections[key] = selection;
+    }
+    setSelectedModelValues(keys);
+    setQuickRunSelections(selections);
+  }, []);
 
   useEffect(() => {
     if (!currentTestCase?._id) {
@@ -2913,6 +2967,7 @@ export function TestTemplateEditor({
 
     initializedSelectionCaseRef.current = currentTestCase._id;
     setSelectedModelValues(routeAnchoredModels);
+    setQuickRunSelections({});
   }, [
     currentTestCase,
     modelOptions,
@@ -2952,7 +3007,7 @@ export function TestTemplateEditor({
     setCompareRunRecords((current) =>
       buildHistoricalCompareRunRecords({
         selectedModelValues,
-        modelLabelByValue,
+        modelLabelByValue: compareLabelByValue,
         iterations: recentIterations,
         testCase: currentTestCase,
         existingRecords: current,
@@ -2961,7 +3016,7 @@ export function TestTemplateEditor({
     );
   }, [
     currentTestCase,
-    modelLabelByValue,
+    compareLabelByValue,
     recentIterations,
     routeCompareAnchorIteration,
     routeCompareAnchorIterationId,
@@ -2992,7 +3047,7 @@ export function TestTemplateEditor({
   useEffect(() => {
     setPersistedTestCaseModelValue(
       selectedTestCaseId,
-      selectedModelValues[0] ?? null,
+      selectedModelValues[0] ? quickRunModelValue(selectedModelValues[0]) : null,
     );
   }, [selectedModelValues, selectedTestCaseId]);
 
@@ -3014,11 +3069,11 @@ export function TestTemplateEditor({
 
         return buildCompareRunRecord({
           modelValue,
-          modelLabel: resolveModelOptionLabel(modelValue, modelLabelByValue),
+          modelLabel: resolveModelOptionLabel(modelValue, compareLabelByValue),
           iteration: null,
         });
       }),
-    [compareRunRecords, modelLabelByValue, selectedModelValues],
+    [compareRunRecords, compareLabelByValue, selectedModelValues],
   );
 
   // Multi-model compare still uses the dedicated side-by-side grid view; the
@@ -3157,10 +3212,14 @@ export function TestTemplateEditor({
             serverAttachmentId: quickRunServerGroup,
             targets: runModelValues.map((value) => {
               const modelId = parseModelValue(value).model;
+              const modelSelection = quickRunSelections[value];
               return {
                 key: value,
                 hostId: clientId,
                 ...(modelId ? { modelId } : {}),
+                // A pick at a chosen effort runs (or derives) the environment
+                // at that effort; a plain pick reuses the suite's as before.
+                ...(modelSelection ? { modelSelection } : {}),
               };
             }),
             clientModelId: (hostId) =>
@@ -3212,7 +3271,9 @@ export function TestTemplateEditor({
 
     if (startsNewCompareSession) {
       try {
-        await persistCompareRunDraft(savePayload, selectedModelValues);
+        await persistCompareRunDraft(savePayload, [
+          ...new Set(selectedModelValues.map(quickRunModelValue)),
+        ]);
       } catch (error) {
         console.error("Failed to save test case before compare run:", error);
         toast.error(
@@ -3244,7 +3305,7 @@ export function TestTemplateEditor({
       runModelValues.map(async (modelValue) => {
         const modelLabel = resolveModelOptionLabel(
           modelValue,
-          modelLabelByValue,
+          compareLabelByValue,
         );
         const advancedConfig = mergeAdvancedConfigWithOverride({
           baseAdvancedConfig: savePayload.advancedConfig,
@@ -3294,7 +3355,7 @@ export function TestTemplateEditor({
                 },
               },
               testCase: currentTestCase,
-              selectedModel: modelValue,
+              selectedModel: quickRunModelValue(modelValue),
               getAccessToken,
               namedHostId: quickRunHostPlan.namedHostId,
               testCaseOverrides,
@@ -3310,7 +3371,10 @@ export function TestTemplateEditor({
 
     for (const [index, preparedResult] of preparedResults.entries()) {
       const modelValue = runModelValues[index]!;
-      const modelLabel = resolveModelOptionLabel(modelValue, modelLabelByValue);
+      const modelLabel = resolveModelOptionLabel(
+        modelValue,
+        compareLabelByValue,
+      );
 
       if (preparedResult.status === "fulfilled") {
         preparedRuns.push(preparedResult.value);
@@ -3870,7 +3934,11 @@ export function TestTemplateEditor({
     ? buildCaseChatHandoff({
         caseId: String(currentTestCase._id),
         serverNames: effectiveSuiteServers,
-        modelId: previewRecord?.model ?? selectedModelValues[0],
+        modelId:
+          previewRecord?.model ??
+          (selectedModelValues[0] !== undefined
+            ? quickRunModelValue(selectedModelValues[0])
+            : undefined),
         advancedConfig: currentAdvancedConfig,
       })
     : null;
@@ -4053,9 +4121,9 @@ export function TestTemplateEditor({
   const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
     ?.suiteRunId
     ? (suiteRuns.find(
-        (run) =>
-          run._id ===
-          selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId,
+        (run): run is EvalSuiteRun =>
+          run._id === selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId &&
+          "tests" in run.configSnapshot,
       ) ?? null)
     : null;
 
@@ -4427,6 +4495,12 @@ export function TestTemplateEditor({
                     availableModels={availableModels}
                     disabled={isRunningCompare}
                     onModelsChange={setSelectedModelValues}
+                    {...(isEnvironmentSuite
+                      ? {
+                          onPicksChange: handleQuickRunPicksChange,
+                          selections: quickRunSelections,
+                        }
+                      : {})}
                     trials={editForm?.runs ?? DEFAULTS.RUNS_PER_TEST}
                     onTrialsChange={(next) =>
                       setEditForm((current) =>
@@ -4446,6 +4520,22 @@ export function TestTemplateEditor({
                       label: option.label,
                     }))}
                     onHostChange={setQuickRunHostSelection}
+                    {...(isEnvironmentSuite && attachedEnvironments
+                      ? {
+                          environmentSelection: (modelId: string) =>
+                            quickRunEnvironmentSelection(
+                              attachedEnvironments,
+                              quickRunHostSelection ??
+                                quickRunClientIds(attachedEnvironments)[0] ??
+                                "",
+                              modelId,
+                              (hostId) =>
+                                projectHosts
+                                  .find((host) => host.hostId === hostId)
+                                  ?.modelId?.trim() || undefined,
+                            ),
+                        }
+                      : {})}
                     {...(isEnvironmentSuite && projectId
                       ? {
                           serverGroup: {

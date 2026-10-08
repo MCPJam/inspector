@@ -171,6 +171,32 @@ afterEach(() => {
 });
 
 describe("MJ-012 — /api/web MCP operation routes carry a per-server budget", () => {
+  it("limits plugin instance requests before the handler and isolates servers", async () => {
+    const { app, burst } = loaded;
+    // Invalid route payloads never connect, but must still consume the budget.
+    for (let i = 0; i < burst; i++) {
+      const response = await call(
+        app,
+        "/api/web/apps/plugin-instances/open",
+        "plugin-server",
+      );
+      expect(response.status).not.toBe(429);
+    }
+    const response = await call(
+        app,
+        "/api/web/apps/plugin-instances/open",
+        "plugin-server",
+      );
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({
+      details: { reason: SERVER_REQUEST_BUDGET_REASON },
+    });
+    expect(
+      (await call(app, "/api/web/apps/plugin-instances/open", "other-server"))
+        .status,
+    ).not.toBe(429);
+  });
+
   it("refuses 40 rapid tools/list calls to one server once its burst is spent", async () => {
     const { app, burst } = loaded;
 

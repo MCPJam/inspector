@@ -1,5 +1,90 @@
 # `@mcpjam/sdk` changelog
 
+## 9.1.0
+
+### Minor Changes
+
+- [#6026](https://github.com/MCPJam/inspector/pull/6026) [`da3b8ac`](https://github.com/MCPJam/inspector/commit/da3b8ac30d2cc914be838637b5422bd66f6dd514) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add Muse (Meta) connector readiness: `gatherMuseReadinessEvidence` and
+  `gradeMuseReadiness`, a third directory-readiness publisher beside Claude and
+  OpenAI, graded against Meta's connector guidelines at muse.ai/platform/docs.
+  
+  Muse adds no MCP extension, so most of its rules are about behaviour. The run
+  has four lanes and two verdicts. The `technicalStatus` verdict comes from the
+  wire alone: HTTPS and redirects, a combined read/write tool must not claim to be
+  read-only, and no credential may appear in a tool listing. The `status` verdict
+  adds the §5 submission, read from a submission profile with all fields optional.
+  That covers the overview, contacts, attestations, tool documentation,
+  integration credentials, the read-only option, the test account, a way to test
+  without real charges, and a declared Read / Write / Sensitive-write class for
+  every tool, checked against the server's own annotations. Heuristics for
+  sensitive writes, writes hidden behind reads, money-movement or trade tools,
+  and descriptions that steer the agent all go in experience-insights and never
+  decide either verdict.
+  
+  Every result carries a suggested classification sheet, and
+  `formatMuseClassificationSheet` renders it as the Markdown table §5.6 asks
+  submitters to include in their documentation. The policy corpus is pinned by
+  hash (`npm run muse-policy:sync` / `muse-policy:check`), with a weekly drift
+  workflow.
+
+### Patch Changes
+
+- [#6048](https://github.com/MCPJam/inspector/pull/6048) [`97cf1e5`](https://github.com/MCPJam/inspector/commit/97cf1e5c1db438eeae7976e814b40efd00a7e8bb) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest fixes and improvements for Inspector, CLI, and SDK.
+
+## 9.0.0
+
+### Major Changes
+
+- [#5912](https://github.com/MCPJam/inspector/pull/5912) [`ce59e1a`](https://github.com/MCPJam/inspector/commit/ce59e1acd2a89c3d8f1b3828fb39b7bc51977144) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Move to AI SDK 7 (`ai@7`) and the v7 line of every model provider package.
+  
+  `@mcpjam/sdk` now requires Node.js 22 or later, depends on `ai@7`, and emits model-visible MCP tool images as AI SDK 7 `file` parts (`{ type: "file", mediaType, data: { type: "data", data } }`) instead of `media` parts, which AI SDK 7 rejects. Read image parts with the new `readModelOutputImage`, which also accepts the older `media` and `image-data` shapes. Model-visible MCP tool images now reach the model in runs driven by the SDK, which its older provider packages had been dropping.
+  
+  `@mcpjam/chat-ui` now peers on `ai@^7` and `@ai-sdk/react@^4`.
+
+### Minor Changes
+
+- [#5890](https://github.com/MCPJam/inspector/pull/5890) [`d27c3aa`](https://github.com/MCPJam/inspector/commit/d27c3aab7f10cac025e121533e02c439193d3879) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Rerun a finished eval run's failed cases as a new run with `mcpjam cloud eval rerun <run-id> --failed` (add `--dry-run` to see which cases would rerun and why), `POST /api/v1/projects/{projectId}/eval-runs/{runId}/rerun`, or the SDK's `rerunEvalRun` and `getEvalRunRerunPreview`. The platform picks the cases. The new run records `rerunOfRunId` and `rerunScope`, and because it ran only what failed, it no longer counts toward the suite's latest run, trends, totals or comparison baselines.
+
+- [#5923](https://github.com/MCPJam/inspector/pull/5923) [`8d36d95`](https://github.com/MCPJam/inspector/commit/8d36d95c3d0af04fcb20adaf8f8c237db04847a5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - A request refused because a feature is not enabled for your organization now says so in a machine-readable way. The answer stays `403 FORBIDDEN`, and `details` now carries `code: "FEATURE_UNAVAILABLE"` and the gated `feature` when the platform names it. The hosted browser answers the same way instead of `422 BROWSER_NOT_AVAILABLE`. The SDK adds `isFeatureUnavailable(error)` to tell that refusal apart from a permission denial.
+
+### Patch Changes
+
+- [#5941](https://github.com/MCPJam/inspector/pull/5941) [`c858114`](https://github.com/MCPJam/inspector/commit/c8581142c299ba071061b39cec7e000098b74490) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Claude directory readiness now requires `annotations.title` on every tool. A top-level `title` alone no longer passes `claude.tools.title-present`, because Claude's directory listing reads only the annotation and flags every tool without one as "Missing title annotation". MCPJam's own MCP server now sets `annotations.title` on every tool too.
+
+- [#5950](https://github.com/MCPJam/inspector/pull/5950) [`0480237`](https://github.com/MCPJam/inspector/commit/04802370345d780d2b3c897f870e141f824df903) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Platform operation descriptions state facts instead of instructions. They no longer tell an agent where to start, what to check first, or to fetch a skill, and they no longer name tools or CLI commands an MCP client cannot reach. Several descriptions are corrected: `publish_study` creates a new study on every call (it is not idempotent), `get_capabilities` reports only the Swarms feature flag among betas, `update_project` can remove access when it makes a project private, and the judge and insight requests overwrite stored results when forced. `create_project_server`, `update_project_server`, `connect_project_server` and `call_server_tool` now link the API or MCP specification they follow.
+
+- [#5873](https://github.com/MCPJam/inspector/pull/5873) [`c98c559`](https://github.com/MCPJam/inspector/commit/c98c559372ae41d8dcb930ff06f1b0d708026cb9) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+  
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5946](https://github.com/MCPJam/inspector/pull/5946) [`65a9328`](https://github.com/MCPJam/inspector/commit/65a932884e17ca0bb62c506c8506f310580a5f1b) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+  
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5969](https://github.com/MCPJam/inspector/pull/5969) [`e08ed12`](https://github.com/MCPJam/inspector/commit/e08ed12f8f66e100cf99913241bd8f543c06f710) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest changes on main for inspector, CLI, and SDK together so the CLI uses the updated SDK.
+
+- [#5922](https://github.com/MCPJam/inspector/pull/5922) [`cf2a57e`](https://github.com/MCPJam/inspector/commit/cf2a57e9241d531bc36225dbf3235893c90cd30e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Support durable swarm Stop requests. Runners poll every five seconds and abort active work when cancellation is reported. Show Stop requested during background cleanup and Stopped after settlement, including after refresh. Expose optional cancellation and cleanup fields through goal and legacy journey APIs and SDK types.
+
+## 8.21.0
+
+### Minor Changes
+
+- [#5809](https://github.com/MCPJam/inspector/pull/5809) [`1b5edf1`](https://github.com/MCPJam/inspector/commit/1b5edf10c46b123fbbd7b7315d8616a8f8d2c611) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Results compare by effort, temperature, source and connection, not just by model id. Runs and iterations carry a `targetKey` (the model id for a default selection, so existing history is unchanged), and the evals tab keys columns, baselines, deltas, the case timeline, lanes, filters and Performance by Model by it, always naming a set effort ("Sonnet 5.5 · High", even alone) and otherwise only what differs. Past runs show their effort everywhere: the run header, run chips, the verdict hero, findings rows and the swarm run page columns (client, then "model · effort"). The SDK adds `comparisonKey`, `isDefaultSelection`, `selectionDistinguishers`, `executionVariantSelectionKey` and `defaultReasoningEffort`, and an eval execution variant gains an optional `selectionKey` (set only for a non-default selection, so every existing verdict key is unchanged). `--compose-model-selection` and `run_eval_suite` compose accept several selections of one model. The case editor counts an effort-only edit as a change.
+
+- [#5760](https://github.com/MCPJam/inspector/pull/5760) [`f9dfb60`](https://github.com/MCPJam/inspector/commit/f9dfb60beab2cd8a13ed88c3fc0678741e1ea0a4) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Reasoning effort is settable through the platform operations that MCP, the in-app agent and the CLI share. `update_client` (`set.modelSelection`), `create_project_environment`, `update_project_environment`, `ensure_adhoc_environment`, `update_eval_suite` (`executionConfig.modelSelection`) and the eval case operations (`models[].selection`) accept a whole model selection, and `run_eval_suite` / `run_eval_case` `compose` accepts `modelSelection` / `modelSelections` (one cell per selection). A `reasoningEffort` shorthand on the update operations edits the effort on the selection the target already has, and is refused with "send `modelSelection`" when there is none. `send_chat_message` takes `reasoningEffort`. `HostRunner` gains a `reasoningEffort` option that is applied through the AI SDK provider's own option (and refused at construction when the model has no effort control), and `runWithClient` now applies a saved hosted selection's `settings` instead of deleting them.
+
+- [#5809](https://github.com/MCPJam/inspector/pull/5809) [`1b5edf1`](https://github.com/MCPJam/inspector/commit/1b5edf10c46b123fbbd7b7315d8616a8f8d2c611) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The saved model selection is the one stored copy of a config's model. Routing and billing read it: a `hosted` selection runs on MCPJam credits, `org` on the organization's connection, `local` on the caller's own provider, and a stored `{ source: "legacy" }` selection means "your own key only" and never runs on MCPJam credits. A config with no selection yet (an older row) keeps today's behaviour exactly until the backend's one-time labelling has run. The v1 API returns `modelSelection` (plus a `modelSelectionOrigin` / `selectionOrigin` / `judgeSelectionOrigin` marker when the platform chose it) on environments, test cases, a suite's execution config and its judge; `modelId` / `model` stay on every response, computed, and stay accepted on input as a shorthand. `requestEvalRunJudge` (and `POST …/eval-runs/{runId}/judge`) accepts `modelSelection` for the run's judge. CLI `--model` and suite-file `model` keep working.
+
+### Patch Changes
+
+- [#5760](https://github.com/MCPJam/inspector/pull/5760) [`f9dfb60`](https://github.com/MCPJam/inspector/commit/f9dfb60beab2cd8a13ed88c3fc0678741e1ea0a4) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Codex hosts can now run at a reasoning effort. Both Codex transports apply low, medium, high and xhigh through their own runtime option (exec `reasoningEffort`; app-server `turn/start` effort), so a Codex turn at an effort runs instead of being refused. A host's saved effort takes part once `/web/host/runtime-config` returns the host's `modelSelection` (the backend half); until then, an effort sent with the turn is what applies. The turn's effort also rides the harness model-broker lease start so the backend can verify what reaches the wire. Claude Code carries the mapping code (`effort` option, adaptive thinking, the effort env instead of `unset`) but stays inert and still refuses an effort until it is verified live. Organization cloud connections no longer refuse an effort in the inspector; the backend applies it per provider, and the SDK offers it for the same provider families as a direct call.
+
+- [#5866](https://github.com/MCPJam/inspector/pull/5866) [`c07f314`](https://github.com/MCPJam/inspector/commit/c07f314855bb99649db7ed5b193a0861c3ddddb1) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Cut a fresh release of @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+  
+  This changeset carries no code changes. It ships the latest work on main and bumps all three packages in the same run so the published CLI depends on the new @mcpjam/sdk instead of the previous one.
+
+- [#5816](https://github.com/MCPJam/inspector/pull/5816) [`0bc140f`](https://github.com/MCPJam/inspector/commit/0bc140fa65a7385079a167e561d7cf111ea1d202) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Report an HTTP error status from the user's MCP server (a 404 at the wrong endpoint path, a 405, the server's own 500) as a 424 `UPSTREAM_HTTP_ERROR` that names the status, instead of a masked hosted 500. The SDK error describer classifies these as `server/http_error`.
+
 ## 8.20.1
 
 ### Patch Changes

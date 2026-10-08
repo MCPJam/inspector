@@ -8,9 +8,10 @@
  * gate used to read "has an Authorization header" as "is a member" and sent one
  * refused query per guest turn.
  *
- * The seam under test is the ROUTE's gate, so `validateGuestToken` is the only
- * thing stubbed on the guest path — the real `isGuestChatRequest` still decides,
- * which keeps a polarity change in that helper from passing here.
+ * The seam under test is the ROUTE's gate, so the guest-token verifier is the
+ * only thing stubbed on the guest path — the real `classifyChatRequestActor`
+ * still decides, which keeps a polarity change in that helper from passing
+ * here.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
@@ -132,7 +133,10 @@ vi.mock("../../../services/guest-token-verifier.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../services/guest-token-verifier.js")
   >("../../../services/guest-token-verifier.js");
-  return { ...actual, validateGuestToken: validateGuestTokenMock };
+  return {
+    ...actual,
+    validateGuestTokenDetailedAsync: validateGuestTokenMock,
+  };
 });
 
 import chatV2 from "../chat-v2.js";

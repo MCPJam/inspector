@@ -74,33 +74,42 @@ shutoff, never a bypass.
   into `llmUsageRecord` against your org — the same accounting as chat — and
   spend caps and empty-wallet rejections apply before the stream starts.
 
-## Codex transports
+## Codex runtime
 
-Codex runs over one of two transports, selected by
-`MCPJAM_CODEX_APPSERVER_TRANSPORT` (off by default). It is one host either way —
-same harness id, same model rules, same host-executed MCP delivery — but NOT
-one resumable session lane (see the fingerprint note below), and the difference
-is what the runtime can be asked to do.
+Codex runs on MCPJam's own `codex app-server` adapter
+(`server/utils/harness/codex-appserver/`) in every venue: hosted and local
+Playground, evals and swarms. It replaced the published `@ai-sdk/harness-codex`
+adapter, which drove `codex exec`, hardcoded `approvalPolicy: "never"` and so
+could never pause for approval.
 
-| | `codex exec` (default) | `codex app-server` |
-|---|---|---|
-| Adapter | `@ai-sdk/harness-codex` | `server/utils/harness/codex-appserver/` (ours) |
-| Tool approval | Impossible. The bridge hardcodes `approvalPolicy: "never"` and `doStart` rejects any permission mode but `allow-all`, so no `tool-approval-request` is ever emitted and an approval host is refused pre-flight. | Supported on native and host-executed surfaces. `allow-reads` maps to Codex's `untrusted` policy; a declined command reports `declined` and does not run. |
-| Attributable actions | `shell`, `web_search`. | `exec_command`, `apply_patch`, `web_search`, each with the real command and Codex's own read/list/search classification. |
-| Usage | Totals. | Per turn, with cache-read, cache-write and reasoning components. |
-| Interrupt / manual compaction | Neither. | `turn/interrupt` yes; manual compaction no (the shared bridge protocol has no command for it, so `doCompact` throws rather than silently doing nothing). |
+- **Tool approval:** supported on native and host-executed surfaces.
+  `allow-reads` maps to Codex's `untrusted` policy, which asks about every
+  command (reads included) and every file change; a declined command reports
+  `declined` and does not run. Evals and swarms refuse an approval host up
+  front, because nobody can answer.
+- **Command sandbox:** hosted with approval off, Codex runs `never` +
+  `danger-full-access` (the disposable box is the boundary). Hosted with
+  approval on, approved commands run in Codex's sandbox opened to the whole box
+  and the network (`HOSTED_APPROVAL_SANDBOX_POLICY`), so approving grants what
+  off grants. Local runs never get network access or full access.
+- **Attributable actions:** `exec_command`, `apply_patch`, `web_search`, each
+  with the real command and Codex's own read/list/search classification.
+- **Usage:** per turn, with cache-read, cache-write and reasoning components.
+- **Interrupt / manual compaction:** `turn/interrupt` yes; manual compaction no
+  (the shared bridge protocol has no command for it, so `doCompact` throws
+  rather than silently doing nothing).
 
-Flipping the flag forks the session lane — the runtime fingerprint folds the
-transport in — because a conversation started on one transport has no thread the
-other can resume. Flipping back lands on the original lane.
+A conversation saved under the retired exec transport forks to a new session
+lane (the runtime fingerprint folds the transport in) and shows a "Started a
+new session" notice, because an exec conversation has no app-server thread to
+resume.
 
-MCP delivery stays host-executed on both. The app-server protocol has no
-approval request for an individual MCP `tools/call`, so native delivery would
-leave a Strict-mode host unable to gate one; that is the blocker for native
-delivery, not the transport.
+MCP delivery is host-executed: every MCP call is relayed back to MCPJam and
+runs under its tool policy and approval gate, which keeps MCPJam the single
+authority over MCP calls.
 
 Protocol facts here were measured against the pinned binary rather than assumed
-— see `.spike-codex-appserver/RESULTS.md`, which is rerunnable.
+— see `server/utils/harness/codex-appserver/PROBES.md`.
 
 ## Failure modes you may see
 
@@ -111,9 +120,10 @@ real runtime did. All fail closed; a failed start spends nothing.
 |---|---|
 | Broker delivery kill-switched (`MCPJAM_HARNESS_BROKER_DELIVERY=false`) | Pre-flight error naming the kill switch — harness runs are unavailable on that server. |
 | Enterprise-managed authorization policy on the host | Pre-flight error — the harness MCP proxy can't carry the policy, so the combination is rejected rather than silently bypassed. |
-| Require tool approval + selected MCP servers | Claude Code: honored. Codex on the default `exec` transport: pre-flight error — the runtime cannot pause at all; turn approval off or switch transports. Codex on `app-server`: honored, with MCPJam gating the host-executed tools. |
+| Require tool approval + selected MCP servers | Claude Code and Codex: honored, with MCPJam gating the host-executed tools (Codex runs on `app-server`; the `exec` transport is retired). Cursor: approval works on native tools, but combined with selected MCP servers it is a pre-flight error (its adapter does not yet gate MCP calls). |
 | Computers data plane not configured | Pre-flight error naming the data plane requirement. |
-| Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. |
+| Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. The web and MCP chat routes answer `422 FEATURE_NOT_SUPPORTED` (the request is valid; retrying will not help), not 503; the broker kill switch and a missing computers data plane stay 503. |
+| Cursor key missing, mis-bound or only project-shared | Pre-flight error naming `CURSOR_API_KEY` and what is wrong with it. See [cursor-host.md](./cursor-host.md). |
 | Computer at daily start cap | Start-limit dialog with upgrade CTA. |
 | Org out of compute allowance + credits (enforce mode) | Computer pauses with the "Paused for billing" notice. |
 | Org spending limit reached | Clean rejection at broker start (429), before any model call. |

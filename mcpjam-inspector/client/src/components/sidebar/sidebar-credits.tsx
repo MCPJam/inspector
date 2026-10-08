@@ -19,6 +19,7 @@ import {
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
+import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
   isPaidPlan,
   useOrganizationBillingStatus,
@@ -65,6 +66,7 @@ export function SidebarCredits({
     balance?.billingModel === "monthly_flat";
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
+  const sponsoredAllowance = useSwarmSponsorshipAllowance();
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "See credits" whose card is a blank number over an empty bar, which reads
@@ -79,6 +81,11 @@ export function SidebarCredits({
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const rolloverRemaining = Math.min(
+    Math.max(0, balance?.rolloverCreditsRemaining ?? 0),
+    Math.max(0, monthlyRemaining),
+  );
+  const meterCapacity = monthlyTotal + rolloverRemaining;
   const resetText = balance
     ? showMonthly
       ? formatMonthlyResetText(balance.monthlyResetAt, {
@@ -166,7 +173,7 @@ export function SidebarCredits({
                 percentText={
                   balance
                     ? showMonthly
-                      ? `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()}`
+                      ? `${monthlyRemaining.toLocaleString()} / ${meterCapacity.toLocaleString()}`
                       : `${balance.freeDailyCreditsRemaining.toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
                     : ""
                 }
@@ -174,18 +181,24 @@ export function SidebarCredits({
                 fillPercent={
                   balance
                     ? showMonthly
-                      ? monthlyTotal > 0
-                        ? (monthlyRemaining / monthlyTotal) * 100
+                      ? meterCapacity > 0
+                        ? (monthlyRemaining / meterCapacity) * 100
                         : 0
                       : balance.freeDailyCreditsTotal > 0
-                      ? (balance.freeDailyCreditsRemaining /
-                          balance.freeDailyCreditsTotal) *
-                        100
-                      : 0
+                        ? (balance.freeDailyCreditsRemaining /
+                            balance.freeDailyCreditsTotal) *
+                          100
+                        : 0
                     : 0
                 }
                 isLoading={isLoading}
                 showCoin
+                isCreditMeter={
+                  balance != null &&
+                  (showMonthly
+                    ? monthlyTotal > 0
+                    : balance.freeDailyCreditsTotal > 0)
+                }
                 testId={
                   showMonthly ? "sidebar-usage-monthly" : "sidebar-usage-daily"
                 }
@@ -223,6 +236,26 @@ export function SidebarCredits({
                   testId="sidebar-usage-eval-iterations"
                 />
               ) : null}
+
+              {sponsoredAllowance ? (
+                <SidebarUsageRow
+                  label="Sponsored swarm conversations"
+                  percentText={`${sponsoredAllowance.remaining.toLocaleString()} / ${sponsoredAllowance.granted.toLocaleString()} remaining`}
+                  helperText={null}
+                  fillPercent={Math.min(
+                    100,
+                    Math.max(
+                      0,
+                      (sponsoredAllowance.remaining /
+                        sponsoredAllowance.granted) *
+                        100,
+                    ),
+                  )}
+                  isLoading={false}
+                  testId="sidebar-usage-swarm-sponsored"
+                  tooltip="Swarm conversations MCPJam pays for before your organization's credits are used. Which ones qualify depends on the model and environment, and sponsored capacity can run out."
+                />
+              ) : null}
             </div>
           </HoverCardContent>
         </HoverCard>
@@ -242,6 +275,8 @@ interface SidebarUsageRowProps {
   showBar?: boolean;
   /** Prefix the value with a coin icon — used for credit-balance amounts. */
   showCoin?: boolean;
+  /** Credit meters use the theme accent and a low-balance text warning. */
+  isCreditMeter?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
@@ -255,6 +290,7 @@ function SidebarUsageRow({
   testId,
   showBar = true,
   showCoin = false,
+  isCreditMeter = false,
   tooltip,
 }: SidebarUsageRowProps) {
   return (
@@ -303,7 +339,9 @@ function SidebarUsageRow({
             className={
               fillPercent <= 10
                 ? "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-destructive"
-                : "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
+                : isCreditMeter
+                  ? "h-1.5 bg-muted"
+                  : "h-1.5 bg-muted [&_[data-slot=progress-indicator]]:bg-foreground/60"
             }
             value={fillPercent}
             aria-label={label}
@@ -311,6 +349,9 @@ function SidebarUsageRow({
           />
         )
       ) : null}
+      {!isLoading && isCreditMeter && fillPercent <= 10 && (
+        <span className="text-xs text-foreground">Low credits</span>
+      )}
       {helperText && !isLoading ? (
         <span className="truncate text-[10px] leading-none text-muted-foreground">
           {helperText}

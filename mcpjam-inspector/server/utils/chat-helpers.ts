@@ -4,7 +4,7 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogle } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
@@ -57,7 +57,7 @@ export const createLlmModel = (
     case "deepseek":
       return createDeepSeek({ apiKey })(modelDefinition.id);
     case "google":
-      return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
+      return createGoogle({ apiKey })(modelDefinition.id);
     case "ollama": {
       const raw = baseUrls?.ollama || "http://127.0.0.1:11434/api";
       const normalized = /\/api\/?$/.test(raw)

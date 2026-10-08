@@ -6,7 +6,6 @@ on:
       - opened
       - synchronize
       - reopened
-      - closed
     # MCP-only PRs have their own preview pipeline (pr-mcp-preview.yml) that
     # deploys a dedicated per-PR worker. Skip the full Railway inspector
     # preview when a PR's diff is confined to MCP-only concerns: the `mcp/`
@@ -15,13 +14,8 @@ on:
     # touches at least one non-ignored path, so mixed PRs still get the
     # inspector preview.
     #
-    # Known rare edge case: if a PR opens with mixed MCP + non-MCP changes
-    # (Railway preview env created), then is force-pushed to remove all
-    # non-MCP changes before close, GitHub evaluates paths-ignore against
-    # the final PR diff and skips the `closed` event too — orphaning the
-    # Railway env. Manual cleanup via the Railway dashboard is the current
-    # answer; a follow-up can split `destroy-preview` into its own
-    # always-on-close workflow if this becomes real.
+    # Close-time cleanup lives in preview-close.yml, without path filters.
+    # preview-reaper.yml also reconciles missed closes every hour.
     #
     # If `upsert-preview` is ever added as a required status check in
     # branch protection, MCP-only PRs will show it perpetually "Pending"
@@ -69,7 +63,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     # Newer pushes cancel older upsert/sync runs for the same PR. Prevents
     # the "commit A's sync clobbers commit B's env vars" race the audit
-    # caught. Shared with sync-backend-preview + destroy-preview below.
+    # caught. Shared with sync-backend-preview and preview-close.yml.
     concurrency:
       group: preview-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -98,7 +92,7 @@ jobs:
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve deployed commit metadata
         id: preview_commit
@@ -281,7 +275,7 @@ jobs:
 
       - name: Dispatch backend preview request
         if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_BRANCH: ${{ steps.meta.outputs.branch }}
         with:
@@ -307,7 +301,7 @@ jobs:
         # always() so the comment reflects truth even when an earlier step
         # (Railway config, origin allowlists, health check) failed.
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           # 'preview requested' is string-matched by preview-watchdog.yml —
@@ -417,7 +411,7 @@ jobs:
       # at its default branch anyway; the co-developed inspector-PR case
       # arrives as `backend_preview_ready` carrying a real inspector ref.
       - name: Checkout default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || 'main' }}
 
@@ -548,7 +542,7 @@ jobs:
 
       - name: Dispatch backend preview request
         if: steps.preview_domain.outputs.url != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
@@ -584,7 +578,7 @@ jobs:
             });
 
       - name: Upsert preview comment on backend PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
@@ -649,96 +643,13 @@ jobs:
               body,
             });
 
-  destroy-preview:
-    # Must mirror upsert-preview's exclusions exactly: a PR that never got
-    # an environment has nothing to destroy, and the teardown would fail on
-    # the same empty token.
-    if: >
-      github.event_name == 'pull_request' &&
-      github.event.action == 'closed' &&
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    # Same group as upsert so closing a PR cancels any in-flight upsert
-    # for that PR; destroy runs last.
-    concurrency:
-      group: preview-pr-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    runs-on: ubuntu-latest
-    env:
-      BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-      RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
-      RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
-    steps:
-      # Checkout is required so the `.github/scripts/` helpers are on disk.
-      - uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli@4.57.1
-
-      # The preview's public domain only exists as RAILWAY_PUBLIC_DOMAIN
-      # inside the Railway environment, so it must be read BEFORE the
-      # environment is deleted — it's what the upsert job registered with
-      # WorkOS staging. Unlike the upsert jobs' version of this step, the
-      # environment may legitimately not exist here (manual deletion, an
-      # upsert that never ran), and railway-retry replays CLI error text on
-      # stdout — so only accept values shaped like a hostname.
-      - name: Read preview public domain
-        id: preview_domain
-        continue-on-error: true
-        run: |
-          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [[ "$DOMAIN" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
-            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Inverse of "Register preview URL with WorkOS staging" in the upsert
-      # job. Without this, the staging WorkOS app accumulates redirect URIs
-      # and CORS origins pointing at deleted (reclaimable) *.up.railway.app
-      # domains — an auth-code-interception hygiene issue. Best-effort: must
-      # never block PR close. Runs before the env delete so a cancelled run
-      # leaves the env (re-registered on reopen) rather than dangling
-      # WorkOS entries. Uses curl, not the workos CLI — the CLI has no
-      # `config redirect/cors remove` subcommand (see workos-cleanup.sh).
-      - name: Deregister preview URL from WorkOS staging
-        if: steps.preview_domain.outputs.url != ''
-        env:
-          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
-        run: |
-          .github/scripts/workos-cleanup.sh "${{ steps.preview_domain.outputs.url }}" || true
-
-      - name: Delete Railway preview environment
-        run: |
-          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
-            --yes || true
-
-      - name: Dispatch backend preview cleanup
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
-          script: |
-            const [owner, repo] = process.env.BACKEND_REPO.split("/");
-            await github.rest.repos.createDispatchEvent({
-              owner,
-              repo,
-              event_type: "inspector_preview_cleanup",
-              client_payload: {
-                branch: context.payload.pull_request.head.ref,
-                inspector_pr_number: context.payload.pull_request.number,
-              },
-            });
-
   destroy-backend-pr-preview:
     if: github.event_name == 'repository_dispatch' && github.event.action == 'backend_pr_inspector_cleanup'
     concurrency:
       group: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
@@ -746,51 +657,26 @@ jobs:
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
     steps:
       # Checkout is required so the `.github/scripts/` helpers are on disk.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli@4.57.1
-
-      # The validated environment name is shared by the read/deregister/
-      # delete steps below; a bad payload fails the job here, before
-      # anything is read or deleted.
-      - name: Resolve preview environment metadata
-        id: meta
+      - name: Delete closed backend PR preview after removing its login redirect
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          INSPECTOR_REPO: ${{ github.repository }}
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+          BACKEND_GITHUB_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
+          GRACE_MINUTES: 0
+          DRY_RUN: 0
+          MAX_DELETIONS: 1
         run: |
           if ! [[ "$BACKEND_PR_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
+            echo "::error::backend_pr_number must be numeric"
             exit 1
           fi
-          echo "environment=${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" >> "$GITHUB_OUTPUT"
-
-      # See destroy-preview above: the domain must be read before the
-      # environment is deleted, then its WorkOS registrations are removed.
-      - name: Read preview public domain
-        id: preview_domain
-        continue-on-error: true
-        run: |
-          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [[ "$DOMAIN" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
-            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Deregister preview URL from WorkOS staging
-        if: steps.preview_domain.outputs.url != ''
-        env:
-          STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
-        run: |
-          .github/scripts/workos-cleanup.sh "${{ steps.preview_domain.outputs.url }}" || true
-
-      - name: Delete Railway backend-PR preview environment
-        run: |
-          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${{ steps.meta.outputs.environment }}" \
-            --yes || true
+          TARGET_ENVIRONMENT="${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
+            .github/scripts/reap-preview-envs.sh
 
   sync-backend-preview:
     if: >
@@ -820,7 +706,7 @@ jobs:
       # `backend_preview_failed` normally carry `inspector_git_ref`, so this
       # only bites when that resolves empty -- but then it bites the same way.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || 'main' }}
 
@@ -956,7 +842,7 @@ jobs:
         # always() so a failed Railway/WorkOS/health step doesn't leave the
         # comment lying about the previous state.
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
           BACKEND_MODE: ${{ steps.backend_target.outputs.backend_mode }}

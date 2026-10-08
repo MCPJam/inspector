@@ -1,3 +1,23 @@
+import { hostComposerClasses } from "@/lib/host-composer-presentation";
+import {
+  registerComposerSlot,
+  useComposerForms,
+} from "@/components/elicitation/composer-form-store";
+import { ComposerFormStatus } from "./chat-input/form-status";
+import { pluginMentionToken } from "@/shared/plugin-mentions";
+import {
+  scopedMentionToken,
+  type MentionComposer,
+  type MentionPlugin,
+  type MentionToken,
+} from "./chat-input/prompts/mentions-popover";
+import { PluginServerIcon } from "./chat-input/plugin-server-icon";
+import {
+  ContextAttachmentChip,
+  ContextGroupChip,
+  groupContextAttachments,
+  type ContextAttachment,
+} from "./chat-input/attachments/context-attachment-chip";
 import {
   useRef,
   useState,
@@ -46,7 +66,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import {
+  ModelSelector,
+  type ModelSelectorEffortProps,
+} from "@/components/chat-v2/chat-input/model-selector";
+import { EffortControl } from "@/components/effort/effort-control";
+import { reasoningEffortDefaultForRow } from "@/lib/reasoning-effort-options";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   ClientSelector,
   type ClientSelectorData,
@@ -158,7 +184,7 @@ function getPreferredRecordingMimeType(): string | undefined {
   if (typeof MediaRecorder.isTypeSupported !== "function") return undefined;
 
   return SUPPORTED_RECORDING_MIME_TYPES.find((mimeType) =>
-    MediaRecorder.isTypeSupported(mimeType)
+    MediaRecorder.isTypeSupported(mimeType),
   );
 }
 
@@ -236,7 +262,7 @@ function getExtensionForMediaType(mediaType: string): string {
 function normalizeIncomingFile(
   file: File,
   source: AttachmentInputSource,
-  index: number
+  index: number,
 ): File {
   if (source !== "paste" || file.name.trim().length > 0) {
     return file;
@@ -269,6 +295,14 @@ function getFilesFromClipboardData(dataTransfer: DataTransfer): File[] {
 const EMPTY_INPUT_HISTORY: readonly string[] = [];
 
 interface ChatInputProps {
+  mentions?: MentionComposer;
+  /**
+   * The plugin workspace of this chat. Extension forms for it take the
+   * composer's place. Independent of mentions: a client may turn mentions off
+   * and keep forms on. Falls back to the mention composer's workspace.
+   */
+  formWorkspaceId?: string;
+  contextAttachments?: ContextAttachment[];
   value: string;
   onChange: (value: string) => void;
   /**
@@ -279,7 +313,7 @@ interface ChatInputProps {
   inputHistory?: readonly string[];
   onSubmit: (
     event: FormEvent<HTMLFormElement>,
-    additionalInput?: string
+    additionalInput?: string,
   ) => void;
   stop: () => void;
   disabled?: boolean;
@@ -291,7 +325,7 @@ interface ChatInputProps {
   availableModels: ModelDefinition[];
   onModelChange: (
     model: ModelDefinition,
-    options?: { userInitiated?: boolean }
+    options?: { userInitiated?: boolean },
   ) => void;
   onModelSelectorOpenChange?: (open: boolean) => void;
   multiModelEnabled?: boolean;
@@ -315,6 +349,22 @@ interface ChatInputProps {
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
   onTemperatureChange: (temperature: number) => void;
+  /**
+   * Reasoning effort chip beside the model picker in single-model mode.
+   * In compare mode, efforts are edited in the model picker modal.
+   * `reasoningEffortLevels` is the row's supported list; empty hides the chip.
+   * While an effort is set the temperature slider is disabled and the turn
+   * omits temperature.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  reasoningEffortLevels?: readonly ModelReasoningEffort[];
+  onReasoningEffortChange?: (effort: ModelReasoningEffort | undefined) => void;
+  /**
+   * Efforts in the model menu: each model opens its efforts to the side
+   * (single mode picks model + effort; compare mode toggles model × effort
+   * panes). Omitted, the menu picks models only.
+   */
+  modelEfforts?: ModelSelectorEffortProps;
   hasMessages?: boolean;
   onResetChat: () => void;
   tokenUsage?: {
@@ -356,6 +406,17 @@ interface ChatInputProps {
   moveCaretToEndTrigger?: number;
   /** All project servers for the "+" dropdown server toggles. */
   allServerConfigs?: Record<string, ServerWithName>;
+  /**
+   * Servers the project's installed plugins add to every turn. The chat route
+   * connects them itself, so they are shown as on, labelled with their plugin,
+   * and cannot be toggled here (a plugin is managed from its server's Settings).
+   */
+  pluginServers?: ReadonlyArray<{
+    serverId: string;
+    name: string;
+    pluginLabel: string;
+  }>;
+  appNavigation?: ReactNode;
   /**
    * @deprecated Connectivity is now the single source of truth — the popover
    * toggle connects/disconnects via `onDisconnectServer`/`onReconnectServer`
@@ -451,6 +512,10 @@ export function ChatInput({
   onSystemPromptChange,
   temperature,
   onTemperatureChange,
+  reasoningEffort,
+  reasoningEffortLevels,
+  onReasoningEffortChange,
+  modelEfforts,
   onResetChat,
   hasMessages = false,
   tokenUsage,
@@ -477,6 +542,8 @@ export function ChatInput({
   pulseSubmit = false,
   moveCaretToEndTrigger,
   allServerConfigs,
+  pluginServers,
+  appNavigation,
   onReconnectServer,
   onDisconnectServer,
   onAddServer,
@@ -490,6 +557,9 @@ export function ChatInput({
   environmentServersOverridden = false,
   onResetEnvironmentServers,
   notice,
+  mentions,
+  formWorkspaceId: formWorkspaceIdProp,
+  contextAttachments = [],
 }: ChatInputProps) {
   // The project LIBRARY half of the `/` picker: list/load skills from the
   // project's Convex source (Playground carries the id via `clientSelector`).
@@ -526,7 +596,7 @@ export function ChatInput({
         connected: true,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedServersSignature]
+    [selectedServersSignature],
   );
 
   const skillsSource = useMemo<SkillsSource | undefined>(
@@ -534,7 +604,7 @@ export function ChatInput({
       skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
-    [clientSelector?.cloudProjectId, skillsEnabled]
+    [clientSelector?.cloudProjectId, skillsEnabled],
   );
   const scenarioHostStyle = useScenarioHostStyle();
   const scenarioHostTheme = useScenarioHostTheme();
@@ -558,10 +628,10 @@ export function ChatInput({
   const recordingMimeTypeRef = useRef("audio/webm");
   const recordingFinalizedRef = useRef(false);
   const stopFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
+    null,
   );
   const recordingCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
+    null,
   );
   const fileErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
@@ -571,6 +641,75 @@ export function ChatInput({
   const mountedRef = useRef(true);
   const valueRef = useRef(value);
   const [caretIndex, setCaretIndex] = useState(0);
+  // Extension forms for this chat take the composer's place. The draft and
+  // every composer control stay mounted (hidden) underneath and come back
+  // when the last pending form is answered.
+  const formWorkspaceId = formWorkspaceIdProp ?? mentions?.workspaceId;
+  const pendingForms = useComposerForms(formWorkspaceId);
+  const formCardActive = pendingForms.length > 0;
+  const formSlotRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = formSlotRef.current;
+    if (!formWorkspaceId || !element) return;
+    return registerComposerSlot(formWorkspaceId, element);
+  }, [formWorkspaceId]);
+  const formCardWasActive = useRef(formCardActive);
+  useEffect(() => {
+    // The draft comes back with focus once the last form is answered.
+    if (formCardWasActive.current && !formCardActive)
+      textareaRef.current?.focus();
+    formCardWasActive.current = formCardActive;
+  }, [formCardActive]);
+  const [dismissedMention, setDismissedMention] = useState<string | null>(null);
+  // Two-step "@": a picked plugin scopes the search to itself from its "@"
+  // onward, spaces allowed, until a result is picked or Esc.
+  const [mentionScope, setMentionScope] = useState<{
+    plugin: MentionPlugin;
+    anchor: number;
+    composer: string;
+  } | null>(null);
+  const scopedMention =
+    mentions && mentionScope?.composer === mentions.scope ? mentionScope : null;
+  const mentionAt = (
+    caret: number,
+  ): { token: MentionToken; scoped: boolean } | undefined => {
+    if (!mentions) return;
+    if (scopedMention) {
+      const token = scopedMentionToken(value, caret, scopedMention.anchor);
+      return token ? { token, scoped: true } : undefined;
+    }
+    const token = pluginMentionToken(value, caret);
+    if (!token || JSON.stringify(token) === dismissedMention) return;
+    return { token, scoped: false };
+  };
+  const openMention = mentionAt(caretIndex);
+  const scopeAlive =
+    !!scopedMention &&
+    !!scopedMentionToken(value, caretIndex, scopedMention.anchor);
+  useEffect(() => {
+    // A scope ends when its "@" is gone, the caret leaves it, or the chat
+    // changes underneath it.
+    if (mentionScope && !scopeAlive) setMentionScope(null);
+  }, [mentionScope, scopeAlive]);
+  const dismissMention = (caret: number) => {
+    if (scopedMention) setMentionScope(null);
+    // Keep the plain "@word" picker from reopening on the same token.
+    setDismissedMention(
+      JSON.stringify(pluginMentionToken(value, caret) ?? null),
+    );
+  };
+  const pickMentionPlugin = (plugin: MentionPlugin, token: MentionToken) => {
+    if (!mentions) return;
+    // The typed "@query" collapses to the plugin's "@" anchor.
+    onChange(value.slice(0, token.start) + "@" + value.slice(token.end));
+    const caret = token.start + 1;
+    setCaretIndex(caret);
+    setMentionScope({ plugin, anchor: token.start, composer: mentions.scope });
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(caret, caret);
+    });
+  };
   const [mcpPromptPopoverKeyTrigger, setMcpPromptPopoverKeyTrigger] = useState<
     string | null
   >(null);
@@ -596,10 +735,10 @@ export function ChatInput({
         // the recording regardless of budget.
         voiceSecondsRemaining < VOICE_GLOBAL_MAX_SECONDS
         ? `You have about ${formatVoiceSeconds(
-            voiceSecondsRemaining
+            voiceSecondsRemaining,
           )} of voice left today — recording will stop when it runs out.`
         : `You have about ${formatVoiceSeconds(
-            voiceSecondsRemaining
+            voiceSecondsRemaining,
           )} of voice left today.`
       : null;
   const voiceBudgetExhausted =
@@ -617,8 +756,9 @@ export function ChatInput({
   const hasServerRows = Boolean(
     allServerConfigs &&
       onDisconnectServer &&
-      Object.keys(allServerConfigs).length > 0
+      Object.keys(allServerConfigs).length > 0,
   );
+  const pluginServerRows = pluginServers ?? [];
   // Environment mode replaces the ad-hoc section outright — presence of the
   // prop (not its length) is the mode switch, so an environment that resolves
   // to zero servers shows no dead "Add server"/Connect controls either.
@@ -634,7 +774,7 @@ export function ChatInput({
     (environmentServers.length > 0 || environmentServersOverridden);
   const hasServerOptions = isEnvironmentServerMode
     ? environmentSectionVisible
-    : Boolean(onAddServer || hasServerRows);
+    : Boolean(onAddServer || hasServerRows || pluginServerRows.length > 0);
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
     Boolean(selectorHostStyle) &&
@@ -644,7 +784,7 @@ export function ChatInput({
     textareaRef,
     containerRef,
     value,
-    caretIndex
+    caretIndex,
   );
 
   useEffect(() => {
@@ -719,7 +859,7 @@ export function ChatInput({
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
     },
-    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults]
+    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults],
   );
 
   const removeMCPPromptResult = (index: number) => {
@@ -736,7 +876,7 @@ export function ChatInput({
       if (!onChangeFileAttachments) return false;
 
       const incomingFiles = Array.from(files).map((file, index) =>
-        normalizeIncomingFile(file, source, index)
+        normalizeIncomingFile(file, source, index),
       );
       if (incomingFiles.length === 0) return false;
 
@@ -770,7 +910,7 @@ export function ChatInput({
 
       return true;
     },
-    [fileAttachments, onChangeFileAttachments, clearFileErrorTimer]
+    [fileAttachments, onChangeFileAttachments, clearFileErrorTimer],
   );
 
   const handleFileInputChange = useCallback(
@@ -783,7 +923,7 @@ export function ChatInput({
       // Reset input so the same file can be selected again
       event.target.value = "";
     },
-    [addFileAttachments]
+    [addFileAttachments],
   );
 
   const handlePaste = useCallback(
@@ -797,7 +937,7 @@ export function ChatInput({
       addFileAttachments(files, "paste");
       textareaRef.current?.focus();
     },
-    [addFileAttachments, canAttachFiles]
+    [addFileAttachments, canAttachFiles],
   );
 
   const handleDragEnter = useCallback(
@@ -811,7 +951,7 @@ export function ChatInput({
 
       setFileDragDepth((depth) => depth + 1);
     },
-    [canHandleFileTransfers, disabled]
+    [canHandleFileTransfers, disabled],
   );
 
   const handleDragOver = useCallback(
@@ -823,7 +963,7 @@ export function ChatInput({
       event.stopPropagation();
       event.dataTransfer.dropEffect = disabled ? "none" : "copy";
     },
-    [canHandleFileTransfers, disabled]
+    [canHandleFileTransfers, disabled],
   );
 
   const handleDragLeave = useCallback(
@@ -837,7 +977,7 @@ export function ChatInput({
 
       setFileDragDepth((depth) => Math.max(0, depth - 1));
     },
-    [canHandleFileTransfers, disabled]
+    [canHandleFileTransfers, disabled],
   );
 
   const handleDrop = useCallback(
@@ -853,7 +993,7 @@ export function ChatInput({
       addFileAttachments(Array.from(event.dataTransfer.files), "drop");
       textareaRef.current?.focus();
     },
-    [addFileAttachments, canHandleFileTransfers, disabled]
+    [addFileAttachments, canHandleFileTransfers, disabled],
   );
 
   const removeFileAttachment = useCallback(
@@ -867,7 +1007,7 @@ export function ChatInput({
 
       onChangeFileAttachments(fileAttachments.filter((a) => a.id !== id));
     },
-    [fileAttachments, onChangeFileAttachments]
+    [fileAttachments, onChangeFileAttachments],
   );
 
   const openFilePicker = useCallback(() => {
@@ -891,7 +1031,7 @@ export function ChatInput({
         setCaretIndex(end);
       });
     },
-    [onChange]
+    [onChange],
   );
 
   const transcribeAudio = useCallback(
@@ -916,7 +1056,7 @@ export function ChatInput({
           throw new Error(
             abortState.reason === "timeout"
               ? VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE
-              : "Voice transcription was interrupted."
+              : "Voice transcription was interrupted.",
           );
         }
 
@@ -987,7 +1127,7 @@ export function ChatInput({
           throw new Error(
             abortState.reason === "timeout"
               ? VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE
-              : "Voice transcription was interrupted."
+              : "Voice transcription was interrupted.",
           );
         }
         throw error;
@@ -1006,7 +1146,7 @@ export function ChatInput({
       voiceInputContext?.scenarioId,
       voiceInputContext?.projectId,
       voiceInputContext?.selectedServerIds,
-    ]
+    ],
   );
 
   const handleRecordedAudio = useCallback(
@@ -1017,7 +1157,7 @@ export function ChatInput({
 
       return transcribeAudio(audioBlob);
     },
-    [transcribeAudio]
+    [transcribeAudio],
   );
 
   const finalizeRecordedAudio = useCallback(
@@ -1029,7 +1169,7 @@ export function ChatInput({
       if (recordingStartedAtRef.current != null) {
         recordingDurationSecondsRef.current = Math.max(
           0,
-          (Date.now() - recordingStartedAtRef.current) / 1000
+          (Date.now() - recordingStartedAtRef.current) / 1000,
         );
         recordingStartedAtRef.current = null;
       }
@@ -1074,7 +1214,7 @@ export function ChatInput({
           setVoiceInputError(
             error instanceof Error
               ? error.message
-              : "Voice transcription failed."
+              : "Voice transcription failed.",
           );
         })
         .finally(() => {
@@ -1091,7 +1231,7 @@ export function ChatInput({
       commitTranscriptToDraft,
       handleRecordedAudio,
       stopAudioStream,
-    ]
+    ],
   );
 
   const startVoiceInput = useCallback(async () => {
@@ -1123,7 +1263,7 @@ export function ChatInput({
       recordingMimeTypeRef.current = mimeType || "audio/webm";
       const recorder = new MediaRecorder(
         stream,
-        mimeType ? { mimeType } : undefined
+        mimeType ? { mimeType } : undefined,
       );
       mediaRecorderRef.current = recorder;
 
@@ -1171,7 +1311,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : "Could not start voice input."
+        error instanceof Error ? error.message : "Could not start voice input.",
       );
     }
   }, [
@@ -1208,7 +1348,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : "Could not stop voice input."
+        error instanceof Error ? error.message : "Could not stop voice input.",
       );
       return;
     }
@@ -1287,7 +1427,7 @@ export function ChatInput({
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
     },
-    [value, caretIndex, onChange, skillResults, onChangeSkillResults]
+    [value, caretIndex, onChange, skillResults, onChangeSkillResults],
   );
 
   const removeSkillResult = (index: number) => {
@@ -1298,7 +1438,9 @@ export function ChatInput({
   const hasResults =
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
-    fileAttachments.length > 0;
+    fileAttachments.length > 0 ||
+    contextAttachments.length > 0 ||
+    !!scopedMention;
   const effectiveSelectedModels =
     selectedModels && selectedModels.length > 0
       ? selectedModels
@@ -1308,11 +1450,16 @@ export function ChatInput({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;
+    const mentionHere = mentionAt(currentCaretIndex);
     if (
-      isMCPPromptsRequested(value, currentCaretIndex) &&
+      (isMCPPromptsRequested(value, currentCaretIndex) || mentionHere) &&
       ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)
     ) {
       event.preventDefault();
+      if (event.key === "Escape" && mentionHere) {
+        dismissMention(currentCaretIndex);
+        return;
+      }
       setMcpPromptPopoverKeyTrigger(event.key);
       return;
     }
@@ -1400,6 +1547,45 @@ export function ChatInput({
     return (
       <div className="px-4 pt-1 pb-0.5">
         <div className="flex flex-wrap gap-1.5">
+          {scopedMention && (
+            <span
+              data-testid="mention-plugin-pill"
+              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-muted/50 py-1 pl-2 pr-1 text-xs"
+            >
+              <PluginServerIcon
+                serverName={scopedMention.plugin.name}
+                pluginIcons={scopedMention.plugin.icons}
+                serverIcons={scopedMention.plugin.serverIcons}
+              />
+              <span className="max-w-48 truncate font-medium">
+                {scopedMention.plugin.name}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-5 shrink-0"
+                aria-label={`Stop searching ${scopedMention.plugin.name}`}
+                onClick={() => setMentionScope(null)}
+              >
+                <X className="size-3" />
+              </Button>
+            </span>
+          )}
+          {groupContextAttachments(contextAttachments).map((entry) =>
+            entry.kind === "group" ? (
+              <ContextGroupChip
+                key={`group:${entry.group.id}`}
+                group={entry.group}
+                items={entry.items}
+              />
+            ) : (
+              <ContextAttachmentChip
+                key={entry.attachment.id}
+                {...entry.attachment}
+              />
+            ),
+          )}
           {mcpPromptResults.map((mcpPromptResult, index) => (
             <MCPPromptResultCard
               key={`prompt-${index}`}
@@ -1443,22 +1629,10 @@ export function ChatInput({
   };
 
   const scenarioHostFamily = getScenarioHostFamily(scenarioHostStyle);
-  const composerClasses =
-    scenarioHostFamily === "chatgpt"
-      ? cn(
-          "scenario-host-composer rounded-[1.75rem]",
-          isDarkScenarioTheme
-            ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
-            : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]"
-        )
-      : scenarioHostFamily === "claude"
-      ? cn(
-          "scenario-host-composer rounded-[1.35rem]",
-          isDarkScenarioTheme
-            ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
-            : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]"
-        )
-      : "rounded-3xl border border-border/40 bg-muted/70";
+  const composerClasses = hostComposerClasses(
+    scenarioHostStyle,
+    isDarkScenarioTheme,
+  );
   const activeSubmitButtonClasses =
     scenarioHostFamily === "chatgpt"
       ? isDarkScenarioTheme
@@ -1502,11 +1676,27 @@ export function ChatInput({
     <>
       {creditBalance?.platformPaidFallback && (
         <p role="status" className="px-2 py-1 text-sm text-muted-foreground">
-          MCPJam&apos;s shared free allowance is unavailable; this chat is using your credits.
+          MCPJam&apos;s shared free allowance is unavailable; this chat is using
+          your credits.
         </p>
       )}
+      {formWorkspaceId ? (
+        <div
+          data-testid="composer-form-region"
+          hidden={!formCardActive}
+          className={cn("w-full", className)}
+        >
+          <ComposerFormStatus forms={pendingForms} />
+          <div
+            ref={formSlotRef}
+            data-testid="composer-form-slot"
+            className={cn("w-full min-w-0 overflow-hidden", composerClasses)}
+          />
+        </div>
+      ) : null}
       <form
         ref={formRef}
+        hidden={formCardActive}
         className={cn("w-full", className)}
         onSubmit={onSubmit}
       >
@@ -1517,7 +1707,7 @@ export function ChatInput({
             "relative flex w-full flex-col px-2 pt-2 pb-2",
             isFileDragActive &&
               "ring-2 ring-primary/45 ring-offset-2 ring-offset-background",
-            composerClasses
+            composerClasses,
           )}
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
@@ -1537,6 +1727,34 @@ export function ChatInput({
           {notice}
 
           <PromptsPopover
+            mentions={
+              mentions && openMention
+                ? {
+                    composer: {
+                      ...mentions,
+                      select: (selection, range) => {
+                        mentions.select(selection, range);
+                        setMentionScope(null);
+                        onChange(
+                          value.slice(0, range.start) + value.slice(range.end),
+                        );
+                        setCaretIndex(range.start);
+                        requestAnimationFrame(() => {
+                          textareaRef.current?.focus();
+                          textareaRef.current?.setSelectionRange(
+                            range.start,
+                            range.start,
+                          );
+                        });
+                      },
+                    },
+                    token: openMention.token,
+                    scopedTo: scopedMention?.plugin ?? null,
+                    onPickPlugin: pickMentionPlugin,
+                    onDismiss: () => dismissMention(caretIndex),
+                  }
+                : undefined
+            }
             anchor={caret}
             selectedServers={selectedServers}
             onPromptSelected={onMCPPromptSelected}
@@ -1650,6 +1868,7 @@ export function ChatInput({
 
           <TextareaAutosize
             ref={textareaRef}
+            data-chat-composer-input=""
             value={textareaDisplayValue}
             onChange={(e) => {
               if (voiceInputState !== "idle") return;
@@ -1669,13 +1888,14 @@ export function ChatInput({
               "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
               "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
               voiceInputState === "recording" && "italic text-muted-foreground",
-              disabled ? "cursor-not-allowed text-muted-foreground" : ""
+              disabled ? "cursor-not-allowed text-muted-foreground" : "",
             )}
             autoFocus={!disabled}
           />
 
           <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
             <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
+              {appNavigation}
               {!minimalMode && (
                 <Popover
                   open={plusPopoverOpen}
@@ -1740,20 +1960,20 @@ export function ChatInput({
                                   key={server.serverId}
                                   className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60"
                                 >
-                                  <div className="flex items-center gap-2 min-w-0">
+                                  <div className="flex flex-1 items-center gap-2 min-w-0">
                                     <div
                                       className={cn(
                                         "w-2 h-2 rounded-full shrink-0",
                                         server.enabled
                                           ? "bg-green-500 dark:bg-green-400"
-                                          : "bg-muted-foreground"
+                                          : "bg-muted-foreground",
                                       )}
                                     />
                                     <span
                                       className={cn(
-                                        "text-sm font-medium truncate",
+                                        "min-w-0 text-sm font-medium truncate",
                                         !server.enabled &&
-                                          "text-muted-foreground"
+                                          "text-muted-foreground",
                                       )}
                                     >
                                       {server.name}
@@ -1770,7 +1990,7 @@ export function ChatInput({
                                       onCheckedChange={(next) =>
                                         onEnvironmentServerToggle?.(
                                           server.serverId,
-                                          next === true
+                                          next === true,
                                         )
                                       }
                                       // Locked while a turn is in flight —
@@ -1828,19 +2048,19 @@ export function ChatInput({
                                       key={name}
                                       className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60"
                                     >
-                                      <div className="flex items-center gap-2 min-w-0">
+                                      <div className="flex flex-1 items-center gap-2 min-w-0">
                                         <div
                                           className={cn(
                                             "w-2 h-2 rounded-full shrink-0",
-                                            statusColor
+                                            statusColor,
                                           )}
                                         />
                                         <span
                                           className={cn(
-                                            "text-sm font-medium truncate",
+                                            "min-w-0 text-sm font-medium truncate",
                                             !isConnected &&
                                               !isConnecting &&
-                                              "text-muted-foreground"
+                                              "text-muted-foreground",
                                           )}
                                         >
                                           {name}
@@ -1870,7 +2090,7 @@ export function ChatInput({
                                             className="text-xs font-medium text-primary hover:text-primary/80 transition-colors cursor-pointer px-1.5 py-0.5 rounded hover:bg-primary/5"
                                             onClick={() => {
                                               onReconnectServer?.(name).catch(
-                                                () => {}
+                                                () => {},
                                               );
                                             }}
                                           >
@@ -1881,6 +2101,38 @@ export function ChatInput({
                                     </div>
                                   );
                                 })}
+                            </div>
+                          )}
+                        {!isEnvironmentServerMode &&
+                          pluginServerRows.length > 0 && (
+                            <div data-testid="composer-plugin-servers">
+                              {pluginServerRows.map((server) => (
+                                <div
+                                  key={server.serverId}
+                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-2"
+                                  data-testid="composer-plugin-server-row"
+                                >
+                                  <div className="flex flex-1 items-center gap-2 min-w-0">
+                                    <div className="w-2 h-2 rounded-full shrink-0 bg-success" />
+                                    <span className="min-w-0 text-sm font-medium truncate">
+                                      {server.name}
+                                    </span>
+                                    <span className="min-w-0 max-w-[45%] truncate text-[10px] text-muted-foreground">
+                                      {server.pluginLabel}
+                                    </span>
+                                  </div>
+                                  <div
+                                    className="flex items-center shrink-0"
+                                    title={`Added by ${server.pluginLabel} on every message`}
+                                  >
+                                    <Switch
+                                      checked
+                                      disabled
+                                      aria-label={`${server.name} is added by ${server.pluginLabel}`}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           )}
                         {!isEnvironmentServerMode && onAddServer && (
@@ -1904,9 +2156,10 @@ export function ChatInput({
                         "px-1 pb-1",
                         (isEnvironmentServerMode
                           ? environmentSectionVisible
-                          : allServerConfigs &&
-                            Object.keys(allServerConfigs).length > 0) &&
-                          "border-t border-border mt-1 pt-1"
+                          : (allServerConfigs &&
+                              Object.keys(allServerConfigs).length > 0) ||
+                            pluginServerRows.length > 0) &&
+                          "border-t border-border mt-1 pt-1",
                       )}
                     >
                       {onChangeFileAttachments && (
@@ -2003,12 +2256,24 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  {...modelEfforts}
                   // Servers attached means the turn can call tools.
                   workload={
                     (selectedServers?.length ?? 0) > 0 ? "mcpChat" : "chat"
                   }
                 />
               )}
+              {!minimalMode && !multiModelEnabled && onReasoningEffortChange ? (
+                <EffortControl
+                  variant="inline"
+                  options={reasoningEffortLevels ?? []}
+                  value={reasoningEffort}
+                  defaultLevel={reasoningEffortDefaultForRow(currentModel)}
+                  onChange={onReasoningEffortChange}
+                  disabled={isLoading}
+                  disabledReason="Reasoning effort can't change while a reply is streaming"
+                />
+              ) : null}
             </div>
 
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -2039,7 +2304,7 @@ export function ChatInput({
                       size="icon"
                       className={cn(
                         "size-[34px] rounded-full transition-colors shadow-none",
-                        activeSubmitButtonClasses
+                        activeSubmitButtonClasses,
                       )}
                       aria-label="Stop recording voice input"
                       onClick={stopVoiceInput}
@@ -2147,7 +2412,7 @@ export function ChatInput({
                       size="icon"
                       className={cn(
                         "size-[34px] rounded-full transition-colors shadow-none",
-                        inactiveSubmitButtonClasses
+                        inactiveSubmitButtonClasses,
                       )}
                       aria-label="Transcribing recording"
                       disabled
@@ -2189,7 +2454,7 @@ export function ChatInput({
                             !submitDisabled
                             ? activeSubmitButtonClasses
                             : inactiveSubmitButtonClasses,
-                          pulseSubmit && "animate-onboarding-pulse"
+                          pulseSubmit && "animate-onboarding-pulse",
                         )}
                         disabled={
                           (!value.trim() && !hasResults) ||
@@ -2226,6 +2491,7 @@ export function ChatInput({
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}
+          reasoningEffort={reasoningEffort}
           isLoading={isLoading}
           hasMessages={hasMessages}
           onResetChat={onResetChat}

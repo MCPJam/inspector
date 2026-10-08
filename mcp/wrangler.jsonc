@@ -44,7 +44,14 @@
         // setup — no `.dev.vars` needed — while deployed envs never accept it.
         "MCPJAM_INSPECTOR_SERVICE_TOKEN": "mcpjam-local-dev-service-token",
         "MCPJAM_GUEST_JWKS_URL": "http://localhost:6274/api/web/guest-jwks",
-        "MCPJAM_GUEST_MINT_URL": "http://localhost:6274/api/web/guest-token"
+        "MCPJAM_GUEST_MINT_URL": "http://localhost:6274/api/web/guest-token",
+        // Who may use /mcp without signing in: "off" (signed-in only) or
+        // "mixed" (guests too; tokenless requests are served only when the
+        // mint credentials above are set). Unset means "off". Kept here, not
+        // in the dashboard, because `wrangler deploy` without `--keep-vars`
+        // wipes dashboard vars. Local dev is "mixed" so a signed-out local
+        // Ask MCPJam keeps working.
+        "MCPJAM_GUEST_ACCESS": "mixed"
       }
     },
     // Per-PR preview workers (`mcpjam-mcp-pr-<n>`) deploy with this env.
@@ -55,8 +62,9 @@
     "preview": {
       "workers_dev": true,
       "vars": {
-        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
-        "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
+        // Must track the tenant backend-staging writes into Convex.
+        "AUTHKIT_DOMAIN": "deep-vanilla-68-test.authkit.app",
+        "WORKOS_CLIENT_ID": "client_01KTN2EWHHJCKRB8RSR307X4SG",
         // Staging Inspector API: the worker's AuthKit JWTs are staging-tenant
         // tokens, which the production app would reject with 401.
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
@@ -65,7 +73,10 @@
         // browser URL; they agree today and must be free to diverge.
         "MCPJAM_APP_ORIGIN": "https://staging.mcpjam.com",
         "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
-        "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
+        "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token",
+        // Signed-in only, like production. Staging is the first to flip to
+        // "mixed" when guests ship. See `dev` above.
+        "MCPJAM_GUEST_ACCESS": "off"
       }
     },
     "staging": {
@@ -77,15 +88,19 @@
         }
       ],
       "vars": {
-        "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
-        "WORKOS_CLIENT_ID": "client_01K4C1TVA6CMQ3G32F1P301A9G",
+        // Must track the tenant backend-staging writes into Convex.
+        "AUTHKIT_DOMAIN": "deep-vanilla-68-test.authkit.app",
+        "WORKOS_CLIENT_ID": "client_01KTN2EWHHJCKRB8RSR307X4SG",
         "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1",
         // Where a HUMAN opens a permalink this worker returns. Separate from
         // PLATFORM_API_URL because one is a request target and the other is a
         // browser URL; they agree today and must be free to diverge.
         "MCPJAM_APP_ORIGIN": "https://staging.mcpjam.com",
         "MCPJAM_GUEST_JWKS_URL": "https://staging.mcpjam.com/api/web/guest-jwks",
-        "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token"
+        "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token",
+        // Signed-in only, like production. Staging is the first to flip to
+        // "mixed" when guests ship. See `dev` above.
+        "MCPJAM_GUEST_ACCESS": "off"
       },
       // Durable Object teardown. The worker is stateless now (see
       // src/server.ts), so the `McpJamMcpServer` class and its MCP_OBJECT
@@ -130,7 +145,9 @@
         // browser URL; they agree today and must be free to diverge.
         "MCPJAM_APP_ORIGIN": "https://app.mcpjam.com",
         "MCPJAM_GUEST_JWKS_URL": "https://app.mcpjam.com/api/web/guest-jwks",
-        "MCPJAM_GUEST_MINT_URL": "https://app.mcpjam.com/api/web/guest-token"
+        "MCPJAM_GUEST_MINT_URL": "https://app.mcpjam.com/api/web/guest-token",
+        // Signed-in only. See `dev` above.
+        "MCPJAM_GUEST_ACCESS": "off"
       },
       // Same DO teardown as staging, and for the same reason: `production`
       // HAS been deployed (repeatedly, most recently 2026-08-06) with the

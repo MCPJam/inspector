@@ -1,5 +1,17 @@
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
+import { useCompareSelections } from "@/hooks/use-compare-selections";
+import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
+import {
+  compareSelectionForRow,
+  mergePickedRows,
+  resolveCompareCards,
+  setCompareCardEffort,
+  MAX_COMPARE_SELECTIONS,
+  type CompareCard,
+} from "@/lib/compare-cards";
 import {
   FormEvent,
   useMemo,
@@ -288,6 +300,11 @@ export function ChatTabV2({
   const lastMultiLeadIdRef = useRef<string | null>(null);
   const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
+  // A card that replaces another (its effort, so its `comparisonKey`,
+  // changed) or joins beside one of the same model (another effort, picked
+  // in the model menu) is seeded from that card's transcript rather than the
+  // lead's: new key → source key.
+  const compareSeedSourceRef = useRef<Record<string, string>>({});
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
@@ -434,6 +451,11 @@ export function ChatTabV2({
     setSystemPrompt,
     temperature,
     setTemperature,
+    reasoningEffort,
+    reasoningEffortLevels,
+    setReasoningEffort,
+    reasoningEffortLevelsFor,
+    setReasoningEffortForModel,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -469,6 +491,9 @@ export function ChatTabV2({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
+    // A scenario / share-link turn runs the host's own config; the visitor's
+    // chip would be ignored there, so it is not offered.
+    reasoningEffortEnabled: !hostedContext?.scenarioId,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     hostedContext: {
@@ -778,6 +803,18 @@ export function ChatTabV2({
         turnTraces?: ChatHistoryTurnTrace[];
       }
     ) => {
+      // Resolved BEFORE the load so the pinned effort seeds for the model the
+      // session restores, not the one the picker is on now.
+      const restoredModel =
+        ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
+          ? // By `modelSource` as well as id: an OpenRouter id can also be a
+            // hosted row, and this thread must reopen on the one it ran on (#5472).
+            resolveRestoredModel(
+              availableModels,
+              detail.modelId,
+              detail.modelSource
+            )
+          : null) ?? undefined;
       await loadChatSession(
         {
           chatSessionId: detail.chatSessionId,
@@ -790,24 +827,14 @@ export function ChatTabV2({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
+          restoredModel,
         }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
-      const shouldRestoreComposerState =
-        options?.shouldRestoreComposerState?.() ?? true;
-      if (shouldRestoreComposerState && detail.modelId) {
-        // By `modelSource` as well as id: an OpenRouter id can also be a
-        // hosted row, and this thread must reopen on the one it ran on (#5472).
-        const matchingModel = resolveRestoredModel(
-          availableModels,
-          detail.modelId,
-          detail.modelSource
-        );
-        if (matchingModel) {
-          setSelectedModel(matchingModel);
-        }
+      if (restoredModel) {
+        setSelectedModel(restoredModel);
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -1211,22 +1238,92 @@ export function ChatTabV2({
     () => new Map(availableModels.map((model) => [String(model.id), model])),
     [availableModels]
   );
-  const resolvedSelectedModels = useMemo(() => {
+  // v1 line-up (model ids): what compare renders until the one-time
+  // migration to the v2 selection list has run.
+  const v1SelectedModels = useMemo(() => {
     const persistedModels = selectedModelIds
       .map((modelId) => multiModelAvailableModels.get(modelId))
       .filter((model): model is ModelDefinition => !!model && !model.disabled);
 
     if (persistedModels.length > 0) {
-      return persistedModels.slice(0, 3);
+      return persistedModels.slice(0, MAX_COMPARE_SELECTIONS);
     }
 
     return selectedModel ? [selectedModel] : [];
-  }, [
-    availableModels,
-    multiModelAvailableModels,
-    selectedModel,
-    selectedModelIds,
-  ]);
+  }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
+  // v2 line-up: saved selections, one card per `comparisonKey` (two cards of
+  // one model at Low and High are two cards), each with its own effort.
+  const { selections: compareSelections, setSelections: setCompareSelections } =
+    useCompareSelections({
+      availableModels,
+      orgConfig: hostedOrgModelConfig,
+      v1ModelIds: selectedModelIds,
+      ready:
+        isSelectedModelResolved !== false &&
+        !executionConfig?.modelId &&
+        !hostedScenarioId,
+    });
+  const compareCards = useMemo<CompareCard[] | null>(() => {
+    if (!compareSelections) return null;
+    const cards = resolveCompareCards(
+      compareSelections,
+      availableModels,
+      hostedOrgModelConfig
+    );
+    if (cards.length > 0 || !selectedModel) return cards;
+    // Nothing saved resolves: compare starts from the lead, as v1 did.
+    const lead = compareSelectionForRow(selectedModel, hostedOrgModelConfig);
+    if (!lead) return null;
+    const leadCards = resolveCompareCards(
+      [lead],
+      [selectedModel],
+      hostedOrgModelConfig
+    );
+    return leadCards.length > 0 ? leadCards : null;
+  }, [availableModels, compareSelections, hostedOrgModelConfig, selectedModel]);
+  // A single-model pick collapses the compare line-up to that model, in both
+  // stores (the v1 id list and, once migrated, the v2 selections).
+  const collapseCompareSelectionsTo = useCallback(
+    (model: ModelDefinition) => {
+      if (!compareSelections) return;
+      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      setCompareSelections(selection ? [selection] : []);
+    },
+    [compareSelections, hostedOrgModelConfig, setCompareSelections]
+  );
+  // What the grid renders: the v2 cards, else one card per v1 model (keyed by
+  // its id, no per-card effort — exactly the v1 behaviour).
+  const modelCompareCards = useMemo<
+    { key: string; model: ModelDefinition; label: string; card?: CompareCard }[]
+  >(
+    () =>
+      compareCards
+        ? compareCards.map((card) => ({
+            key: card.key,
+            model: card.model,
+            label: card.label,
+            card,
+          }))
+        : v1SelectedModels.map((model) => ({
+            key: String(model.id),
+            model,
+            label: model.name,
+          })),
+    [compareCards, v1SelectedModels]
+  );
+  // The distinct rows in the line-up (the picker's checked models and the v1
+  // id mirror); two efforts of one model are one row.
+  const resolvedSelectedModels = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: ModelDefinition[] = [];
+    for (const entry of modelCompareCards) {
+      const rowKey = modelRowKey(entry.model);
+      if (seen.has(rowKey)) continue;
+      seen.add(rowKey);
+      rows.push(entry.model);
+    }
+    return rows;
+  }, [modelCompareCards]);
   // Shared (project-visible) sessions are collaborative artifacts; the
   // multi-model toggle would mutate session state for every collaborator,
   // so it's hidden in that scope. Single-model selection stays available.
@@ -1247,10 +1344,10 @@ export function ChatTabV2({
     useModelSelectorLayoutLock(isMultiModelMode);
 
   useEffect(() => {
-    if (isMultiModelMode && resolvedSelectedModels[0]) {
-      lastMultiLeadIdRef.current = String(resolvedSelectedModels[0].id);
+    if (isMultiModelMode && modelCompareCards[0]) {
+      lastMultiLeadIdRef.current = modelCompareCards[0].key;
     }
-  }, [isMultiModelMode, resolvedSelectedModels]);
+  }, [isMultiModelMode, modelCompareCards]);
 
   const handleMultiModelTranscriptSync = useCallback(
     (modelId: string, transcript: UIMessage[]) => {
@@ -1292,26 +1389,35 @@ export function ChatTabV2({
       prevCompareModelIdsRef.current = new Set();
       return;
     }
-    const current = new Set(resolvedSelectedModels.map((m) => String(m.id)));
+    const current = new Set(modelCompareCards.map((card) => card.key));
     const prev = prevCompareModelIdsRef.current;
     const added = [...current].filter((id) => !prev.has(id));
-    const leadId = resolvedSelectedModels[0]
-      ? String(resolvedSelectedModels[0].id)
-      : null;
+    const leadId = modelCompareCards[0]?.key ?? null;
     if (prev.size > 0 && added.length > 0 && leadId) {
-      const src = multiTranscriptsRef.current[leadId] ?? [];
       multiAddColumnSeqRef.current += 1;
       const v = multiAddColumnSeqRef.current;
+      const sources = compareSeedSourceRef.current;
+      const seeds = added.map((id) => {
+        const sourceId = sources[id];
+        const src =
+          (sourceId !== undefined
+            ? multiTranscriptsRef.current[sourceId]
+            : undefined) ??
+          multiTranscriptsRef.current[leadId] ??
+          [];
+        return [id, src] as const;
+      });
       setMultiAddColumnSeeds((s) => {
         const next = { ...s };
-        for (const id of added) {
+        for (const [id, src] of seeds) {
           next[id] = { version: v, messages: cloneUiMessages(src) };
         }
         return next;
       });
     }
+    for (const id of added) delete compareSeedSourceRef.current[id];
     prevCompareModelIdsRef.current = current;
-  }, [isMultiModelMode, resolvedSelectedModels]);
+  }, [isMultiModelMode, modelCompareCards]);
 
   const effectiveHasMessages = isMultiModelLayoutMode
     ? Object.values(multiModelHasMessages).some(Boolean)
@@ -1359,23 +1465,27 @@ export function ChatTabV2({
       setSelectedModelIds(selectedModel ? [String(selectedModel.id)] : []);
       return;
     }
-
     const sanitizedIds = resolvedSelectedModels.map((model) =>
       String(model.id)
     );
+    // What the ids SHOULD be: the line-up in compare, else the single chat's
+    // own model. Compared against that same value, so the write settles:
+    // comparing against the line-up while writing the single model looped
+    // forever whenever the two differed (a reload keeps the line-up while the
+    // single chat re-seeds from the client).
+    const nextIds =
+      sanitizedIds.length > 0 && multiModelEnabled
+        ? sanitizedIds
+        : selectedModel
+          ? [String(selectedModel.id)]
+          : [];
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
-      sanitizedIds.length !== persistedIds.length ||
-      sanitizedIds.some((modelId, index) => modelId !== persistedIds[index]);
+      nextIds.length !== persistedIds.length ||
+      nextIds.some((modelId, index) => modelId !== persistedIds[index]);
 
     if (idsChanged) {
-      setSelectedModelIds(
-        sanitizedIds.length > 0 && multiModelEnabled
-          ? sanitizedIds
-          : selectedModel
-          ? [String(selectedModel.id)]
-          : []
-      );
+      setSelectedModelIds(nextIds);
     }
   }, [
     canEnableMultiModel,
@@ -1389,9 +1499,7 @@ export function ChatTabV2({
   ]);
 
   useEffect(() => {
-    const activeModelIds = new Set(
-      resolvedSelectedModels.map((model) => String(model.id))
-    );
+    const activeModelIds = new Set(modelCompareCards.map((card) => card.key));
 
     setMultiModelSummaries((previous) =>
       Object.fromEntries(
@@ -1407,7 +1515,7 @@ export function ChatTabV2({
         )
       )
     );
-  }, [resolvedSelectedModels]);
+  }, [modelCompareCards]);
 
   useEffect(() => {
     setTraceViewMode("chat");
@@ -1441,10 +1549,12 @@ export function ChatTabV2({
     if (matchingModel) {
       setMultiModelEnabled(false);
       setSelectedModelIds([String(matchingModel.id)]);
+      collapseCompareSelectionsTo(matchingModel);
       setSelectedModel(matchingModel);
     } else if (selectedModel) {
       setMultiModelEnabled(false);
       setSelectedModelIds([String(selectedModel.id)]);
+      collapseCompareSelectionsTo(selectedModel);
     }
 
     const seedApplied = startChatWithMessages(evalChatHandoff.messages);
@@ -1483,6 +1593,7 @@ export function ChatTabV2({
     evalChatHandoff,
     isSessionBootstrapComplete,
     onEvalChatHandoffConsumed,
+    collapseCompareSelectionsTo,
     outgoingSenderMetadata,
     selectedModel,
     sendMessage,
@@ -1933,14 +2044,20 @@ export function ChatTabV2({
     (model: ModelDefinition, options?: { userInitiated?: boolean }) => {
       setSelectedModel(model, options);
       setSelectedModelIds([String(model.id)]);
+      collapseCompareSelectionsTo(model);
       setMultiModelEnabled(false);
     },
-    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds]
+    [
+      collapseCompareSelectionsTo,
+      setMultiModelEnabled,
+      setSelectedModel,
+      setSelectedModelIds,
+    ]
   );
 
   const handleSelectedModelsChange = useCallback(
     (models: ModelDefinition[]) => {
-      const nextSelectedModels = models.slice(0, 3);
+      const nextSelectedModels = models.slice(0, MAX_COMPARE_SELECTIONS);
       const leadModel = nextSelectedModels[0] ?? selectedModel;
 
       if (leadModel) {
@@ -1952,9 +2069,66 @@ export function ChatTabV2({
           String(selectedModelItem.id)
         )
       );
+      // v2: every card of a still-picked row keeps its effort (Sonnet·Low and
+      // Sonnet·High both stay); a new row joins at its default.
+      if (compareSelections) {
+        setCompareSelections(
+          mergePickedRows(
+            compareCards ?? [],
+            nextSelectedModels,
+            hostedOrgModelConfig,
+            compareSelections
+          )
+        );
+      }
     },
-    [selectedModel, setSelectedModel, setSelectedModelIds]
+    [
+      compareCards,
+      compareSelections,
+      hostedOrgModelConfig,
+      selectedModel,
+      setCompareSelections,
+      setSelectedModel,
+      setSelectedModelIds,
+    ]
   );
+
+  // One card's chip. The card's `comparisonKey` changes with its effort, so
+  // the replacement card is seeded from the old card's transcript.
+  const handleCompareCardEffortChange = useCallback(
+    (cardKey: string, effort: ModelReasoningEffort | undefined) => {
+      if (!compareCards) return;
+      const next = setCompareCardEffort(compareCards, cardKey, effort);
+      if (!next) return;
+      compareSeedSourceRef.current[next.key] = cardKey;
+      setCompareSelections(next.selections);
+    },
+    [compareCards, setCompareSelections]
+  );
+
+  // Efforts in the model menu: a model and its effort in one pick; in
+  // compare, each model × effort is its own card. A scenario's effort is
+  // fixed, as the composer chip's is.
+  const seedCompareCard = useCallback((key: string, fromKey: string) => {
+    compareSeedSourceRef.current[key] = fromKey;
+  }, []);
+  const modelEfforts = useModelPickerEfforts({
+    enabled: !hostedContext?.scenarioId,
+    isMultiModelMode,
+    selectedModel,
+    reasoningEffort,
+    levelsFor: reasoningEffortLevelsFor,
+    onSingleModelChange: handleSingleModelChange,
+    setReasoningEffortForModel,
+    compareCards,
+    compareSelections,
+    availableModels,
+    orgConfig: hostedOrgModelConfig,
+    setCompareSelections,
+    setSelectedModel,
+    setSelectedModelIds,
+    seedCard: seedCompareCard,
+  });
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
@@ -2004,7 +2178,7 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
         multi_model_enabled: isMultiModelMode,
-        multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
+        multi_model_count: isMultiModelMode ? modelCompareCards.length : 1,
         ...(captureProps ?? {}),
       });
 
@@ -2015,7 +2189,7 @@ export function ChatTabV2({
     },
     [
       isMultiModelMode,
-      resolvedSelectedModels.length,
+      modelCompareCards.length,
       selectedModel?.id,
       selectedModel?.name,
       selectedModel?.provider,
@@ -2189,6 +2363,7 @@ export function ChatTabV2({
     [messages],
   );
 
+  const leadCompareCard = isMultiModelMode ? compareCards?.[0] : undefined;
   const sharedChatInputProps = {
     value: input,
     onChange: setInput,
@@ -2207,10 +2382,34 @@ export function ChatTabV2({
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
     enableMultiModel: canEnableMultiModel,
+    modelEfforts,
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
+    // In compare mode the chip edits the lead card's effort (each card has
+    // its own chip too); before the v2 migration ran, cards carry no effort,
+    // so the chip is withheld rather than shown doing nothing.
+    ...(!isMultiModelMode
+      ? {
+          reasoningEffort,
+          reasoningEffortLevels,
+          onReasoningEffortChange: hostedContext?.scenarioId
+            ? undefined
+            : setReasoningEffort,
+        }
+      : leadCompareCard?.editableSelection
+      ? {
+          reasoningEffort: leadCompareCard.reasoningEffort,
+          reasoningEffortLevels: leadCompareCard.reasoningEffortLevels,
+          onReasoningEffortChange: (effort: ModelReasoningEffort | undefined) =>
+            handleCompareCardEffortChange(leadCompareCard.key, effort),
+        }
+      : {
+          reasoningEffort: undefined,
+          reasoningEffortLevels: [],
+          onReasoningEffortChange: undefined,
+        }),
     onResetChat: handleResetAllChats,
     submitDisabled: submitBlocked || scenarioComposerBlocked,
     tokenUsage,
@@ -2498,19 +2697,36 @@ export function ChatTabV2({
                     <div
                       className={cn(
                         "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                        resolvedSelectedModels.length <= 1 && "grid-cols-1",
-                        resolvedSelectedModels.length === 2 &&
+                        modelCompareCards.length <= 1 && "grid-cols-1",
+                        modelCompareCards.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
-                        resolvedSelectedModels.length >= 3 &&
+                        modelCompareCards.length >= 3 &&
                           "grid-cols-1 xl:grid-cols-3"
                       )}
                     >
-                      {resolvedSelectedModels.map((model) => (
+                      {modelCompareCards.map(({ key, model, label, card }) => (
                         <MultiModelChatCard
-                          key={`${multiModelSessionGeneration}:${String(
-                            model.id
-                          )}`}
+                          // `comparisonKey`: Sonnet·Low and Sonnet·High are
+                          // two cards, each sending its own selection + effort.
+                          key={`${multiModelSessionGeneration}:${key}`}
+                          compareId={key}
+                          compareLabel={label}
                           model={model}
+                          reasoningEffort={card?.reasoningEffort}
+                          effort={
+                            card?.editableSelection
+                              ? {
+                                  levels: card.reasoningEffortLevels,
+                                  value: card.reasoningEffort,
+                                  onChange: (effort) =>
+                                    handleCompareCardEffortChange(
+                                      card.key,
+                                      effort
+                                    ),
+                                  disabled: isStreamingActive,
+                                }
+                              : undefined
+                          }
                           comparisonSummaries={Object.values(
                             multiModelSummaries
                           )}
@@ -2557,14 +2773,10 @@ export function ChatTabV2({
                           onHasMessagesChange={
                             handleMultiModelHasMessagesChange
                           }
-                          showComparisonChrome={
-                            resolvedSelectedModels.length > 1
-                          }
+                          showComparisonChrome={modelCompareCards.length > 1}
                           compareEnterVersion={multiCompareEnterVersion}
                           compareEnterMessages={multiCompareEnterMessages}
-                          addColumnSeed={
-                            multiAddColumnSeeds[String(model.id)] ?? null
-                          }
+                          addColumnSeed={multiAddColumnSeeds[key] ?? null}
                           onTranscriptSync={handleMultiModelTranscriptSync}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}

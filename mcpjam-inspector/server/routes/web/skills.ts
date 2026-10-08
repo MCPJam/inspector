@@ -20,6 +20,7 @@ import {
   readJsonBody,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { requireProjectIdArg } from "../v1/convex-id-param.js";
 import {
   CloudSkillsError,
   listCloudSkills,
@@ -84,10 +85,17 @@ async function ctxFrom(
   c: Context,
   projectId: string,
 ): Promise<CloudSkillsContext> {
+  // A malformed id is a 404 here, before Convex's `v.id("projects")` rejects
+  // it as a masked 500 "Server Error" (the same gate v1 uses, #5799).
+  const checkedProjectId = requireProjectIdArg(projectId, "web.skills");
   // Exchange the request bearer for a Convex-usable bearer (handles WorkOS
   // API-key → delegated-JWT; a session JWT passes through).
   const bearer = await getConvexBearerForRequest(c);
-  return { authHeader: bearer, projectId, signal: c.req.raw.signal };
+  return {
+    authHeader: bearer,
+    projectId: checkedProjectId,
+    signal: c.req.raw.signal,
+  };
 }
 
 const projectOnly = z.object({ projectId: z.string().min(1) });

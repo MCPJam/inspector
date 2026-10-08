@@ -583,6 +583,8 @@ Provide either `--template` or `--file`/`--json`, not both.
 | `--expected-config-id <id>` | With any config edit | The `configId` you last read |
 | `--set <key=value>` | No | Set one field. Repeatable |
 | `--unset <key>` | No | Clear an optional field, or reset a required one to its default. Repeatable |
+| `--effort <level>` | No | Set the reasoning effort on the client's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the client's model selection |
 | `--file <path>` | No | Replacement client config v2 JSON (or `-` for stdin) |
 | `--json <json>` | No | Inline replacement client config v2 JSON (or `@file`, or `-`) |
 
@@ -600,13 +602,14 @@ string.
 | Field | Value | `--unset` |
 |-------|-------|-----------|
 | `modelId` | string | Not allowed — a client cannot be edited into one that pins no model |
+| `modelSelection` | JSON object | Drops the saved selection and keeps the bare `modelId` |
 | `systemPrompt` | string | Resets to `""` |
 | `temperature` | number | Resets to `0.7` |
 | `requireToolApproval` | `true` \| `false` | Resets to `false` |
 | `connectionDefaults` | JSON object | Resets to the platform defaults |
 | `respectToolVisibility` | `true` \| `false` | Clears |
 | `progressiveToolDiscovery` | `true` \| `false` | Clears |
-| `harness` | string (`claude-code` \| `codex`) | Clears |
+| `harness` | string (`claude-code` \| `codex` \| `cursor`) | Clears |
 | `computer` | JSON object | Clears |
 | `builtInToolIds` | JSON array | Clears |
 | `skillSelection` | JSON object | Clears |
@@ -708,6 +711,8 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--host-id <id>` | Yes\* | ID of the host this environment runs against |
 | `--project <id-or-name>` | No | Project name or ID |
 | `--description <text>` | No | Optional description |
+| `--model <id>` | No | Model to run instead of the host's |
+| `--model-selection <json>` | No | Whole saved model selection behind the override — source, connection and `settings.reasoningEffort` (see [Reasoning effort](#reasoning-effort)). Must be for the model named; sent alone it pins its own model |
 | `--file <path>` | No | Environment JSON file (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
@@ -731,6 +736,9 @@ mcpjam cloud environments create --project Acme --json '{
 | `--name <name>` | No | New display name |
 | `--host-id <id>` | No | New host |
 | `--description <text>` | No | New description (empty string clears it) |
+| `--model-selection <json>` | No | Whole saved model selection for the override, as JSON (or `@file`, or `-`) |
+| `--effort <level>` | No | Set the reasoning effort on the environment's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the environment's model selection |
 | `--file <path>` | No | Environment JSON with the fields to change (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
@@ -772,6 +780,7 @@ Requires project membership, not admin (pinning plugin versions still requires a
 | `--host <id-or-name>` | Yes | Host the stack runs as — the client whose configuration a run is stamped with |
 | `--server-group <id>` | No | Standalone server group to pin (omit to use the host's own servers) |
 | `--model <id>` | No | Model to run instead of the host's pinned one |
+| `--model-selection <json>` | No | Whole saved model selection (source, connection, `settings.reasoningEffort`) as JSON. Stacks that differ only by effort are different environments |
 | `--computer <id-or-name>` | No | Project-shared sandbox image to pin, so runs boot a fresh computer from it |
 | `--skill <id...>` | No | Project-shared skill IDs to pin |
 | `--secret <id...>` | No | Project secret IDs the stack grants to its runs (`secrets list` shows them) |
@@ -812,16 +821,62 @@ The pin fields are narrower than they look:
 
   - **This MCPJam deployment does not support environment model overrides.**
   - **This MCPJam deployment does not support environment secret grants.**
+  - **This MCPJam deployment does not support saved model selections (and so reasoning effort) on composed stacks.**
+  - **This MCPJam deployment does not support saved model selections (and so reasoning effort) on environments.**
 
   A second sentence then names what to drop, and it differs by surface —
   `--model` / `--clear-model` / `"modelId"` on the environment writes,
   `--compose-model` / `compose.models` on a composed launch, and the
-  `--secret` / `--compose-secret` equivalents. Grep for the sentence above,
+  `--secret` / `--compose-secret` equivalents, and
+  `--model-selection` / `--compose-model-selection` / `--effort` on an
+  environment for the two saved-selection sentences (the deployment publishes
+  `modelSelections` when it accepts them). Grep for the sentence above,
   not for the whole message.
 
   Every other flag on these commands works regardless; only the calls that
   actually carry a model or a grant are checked.
 </Note>
+
+### Reasoning effort
+
+A reasoning effort is saved on a **model selection** — `settings.reasoningEffort`
+inside the `modelSelection` a client, environment, eval case (`models[].selection`)
+or eval suite (`executionConfig.modelSelection`) carries. There is no other saved
+carrier, and `advancedConfig.reasoningEffort` is refused. Levels are `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh` and `max`; which of them a model
+accepts is `supportedReasoningEfforts` on the public model catalog
+(`GET /v1/models`). Every route either applies a saved effort and records it or
+refuses it (`capability_missing`) before any spend — it is never dropped — and an
+effort replaces the sampling temperature.
+
+Three ways to set one:
+
+- **A whole selection** — `--set modelSelection='{…}'` (clients),
+  `--model-selection '{…}'` (environments, `eval update`),
+  `--compose-model-selection '{…}'` (composed launches). A selection holds
+  `source` and a connection that only you know, so it is always sent whole:
+
+  ```json
+  {
+    "modelId": "openai/gpt-5",
+    "source": "hosted",
+    "settings": { "reasoningEffort": "high" },
+    "fallback": { "provider": "none", "model": "none" }
+  }
+  ```
+
+- **`--effort <level>` / `--clear-effort`** on `clients update`,
+  `environments update` and `eval update` — a shorthand that edits the
+  selection the target **already has**. When there is none the command is
+  refused with a message telling you to send `modelSelection`, because inventing
+  one would mean guessing whose credentials pay. It cannot be combined with a
+  whole selection, or with a new model (a new model needs a new selection).
+- **`sessions send --effort <level>`** — a per-request effort, pinned on the
+  session's first turn like `--temperature`.
+
+Changing a target's model with a bare `--model` never keeps a selection saved for
+the old one: on a suite or environment it is dropped, so the write is not
+refused for naming two models.
 
 ---
 
@@ -1088,6 +1143,42 @@ With `--format json`, a single machine-readable startup object (public URL, serv
 
 ---
 
+## `readiness check` commands
+
+Grade a server locally — from your machine, against the URL you supply. No account required. Results are printed to stdout and never uploaded.
+
+### `readiness check claude`
+
+Grade a server against Anthropic's connector-directory rules. Uses shared connection flags (see [`server` commands](#server-commands)) plus:
+
+| Flag | Description |
+|------|-------------|
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+### `readiness check openai`
+
+Grade a server against OpenAI's app-directory rules. `--submission-mode` is required and never inferred.
+
+| Flag | Description |
+|------|-------------|
+| `--submission-mode <mode>` | Declared submission shape: `mcp-only`, `mcp-imported-skills`, `mcp-package`, or `mcp-imported-skills-package` |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags.
+
+### `readiness check muse`
+
+Grade a server against Meta's Muse connector guidelines. Free — no AI observations.
+
+| Flag | Description |
+|------|-------------|
+| `--submission-profile <path>` | JSON submission profile (overview, contacts, docs, credentials, tool classes). Without it the submission verdict stays `incomplete`. |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags (see [`server` commands](#server-commands)).
+
+---
+
 ## `readiness` hosted commands
 
 Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
@@ -1125,6 +1216,16 @@ Start a hosted readiness run that grades a saved server against OpenAI's app-dir
 | `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
 | `--idempotency-key <key>` | No | Replay guard |
 
+### `readiness start muse`
+
+Start a hosted readiness run that grades a saved server against Meta's Muse connector guidelines. Free — Muse has no AI observations. Returns immediately with a run id; poll with `readiness status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+
 ### `readiness status`
 
 Read one hosted readiness run. The response carries three independent axes: `status` (whether the run finished), `overallStatus` (the grade — a `completed` run can be `not-ready`), and `llmObservations` (whether the optional model pass ran).
@@ -1141,7 +1242,7 @@ List hosted readiness runs, newest first.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID |
-| `--kind <publisher>` | No | Narrow to `claude` or `openai` |
+| `--kind <publisher>` | No | Narrow to `claude`, `openai`, or `muse` |
 | `--server <idOrName>` | No | Narrow to one saved server |
 | `--limit <n>` | No | Rows to return (1–100) |
 
@@ -1240,7 +1341,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--notes <text>` | No | Free-text note stored on the run |
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
-| `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+| `--idempotency-key <key>` | No | Retry key for a lost launch response. For `--file`, a fresh key is minted and printed on every invocation when this flag is omitted; supply the printed key to replay the same run instead of starting a new one |
 | `--wait` | No | Wait for every launched run to reach a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
@@ -1249,6 +1350,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
+| `--compose-model-selection <json...>` | No | Whole saved model selection(s) — source, connection, `settings.reasoningEffort` — as JSON: one cell per selection, for its model, at its effort. Repeat to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell |
 | `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
 | `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
@@ -1410,16 +1512,12 @@ keeps whatever hosts it already has. Host attachment synchronization only
 runs when no explicit CLI target overrides the file. Environment attachment
 synchronization is unaffected and always runs.
 
-Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
-declared suite id, project, target, and every run-affecting knob
-(`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
-`--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
-`--refresh-snapshot`, compose flags, and the normalized
-`--allow-approximated` set with its `--approval-reason`). Repeating the same
-file with the same knobs returns the run it already started; changing a knob
-starts a new one. The approval set is sorted and keyed by AUTHORED case id, so
-`--allow-approximated a b` and `--allow-approximated b a` are the same run
-while approving nothing is a different one. `--notes` is not part of the key.
+Without `--idempotency-key`, the CLI mints a fresh UUID for every invocation
+and prints it to stderr before launch (`Eval idempotency key: <key>`). Each
+invocation therefore starts and bills a new run. To retry a launch whose
+response was lost — without starting a second run — pass the key that was
+printed: `--idempotency-key <printed-key>`. A replay is marked `deduped` in
+the receipt and human output. `--notes` is not part of the key.
 
 ##### Imported cases: live tool resolution, and per-run approval
 
@@ -1497,8 +1595,9 @@ that names `eval create --file`. The converse is also true: `eval create --file`
 on a versioned suite file names `eval run --file`.
 
 Export of a file-owned suite writes `declaredId` as `suite.id`. Export of a
-UI suite still writes the Convex id; running that file back is the ownership
-refusal.
+UI-owned suite derives a stable file identity (`s_export_<sourceSuiteId>`),
+so importing the exported file creates a file-owned clone rather than
+re-claiming the original UI suite.
 
 When the run targets an **attached project environment** (`eval environments
 set`), it executes against that environment's resolved host config, closed
@@ -1591,6 +1690,35 @@ six chain rows — connection, discovery, selection, tool call, response, user
 value — with each row's state and reason in words. It is off by default because
 six rows per trial is a lot of terminal on a run with twenty failures; the
 first-break line above the per-trial detail is printed either way.
+
+### `cloud eval rerun`
+
+Rerun a finished run's failed cases as a new run. The platform picks the cases:
+every case with a trial that did not complete and pass. Cancelled and skipped
+trials do not count. The new run records `rerunOfRunId` and `rerunScope`, and
+because it ran only what failed, it is never used as the suite's latest run, a
+trend point, or a comparison baseline.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `<run-id>` | Yes | Eval run ID to rerun (from `eval run`) |
+| `--failed` | Yes | Rerun only the cases that did not pass (the only rerun scope) |
+| `--dry-run` | No | Show which cases would rerun, and why, without starting anything. Exits 1 when nothing can rerun |
+| `--notes <text>` | No | Free-text note stored on the new run |
+| `--idempotency-key <key>` | No | Repeating the call returns the run it already started |
+| `--wait` | No | Wait for the rerun to reach a terminal status; exits on its verdict like `eval run --wait` |
+| `--wait-timeout <ms>` | No | Maximum time to wait (requires `--wait`) |
+| `--json` | No | Print machine-readable JSON (same as `--format json`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+A run that is still executing or grading, or one where nothing qualifies, is
+refused with `409` (`details.reason` is `RERUN_SOURCE_NOT_TERMINAL` or
+`RERUN_NOTHING_TO_RERUN`) before anything starts.
+
+```bash
+mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --json
+mcpjam cloud eval rerun "$RUN_ID" --failed --wait
+```
 
 ### `cloud eval judge`
 
@@ -2122,8 +2250,8 @@ that refuse today include:
 - a pinned sandbox image;
 - automatic LLM-as-judge grading, non-default match options, and an iterations
   floor that raises a case above its own count;
-- a compare-across-models case, a scenario-bound case, and cases that name
-  **different model providers** (a suite file carries one suite-level provider);
+- a compare-across-models case and cases that name **different model providers**
+  (a suite file carries one suite-level provider);
 - `replace`/`extend` check overrides, a case that inherits the suite's checks
   while also carrying its own, and any suite check the predicate contract does
   not recognise;
@@ -2163,6 +2291,9 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--client <name...>` | No | Replace client attachments (by name/ID) |
 | `--host <name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
 | `--model <id>` | No | Execution model ID |
+| `--model-selection <json>` | No | Whole saved model selection for the suite (source, connection, `settings.reasoningEffort`) as JSON. A bare `--model` change drops a selection saved for a different model |
+| `--effort <level>` | No | Set the reasoning effort on the suite's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the suite's model selection |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
 | `--min-accuracy <pct>` | No | Suite accuracy threshold: one percentage, 0–100, over the whole run. Mutually exclusive with `--pass-threshold` |
@@ -2374,6 +2505,7 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-model-selection <json>` | No | One whole saved model selection to run this case on, at its effort |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
@@ -2564,6 +2696,7 @@ Omit `--session` to start a conversation; pass the `sessionId` the command retur
 | `--max-steps <n>` | Maximum engine steps this turn (1–16) |
 | `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. |
 | `--temperature <n>` | Sampling temperature (0–2) |
+| `--effort <level>` | Reasoning effort for the model. First turn only: pinned to the session, refused with `--session`. It replaces the temperature, so it cannot be combined with `--temperature`. Applied or refused by the rail the model runs on, never dropped |
 | `--project <id-or-name>` | Project name or ID (required to start a session) |
 
 `read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.

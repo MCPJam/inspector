@@ -7,7 +7,7 @@ import {
 import type { MetricStripData } from "../evals/metric-strip-data";
 import { MetricStrip } from "../evals/metric-strip";
 import type { RunMetricsByRun } from "../evals/run-metrics";
-import type { EvalSuiteRun } from "../evals/types";
+import type { EvalSuiteRunListItem } from "../evals/types";
 import { runTimestamp } from "./suite-detail-model";
 
 /** Latest run metrics and run-history trends, sharing the original metric strip. */
@@ -15,7 +15,7 @@ export function SuiteRunHistorySnapshot({
   runs,
   metricsByRun,
 }: {
-  runs: readonly EvalSuiteRun[];
+  runs: readonly EvalSuiteRunListItem[];
   /** One metrics object per run — see `evals/run-metrics.ts`. */
   metricsByRun: RunMetricsByRun;
 }) {

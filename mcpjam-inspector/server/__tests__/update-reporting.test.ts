@@ -43,6 +43,8 @@ describe("update failure reporting", () => {
       request: { url: "private" },
       breadcrumbs: [{ message: "private" }],
       extra: { token: "private" },
+      tags: { email: "private" },
+      contexts: { identity: { email: "private" } },
     };
     const event = mocks.processors[0](raw);
     expect(JSON.stringify(event)).not.toContain("private");
@@ -56,6 +58,21 @@ describe("update failure reporting", () => {
     reportUpdateFailure(attempt, "install_threw");
     reportUpdateFailure(JSON.parse(JSON.stringify(attempt)), "install_threw");
     expect(mocks.capture).toHaveBeenCalledTimes(1);
+  });
+  it("keeps only an opaque user ID and its actor kind", () => {
+    reportUpdateFailure(newAttempt("3.10.0"), "updater_error");
+    const event = mocks.processors[0]({
+      ...mocks.capture.mock.calls[0][0],
+      user: {
+        id: "user_A",
+        email: "private@example.com",
+        data: { token: "private" },
+      },
+      tags: { actor_kind: "signedIn", secret: "private" },
+    });
+    expect(event.user).toEqual({ id: "user_A" });
+    expect(event.tags.actor_kind).toBe("signedIn");
+    expect(JSON.stringify(event)).not.toContain("private");
   });
   it("bounds a never-ending flush", async () => {
     vi.useFakeTimers();
@@ -99,4 +116,22 @@ it("reports recovery with safe timing and intent metadata, deduplicated separate
     request: { url: "private" },
   });
   expect(JSON.stringify(sanitized)).not.toContain("private");
+});
+
+it("labels install shutdown timeouts without claiming a download failure", () => {
+  const attempt = newAttempt("3.12.6");
+  attempt.phase = "installing";
+  reportUpdateFailure(attempt, "shutdown_stuck", "a".repeat(32));
+  expect(mocks.capture.mock.calls[0][0]).toMatchObject({
+    event_id: "a".repeat(32),
+    message:
+      "MCPJam couldn’t close to finish updating. Download completed. Install status: waiting for next launch.",
+    contexts: { update_shutdown: {} },
+  });
+});
+it("does not claim a completed download for a relaunch-to-retry timeout", () => {
+  const attempt = newAttempt("3.12.6");
+  attempt.phase = "recovering";
+  reportUpdateFailure(attempt, "shutdown_stuck");
+  expect(mocks.capture.mock.calls[0][0].message).toBe("Desktop update failed");
 });

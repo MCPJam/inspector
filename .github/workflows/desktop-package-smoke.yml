@@ -47,13 +47,15 @@ env:
 jobs:
   package:
     name: Desktop Package Smoke
+    # Skip Dependabot's own rebases; see local-browser-security.yml.
+    if: ${{ !(github.event.action == 'synchronize' && github.event.sender.login == 'dependabot[bot]') }}
     runs-on: macos-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
