@@ -14,6 +14,7 @@ let balanceState:
       walletLocked: boolean;
       billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
+      rolloverCreditsRemaining?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
     }
@@ -128,6 +129,49 @@ describe("SidebarCredits", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  it("uses the same rollover capacity as Billing for low credits", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 550,
+      rolloverCreditsRemaining: 550,
+    };
+    renderCredits();
+    expect(screen.getByText("Low credits")).toBeInTheDocument();
+    expect(screen.getByText("550 / 5,550")).toBeInTheDocument();
+  });
+
+  it("does not label a monthly balance with an unknown allowance as low", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: undefined,
+      monthlyAllowanceRemaining: 500,
+    };
+    renderCredits();
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
+  it.each([75, 100, 5])(
+    "shows credit balance at %s percent with a text warning only when low",
+    (percent) => {
+      balanceState = {
+        ...balanceState!,
+        freeDailyCreditsRemaining: percent * 3,
+      };
+      renderCredits();
+      const meter = screen.getByRole("progressbar", {
+        name: "Free daily credits",
+      });
+      expect(meter).toHaveAttribute("aria-valuetext", `${percent * 3} / 300`);
+      expect(meter).not.toHaveClass(
+        "[&_[data-slot=progress-indicator]]:bg-foreground/60",
+      );
+      expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
+    },
+  );
 
   it("shows the remaining sponsored swarm conversations when the user has an allowance", () => {
     allowanceState = { remaining: 412, granted: 500 };

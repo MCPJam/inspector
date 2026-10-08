@@ -575,6 +575,7 @@ function writeRunGroupSummary(
       | {
           status: "started";
           runId: string;
+          deduped?: boolean;
           host?: { id: string; name: string };
           environment?: { id: string; name?: string | null } | null;
         }
@@ -590,6 +591,11 @@ function writeRunGroupSummary(
   if (format !== "human") return;
   for (const target of result.targets) {
     if (target.status !== "started") continue;
+    if (target.deduped === true) {
+      process.stderr.write(
+        `Reused existing eval run ${target.runId} (idempotency key replay).\n`
+      );
+    }
     writeRunLink(format, webOrigin, {
       projectId: result.project.id,
       suiteId: result.suite.id,
@@ -3577,7 +3583,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option(
       "--idempotency-key <key>",
-      "Retry-safety key: repeating the call returns the run it already started"
+      "Retry key for a lost launch response; for --file, one is minted and printed when omitted"
     )
     .option("--wait", "Wait for every started run to reach a terminal status")
     .option(
@@ -3796,6 +3802,9 @@ export function registerEvalCommands(program: Command): void {
                     signal: context.signal,
                     onDisclosure,
                     onDisclosureUnavailable,
+                    onIdempotencyKey: (key) => {
+                      process.stderr.write(`Eval idempotency key: ${key}\n`);
+                    },
                   },
                   {
                     source,

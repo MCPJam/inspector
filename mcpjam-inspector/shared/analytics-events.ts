@@ -550,8 +550,9 @@ export const ANALYTICS_EVENTS = {
 
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
-  // state (none | provisioning | invite_sent | pending_admin_approval |
-  // active | invite_declined | invite_expired | error).
+  // state (none | automatic_invite_pending | provisioning | invite_sent |
+  // pending_admin_approval | active | invite_declined | invite_expired |
+  // error).
   home_shared_slack_card_viewed: { source: "client" },
   home_shared_slack_provision_clicked: { source: "client" },
   home_shared_slack_invite_opened: { source: "client" },
