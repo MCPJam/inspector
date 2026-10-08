@@ -1282,13 +1282,20 @@ function resolveEffectiveInitializePinsForServer(
  * that belongs to one server. A failed XAA mint is the one `INTERNAL_ERROR`
  * kept: `toXaaConnectFailure` frames an unclassified handshake failure that
  * way, it belongs to that server's IdP, and the mint site has already
- * logged it.
+ * logged it. The secret reveal is the one hop where a 5xx is never the
+ * server's: the only party on it is Convex, so a 5xx there (unreachable,
+ * timed out, or answering 5xx itself) is MCPJam's own dependency failing,
+ * while its 4xx (export denied, origin mismatch) is still the backend's
+ * answer for that server.
  */
 function isServerRefusal(error: unknown): boolean {
+  if (!(error instanceof WebRouteError)) return false;
+  if (error.setupFailureSource === "secret_reveal" && error.status >= 500) {
+    return false;
+  }
   return (
-    error instanceof WebRouteError &&
-    (error.code !== ErrorCode.INTERNAL_ERROR ||
-      error.setupFailureSource === "xaa_mint")
+    error.code !== ErrorCode.INTERNAL_ERROR ||
+    error.setupFailureSource === "xaa_mint"
   );
 }
 

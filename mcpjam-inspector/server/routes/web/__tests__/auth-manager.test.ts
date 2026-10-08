@@ -434,6 +434,162 @@ describe("web auth manager batching", () => {
     ).rejects.toMatchObject({ status: 500, code: "INTERNAL_ERROR" });
   });
 
+  // Pass 2 reveals the stored headers of a server the authorize response
+  // redacted. The reveal talks to Convex, not to the server.
+  function revealBatchFetch(
+    reveal: () => Response | Promise<Response>,
+  ): typeof fetch {
+    return vi.fn(async (input) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return Response.json({
+          results: {
+            "server-secret": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-secret.example.com/mcp",
+                hasHeaders: true,
+              },
+            },
+            "server-plain": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-plain.example.com/mcp",
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith("/web/server/reveal-secrets")) return reveal();
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+  }
+
+  it.each([
+    {
+      reveal: "cannot be reached",
+      respond: () => {
+        throw new Error("connect ECONNREFUSED");
+      },
+    },
+    {
+      reveal: "answers 502",
+      respond: () =>
+        Response.json({ success: false, error: "upstream" }, { status: 502 }),
+    },
+  ])(
+    "fails the batch when the secret reveal $reveal even when tolerating refusals",
+    async ({ respond }) => {
+      global.fetch = revealBatchFetch(respond);
+
+      // MCPJam's own reveal service is down, not the server refusing: kept per
+      // server it would answer inside a 200 and reach neither Sentry nor
+      // `http.request.failed`.
+      await expect(
+        createAuthorizedManager(
+          callerContextFromHono(mockContext),
+          "bearer-token",
+          "project-1",
+          ["server-secret", "server-plain"],
+          10_000,
+          undefined,
+          undefined,
+          { tolerateServerRefusals: true },
+        ),
+      ).rejects.toMatchObject({ status: 502, code: "SERVER_UNREACHABLE" });
+      expect(mcpClientManagerMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a secret reveal the backend refused per server", async () => {
+    global.fetch = revealBatchFetch(() =>
+      Response.json(
+        { code: "FORBIDDEN", message: "Export denied", exportDenied: true },
+        { status: 403 },
+      ),
+    );
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-secret", "server-plain"],
+      10_000,
+      undefined,
+      undefined,
+      { tolerateServerRefusals: true },
+    );
+
+    expect(result.refusedServers?.["server-secret"]).toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: { exportDenied: true },
+    });
+    expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
+      "server-plain",
+    ]);
+  });
+
+  it("keeps an unreachable authorization server per server", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json({
+        results: {
+          "server-oauth": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            oauthUnavailableReason: "authorization_server_unreachable",
+            serverConfig: {
+              transportType: "http",
+              url: "https://server-oauth.example.com/mcp",
+              useOAuth: true,
+            },
+          },
+          "server-plain": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server-plain.example.com/mcp",
+            },
+          },
+        },
+      }),
+    ) as typeof fetch;
+
+    // A 503 too, but it belongs to that server's authorization server.
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-oauth", "server-plain"],
+      10_000,
+      undefined,
+      undefined,
+      { tolerateServerRefusals: true },
+    );
+
+    expect(result.refusedServers?.["server-oauth"]).toMatchObject({
+      status: 503,
+      code: "SERVER_UNREACHABLE",
+      details: { serverId: "server-oauth" },
+    });
+    expect(Object.keys(mcpClientManagerMock.mock.calls[0][0])).toEqual([
+      "server-plain",
+    ]);
+  });
+
   it("records a failed required recovery per server when tolerating refusals", async () => {
     // Pass 1b: the batch could not refresh a private-authorization-server
     // credential, the local refresh fails too, and the server is explicit
