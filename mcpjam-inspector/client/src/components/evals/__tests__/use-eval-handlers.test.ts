@@ -512,12 +512,13 @@ describe("useEvalHandlers", () => {
       expect(mockAuthFetch).not.toHaveBeenCalled();
     });
 
-    it("throws a missing case to the setup sheet instead of silently resolving", async () => {
+    it.each([{ throwOnFailure: true }, { stayOnPage: true }])(
+      "throws a missing case as-is instead of silently resolving: %o", async (mode) => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       await act(async () => {
         await expect(result.current.handleRerun({
           _id: "suite-x", name: "Suite", environment: { servers: ["server-1"] },
-        } as any, { caseIds: ["not-in-this-suite"], throwOnFailure: true }))
+        } as any, { caseIds: ["not-in-this-suite"], ...mode }))
           .rejects.toThrow("That case is not in this suite.");
       });
       expect(mockAuthFetch).not.toHaveBeenCalled();

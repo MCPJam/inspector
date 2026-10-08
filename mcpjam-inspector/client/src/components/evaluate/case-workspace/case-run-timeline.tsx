@@ -109,12 +109,15 @@ export function CaseRunTimeline({
             typeof snapshotStyle === "string" && findHostStyle(snapshotStyle)
               ? getScenarioHostLabel(snapshotStyle)
               : undefined;
+          // A suite-default run with no known style, version, or named host
+          // carries only the backend's placeholder name ("Client").
+          const placeholderClient =
+            run?.client?.source === "suite_default" &&
+            !run.client.versionId &&
+            !run.client.namedHostId &&
+            !findHostStyle(run.client.hostStyle?.trim());
           const client =
-            recordedClient &&
-            !(
-              run?.client?.source === "suite_default" &&
-              recordedClient === "Suite default"
-            )
+            recordedClient && !placeholderClient
               ? recordedClient
               : (snapshotClient ?? defaultClient);
           return [

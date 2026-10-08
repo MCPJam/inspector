@@ -1084,7 +1084,7 @@ describe("TestTemplateEditor run view from route", () => {
       name === "testSuites:getTestSuite" ? undefined : original(name, args));
     renderGoldenCase({ onRunCase: vi.fn() });
     await userEvent.setup().click(await screen.findByRole("button", { name: "Setup Run" }));
-    expect(screen.getByText("Loading suite setup…")).toHaveAttribute("role", "status");
+    expect(screen.queryByRole("dialog", { name: "Setup Run" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Run test case" })).toBeNull();
     expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
   });

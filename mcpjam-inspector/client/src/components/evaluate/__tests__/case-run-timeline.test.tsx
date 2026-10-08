@@ -258,6 +258,19 @@ describe("CaseRunTimeline", () => {
     expect(screen.queryByText(/Suite default/)).toBeNull();
   });
 
+  it("replaces the backend's placeholder client name with the default client", async () => {
+    render(<CaseRunTimeline caseTitle="Case" selectedIterationId={null} onSelect={vi.fn()}
+      defaultHostLabel="Claude"
+      iterations={[{ ...iteration("default", "haiku", "passed", 1000), suiteRunId: "default" }]}
+      suiteRuns={[{ _id: "default", effectiveModelId: "haiku",
+        client: { source: "suite_default", name: "Client" } }] as EvalSuiteRun[]}>
+      Evidence
+    </CaseRunTimeline>);
+    await userEvent.setup().click(screen.getByRole("combobox", { name: "Client", exact: true }));
+    expect(screen.getByRole("option", { name: "Claude", exact: true })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Client", exact: true })).toBeNull();
+  });
+
   it("keeps a recorded client when the current default changes", async () => {
     const trial = { ...iteration("old", "haiku", "passed", 1000),
       testCaseSnapshot: { model: "haiku", hostConfigOverride: { hostStyle: "claude" } } } as unknown as EvalIteration;

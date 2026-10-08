@@ -939,6 +939,9 @@ export function useEvalHandlers({
       );
 
       const suiteRunStartedAt = Date.now();
+      // Thrown as-is by the catch below: it is not a server failure, so the
+      // "connect your servers" rewrite must not replace it.
+      const caseNotInSuite = new Error("That case is not in this suite.");
       try {
         // The local run route executes on this inspector's connection pool and
         // connects nothing itself, so connect the environments' servers first,
@@ -1016,9 +1019,9 @@ export function useEvalHandlers({
           : testsPayload;
         if (wantedCaseIds?.length && narrowedTests.length === 0) {
           if (options?.stayOnPage || options?.throwOnFailure)
-            throw new Error("That case is not in this suite.");
+            throw caseNotInSuite;
           setRerunningSuiteId(null);
-          toast.error("That case is not in this suite.", {
+          toast.error(caseNotInSuite.message, {
             id: runStartedToastId,
           });
           return;
@@ -1226,6 +1229,10 @@ export function useEvalHandlers({
         return launch;
       } catch (error) {
         console.error("Failed to rerun evals:", error);
+        if (error === caseNotInSuite) {
+          toast.dismiss(runStartedToastId);
+          throw error;
+        }
         if (openEvalIterationWall(error)) {
           // The "Starting run…" toast above would sit next to the wall,
           // claiming the run is on its way.

@@ -1681,14 +1681,17 @@ export function TestTemplateEditor({
   const suiteHostLabel = getScenarioHostLabel(suiteHostStyle);
   const suiteHostLogoSrc = getScenarioHostLogo(suiteHostStyle);
 
+  // Keyed on the suite view's memoized map, not `launchReview` itself: that
+  // object is a fresh literal on every parent render.
+  const launchHostNamesById = launchReview?.hostNamesById;
   const hostNamesById = useMemo(() => {
-    if (launchReview) return new Map(launchReview.hostNamesById);
+    if (launchHostNamesById) return new Map(launchHostNamesById);
     const map = new Map<string, string | null>();
     for (const attachment of suite?.hostAttachments ?? []) {
       map.set(attachment.namedHostId, attachment.hostName);
     }
     return map;
-  }, [launchReview, suite?.hostAttachments]);
+  }, [launchHostNamesById, suite?.hostAttachments]);
   const hasHostAttachments = (suite?.hostAttachments?.length ?? 0) > 0;
 
   // ── Harness system tools (assertable built-ins) ──────────────────────────
@@ -4518,33 +4521,31 @@ export function TestTemplateEditor({
                   />
                 ) : null}
                 {useWorkspace && onRunCase && !isDirectGuest ? (
-                  runSetupOpen && (
-                    suite ? (
-                      <SuiteRunReview
-                        {...(launchReview ?? {
-                          projectId,
-                          suite,
-                          environments: projectEnvironmentViews,
-                          hostNamesById,
-                        })}
-                        cases={[currentTestCase]}
-                        caseTitle={editForm?.title || currentTestCase.title}
-                        initialIterations={
-                          editForm?.runs ?? DEFAULTS.RUNS_PER_TEST
-                        }
-                        disabledReason={
-                          evalRunsDisabledReason ??
-                          saveDisabledTooltip ??
-                          (isDraft ? "Save the test case before running." : null)
-                        }
-                        onClose={() => setRunSetupOpen(false)}
-                        onStart={(launchSuite, options) =>
-                          runTest({ suite: launchSuite, options })
-                        }
-                      />
-                    ) : (
-                      <p role="status">Loading suite setup…</p>
-                    )
+                  // Opens once the suite is known; never the quick-run sheet.
+                  runSetupOpen &&
+                  suite && (
+                    <SuiteRunReview
+                      {...(launchReview ?? {
+                        projectId,
+                        suite,
+                        environments: projectEnvironmentViews,
+                        hostNamesById,
+                      })}
+                      cases={[currentTestCase]}
+                      caseTitle={editForm?.title || currentTestCase.title}
+                      initialIterations={
+                        editForm?.runs ?? DEFAULTS.RUNS_PER_TEST
+                      }
+                      disabledReason={
+                        evalRunsDisabledReason ??
+                        saveDisabledTooltip ??
+                        (isDraft ? "Save the test case before running." : null)
+                      }
+                      onClose={() => setRunSetupOpen(false)}
+                      onStart={(launchSuite, options) =>
+                        runTest({ suite: launchSuite, options })
+                      }
+                    />
                   )
                 ) : useWorkspace ? (
                   <CaseRunSetup
