@@ -220,12 +220,13 @@ describe("saveHarnessAttachments", () => {
         attachment("c.txt", { type: "data", data: dataUrl("three") }),
         attachment("d.txt", new URL(dataUrl("four"))),
         attachment("e.txt", "data:text/plain,five%20six"),
+        attachment("f.txt", { type: "text", text: "seven ✓" }),
       ],
     });
     expect(outcomes.every((o) => "path" in o)).toBe(true);
     expect(
       [...session.files.values()].map((b) => Buffer.from(b).toString()),
-    ).toEqual(["one", "two", "three", "four", "five six"]);
+    ).toEqual(["one", "two", "three", "four", "five six", "seven ✓"]);
   });
 
   it("never fetches a link; it reports it instead", async () => {

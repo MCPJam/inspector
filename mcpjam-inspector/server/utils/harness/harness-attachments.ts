@@ -242,11 +242,21 @@ function decodeAttachmentData(
   }
   // AI SDK 7's tagged file data.
   if (data && typeof data === "object") {
-    const tagged = data as { type?: unknown; data?: unknown; url?: unknown };
+    const tagged = data as {
+      type?: unknown;
+      data?: unknown;
+      url?: unknown;
+      text?: unknown;
+    };
     if (tagged.type === "data")
       return decodeAttachmentData(tagged.data, remaining);
     if (tagged.type === "url")
       return decodeAttachmentData(tagged.url, remaining);
+    if (tagged.type === "text" && typeof tagged.text === "string") {
+      const bytes = new TextEncoder().encode(tagged.text);
+      const limit = overLimit(bytes.byteLength, remaining);
+      return limit ? { error: limit } : { bytes };
+    }
   }
   return { error: "it was not readable" };
 }
