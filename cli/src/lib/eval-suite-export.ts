@@ -523,16 +523,6 @@ function caseLevelFindings(
     );
   }
 
-  if (evalCase.scenario !== undefined && evalCase.scenario !== null) {
-    findings.push(
-      unsupported(
-        ["cases", index, "scenario"],
-        `case "${evalCase.title}" is bound to scenario ` +
-          `"${evalCase.scenario}", which a suite file has no field for`
-      )
-    );
-  }
-
   if (!isNeutralMatchOptions(evalCase.matchOptions)) {
     findings.push(
       unsupported(
@@ -809,10 +799,10 @@ export function buildSuiteFileFromPlatform(
     mode: "agentWorkflow",
     reportingMode: "standard",
     suite: {
-      // File-owned suites keep the declared id the file authored. A UI suite
-      // has none, so export still writes the Convex document id — running that
-      // file back is the ownership refusal, not an attach.
-      id: detail.declaredId ?? detail.id,
+      // File-owned suites keep the declared id the file authored. For a
+      // UI-owned suite, derive a stable file identity distinct from the source
+      // row so importing the export creates a file-owned clone.
+      id: detail.declaredId ?? `s_export_${detail.id}`,
       name: (detail.name ?? "").trim(),
       ...(detail.description === null || detail.description === undefined
         ? {}
@@ -899,6 +889,7 @@ export function buildSuiteFileFromPlatform(
       id: caseIds[index],
       title: evalCase.title,
       ...(evalCase.intent === undefined ? {} : { intent: evalCase.intent }),
+      ...(evalCase.scenario == null ? {} : { scenario: evalCase.scenario }),
       ...(evalCase.iterations === iterations
         ? {}
         : { [countKey]: evalCase.iterations }),

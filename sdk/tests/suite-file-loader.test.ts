@@ -86,7 +86,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("round-trips every roundTrip row through serialize → load", () => {
-    expect(data.roundTrip).toHaveLength(3);
+    expect(data.roundTrip).toHaveLength(5);
     for (const row of data.roundTrip) {
       const authored = payload(row) as EvalSuiteFile;
       const reloaded = loadOrThrow(serializeEvalSuiteFile(authored));
