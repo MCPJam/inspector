@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   EvalIteration,
@@ -139,6 +139,33 @@ describe("CaseRunTimeline", () => {
     expect(screen.getByRole("button", { name: "All clients" })).toHaveAttribute("aria-pressed", "true");
     for (const client of clients)
       expect(screen.getAllByTestId("case-run-row").some((row) => row.textContent?.includes(client))).toBe(true);
+  });
+
+  it("shows a shared run number, separate iterations, and recorded dates for a multi-client launch", async () => {
+    const clients = ["Cursor", "Claude", "ChatGPT"];
+    const createdAt = Date.UTC(2026, 9, 8, 21, 21);
+    const trials = clients.map((client, index) => ({
+      ...iteration(client, "model", "passed", 1000),
+      suiteRunId: client, iterationNumber: 1, createdAt: createdAt + index * 1000,
+    }));
+    render(<CaseRunTimeline caseTitle="Case" iterations={trials} selectedIterationId={null} onSelect={vi.fn()}
+      hostNamesById={new Map(clients.map((client) => [client, client]))}
+      suiteRuns={clients.map((client, index) => ({
+        _id: client, namedHostId: client, runGroupId: "launch", runNumber: 7 + index,
+      })) as EvalSuiteRun[]}>
+      Evidence
+    </CaseRunTimeline>);
+    expect(screen.getByText("Run", { exact: true })).toBeVisible();
+    expect(screen.getByText("Date", { exact: true })).toBeVisible();
+    for (const [index, row] of screen.getAllByTestId("case-run-row").entries()) {
+      expect(within(row).getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
+      expect(within(row).getByText("#1", { exact: true })).toBeVisible();
+      const date = within(row).getByTestId("case-run-date");
+      expect(date).toHaveTextContent(new Date(trials[index].createdAt).toLocaleString());
+      expect(date.querySelector("time")).toHaveAttribute("datetime", new Date(trials[index].createdAt).toISOString());
+    }
+    await userEvent.setup().click(screen.getByRole("button", { name: "ChatGPT · model", exact: true }));
+    expect(screen.getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
   });
 
   it("shows the recorded client and model pair", () => {

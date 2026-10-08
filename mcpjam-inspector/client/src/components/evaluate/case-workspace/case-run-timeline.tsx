@@ -10,7 +10,7 @@ import {
   average,
   compactMetric,
   formatRunId,
-  formatRelativeTime,
+  formatTime,
   iterationLatencyP50,
   iterationLatencyP95,
   runHostLabel,
@@ -220,18 +220,35 @@ export function CaseRunTimeline({
     ...new Set(
       [...iterations]
         .sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id))
-        .map((it) => it.suiteRunId ?? it._id),
+        .map(
+          (it) =>
+            suiteRuns.find((run) => run._id === it.suiteRunId)?.runGroupId ??
+            it.suiteRunId ??
+            it._id,
+        ),
     ),
   ];
+  const runNumber = (iteration?: EvalIteration) => {
+    const run = suiteRuns.find((item) => item._id === iteration?.suiteRunId);
+    const siblings = run?.runGroupId
+      ? suiteRuns.filter((item) => item.runGroupId === run.runGroupId)
+      : run
+        ? [run]
+        : [];
+    const numbers = siblings.flatMap((item) =>
+      typeof item.runNumber === "number" ? [item.runNumber] : [],
+    );
+    const key = run?.runGroupId ?? iteration?.suiteRunId ?? iteration?._id;
+    const index = key ? orderedRunIds.indexOf(key) : -1;
+    return numbers.length
+      ? Math.min(...numbers)
+      : index >= 0
+        ? index + 1
+        : orderedRunIds.length + 1;
+  };
   const runLabel = (iteration?: EvalIteration) => {
     const run = suiteRuns.find((item) => item._id === iteration?.suiteRunId);
-    const index = iteration
-      ? orderedRunIds.indexOf(iteration.suiteRunId ?? iteration._id)
-      : -1;
-    const number =
-      run?.runNumber ??
-      iteration?.iterationNumber ??
-      (index >= 0 ? index + 1 : orderedRunIds.length + 1);
+    const number = runNumber(iteration);
     const titles = [
       ...new Set(
         run && "tests" in run.configSnapshot
@@ -339,9 +356,11 @@ export function CaseRunTimeline({
         ))}
       </div>
       <div className="overflow-x-auto rounded-lg border border-border bg-background text-foreground">
-        <div className="min-w-[620px]">
-          <div className="grid grid-cols-[minmax(110px,.8fr)_minmax(150px,1fr)_80px_80px_80px_52px] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="min-w-[850px]">
+          <div className="grid grid-cols-[52px_64px_minmax(160px,1fr)_minmax(150px,1fr)_80px_80px_80px_52px] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Run</span>
             <span>Iteration</span>
+            <span>Date</span>
             <span>Client / Model</span>
             <span>Result</span>
             <span>Latency</span>
@@ -374,8 +393,14 @@ export function CaseRunTimeline({
                     else onSelectLive?.();
                     setDrawerOpen(true);
                   }}
-                  className="grid w-full grid-cols-[minmax(110px,.8fr)_minmax(150px,1fr)_80px_80px_80px_52px] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
+                  className="grid w-full grid-cols-[52px_64px_minmax(160px,1fr)_minmax(150px,1fr)_80px_80px_80px_52px] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
                 >
+                  <span
+                    className="truncate font-medium"
+                    data-testid="case-run-number"
+                  >
+                    {it ? `#${runNumber(it)}` : "—"}
+                  </span>
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span
                       className={cn(
@@ -392,9 +417,19 @@ export function CaseRunTimeline({
                       {it?.iterationNumber ??
                         (it ? filtered.indexOf(it) + 1 : filtered.length + 1)}
                     </span>
-                    <span className="truncate text-muted-foreground">
-                      {it ? formatRelativeTime(it.createdAt) : "just now"}
-                    </span>
+                  </span>
+                  <span
+                    className="truncate text-muted-foreground"
+                    data-testid="case-run-date"
+                    title={it ? formatTime(it.createdAt) : undefined}
+                  >
+                    {it ? (
+                      <time dateTime={new Date(it.createdAt).toISOString()}>
+                        {formatTime(it.createdAt)}
+                      </time>
+                    ) : (
+                      "just now"
+                    )}
                   </span>
                   <span
                     className="min-w-0"
