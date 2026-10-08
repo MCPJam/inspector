@@ -196,6 +196,10 @@ export function createOwnedPluginMrtr(deps: {
       throw new PluginInvocationError("CONTINUATION_OPERATION_DENIED");
     op.signal.throwIfAborted();
     await deps.assertCurrent();
+    // Settings may execute ordinary modern calls, but have no form consumer.
+    // Refuse before creating durable continuation state or private payloads.
+    if (op.authorization.origin === "settings")
+      throw new PluginInvocationError("SETTINGS_CONTINUATION_UNSUPPORTED");
     validateRequests(args.inputRequests, op);
     const current = manager();
     const negotiatedEra = resolveMrtrNegotiatedEra(current, deps.serverId);
@@ -236,7 +240,7 @@ export function createOwnedPluginMrtr(deps: {
       runOriginal?: () => Promise<unknown>,
     ) {
       if (
-        !["app", "entrypoint", "quick-action", "model"].includes(
+        !["app", "entrypoint", "quick-action", "model", "settings"].includes(
           authorization.origin,
         )
       )
