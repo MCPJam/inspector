@@ -212,6 +212,29 @@ describe("CaseRunTimeline", () => {
     expect(screen.queryByRole("button", { name: "ChatGPT · haiku", exact: true })).toBeNull();
   });
 
+  it("shows dashes for metrics while running and keeps measured zeroes after completion", () => {
+    const props = { caseTitle: "Case", selectedIterationId: null, onSelect: vi.fn() };
+    const running = { ...iteration("live", "model", "pending", 0), tokensUsed: 0 };
+    const { rerender } = render(<CaseRunTimeline {...props} iterations={[running]}>
+      Evidence
+    </CaseRunTimeline>);
+    const metrics = () => [...screen.getByTestId("case-run-row").children]
+      .slice(4, 7).map((cell) => cell.textContent);
+    expect(metrics()).toEqual(["—", "—", "—"]);
+    rerender(<CaseRunTimeline {...props} iterations={[{
+      ...running, tokensUsed: 10, actualToolCalls: [{ toolName: "search" }],
+    } as EvalIteration]}>
+      Evidence
+    </CaseRunTimeline>);
+    expect(metrics()).toEqual(["—", "—", "—"]);
+    rerender(<CaseRunTimeline {...props} iterations={[{
+      ...iteration("live", "model", "passed", 1000), tokensUsed: 0,
+    }]}>
+      Evidence
+    </CaseRunTimeline>);
+    expect(metrics()).toEqual(["1.0s", "0", "0"]);
+  });
+
   it("shows the recorded client and model pair", () => {
     const trial = {
       ...iteration("trial-id", "old-model", "passed", 1000),

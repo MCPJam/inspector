@@ -477,12 +477,16 @@ export function CaseRunTimeline({
                       : "—"}
                   </span>
                   <span className="tabular-nums text-muted-foreground">
-                    {it && typeof it.tokensUsed === "number"
+                    {it &&
+                    result !== "pending" &&
+                    typeof it.tokensUsed === "number"
                       ? compactMetric(it.tokensUsed)
                       : "—"}
                   </span>
                   <span className="tabular-nums text-muted-foreground">
-                    {it ? (it.actualToolCalls?.length ?? "—") : "—"}
+                    {it && result !== "pending"
+                      ? (it.actualToolCalls?.length ?? "—")
+                      : "—"}
                   </span>
                   <span
                     className="truncate text-muted-foreground"
