@@ -61,6 +61,7 @@
     "@types/dagre": "^0.7.54",
     "concurrently": "^10.0.5",
     "@changesets/changelog-github": "^1.0.1",
+    "vite": "^7.3.6",
     "vitest": "^4.1.11"
   },
   "dependencies": {

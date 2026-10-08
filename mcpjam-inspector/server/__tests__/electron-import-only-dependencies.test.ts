@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import configuration from "../../vite.main.config";
@@ -37,7 +38,12 @@ describe("Electron main dependency externalization", () => {
 });
 
 it("transforms JSX with Forge's Vite 7 instead of requiring Vite 8 internals", async () => {
-  const { createServer, version } = await import("vite");
+  // Forge loads Vite with require() relative to its own plugin package.
+  const require = createRequire(import.meta.url);
+  const forgeRequire = createRequire(
+    require.resolve("@electron-forge/plugin-vite"),
+  );
+  const { createServer, version } = forgeRequire("vite");
   const { default: react } = await import("@vitejs/plugin-react-electron");
   expect(version).toMatch(/^7\./);
   const dir = fs.realpathSync(
