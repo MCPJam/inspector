@@ -22,6 +22,8 @@ import {
   targetKeySuffix,
 } from "@/lib/eval-target-key";
 import { cn } from "@mcpjam/design-system/cn";
+import { findHostStyle } from "@/lib/client-styles";
+import { getScenarioHostLabel } from "@/lib/scenario-client-style";
 import {
   computeIterationResult,
   computeMeasuredIterationResult,
@@ -50,6 +52,7 @@ export function CaseRunTimeline({
   iterations,
   suiteRuns = [],
   hostNamesById,
+  defaultHostLabel,
   selectedIterationId,
   openIterationId,
   onSelect,
@@ -64,6 +67,7 @@ export function CaseRunTimeline({
   iterations: EvalIteration[];
   suiteRuns?: (EvalSuiteRun | EvalSuiteRunListItem)[];
   hostNamesById?: Map<string, string | null>;
+  defaultHostLabel?: string;
   selectedIterationId: string | null;
   openIterationId?: string | null;
   onSelect: (iteration: EvalIteration) => void;
@@ -81,25 +85,41 @@ export function CaseRunTimeline({
   useEffect(() => {
     if (openIterationId) setDrawerOpen(true);
   }, [openIterationId]);
+  const defaultClient = defaultHostLabel?.trim() || "Unknown client";
   const runMetadata = useMemo(
     () =>
       new Map(
         iterations.map((it) => {
           const run = suiteRuns.find((run) => run._id === it.suiteRunId);
+          const recordedClient = run ? runHostLabel(run, hostNamesById) : null;
+          const snapshotStyle = (
+            it.testCaseSnapshot as
+              { hostConfigOverride?: { hostStyle?: unknown } } | undefined
+          )?.hostConfigOverride?.hostStyle;
+          const snapshotClient =
+            typeof snapshotStyle === "string" && findHostStyle(snapshotStyle)
+              ? getScenarioHostLabel(snapshotStyle)
+              : undefined;
+          const client =
+            recordedClient &&
+            !(
+              run?.client?.source === "suite_default" &&
+              recordedClient === "Suite default"
+            )
+              ? recordedClient
+              : (snapshotClient ?? defaultClient);
           return [
             it._id,
             {
               // The TARGET (`targetKey`; the bare model id when default), so
               // Sonnet at Low and at High are two chips.
               model: runIterationTargetKey(run, it) || UNKNOWN_MODEL,
-              client:
-                (run ? runHostLabel(run, hostNamesById) : null) ||
-                "Suite default",
+              client,
             },
           ];
         }),
       ),
-    [iterations, suiteRuns, hostNamesById],
+    [iterations, suiteRuns, hostNamesById, defaultClient],
   );
   const targets = useMemo(() => {
     const grouped = new Map<
@@ -124,7 +144,7 @@ export function CaseRunTimeline({
       grouped.set(key, target);
     }
     if (pendingRun) {
-      const client = pendingRun.client ?? "Suite default";
+      const client = pendingRun.client ?? defaultClient;
       const key = `${client}\u0000${pendingRun.model}`;
       if (!grouped.has(key))
         grouped.set(key, {
@@ -135,7 +155,7 @@ export function CaseRunTimeline({
         });
     }
     return [...grouped.values()];
-  }, [iterations, pendingRun, runMetadata]);
+  }, [iterations, pendingRun, runMetadata, defaultClient]);
   // Labels show only what differs: a lone target reads as its model.
   const targetKeysInView = useMemo(
     () => [
@@ -153,7 +173,7 @@ export function CaseRunTimeline({
       ? key
       : targetKeyLabel(key, targetKeysInView, (modelId) => modelId);
   const pendingKey = pendingRun
-    ? `${pendingRun.client ?? "Suite default"}\u0000${pendingRun.model}`
+    ? `${pendingRun.client ?? defaultClient}\u0000${pendingRun.model}`
     : null;
   // A client/model filter applies only after the user picks a chip.
   const selectedTarget = targets.find((target) => target.key === targetKey);
@@ -372,7 +392,7 @@ export function CaseRunTimeline({
             const { client, model: recordedModel } = it
               ? runMetadata.get(it._id)!
               : {
-                  client: pendingRun?.client ?? "Suite default",
+                  client: pendingRun?.client ?? defaultClient,
                   model: pendingRun!.model,
                 };
             const open =
@@ -420,13 +440,9 @@ export function CaseRunTimeline({
                   </span>
                   <span
                     className="min-w-0"
-                    title={`${client ?? "Suite default"} · ${modelTitle(
-                      recordedModel,
-                    )}`}
+                    title={`${client} · ${modelTitle(recordedModel)}`}
                   >
-                    <span className="block truncate">
-                      {client ?? "Suite default"}
-                    </span>
+                    <span className="block truncate">{client}</span>
                     <span className="block truncate text-muted-foreground">
                       {modelLabel(recordedModel)}
                     </span>

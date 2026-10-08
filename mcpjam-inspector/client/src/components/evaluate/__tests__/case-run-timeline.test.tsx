@@ -170,6 +170,48 @@ describe("CaseRunTimeline", () => {
     expect(screen.getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
   });
 
+  it("names the default client and merges it with the matching environment filter", async () => {
+    const trials = [
+      { ...iteration("default", "haiku", "passed", 1000), suiteRunId: "default" },
+      { ...iteration("environment", "haiku", "failed", 1000), suiteRunId: "environment" },
+    ];
+    render(<CaseRunTimeline caseTitle="Case" iterations={trials} selectedIterationId={null} onSelect={vi.fn()}
+      defaultHostLabel="Claude" hostNamesById={new Map([["claude-client", "Claude"]])}
+      suiteRuns={[
+        { _id: "default", effectiveModelId: "haiku" },
+        { _id: "environment", effectiveModelId: "haiku", namedHostId: "claude-client" },
+      ] as EvalSuiteRun[]}>
+      Evidence
+    </CaseRunTimeline>);
+    expect(screen.queryByText(/Suite default/)).toBeNull();
+    const chip = screen.getByRole("button", { name: "Claude · haiku", exact: true });
+    await userEvent.setup().click(chip);
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    expect(screen.getByText("1/2")).toBeVisible();
+  });
+
+  it("uses the known default for old rows and pending runs without duplicate filters", () => {
+    render(<CaseRunTimeline caseTitle="Case" selectedIterationId={null} onSelect={vi.fn()}
+      defaultHostLabel="Claude" pendingRun={{ model: "haiku" }}
+      iterations={[iteration("old", "haiku", "passed", 1000)]}>
+      Evidence
+    </CaseRunTimeline>);
+    expect(screen.getByRole("button", { name: "Claude · haiku", exact: true })).toBeVisible();
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    expect(screen.queryByText(/Suite default/)).toBeNull();
+  });
+
+  it("keeps a recorded client when the current default changes", () => {
+    const trial = { ...iteration("old", "haiku", "passed", 1000),
+      testCaseSnapshot: { model: "haiku", hostConfigOverride: { hostStyle: "claude" } } } as unknown as EvalIteration;
+    render(<CaseRunTimeline caseTitle="Case" selectedIterationId={null} onSelect={vi.fn()}
+      defaultHostLabel="ChatGPT" iterations={[trial]}>
+      Evidence
+    </CaseRunTimeline>);
+    expect(screen.getByRole("button", { name: "Claude · haiku", exact: true })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "ChatGPT · haiku", exact: true })).toBeNull();
+  });
+
   it("shows the recorded client and model pair", () => {
     const trial = {
       ...iteration("trial-id", "old-model", "passed", 1000),
@@ -217,7 +259,7 @@ describe("CaseRunTimeline", () => {
       </CaseRunTimeline>,
     );
     expect(screen.getByText("1/2")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Suite default · model-a", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Unknown client · model-a", exact: true }));
     expect(screen.getByText("1/1")).toBeInTheDocument();
     expect(screen.getAllByText("1.0s")).toHaveLength(3);
     await user.click(screen.getByTestId("case-run-row"));
@@ -225,7 +267,7 @@ describe("CaseRunTimeline", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(
       screen.getByRole("button", {
-        name: "Suite default · model-b",
+        name: "Unknown client · model-b",
         exact: true,
       }),
     );
@@ -264,7 +306,7 @@ describe("CaseRunTimeline", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(
       screen.getByRole("button", {
-        name: "Suite default · model-b",
+        name: "Unknown client · model-b",
         exact: true,
       }),
     );

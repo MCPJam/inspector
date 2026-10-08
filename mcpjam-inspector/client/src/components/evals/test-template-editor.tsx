@@ -5248,6 +5248,9 @@ export function TestTemplateEditor({
                       "Untitled test case"
                     }
                     suiteName={suite?.name}
+                    defaultHostLabel={
+                      hostConfigBaseline?.hostStyle ? suiteHostLabel : undefined
+                    }
                     liveVerdict={
                       workspaceLiveRecord && workspaceSelectedTrial
                         ? trialVerdict(workspaceSelectedTrial).word
