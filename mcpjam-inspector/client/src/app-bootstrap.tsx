@@ -1,10 +1,15 @@
 // Must stay the first import; see the module comment.
 import "./lib/install-failed-request-tracker";
+import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
 import { AccessRequired } from "./components/AccessRequired";
 import { traceConvexQueries } from "./lib/trace-convex-queries";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, useEffect, type ReactNode } from "react";
 import { appRoot as root } from "./app-root";
+import {
+  GuestTabRecoveryBoundary,
+  GuestTabTransitionListener,
+} from "./components/GuestTabRecoveryBoundary";
 import { SignOutBoundary } from "./components/SignOutBoundary";
 import { AppRouterProvider } from "./router";
 import "./index.css";
@@ -102,15 +107,21 @@ if (sandboxOriginFault) {
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+  useEffect(() => {
+    authRefusalDiagnostics.update({ ready: isUserReady });
+    return () => authRefusalDiagnostics.update({ ready: false });
+  }, [isUserReady]);
 
   return (
     <DbUserReadyProvider
       isEnsuringUser={isEnsuringUser}
       isUserReady={isUserReady}
     >
-      <AuthRecoveryBoundary ready={isUserReady}>
-        {children}
-      </AuthRecoveryBoundary>
+      <GuestTabRecoveryBoundary ready={isUserReady}>
+        <AuthRecoveryBoundary ready={isUserReady}>
+          {children}
+        </AuthRecoveryBoundary>
+      </GuestTabRecoveryBoundary>
     </DbUserReadyProvider>
   );
 }
@@ -435,6 +446,7 @@ if (isInIframe) {
       {...workosClientOptions}
     >
       <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
+        <GuestTabTransitionListener />
         <SignOutBoundary>
           <AuthRecoveryBoundary>
             <AuthBootstrap>
