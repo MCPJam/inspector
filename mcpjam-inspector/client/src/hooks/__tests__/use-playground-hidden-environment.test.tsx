@@ -307,6 +307,80 @@ describe("usePlaygroundHiddenEnvironment", () => {
       expect(result.current.wanted).toBe(false);
     });
 
+    const PROPS = {
+      projectId: PROJECT_ID,
+      eligible: true,
+      hostId: "host_1",
+      harnessId: null,
+      hostResolved: true,
+    };
+
+    it("drops a re-read whose chat moved to another client meanwhile (nothing runnable)", async () => {
+      state.plugins = [plugin("bits")];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      let answer!: (value: unknown) => void;
+      state.query.mockImplementationOnce(
+        () => new Promise((resolve) => (answer = resolve)),
+      );
+
+      let pending!: Promise<unknown>;
+      act(() => {
+        pending = result.current.recover();
+      });
+      rerender({ ...PROPS, hostId: "host_2" });
+      await waitFor(() => expect(result.current.environmentId).toBe("env_2"));
+
+      let recovery: unknown;
+      await act(async () => {
+        answer({ enabled: true, plugins: [] });
+        recovery = await pending;
+      });
+
+      // Not "run as a plain client turn": that answer was for host_1.
+      expect(recovery).toEqual({ ok: false });
+      expect(result.current.wanted).toBe(true);
+      expect(result.current.environmentId).toBe("env_2");
+    });
+
+    it("drops a recompose that finishes after an A→B→A switch", async () => {
+      state.plugins = [plugin("bits")];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      state.query.mockResolvedValue({
+        enabled: true,
+        plugins: [plugin("cad")],
+      });
+      let release!: (value: unknown) => void;
+      state.ensure.mockImplementationOnce(
+        () => new Promise((resolve) => (release = resolve)),
+      );
+
+      let pending!: Promise<unknown>;
+      act(() => {
+        pending = result.current.recover();
+      });
+      await waitFor(() => expect(state.ensure).toHaveBeenCalledTimes(2));
+
+      // Away to another client and back: the key is A again, but the
+      // composition under it was ensured afresh.
+      rerender({ ...PROPS, hostId: "host_2" });
+      await waitFor(() => expect(result.current.environmentId).toBe("env_2"));
+      rerender(PROPS);
+      await waitFor(() => expect(result.current.environmentId).toBe("env_3"));
+
+      let recovery: unknown;
+      await act(async () => {
+        release({ environment: { environmentId: "env_stale" }, created: true });
+        recovery = await pending;
+      });
+
+      expect(recovery).toEqual({ ok: false });
+      // The fresh composition stands.
+      expect(result.current.environmentId).toBe("env_3");
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+    });
+
     it("reports a failed re-read without throwing", async () => {
       state.plugins = [plugin("bits")];
       const { result } = render();
