@@ -57,6 +57,35 @@ describe("authoringRequest", () => {
     });
   });
 
+  it("surfaces a nested `{ error: { message } }` from Convex", async () => {
+    respond(409, { error: { message: "Draft changed. Review it again." } });
+    await expect(
+      authoringRequest({ operation: "status", jobId: "job-1" }),
+    ).rejects.toMatchObject({
+      message: "Draft changed. Review it again.",
+      status: 409,
+    });
+  });
+
+  it("never surfaces a non-string message", async () => {
+    respond(400, { error: { message: { code: "x" } } });
+    await expect(
+      authoringRequest({ operation: "status", jobId: "job-1" }),
+    ).rejects.toMatchObject({ message: "Case authoring failed.", status: 400 });
+  });
+
+  it("keeps the status for a 4xx block page instead of advising a retry", async () => {
+    authFetchMock.mockResolvedValueOnce(
+      new Response("<html>access denied</html>", { status: 403 }),
+    );
+    await expect(
+      authoringRequest({ operation: "status", jobId: "job-1" }),
+    ).rejects.toMatchObject({
+      message: "Case authoring failed (403).",
+      status: 403,
+    });
+  });
+
   it("falls back to a generic sentence when the body names nothing", async () => {
     respond(500, {});
     await expect(

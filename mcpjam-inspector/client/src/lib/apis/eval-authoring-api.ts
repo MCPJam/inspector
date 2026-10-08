@@ -54,23 +54,27 @@ export async function authoringRequest(
   // otherwise become the message the user reads. A cancellation that lands
   // while the body is read stays a cancellation.
   const data = await response.json().catch((error: unknown) => {
-    if (signal?.aborted) throw error;
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
     return null;
   });
   if (data === null)
     throw new AuthoringRequestError(
-      "The case authoring service is unavailable. Please try again.",
+      // A 4xx block page (a proxy, a Cloudflare challenge) is not fixed by
+      // retrying, so it keeps the status that explains it.
+      response.status >= 400 && response.status < 500
+        ? `Case authoring failed (${response.status}).`
+        : "The case authoring service is unavailable. Please try again.",
       response.status,
     );
   if (!response.ok) {
-    // Convex passes `{ error }` through; the inspector's own route answers
-    // `{ code, message }` (a server it could not reach, no read-only tools).
+    // Convex passes `{ error }` (or `{ error: { message } }`) through; the
+    // inspector's own route answers `{ code, message }` (a server it could
+    // not reach, no read-only tools).
     const message =
-      typeof data.error === "string"
-        ? data.error
-        : (data.error?.message ??
-          (typeof data.message === "string" ? data.message : undefined) ??
-          "Case authoring failed.");
+      [data.error, data.error?.message, data.message].find(
+        (value): value is string => typeof value === "string",
+      ) ?? "Case authoring failed.";
     notifyMCPJamLimitError({ code: data.code, details: data, message });
     throw new AuthoringRequestError(message, response.status);
   }
