@@ -9,7 +9,7 @@
  */
 
 import type { Context, Next } from "hono";
-import { SERVER_PORT, parseAllowedHosts } from "../config.js";
+import { HOSTED_MODE, SERVER_PORT, parseAllowedHosts } from "../config.js";
 import {
   hostnameMatchesAllowlist,
   isTunnelHost,
@@ -18,13 +18,34 @@ import { getActiveTunnelDomains } from "../services/tunnel-registry.js";
 import { logger as appLogger } from "../utils/logger.js";
 
 /**
+ * The origins this server's own UI is served from.
+ *
+ * Outside hosted mode (the desktop app and `npx @mcpjam/inspector`) the page
+ * making every `/api/*` request is served by this same server, on this port,
+ * so rejecting it only locks the app out of itself.
+ */
+function ownUiOrigins(): string[] {
+  return [
+    `http://localhost:${SERVER_PORT}`,
+    `http://127.0.0.1:${SERVER_PORT}`,
+  ];
+}
+
+/**
  * Get the list of allowed origins.
  * Can be overridden via ALLOWED_ORIGINS environment variable.
+ *
+ * In hosted mode the override replaces the list, since it is the deployment's
+ * exact allowlist. Outside hosted mode it can only ADD: `ALLOWED_ORIGINS` is a
+ * common variable name, and a desktop app inherits the user's OS environment.
+ * A value set there for some other project used to replace this list, and the
+ * app then 403'd its own requests (INSPECTOR-CLIENT-2F5).
  */
 function getAllowedOrigins(): string[] {
   // Allow override via environment variable
   if (process.env.ALLOWED_ORIGINS) {
     const origins = process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
+    if (!HOSTED_MODE) origins.push(...ownUiOrigins());
 
     // Wildcard origins (e.g. https://*.up.railway.app) are only safe in
     // non-production environments that deliberately opt in via
@@ -277,7 +298,9 @@ export async function originValidationMiddleware(
     return c.json(
       {
         error: "Forbidden",
-        message: "Request origin not allowed.",
+        // Names the origin, so a refusal reported from the client says what
+        // was refused. It is the request's own header, echoed as JSON.
+        message: `Request origin not allowed: ${origin}.`,
       },
       403,
     );
