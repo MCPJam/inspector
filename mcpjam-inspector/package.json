@@ -165,7 +165,7 @@
     "@tanstack/react-virtual": "^3.14.13",
     "@workos-inc/authkit-react": "^0.16.3",
     "@workos-inc/node": "^11.0.0",
-    "@xmldom/xmldom": "^0.8.13",
+    "@xmldom/xmldom": "^0.9.12",
     "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
