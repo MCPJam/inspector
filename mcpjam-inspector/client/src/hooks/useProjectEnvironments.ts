@@ -300,10 +300,11 @@ export function useCreateProjectEnvironment(): (args: {
  * row. The fingerprint is computed server-side and never crosses the wire,
  * which is what makes a client/server canonicalizer drift impossible.
  *
- * MEMBER-gated, unlike `createEnvironment`'s admin escalation for plugin pins —
- * except that pinning plugins escalates here too, for the same reason it does
- * there: pinning a version is plugin-lifecycle authority, and this must not
- * become a side door into it.
+ * MEMBER-gated, unlike `createEnvironment`'s admin escalation for plugin pins.
+ * Pinning a plugin escalates to admin here too, with one exception: a member
+ * may pin the CURRENT active, ready version of an enabled plugin, which is
+ * what an admin already chose to run (the Playground's hidden environment).
+ * Any other version is plugin-lifecycle authority and stays admin-only.
  *
  * `created` distinguishes a mint from a match. A backend that omits it reads as
  * a reuse, which only costs a word in a toast.
@@ -324,6 +325,12 @@ export function useEnsureAdhocEnvironment(): (args: {
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
+  /**
+   * Exact plugin VERSION ids to pin. A member may pin only each enabled
+   * plugin's current active, ready version; any other pin needs a project
+   * admin. Omit (never `[]`) for no pins.
+   */
+  pluginVersionIds?: string[];
 }) => Promise<{ environment: ProjectEnvironmentView; created?: boolean }> {
   return useMutation(
     "projectEnvironments:ensureAdhocEnvironment" as any,

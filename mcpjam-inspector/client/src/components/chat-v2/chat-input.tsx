@@ -406,6 +406,16 @@ interface ChatInputProps {
   moveCaretToEndTrigger?: number;
   /** All project servers for the "+" dropdown server toggles. */
   allServerConfigs?: Record<string, ServerWithName>;
+  /**
+   * Servers the project's installed plugins add to every turn. The chat route
+   * connects them itself, so they are shown as on, labelled with their plugin,
+   * and cannot be toggled here (a plugin is managed from its server's Settings).
+   */
+  pluginServers?: ReadonlyArray<{
+    serverId: string;
+    name: string;
+    pluginLabel: string;
+  }>;
   appNavigation?: ReactNode;
   /**
    * @deprecated Connectivity is now the single source of truth — the popover
@@ -532,6 +542,7 @@ export function ChatInput({
   pulseSubmit = false,
   moveCaretToEndTrigger,
   allServerConfigs,
+  pluginServers,
   appNavigation,
   onReconnectServer,
   onDisconnectServer,
@@ -747,6 +758,7 @@ export function ChatInput({
       onDisconnectServer &&
       Object.keys(allServerConfigs).length > 0,
   );
+  const pluginServerRows = pluginServers ?? [];
   // Environment mode replaces the ad-hoc section outright — presence of the
   // prop (not its length) is the mode switch, so an environment that resolves
   // to zero servers shows no dead "Add server"/Connect controls either.
@@ -762,7 +774,7 @@ export function ChatInput({
     (environmentServers.length > 0 || environmentServersOverridden);
   const hasServerOptions = isEnvironmentServerMode
     ? environmentSectionVisible
-    : Boolean(onAddServer || hasServerRows);
+    : Boolean(onAddServer || hasServerRows || pluginServerRows.length > 0);
   const showHostStyleSelectorControl =
     showHostStyleSelector &&
     Boolean(selectorHostStyle) &&
@@ -2091,6 +2103,38 @@ export function ChatInput({
                                 })}
                             </div>
                           )}
+                        {!isEnvironmentServerMode &&
+                          pluginServerRows.length > 0 && (
+                            <div data-testid="composer-plugin-servers">
+                              {pluginServerRows.map((server) => (
+                                <div
+                                  key={server.serverId}
+                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-2"
+                                  data-testid="composer-plugin-server-row"
+                                >
+                                  <div className="flex flex-1 items-center gap-2 min-w-0">
+                                    <div className="w-2 h-2 rounded-full shrink-0 bg-success" />
+                                    <span className="min-w-0 text-sm font-medium truncate">
+                                      {server.name}
+                                    </span>
+                                    <span className="min-w-0 max-w-[45%] truncate text-[10px] text-muted-foreground">
+                                      {server.pluginLabel}
+                                    </span>
+                                  </div>
+                                  <div
+                                    className="flex items-center shrink-0"
+                                    title={`Added by ${server.pluginLabel} on every message`}
+                                  >
+                                    <Switch
+                                      checked
+                                      disabled
+                                      aria-label={`${server.name} is added by ${server.pluginLabel}`}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         {!isEnvironmentServerMode && onAddServer && (
                           <button
                             type="button"
@@ -2112,8 +2156,9 @@ export function ChatInput({
                         "px-1 pb-1",
                         (isEnvironmentServerMode
                           ? environmentSectionVisible
-                          : allServerConfigs &&
-                            Object.keys(allServerConfigs).length > 0) &&
+                          : (allServerConfigs &&
+                              Object.keys(allServerConfigs).length > 0) ||
+                            pluginServerRows.length > 0) &&
                           "border-t border-border mt-1 pt-1",
                       )}
                     >

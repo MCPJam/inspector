@@ -6,6 +6,18 @@ import { createThreadAppApi } from "@/components/host-workspace/thread-app-api";
 import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
 import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
 import { useProjectPlugins } from "@/hooks/usePluginImportApi";
+import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-environment";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import type { ActivePluginServer } from "@/hooks/useActivePlugins";
+import { buildExtensionServers } from "./playground-plugins";
+import {
+  isRunnablePlugin,
+  skippedPluginsForNotice,
+} from "@/lib/plugins/hidden-environment";
+import {
+  showPluginNotice,
+  type PluginNoticeData,
+} from "@/lib/plugins/plugin-notice-display";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
 import type { PluginMessageIntent } from "@/shared/plugin-message";
@@ -190,7 +202,7 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import {
   useHost,
@@ -232,6 +244,7 @@ import { ConversationTargetNotice } from "@/components/playground/ConversationTa
 import {
   describeConversationTargetDisclosure,
   readConversationExecutionTarget,
+  readHiddenEnvironmentConversationTarget,
   type ComposerExecutionTarget,
   type ConversationExecutionTarget,
 } from "@/lib/conversation-execution-target";
@@ -370,6 +383,8 @@ const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 // template like "claude-code" would both leak the gated client to everyone
 // and have no working way to be filtered out.
 const PLAYGROUND_SEED_TEMPLATE_IDS = ["claude", "chatgpt", "cursor"] as const;
+
+const NO_PLUGIN_SERVERS: ActivePluginServer[] = [];
 
 function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
@@ -1159,6 +1174,21 @@ export function PlaygroundMain({
     }),
     [localHarnessRequested, localHarnessResolveSendTarget],
   );
+  // The project's installed plugins, while the environments UI is hidden.
+  // Plugins reach a turn only through an environment, so a chat in a project
+  // with a runnable plugin runs as a hidden ad-hoc environment composed for
+  // its client (see `lib/plugins/hidden-environment.ts`); every other chat
+  // stays the plain client turn it always was. With the environments UI on,
+  // plugins are pinned on a chosen environment instead and nothing here runs.
+  // Agent plugins load on every client — the client's plugin-extensions
+  // switch is not read here.
+  const hiddenEnvironment = usePlaygroundHiddenEnvironment({
+    projectId: convexProjectId,
+    eligible: !environmentsEnabled,
+    hostId: previewedHostId,
+    harnessId: previewedHost?.config?.harness,
+    hostResolved: !previewedHostConfigUnresolved,
+  });
 
   // ONE dialog for the whole surface. Six composers each owning their own
   // would be six dialogs racing one approval, and a compare view would open
@@ -1357,6 +1387,8 @@ export function PlaygroundMain({
     elicitationResponding,
     urlElicitationRequired,
     dismissUrlElicitationRequired,
+    hiddenEnvironmentActive,
+    hiddenEnvironmentOffReason,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
@@ -1429,6 +1461,20 @@ export function PlaygroundMain({
             // authoritative runtime config (harness/computer) for this direct
             // session, and so switching hosts forks the chat session.
             ...(previewedHostId ? { hostId: previewedHostId } : {}),
+            // The project has a runnable plugin and the environments UI is
+            // hidden: the chat hook sends this composition INSTEAD of
+            // `hostId` wherever the web chat route can run the turn, keeping
+            // the server preflight above for the chat's own servers. Absent
+            // otherwise, so a chat without plugins sends exactly what it did.
+            ...(hiddenEnvironment.wanted
+              ? {
+                  hiddenEnvironment: {
+                    environmentId: hiddenEnvironment.environmentId,
+                    pluginServerIds: hiddenEnvironment.pluginServerIds,
+                    recover: hiddenEnvironment.recover,
+                  },
+                }
+              : {}),
           }),
     },
     // Source the host-level toggle from the previewed host's resolved
@@ -1721,34 +1767,63 @@ export function PlaygroundMain({
         : null,
     [extensionIdentity, chatSessionId, multiModelEnabled],
   );
+  // The servers a hidden environment's plugins add to this chat's turns. Empty
+  // unless the chat actually carries them (see `hiddenEnvironmentActive`), so
+  // nothing claims a plugin ran on a turn that ran without it.
+  const hiddenPluginServers = hiddenEnvironmentActive
+    ? hiddenEnvironment.pluginServers
+    : NO_PLUGIN_SERVERS;
+  // Plugin-owned servers show their plugin's icons (composer icon, logo).
+  // One subscription to the project's plugins; discovery names each
+  // server's plugin, and the hidden environment's plugin servers carry them
+  // directly.
+  const pluginIconsById = usePluginIconsById(
+    useProjectPlugins(
+      extensionScope?.projectId ??
+        (hiddenPluginServers.length > 0 ? convexProjectId : null),
+    ),
+  );
+  // A chat that carries its plugins through a hidden environment shows their
+  // servers beside the selected ones: they run on every turn, so the Apps
+  // menu, sidebar Apps, settings and onboarding have to see them too.
   const extensionServers = useMemo(
     () =>
-      isEnvironmentMode
-        ? playgroundEnvironment.servers
-            .filter((server) => server.enabled)
-            .map((server) => ({ serverId: server.serverId, name: server.name }))
-        : selectedServers.flatMap((name) => {
-            const serverId = serversByName.get(name);
-            const server = servers[name];
-            // A new epoch after the first means a reconnect: entrypoints and
-            // open Apps' tool metadata are read again.
-            const connection =
-              server?.connectionStatus === "connected"
-                ? String(new Date(server.lastConnectionTime).getTime())
-                : undefined;
-            const icons = server?.initializationInfo?.serverVersion?.icons;
-            return serverId
-              ? [
-                  {
-                    serverId,
-                    name,
-                    ...(connection ? { connection } : {}),
-                    ...(Array.isArray(icons) && icons.length ? { icons } : {}),
-                  },
-                ]
-              : [];
+      buildExtensionServers({
+        isEnvironmentMode,
+        environmentServers: playgroundEnvironment.servers,
+        selectedServers,
+        serversByName,
+        servers,
+        pluginServers: hiddenPluginServers,
+        pluginIconsById,
+      }),
+    [
+      isEnvironmentMode,
+      playgroundEnvironment.servers,
+      selectedServers,
+      serversByName,
+      servers,
+      hiddenPluginServers,
+      pluginIconsById,
+    ],
+  );
+  // Compare columns each run a plain client turn, without the chat's plugins,
+  // so their Apps see only the selected servers.
+  const compareExtensionServers = useMemo(
+    () =>
+      hiddenPluginServers.length === 0
+        ? extensionServers
+        : buildExtensionServers({
+            isEnvironmentMode,
+            environmentServers: playgroundEnvironment.servers,
+            selectedServers,
+            serversByName,
+            servers,
+            pluginServers: NO_PLUGIN_SERVERS,
           }),
     [
+      hiddenPluginServers.length,
+      extensionServers,
       isEnvironmentMode,
       playgroundEnvironment.servers,
       selectedServers,
@@ -1781,7 +1856,7 @@ export function PlaygroundMain({
           projectId: convexProjectId,
           hostId,
         },
-        servers: extensionServers,
+        servers: compareExtensionServers,
         capabilities: resolved.capabilities,
         profile: (hostConfig?.harness === "codex" ? "codex" : "chatgpt") as
           | "codex"
@@ -1794,7 +1869,7 @@ export function PlaygroundMain({
       currentUserForSender?._id,
       convexProjectId,
       pluginExtensions,
-      extensionServers,
+      compareExtensionServers,
     ],
   );
   const onboardingOwnerKey = JSON.stringify([
@@ -1956,12 +2031,6 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
-  );
-  // Plugin-owned servers show their plugin's icons (composer icon, logo).
-  // One subscription to the project's plugins; discovery names each
-  // server's plugin.
-  const pluginIconsById = usePluginIconsById(
-    useProjectPlugins(extensionScope?.projectId ?? null),
   );
   usePublishPluginIcons(pluginIconsById);
   const composerMentions = useComposerMentions(
@@ -2682,6 +2751,38 @@ export function PlaygroundMain({
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isCompareMode);
 
+  // ── What the chat says about its plugins ─────────────────────────────────
+  //
+  // One plain line per chat, plus a right-rail Logs entry (see
+  // `plugin-notice-display.ts`), from the client's own read of the plugins:
+  // which installed plugins its turns skip and why, that it couldn't be set
+  // up to run them, or why this message ran without them. Said when a
+  // message is SENT in the chat — never just for opening one.
+  const pluginNotices = useMemo((): PluginNoticeData[] => {
+    const notices: PluginNoticeData[] = [];
+    const skipped = skippedPluginsForNotice(hiddenEnvironment.plugins);
+    if (skipped.length > 0) notices.push({ kind: "skipped", plugins: skipped });
+    if (hiddenEnvironment.failed) notices.push({ kind: "unavailable" });
+    if (hiddenEnvironmentOffReason) {
+      notices.push({ kind: "off", reason: hiddenEnvironmentOffReason });
+    }
+    return notices;
+  }, [
+    hiddenEnvironment.plugins,
+    hiddenEnvironment.failed,
+    hiddenEnvironmentOffReason,
+  ]);
+  // A send is the chat's status entering "submitted". Opening a chat, or a
+  // restored transcript landing in it, changes the messages but never the
+  // status, so neither says anything.
+  const pluginNoticeStatusRef = useRef(status);
+  useEffect(() => {
+    const previous = pluginNoticeStatusRef.current;
+    pluginNoticeStatusRef.current = status;
+    if (status !== "submitted" || previous === "submitted") return;
+    for (const notice of pluginNotices) showPluginNotice(chatSessionId, notice);
+  }, [status, chatSessionId, pluginNotices]);
+
   useEffect(() => {
     if (isMultiModelMode && modelCompareCards[0]) {
       lastCompareLeadIdRef.current = modelCompareCards[0].key;
@@ -3372,6 +3473,38 @@ export function PlaygroundMain({
     );
   }, []);
 
+  // What an opened conversation's recorded target READS AS, by chat id, once
+  // a hidden environment the composer made has been read as its client (see
+  // `readHiddenEnvironmentConversationTarget`). Filled before the target is
+  // restored, so both the restore and the disclosure use the same answer.
+  const readRecordedTargetsRef = useRef(
+    new Map<string, ConversationExecutionTarget>(),
+  );
+  const convexClient = useConvex();
+  const readRecordedTarget = useCallback(
+    async (
+      detail: ChatHistoryDetailSession,
+    ): Promise<ConversationExecutionTarget> => {
+      const recorded = readConversationExecutionTarget(detail);
+      const projectId = convexProjectId;
+      const target = await readHiddenEnvironmentConversationTarget(recorded, {
+        environmentsEnabled,
+        loadEnvironment: async (environmentId) =>
+          projectId && shouldQueryProjectId(projectId)
+            ? ((await convexClient.query(
+                "projectEnvironments:getEnvironment" as never,
+                { projectId, environmentId } as never,
+              )) as ProjectEnvironmentView | null)
+            : null,
+      });
+      const known = readRecordedTargetsRef.current;
+      if (known.size > 200) known.clear();
+      known.set(detail.chatSessionId, target);
+      return target;
+    },
+    [convexClient, convexProjectId, environmentsEnabled],
+  );
+
   /**
    * Record what an EXPLICITLY opened conversation says about where it ran.
    *
@@ -3386,7 +3519,9 @@ export function PlaygroundMain({
     (detail: ChatHistoryDetailSession) => {
       setRestoredConversation((previous) => ({
         chatSessionId: detail.chatSessionId,
-        target: readConversationExecutionTarget(detail),
+        target:
+          readRecordedTargetsRef.current.get(detail.chatSessionId) ??
+          readConversationExecutionTarget(detail),
         // Reopening the SAME conversation keeps the acknowledgement; a
         // different one is a different question.
         acknowledged:
@@ -3462,9 +3597,11 @@ export function PlaygroundMain({
       },
     ) => {
       if (options?.restoreExecutionTarget && detail.origin !== "api") {
+        const recordedTarget = await readRecordedTarget(detail);
+        if (options.shouldApply && !options.shouldApply()) return false;
         adoptRestoredConversationTarget(detail);
         const apply = await restoreTarget(
-          readConversationExecutionTarget(detail),
+          recordedTarget,
           options.shouldApply ?? (() => true),
         );
         if (!apply) return false;
@@ -3528,6 +3665,7 @@ export function PlaygroundMain({
       availableModels,
       loadChatSession,
       adoptRestoredConversationTarget,
+      readRecordedTarget,
       restoreTarget,
       markHistorySessionRead,
       setSelectedModel,
@@ -5122,12 +5260,26 @@ export function PlaygroundMain({
       captureProps?: Record<string, unknown>,
     ) => {
       trackSendMessage(captureProps);
+      // Compare columns each run a plain client turn: say so on the first
+      // send of each comparison. Keyed by the chat and by the compare lanes'
+      // generation, which a new or cleared chat moves on.
+      if (hiddenEnvironment.plugins.some(isRunnablePlugin)) {
+        showPluginNotice(
+          `${chatSessionId}:compare:${multiModelSessionGeneration}`,
+          { kind: "off", reason: "compare" },
+        );
+      }
       setBroadcastRequest({
         ...request,
         id: Date.now(),
       });
     },
-    [trackSendMessage],
+    [
+      trackSendMessage,
+      hiddenEnvironment.plugins,
+      chatSessionId,
+      multiModelSessionGeneration,
+    ],
   );
 
   const mergedToolRenderOverrides = useMemo(
@@ -6134,6 +6286,12 @@ export function PlaygroundMain({
         }
       : {
           allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
+          // The chat's plugins add these to every turn it carries them on,
+          // so they show as on and can't be toggled here — and they never
+          // enter `selectedServers`. Compare columns run without plugins.
+          pluginServers: isCompareMode
+            ? NO_PLUGIN_SERVERS
+            : hiddenPluginServers,
           onServerToggle: handlePlaygroundServerToggle,
           onReconnectServer: playgroundServerSelectorProps?.onReconnect,
           onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
