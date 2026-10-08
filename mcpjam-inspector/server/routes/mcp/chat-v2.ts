@@ -1720,12 +1720,25 @@ chatV2.post("/", async (c) => {
           playgroundBoxReason,
           acquired.refusal,
         );
+        // The control plane's own wait, so a caller backs off for as long as
+        // it asked instead of guessing.
+        const retryAfterMs =
+          described.status === 429 || described.status === 503
+            ? acquired.refusal.retryAfterMs
+            : undefined;
         return c.json(
           {
             error: described.message,
             code: described.code ?? "PLAYGROUND_SANDBOX_PROVISION_FAILED",
           },
           described.status,
+          retryAfterMs !== undefined
+            ? {
+                "Retry-After": String(
+                  Math.max(1, Math.ceil(retryAfterMs / 1000)),
+                ),
+              }
+            : {},
         );
       }
       playgroundHarnessBox = acquired.box;
