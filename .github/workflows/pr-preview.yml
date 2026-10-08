@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: preview-pr-${{ github.event.pull_request.number }}
-      url: ${{ steps.preview_domain.outputs.url }}
+      url: https://pr-${{ github.event.pull_request.number }}.mcpjam.dev
     env:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
@@ -256,6 +256,12 @@ jobs:
           workos config cors add "${{ steps.preview_domain.outputs.url }}" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
+          workos config redirect add "$PUBLIC_PREVIEW_ORIGIN/callback" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json
+          workos config cors add "$PUBLIC_PREVIEW_ORIGIN" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json || true
 
       # Initial health check: the preview starts wired to the default
       # backend (shared preview deployment, or staging until that's
@@ -295,7 +301,7 @@ jobs:
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
                 inspector_pr_number: context.payload.pull_request.number,
                 inspector_environment: "${{ steps.meta.outputs.environment }}",
-                preview_url: "${{ steps.preview_domain.outputs.url }}",
+                preview_url: "${{ env.PUBLIC_PREVIEW_ORIGIN }}",
               },
             });
 
@@ -305,7 +311,7 @@ jobs:
         if: always()
         uses: actions/github-script@v9
         env:
-          PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
+          PREVIEW_URL: ${{ env.PUBLIC_PREVIEW_ORIGIN }}
           # 'preview requested' is string-matched by preview-watchdog.yml —
           # keep that label verbatim when rewording.
           BACKEND_MODE: ${{ steps.backend_branch.outputs.exists == 'true' && 'preview requested' || (vars.PREVIEW_BACKEND_VITE_CONVEX_URL != '' && 'shared preview backend' || 'staging fallback') }}
@@ -382,7 +388,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: preview-pr-be-${{ github.event.client_payload.backend_pr_number }}
-      url: ${{ steps.preview_domain.outputs.url }}
+      url: https://pr-be-${{ github.event.client_payload.backend_pr_number }}.mcpjam.dev
     env:
       BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
@@ -543,6 +549,12 @@ jobs:
           workos config cors add "${{ steps.preview_domain.outputs.url }}" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
+          workos config redirect add "$PUBLIC_PREVIEW_ORIGIN/callback" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json
+          workos config cors add "$PUBLIC_PREVIEW_ORIGIN" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json || true
 
       - name: Dispatch backend preview request
         if: steps.preview_domain.outputs.url != ''
@@ -574,7 +586,7 @@ jobs:
                 inspector_repo: context.repo.owner + "/" + context.repo.repo,
                 inspector_pr_number: "0",
                 inspector_environment: "${{ steps.meta.outputs.environment }}",
-                preview_url: "${{ steps.preview_domain.outputs.url }}",
+                preview_url: "${{ env.PUBLIC_PREVIEW_ORIGIN }}",
                 comment_issue_owner: beOwner,
                 comment_issue_repo: beRepo,
                 comment_issue_number: String(process.env.BACKEND_PR_NUMBER),
@@ -584,7 +596,7 @@ jobs:
       - name: Upsert preview comment on backend PR
         uses: actions/github-script@v9
         env:
-          PREVIEW_URL: ${{ steps.preview_domain.outputs.url }}
+          PREVIEW_URL: ${{ env.PUBLIC_PREVIEW_ORIGIN }}
           BACKEND_REPO_FULL: ${{ github.event.client_payload.backend_repo }}
           BACKEND_PR_NUMBER: ${{ github.event.client_payload.backend_pr_number }}
           PREVIEW_DEPLOYED_SHA: ${{ steps.preview_commit.outputs.deployed_sha }}
@@ -839,6 +851,12 @@ jobs:
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json
           workos config cors add "${{ steps.preview_domain.outputs.url }}" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json || true
+          workos config redirect add "$PUBLIC_PREVIEW_ORIGIN/callback" \
+            --api-key "$STAGING_WORKOS_API_KEY" \
+            --json
+          workos config cors add "$PUBLIC_PREVIEW_ORIGIN" \
             --api-key "$STAGING_WORKOS_API_KEY" \
             --json || true
 

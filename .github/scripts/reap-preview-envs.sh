@@ -260,6 +260,11 @@ while IFS=$'\t' read -r ENV_ID ENV_NAME DOMAIN SERVICE_DOMAINS CUSTOM_DOMAINS <&
       fail "$ENV_NAME" "WorkOS redirect URI removal unconfirmed; retrying next run"
       continue
     fi
+    if ! WORKOS_CLEANUP_STRICT=1 \
+      "$SCRIPT_DIR/workos-cleanup.sh" "https://${ENV_NAME}.mcpjam.dev"; then
+      fail "$ENV_NAME" "protected WorkOS redirect removal unconfirmed; retrying next run"
+      continue
+    fi
   fi
 
   if "$SCRIPT_DIR/railway-retry.sh" "$SCRIPT_DIR/railway-env.sh" delete "$ENV_ID"; then
