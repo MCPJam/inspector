@@ -75,6 +75,14 @@ const {
   mockHostedMode: vi.fn(() => false),
 }));
 
+const { analyticsTrackMock } = vi.hoisted(() => ({
+  analyticsTrackMock: vi.fn(),
+}));
+vi.mock("@/lib/analytics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/analytics")>()),
+  track: analyticsTrackMock,
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: toastError,
@@ -1520,6 +1528,27 @@ describe("useServerState OAuth callback failures", () => {
       ([action]) => action?.type === "CONNECT_SUCCESS"
     );
     expect(successCall?.[0]?.config?.mcpProtocolVersion).toBe("2026-07-28");
+  });
+
+  it("records one connect outcome when the attempt ends", async () => {
+    reconnectServerMock.mockResolvedValueOnce({ success: true, initInfo: null });
+    analyticsTrackMock.mockClear();
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState());
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        { accessToken: "access-token", clientId: "client-id" },
+        "https://example.com/mcp"
+      );
+    });
+
+    const outcomes = analyticsTrackMock.mock.calls.filter(
+      ([event]) => event === "server_connect_outcome"
+    );
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0][1]).toMatchObject({ outcome: "success" });
   });
 
   it("imports debugger-applied OAuth tokens before reconnecting a synced server", async () => {

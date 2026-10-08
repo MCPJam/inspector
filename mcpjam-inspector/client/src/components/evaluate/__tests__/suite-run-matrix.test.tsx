@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { ConvexError } from "convex/values";
 import { SuiteRunReview } from "../suite-run-review";
 import {
   inEnvironmentBatches,
+  plannedPreflight,
   planRunMatrix,
   seedRunMatrix,
   seedSuiteRunGroup,
@@ -19,7 +21,15 @@ const {
   groups,
   projectDefault,
   availableModels,
+  useQueries,
+  projectServers,
+  userReady,
+  composeCapable,
 } = vi.hoisted(() => ({
+  useQueries: vi.fn((_queries: Record<string, unknown>) => ({})),
+  projectServers: { value: undefined as unknown[] | undefined },
+  userReady: { value: true },
+  composeCapable: { value: true },
   ensure: vi.fn(),
   query: vi.fn(async () => ({ ephemeralEnvironmentLaunch: true })),
   mutation: vi.fn(),
@@ -37,9 +47,18 @@ const {
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
-  // `hostConfigsV2:getProjectDefault`, the only reactive query in the dialog.
-  useQuery: (_name: string, args: unknown) =>
-    args === "skip" ? undefined : projectDefault.value,
+  // `hostConfigsV2:getProjectDefault`; the preflight's other reads stay empty.
+  useQuery: (name: string, args: unknown) =>
+    args !== "skip" && name === "hostConfigsV2:getProjectDefault"
+      ? projectDefault.value
+      : undefined,
+  // The run preflight's environment resolutions.
+  useQueries: (queries: Record<string, unknown>) => useQueries(queries),
+}));
+// A signed-in, ready user: the preflight only resolves environments then.
+vi.mock("@/contexts/db-user-ready-context", async (original) => ({
+  ...(await original<typeof import("@/contexts/db-user-ready-context")>()),
+  useDbUserReady: () => userReady.value,
 }));
 // The mount-time capabilities probe; `query` then only sees launch probes.
 vi.mock("@/hooks/use-environment-capabilities", () => ({
@@ -72,7 +91,11 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => projectEnvironments.value,
 }));
 vi.mock("@/hooks/useViews", () => ({
-  useProjectServerAttachments: ({ projectId }: { projectId: string | null }) => ({
+  useProjectServerAttachments: ({
+    projectId,
+  }: {
+    projectId: string | null;
+  }) => ({
     serverAttachments: projectId ? groups.value : [],
     isLoading: false,
   }),
@@ -80,9 +103,14 @@ vi.mock("@/hooks/useViews", () => ({
 vi.mock("@/hooks/useProjects", () => ({
   shouldQueryProjectId: (projectId: string | null | undefined) =>
     Boolean(projectId),
+  // The preflight reads the project's servers; undefined while loading.
+  useProjectServers: () => ({ servers: projectServers.value }),
 }));
 vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
-  useEvalComposeCapable: () => ({ capable: true, pending: false }),
+  useEvalComposeCapable: () => ({
+    capable: composeCapable.value,
+    pending: false,
+  }),
 }));
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: ({
@@ -153,7 +181,10 @@ const cases = [{ _id: "case", runs: 1, models: [] }] as unknown as EvalCase[];
 it("seeds model overrides and preserves existing environment ids", () => {
   const selection = seedRunMatrix(suite, environments);
   expect(selection).toEqual({
-    claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "sonnet" }] },
+    claude: {
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "sonnet" }],
+    },
   });
   expect(planRunMatrix(suite, environments, selection)[0].environmentId).toBe(
     "env",
@@ -166,7 +197,10 @@ it("keeps inherited models and preserves server scope for a new model", () => {
   ).toBe(true);
   expect(
     planRunMatrix(suite, environments, {
-      claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] },
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
     })[0].stack,
   ).toEqual({
     hostId: "claude",
@@ -206,8 +240,16 @@ describe("reasoning effort in the run matrix", () => {
 
   it("seeds two efforts of one model as two cells, each reusing its own environment", () => {
     const siblings = [
-      { ...environments[0], environmentId: "env-low", modelSelection: selectionWith("low") },
-      { ...environments[0], environmentId: "env-high", modelSelection: selectionWith("high") },
+      {
+        ...environments[0],
+        environmentId: "env-low",
+        modelSelection: selectionWith("low"),
+      },
+      {
+        ...environments[0],
+        environmentId: "env-high",
+        modelSelection: selectionWith("high"),
+      },
     ] as typeof environments;
     const siblingSuite = { ...suite, environmentIds: ["env-low", "env-high"] };
     const selection = seedRunMatrix(siblingSuite, siblings as never);
@@ -263,18 +305,25 @@ describe("reasoning effort in the run matrix", () => {
       },
     });
     expect(
-      planRunMatrix(plainSuite, plain, selection, { modelSelections: true }).map(
-        (cell) => cell.environmentId,
-      ),
+      planRunMatrix(plainSuite, plain, selection, {
+        modelSelections: true,
+      }).map((cell) => cell.environmentId),
     ).toEqual(["a", "b"]);
   });
 
   it("keeps both environments that differ only by effort (High and default)", () => {
     const siblings = [
-      { ...environments[0], environmentId: "env-high", modelSelection: selectionWith("high") },
+      {
+        ...environments[0],
+        environmentId: "env-high",
+        modelSelection: selectionWith("high"),
+      },
       { ...environments[0], environmentId: "env-default" },
     ] as typeof environments;
-    const siblingSuite = { ...suite, environmentIds: ["env-high", "env-default"] };
+    const siblingSuite = {
+      ...suite,
+      environmentIds: ["env-high", "env-default"],
+    };
     const selection = seedRunMatrix(siblingSuite, siblings as never);
     const cells = planRunMatrix(siblingSuite, siblings as never, selection, {
       modelSelections: true,
@@ -354,7 +403,12 @@ it("never derives a new cell's servers from the suite's legacy group", () => {
   const [cell] = planRunMatrix(
     { ...suite, serverAttachmentId: "legacy-group" },
     [{ ...environments[0], serverAttachmentId: undefined }],
-    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
+    {
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
+    },
   );
   expect(cell.stack).not.toHaveProperty("serverAttachmentId");
   expect(cell.missingGroup).toBe(true);
@@ -367,7 +421,12 @@ it("blocks a new cell when the client's setups disagree", () => {
       environments[0],
       { ...environments[0], environmentId: "env-2", serverAttachmentId: "b" },
     ],
-    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
+    {
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
+    },
   );
   expect(plan).toHaveLength(1);
   expect(plan[0].blocked).toMatch(/setups differ/);
@@ -382,10 +441,157 @@ it("blocks a new cell whose template carries what a one-run change can't copy", 
         secretSelection: { mode: "explicit", secretIds: ["secret"] },
       },
     ],
-    { claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] } },
+    {
+      claude: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "opus" }],
+      },
+    },
   );
   expect(cell.blocked).toMatch(/grants project secrets/);
 });
+it("preflights the cells a run launches, and the setup a new cell copies", () => {
+  const plan = planRunMatrix(suite, environments, {
+    claude: {
+      includeClientDefaults: true,
+      explicitTargets: [{ modelId: "sonnet" }],
+    },
+  });
+  expect(plannedPreflight(plan)).toEqual({
+    environmentIds: ["env"],
+    // "env" also launches as itself, so nothing about it is template-only.
+    templateOnlyIds: [],
+    targets: [{ hostId: "claude" }, { hostId: "claude", modelId: "sonnet" }],
+  });
+  // A new cell alone still brings the setup it copies.
+  const newOnly = planRunMatrix(suite, environments, {
+    claude: {
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "opus" }],
+    },
+  });
+  expect(plannedPreflight(newOnly)).toMatchObject({
+    environmentIds: ["env"],
+    templateOnlyIds: ["env"],
+  });
+});
+
+describe("with the backend's answer", () => {
+  const renderReview = () =>
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={suite}
+        cases={cases}
+        environments={environments}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+  it("blocks Start on an environment the backend refuses", () => {
+    useQueries.mockImplementation(() => ({
+      env: new ConvexError({
+        code: "ENV_SERVERS_UNRESOLVED",
+        message:
+          'Server "crm" in this environment\'s server group was deleted. Pick the servers again before running.',
+      }),
+    }));
+    renderReview();
+    expect(screen.getByText(/Server "crm" in this environment/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
+  it("asks nothing before the user is ready", () => {
+    userReady.value = false;
+    renderReview();
+    expect(useQueries).toHaveBeenLastCalledWith({});
+  });
+
+  // An older deployment picks environments with checkboxes, not the matrix.
+  it("lets an older deployment start once the refused environment is deselected", () => {
+    composeCapable.value = false;
+    useQueries.mockImplementation(() => ({
+      env: new ConvexError({
+        code: "ENV_SERVERS_UNRESOLVED",
+        message: "env refused",
+      }),
+      "env-opus": { servers: [] },
+    }));
+    render(
+      <SuiteRunReview
+        projectId="project"
+        suite={{ ...suite, environmentIds: ["env", "env-opus"] }}
+        cases={cases}
+        environments={[
+          environments[0],
+          { ...environments[0], environmentId: "env-opus", modelId: "opus" },
+        ]}
+        hostNamesById={new Map()}
+        onStart={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const start = () => screen.getByRole("button", { name: "Start run" });
+    expect(start()).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /sonnet/ }));
+    expect(start()).toHaveProperty("disabled", false);
+  });
+
+  it("lets Start through while the resolution is still loading", () => {
+    useQueries.mockImplementation(() => ({ env: undefined }));
+    renderReview();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  // The project's server list leaves plugin components out, so a pinned
+  // plugin's server is neither connected nor listed, and is not "removed".
+  it("does not call a pinned plugin's server removed", () => {
+    projectServers.value = [];
+    useQueries.mockImplementation(() => ({
+      env: { servers: [{ serverId: "srv-plugin", name: "plugin-tools" }] },
+    }));
+    renderReview();
+    expect(screen.queryByText(/plugin-tools/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+});
+
+it("stops preflighting a saved pairing once it is deselected", () => {
+  const twoModels = { ...suite, environmentIds: ["env", "env-opus"] };
+  const both = [
+    environments[0],
+    { ...environments[0], environmentId: "env-opus", modelId: "opus" },
+  ];
+  useQueries.mockClear();
+  render(
+    <SuiteRunReview
+      projectId="project"
+      suite={twoModels}
+      cases={cases}
+      environments={both}
+      hostNamesById={new Map()}
+      onStart={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const asked = () => Object.keys(useQueries.mock.lastCall?.[0] ?? {});
+  expect(asked()).toEqual(["env", "env-opus"]);
+  // The matrix stub keeps only "opus" on this client.
+  fireEvent.click(screen.getByRole("button", { name: "Change model" }));
+  expect(asked()).toEqual(["env-opus"]);
+});
+
 it("resolves changed combinations only at launch without modifying the suite", async () => {
   ensure.mockResolvedValue([{ environment: { environmentId: "new-env" } }]);
   const onStart = vi.fn();
@@ -406,7 +612,11 @@ it("resolves changed combinations only at launch without modifying the suite", a
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["new-env"] }),
-      { iterationOverride: 5, ephemeralEnvironment: true },
+      {
+        iterationOverride: 5,
+        ephemeralEnvironment: true,
+        throwOnFailure: true,
+      },
     ),
   );
   expect(ensure).toHaveBeenCalledWith(
@@ -424,6 +634,11 @@ it("resolves changed combinations only at launch without modifying the suite", a
 });
 
 beforeEach(() => {
+  useQueries.mockImplementation(() => ({}));
+  useQueries.mockClear();
+  projectServers.value = undefined;
+  userReady.value = true;
+  composeCapable.value = true;
   ensure.mockReset();
   query.mockReset();
   query.mockResolvedValue({ ephemeralEnvironmentLaunch: true });
@@ -452,7 +667,7 @@ it("launches saved pairings without a temporary-environment flag or capability p
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["env"] }),
-      { iterationOverride: 5 },
+      { iterationOverride: 5, throwOnFailure: true },
     ),
   );
   expect(ensure).not.toHaveBeenCalled();
@@ -572,7 +787,10 @@ it("derives a one-run cell from a pinned setup on the backend instead of blockin
     },
   ];
   const opus = {
-    claude: { includeClientDefaults: false, explicitTargets: [{ modelId: "opus" }] },
+    claude: {
+      includeClientDefaults: false,
+      explicitTargets: [{ modelId: "opus" }],
+    },
   };
   expect(planRunMatrix(suite, pinned, opus)[0].blocked).toMatch(
     /pins plugin versions/,
@@ -606,7 +824,11 @@ it("launches a derived cell without modifying the suite", async () => {
   await waitFor(() =>
     expect(onStart).toHaveBeenCalledWith(
       expect.objectContaining({ environmentIds: ["derived"] }),
-      { iterationOverride: 5, ephemeralEnvironment: true },
+      {
+        iterationOverride: 5,
+        ephemeralEnvironment: true,
+        throwOnFailure: true,
+      },
     ),
   );
   expect(mutation).toHaveBeenCalledWith(
@@ -640,7 +862,11 @@ describe("a suite without environments", () => {
     hostAttachments: [],
   } as unknown as EvalSuite;
   const legacyCases = [
-    { _id: "draw", runs: 1, models: [{ model: "haiku", provider: "anthropic" }] },
+    {
+      _id: "draw",
+      runs: 1,
+      models: [{ model: "haiku", provider: "anthropic" }],
+    },
     {
       _id: "share",
       runs: 1,
@@ -651,7 +877,10 @@ describe("a suite without environments", () => {
       ],
     },
   ] as unknown as EvalCase[];
-  const renderLegacy = (overrides: Partial<EvalSuite> = {}, onStart = vi.fn()) =>
+  const renderLegacy = (
+    overrides: Partial<EvalSuite> = {},
+    onStart = vi.fn(),
+  ) =>
     render(
       <SuiteRunReview
         projectId="project"
@@ -680,6 +909,19 @@ describe("a suite without environments", () => {
     availableModels.value = [{ id: "haiku" }];
   });
 
+  // Its cells run on the server group picked here, not on the servers the
+  // suite saved, so those are what the preflight checks.
+  it("preflights the picked group's servers, not the suite's own", () => {
+    projectServers.value = [{ _id: "server-1", name: "Excalidraw (App)" }];
+    renderLegacy({ environment: { servers: ["gone-from-project"] } } as never);
+    expect(screen.getByText(/Excalidraw \(App\) isn't connected/)).toBeTruthy();
+    expect(screen.queryByText(/gone-from-project/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Start run" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
   it("pre-fills its servers, the project's default client and the cases' models, then runs one-run cells", async () => {
     ensure.mockResolvedValue([{ environment: { environmentId: "one-run" } }]);
     const onStart = vi.fn();
@@ -696,7 +938,11 @@ describe("a suite without environments", () => {
     await waitFor(() =>
       expect(onStart).toHaveBeenCalledWith(
         expect.objectContaining({ environmentIds: ["one-run"] }),
-        { iterationOverride: 5, ephemeralEnvironment: true },
+        {
+          iterationOverride: 5,
+          ephemeralEnvironment: true,
+          throwOnFailure: true,
+        },
       ),
     );
     // The suite's own skills and image ride along; the suite is not changed.
@@ -718,8 +964,18 @@ describe("a suite without environments", () => {
   it("starts from the clients it attaches that still exist", () => {
     renderLegacy({
       hostAttachments: [
-        { namedHostId: "claude", enabledOptionalServerIds: [], hostName: "Claude", resolvedServerNames: [] },
-        { namedHostId: "deleted", enabledOptionalServerIds: [], hostName: "Gone", resolvedServerNames: [] },
+        {
+          namedHostId: "claude",
+          enabledOptionalServerIds: [],
+          hostName: "Claude",
+          resolvedServerNames: [],
+        },
+        {
+          namedHostId: "deleted",
+          enabledOptionalServerIds: [],
+          hostName: "Gone",
+          resolvedServerNames: [],
+        },
       ],
     });
     expect(Object.keys(matrixState())).toEqual(["claude"]);
@@ -788,7 +1044,9 @@ describe("an SDK suite", () => {
     const onStart = vi.fn();
     renderSdk(onStart);
     // No saved environment with servers: nothing to switch to.
-    expect(screen.queryByRole("radio", { name: "Saved environment" })).toBeNull();
+    expect(
+      screen.queryByRole("radio", { name: "Saved environment" }),
+    ).toBeNull();
     expect(screen.getByTestId("server-picker")).toHaveTextContent(
       "Pick a server group",
     );
@@ -799,7 +1057,11 @@ describe("an SDK suite", () => {
     await waitFor(() =>
       expect(onStart).toHaveBeenCalledWith(
         expect.objectContaining({ environmentIds: ["one-run"] }),
-        { iterationOverride: 5, ephemeralEnvironment: true },
+        {
+          iterationOverride: 5,
+          ephemeralEnvironment: true,
+          throwOnFailure: true,
+        },
       ),
     );
     expect(ensure).toHaveBeenCalledWith({
@@ -831,8 +1093,15 @@ describe("an SDK suite", () => {
     fireEvent.click(start);
     await waitFor(() =>
       expect(onStart).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentIds: ["prod"], hostAttachments: [] }),
-        { iterationOverride: 5, ephemeralEnvironment: true },
+        expect.objectContaining({
+          environmentIds: ["prod"],
+          hostAttachments: [],
+        }),
+        {
+          iterationOverride: 5,
+          ephemeralEnvironment: true,
+          throwOnFailure: true,
+        },
       ),
     );
     expect(ensure).not.toHaveBeenCalled();
@@ -862,7 +1131,11 @@ describe("seeding a suite without environments", () => {
       [
         {
           models: [
-            { model: "sonnet", provider: "anthropic", selection: selection("high") },
+            {
+              model: "sonnet",
+              provider: "anthropic",
+              selection: selection("high"),
+            },
             { model: "n/a", provider: "external" },
             { model: "retired", provider: "anthropic" },
           ],
@@ -918,7 +1191,11 @@ describe("seeding a suite without environments", () => {
 
   it("starts from the backend's default client when the suite attaches none", () => {
     const hosts = [
-      { hostId: "owned", hostConfigId: "cfg-default", ownerScope: { type: "journeys" as const } },
+      {
+        hostId: "owned",
+        hostConfigId: "cfg-default",
+        ownerScope: { type: "journeys" as const },
+      },
       { hostId: "first", hostConfigId: "cfg-first", ownerScope: null },
       { hostId: "default", hostConfigId: "cfg-default" },
     ];
@@ -935,7 +1212,9 @@ describe("seeding a suite without environments", () => {
         { _id: "g", resolvedServerNames: ["[deleted server]"] },
       ]),
     ).toBeNull();
-    expect(seedSuiteRunGroup({ serverAttachmentId: "other" }, [group])).toBeNull();
+    expect(
+      seedSuiteRunGroup({ serverAttachmentId: "other" }, [group]),
+    ).toBeNull();
     expect(seedSuiteRunGroup({}, [group])).toBeNull();
   });
 
@@ -947,7 +1226,12 @@ describe("seeding a suite without environments", () => {
       selectedSkillIds: ["skill-1"],
       environment: { servers: [], computerEnvironmentId: "image-1" },
     } as unknown as EvalSuite;
-    const cells = { mcpjam: { includeClientDefaults: false, explicitTargets: [{ modelId: "haiku" }] } };
+    const cells = {
+      mcpjam: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "haiku" }],
+      },
+    };
     expect(planRunMatrix(legacy, [], cells, { group: "picked" })).toEqual([
       {
         stack: {

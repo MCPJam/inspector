@@ -39,6 +39,16 @@ export interface PluginInstanceIdentity {
 export type PluginInstanceAdmissionRead = <T>(
   read: () => Promise<T>,
 ) => Promise<T>;
+/** The fenced reads of one authorization taken before the invoker starts
+ * (see `PluginInstanceRegistry.fence`). Opaque outside this module. */
+export interface PluginInstanceFence {
+  readonly read: PluginInstanceAdmissionRead;
+}
+type FenceState = { reads: number; reading: boolean };
+const fences = new WeakMap<
+  PluginInstanceFence,
+  { token: string; identity: string; state: FenceState; used: boolean }
+>();
 export interface PluginInstanceInvocationPorts extends PluginInvocationPorts {
   /** The runtime places these fences before target authorization and after its
    * catalog wait. Other adapters retain the ordinary serial ownership checks. */
@@ -694,6 +704,65 @@ export class PluginInstanceRegistry {
     return record.instance;
   }
 
+  /** One authorization's two reads, each the instance's durable control and
+   * the caller's admission query side by side. Both legs are observed,
+   * including late failure of either; neither permits the next step alone. */
+  private fencedReads(
+    token: string,
+    identity: PluginInstanceIdentity,
+    requestSignal: AbortSignal,
+  ) {
+    const state: FenceState = { reads: 0, reading: false };
+    const read: PluginInstanceAdmissionRead = async (query) => {
+      requestSignal.throwIfAborted();
+      this.get(token, identity);
+      if (state.reading || state.reads >= 2)
+        throw new PluginInvocationError("INSTANCE_AUTHORIZATION_INVALID");
+      state.reading = true;
+      try {
+        const [control, admission] = await Promise.allSettled([
+          this.getPersistent(token, identity, requestSignal),
+          Promise.resolve().then(query),
+        ]);
+        requestSignal.throwIfAborted();
+        if (control.status === "rejected") throw control.reason;
+        if (admission.status === "rejected") throw admission.reason;
+        this.get(token, identity);
+        state.reads++;
+        return admission.value;
+      } finally {
+        state.reading = false;
+      }
+    };
+    return { read, state };
+  }
+
+  /**
+   * Fenced reads for a request's FIRST authorization, run by the route before
+   * the invoker starts (it needs the result to decide approval and to check
+   * the call's origin and arguments). They are exactly the reads an invoker
+   * authorization makes. Pass the fence to `invoke`: the invoker's first
+   * authorization may then reuse that resolution instead of repeating the same
+   * two reads with nothing in between, but only when it completed both reads
+   * and no other authorization has used it.
+   */
+  fence(
+    token: string,
+    identity: PluginInstanceIdentity,
+    signal: AbortSignal,
+  ): PluginInstanceFence {
+    this.get(token, identity);
+    const { read, state } = this.fencedReads(token, identity, signal);
+    const fence: PluginInstanceFence = Object.freeze({ read });
+    fences.set(fence, {
+      token,
+      identity: identityKey(identity),
+      state,
+      used: false,
+    });
+    return fence;
+  }
+
   invoke(
     token: string,
     identity: PluginInstanceIdentity,
@@ -702,8 +771,17 @@ export class PluginInstanceRegistry {
     params: PluginToolCallParams,
     signal?: AbortSignal,
     origin: PluginInvocationOrigin = "app",
+    fence?: PluginInstanceFence,
   ) {
     const instance = this.get(token, identity);
+    let first = fence ? fences.get(fence) : undefined;
+    if (
+      fence &&
+      (!first ||
+        first.token !== token ||
+        first.identity !== identityKey(identity))
+    )
+      throw new PluginInvocationError("INSTANCE_AUTHORIZATION_INVALID");
     if (
       origin !== "app" &&
       !(
@@ -723,33 +801,21 @@ export class PluginInstanceRegistry {
         ...ports,
         authorize: async (owner, callOrigin, next, requestSignal) => {
           if (ports.authorizeInstance) {
-            let reads = 0;
-            let reading = false;
-            const read: PluginInstanceAdmissionRead = async (query) => {
-              requestSignal.throwIfAborted();
-              this.get(token, identity);
-              if (reading || reads >= 2)
-                throw new PluginInvocationError(
-                  "INSTANCE_AUTHORIZATION_INVALID",
-                );
-              reading = true;
-              try {
-                // Both results are observed, including late failure of either
-                // leg. Neither may permit the next runtime step on its own.
-                const [control, admission] = await Promise.allSettled([
-                  this.getPersistent(token, identity, requestSignal),
-                  Promise.resolve().then(query),
-                ]);
-                requestSignal.throwIfAborted();
-                if (control.status === "rejected") throw control.reason;
-                if (admission.status === "rejected") throw admission.reason;
-                this.get(token, identity);
-                reads++;
-                return admission.value;
-              } finally {
-                reading = false;
-              }
-            };
+            // Only the first authorization may stand on the route's fence,
+            // and only when that fence made both of its reads.
+            const prior =
+              first &&
+              !first.used &&
+              !first.state.reading &&
+              first.state.reads === 2
+                ? first
+                : undefined;
+            first = undefined;
+            const { read, state } = this.fencedReads(
+              token,
+              identity,
+              requestSignal,
+            );
             const authorization = await ports.authorizeInstance(
               owner,
               callOrigin,
@@ -757,8 +823,15 @@ export class PluginInstanceRegistry {
               requestSignal,
               read,
             );
-            if (reading || reads !== 2)
+            if (state.reading)
               throw new PluginInvocationError("INSTANCE_AUTHORIZATION_INVALID");
+            if (state.reads !== 2) {
+              if (state.reads !== 0 || !prior || prior.used)
+                throw new PluginInvocationError(
+                  "INSTANCE_AUTHORIZATION_INVALID",
+                );
+              prior.used = true;
+            }
             this.get(token, identity);
             return authorization;
           }

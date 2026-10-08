@@ -13,6 +13,7 @@ import {
 } from "./chat-v2-plugin-forms.js";
 import { createModelFormDispatch, createModelFormExecutor } from "../../services/plugin-host/model-forms.js";
 import { admitPluginWorkspace, assertPluginWorkspaceRuntime } from "../../services/plugin-host/admission.js";
+import { pluginChatRefusal } from "./chat-v2-plugin-refusal.js";
 import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
 import {
   globalOwnerAdmission,
@@ -2490,6 +2491,14 @@ chatV2.post("/", async (c) => {
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = isScenarioSession ? "scenario" : "playground";
       const isDirectChat = !isScenarioSession;
+      // The turn's servers minus the ones a plugin contributed, for the
+      // trace's host config (see where it is built below).
+      const pluginServerIdSet = new Set(
+        effectiveCapabilities?.pluginServerIds ?? [],
+      );
+      const hostConfigServerIds = effectiveServerIds.filter(
+        (serverId) => !pluginServerIdSet.has(serverId),
+      );
 
       // Server twin of the client's `send_message` — fires even when the
       // browser can't reach PostHog. Identity: guests always resolve (the
@@ -2831,7 +2840,10 @@ chatV2.post("/", async (c) => {
                     resolvedExecution.modelVisibleMcpToolResults,
                   mcpToolResultImageRendering:
                     resolvedExecution.mcpToolResultImageRendering,
-                  selectedServerIds: effectiveServerIds,
+                  // Plugin servers stay out: ingestion's server-scope check
+                  // refuses a plugin id in a host config (lifecycle bypass),
+                  // and would drop the trace's whole host config with it.
+                  selectedServerIds: hostConfigServerIds,
                 })
             : null,
           selectedServerNames: effectiveServerNames,
@@ -2915,6 +2927,15 @@ chatV2.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
       );
     }
+    const pluginRefusal = pluginChatRefusal(error);
+    if (pluginRefusal)
+      return webError(
+        c,
+        pluginRefusal.status,
+        pluginRefusal.code,
+        pluginRefusal.message,
+        pluginRefusal.details,
+      );
     // `webErrorFromRoute`, not `webError` — this call dropped
     // `routeError.normalized`, so the envelope carried no `origin` and no
     // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,

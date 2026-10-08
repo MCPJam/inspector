@@ -1143,6 +1143,42 @@ With `--format json`, a single machine-readable startup object (public URL, serv
 
 ---
 
+## `readiness check` commands
+
+Grade a server locally — from your machine, against the URL you supply. No account required. Results are printed to stdout and never uploaded.
+
+### `readiness check claude`
+
+Grade a server against Anthropic's connector-directory rules. Uses shared connection flags (see [`server` commands](#server-commands)) plus:
+
+| Flag | Description |
+|------|-------------|
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+### `readiness check openai`
+
+Grade a server against OpenAI's app-directory rules. `--submission-mode` is required and never inferred.
+
+| Flag | Description |
+|------|-------------|
+| `--submission-mode <mode>` | Declared submission shape: `mcp-only`, `mcp-imported-skills`, `mcp-package`, or `mcp-imported-skills-package` |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags.
+
+### `readiness check muse`
+
+Grade a server against Meta's Muse connector guidelines. Free — no AI observations.
+
+| Flag | Description |
+|------|-------------|
+| `--submission-profile <path>` | JSON submission profile (overview, contacts, docs, credentials, tool classes). Without it the submission verdict stays `incomplete`. |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags (see [`server` commands](#server-commands)).
+
+---
+
 ## `readiness` hosted commands
 
 Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
@@ -1180,6 +1216,16 @@ Start a hosted readiness run that grades a saved server against OpenAI's app-dir
 | `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
 | `--idempotency-key <key>` | No | Replay guard |
 
+### `readiness start muse`
+
+Start a hosted readiness run that grades a saved server against Meta's Muse connector guidelines. Free — Muse has no AI observations. Returns immediately with a run id; poll with `readiness status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+
 ### `readiness status`
 
 Read one hosted readiness run. The response carries three independent axes: `status` (whether the run finished), `overallStatus` (the grade — a `completed` run can be `not-ready`), and `llmObservations` (whether the optional model pass ran).
@@ -1196,7 +1242,7 @@ List hosted readiness runs, newest first.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID |
-| `--kind <publisher>` | No | Narrow to `claude` or `openai` |
+| `--kind <publisher>` | No | Narrow to `claude`, `openai`, or `muse` |
 | `--server <idOrName>` | No | Narrow to one saved server |
 | `--limit <n>` | No | Rows to return (1–100) |
 
@@ -1295,7 +1341,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--notes <text>` | No | Free-text note stored on the run |
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
-| `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+| `--idempotency-key <key>` | No | Retry key for a lost launch response. For `--file`, a fresh key is minted and printed on every invocation when this flag is omitted; supply the printed key to replay the same run instead of starting a new one |
 | `--wait` | No | Wait for every launched run to reach a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
@@ -1466,16 +1512,12 @@ keeps whatever hosts it already has. Host attachment synchronization only
 runs when no explicit CLI target overrides the file. Environment attachment
 synchronization is unaffected and always runs.
 
-Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
-declared suite id, project, target, and every run-affecting knob
-(`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
-`--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
-`--refresh-snapshot`, compose flags, and the normalized
-`--allow-approximated` set with its `--approval-reason`). Repeating the same
-file with the same knobs returns the run it already started; changing a knob
-starts a new one. The approval set is sorted and keyed by AUTHORED case id, so
-`--allow-approximated a b` and `--allow-approximated b a` are the same run
-while approving nothing is a different one. `--notes` is not part of the key.
+Without `--idempotency-key`, the CLI mints a fresh UUID for every invocation
+and prints it to stderr before launch (`Eval idempotency key: <key>`). Each
+invocation therefore starts and bills a new run. To retry a launch whose
+response was lost — without starting a second run — pass the key that was
+printed: `--idempotency-key <printed-key>`. A replay is marked `deduped` in
+the receipt and human output. `--notes` is not part of the key.
 
 ##### Imported cases: live tool resolution, and per-run approval
 
@@ -1553,8 +1595,9 @@ that names `eval create --file`. The converse is also true: `eval create --file`
 on a versioned suite file names `eval run --file`.
 
 Export of a file-owned suite writes `declaredId` as `suite.id`. Export of a
-UI suite still writes the Convex id; running that file back is the ownership
-refusal.
+UI-owned suite derives a stable file identity (`s_export_<sourceSuiteId>`),
+so importing the exported file creates a file-owned clone rather than
+re-claiming the original UI suite.
 
 When the run targets an **attached project environment** (`eval environments
 set`), it executes against that environment's resolved host config, closed
@@ -2207,8 +2250,8 @@ that refuse today include:
 - a pinned sandbox image;
 - automatic LLM-as-judge grading, non-default match options, and an iterations
   floor that raises a case above its own count;
-- a compare-across-models case, a scenario-bound case, and cases that name
-  **different model providers** (a suite file carries one suite-level provider);
+- a compare-across-models case and cases that name **different model providers**
+  (a suite file carries one suite-level provider);
 - `replace`/`extend` check overrides, a case that inherits the suite's checks
   while also carrying its own, and any suite check the predicate contract does
   not recognise;

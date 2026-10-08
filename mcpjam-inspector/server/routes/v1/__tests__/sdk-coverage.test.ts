@@ -160,6 +160,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "startClaudeReadinessRun",
   "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
     "startOpenAIReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/muse":
+    "startMuseReadinessRun",
   "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
   "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
   "get /projects/{projectId}/readiness-runs/{runId}/report":

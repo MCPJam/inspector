@@ -50,6 +50,7 @@ import {
   SuiteRunReviewContent,
   type SuiteRunReviewProps,
 } from "./suite-run-review";
+import { useSuiteRunPreflight } from "./suite-run-preflight";
 
 type PlannedCombination = {
   environmentId?: string;
@@ -72,6 +73,8 @@ type PlannedCombination = {
   blocked?: string;
   /** No server group and no plugin pin: the run would connect no servers. */
   missingGroup?: boolean;
+  /** The attached environment a new cell copies its setup from. */
+  templateEnvironmentId?: string;
 };
 
 type Environments = NonNullable<SuiteRunReviewProps["environments"]>;
@@ -163,7 +166,10 @@ export function suiteCaseModels(
  */
 export function suiteRunClients(
   suite: Pick<EvalSuite, "hostAttachments">,
-  hosts: readonly Pick<HostListItem, "hostId" | "hostConfigId" | "ownerScope">[],
+  hosts: readonly Pick<
+    HostListItem,
+    "hostId" | "hostConfigId" | "ownerScope"
+  >[],
   projectDefaultHostConfigId: string | null | undefined,
 ): string[] {
   const attached = (suite.hostAttachments ?? [])
@@ -203,7 +209,10 @@ export function seedSuiteRunGroup(
 export function seedSuiteRunMatrix(
   suite: Pick<EvalSuite, "defaultConfig" | "hostAttachments">,
   cases: readonly Pick<EvalCase, "models" | "steps" | "promptTurns">[],
-  hosts: readonly Pick<HostListItem, "hostId" | "hostConfigId" | "ownerScope">[],
+  hosts: readonly Pick<
+    HostListItem,
+    "hostId" | "hostConfigId" | "ownerScope"
+  >[],
   projectDefaultHostConfigId: string | null | undefined,
   runnable: ReadonlySet<string>,
 ): Record<string, ModelSelection> {
@@ -349,6 +358,7 @@ export function planRunMatrix(
               },
             },
             missingGroup: lacksServerSource(choice.composition),
+            templateEnvironmentId: choice.source.environmentId,
           },
         ];
       const reason = unpreservableReason(choice.composition);
@@ -363,16 +373,42 @@ export function planRunMatrix(
         {
           stack: composeAdhocStack(choice.composition, bare),
           missingGroup: lacksServerSource(choice.composition),
+          templateEnvironmentId: choice.source.environmentId,
         },
       ];
     });
   });
 }
 
+/**
+ * What a planned run launches, for the preflight: each cell's environment
+ * (or the one a new cell copies) and each cell's client and model.
+ */
+export function plannedPreflight(plan: readonly PlannedCombination[]) {
+  const launched = new Set(
+    plan.flatMap((item) => (item.environmentId ? [item.environmentId] : [])),
+  );
+  const copied = new Set(
+    plan.flatMap((item) =>
+      !item.environmentId && item.templateEnvironmentId
+        ? [item.templateEnvironmentId]
+        : [],
+    ),
+  );
+  return {
+    environmentIds: [...new Set([...launched, ...copied])],
+    templateOnlyIds: [...copied].filter((id) => !launched.has(id)),
+    targets: plan.map(({ stack }) => ({
+      hostId: stack.hostId,
+      ...(stack.modelId ? { modelId: stack.modelId } : {}),
+    })),
+  };
+}
+
 export function ConfiguredSuiteRunReview(
-  props: SuiteRunReviewProps & { projectId: string },
+  reviewProps: SuiteRunReviewProps & { projectId: string },
 ) {
-  const { suite, cases, projectId, environments = [] } = props;
+  const { suite, cases, projectId, environments = [] } = reviewProps;
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { availableModels, modelSelectionsSupported } = useAvailableModels({
@@ -457,18 +493,59 @@ export function ConfiguredSuiteRunReview(
   const savedEnvironment = runInSaved
     ? launchable.find((environment) => environment.environmentId === savedId)
     : undefined;
-  // Older deployments retain their launch path until they support model overrides.
-  if (!capable && !pending) return <SuiteRunReviewContent {...props} />;
   // A cell the suite does not attach needs a backend that launches one, and a
   // suite of this project; otherwise the suite keeps its own launch.
-  if (
+  const ownLaunch =
     withoutSetups &&
     (capabilities === null ||
       (capabilities !== undefined &&
         capabilities.ephemeralEnvironmentLaunch !== true) ||
-      suite.projectId !== projectId)
-  )
-    return <SuiteRunReviewContent {...props} />;
+      suite.projectId !== projectId);
+  // Every branch below renders through the content, which shows these. They
+  // cover what this run launches: the matrix's cells (and the setup a new
+  // cell copies), the saved environment it runs in, or, for a suite without
+  // environments, the server group picked here.
+  const props = {
+    ...reviewProps,
+    preflight: useSuiteRunPreflight({
+      ...reviewProps,
+      ...(!withoutSetups
+        ? { planned: plannedPreflight(plan) }
+        : (!capable && !pending) || ownLaunch
+          ? {}
+          : runInSaved
+            ? {
+                planned: {
+                  environmentIds: savedEnvironment
+                    ? [savedEnvironment.environmentId]
+                    : [],
+                  templateOnlyIds: [],
+                  targets: savedEnvironment
+                    ? [
+                        {
+                          hostId: savedEnvironment.hostId,
+                          ...(savedEnvironment.modelId
+                            ? { modelId: savedEnvironment.modelId }
+                            : {}),
+                        },
+                      ]
+                    : [],
+                },
+              }
+            : {
+                planned: {
+                  ...plannedPreflight(plan),
+                  serverRefs: (
+                    groups.find((row) => row._id === group)
+                      ?.resolvedServerNames ?? []
+                  ).filter((name) => name !== DELETED_SERVER),
+                },
+              }),
+    }),
+  };
+  // Older deployments retain their launch path until they support model overrides.
+  if (!capable && !pending) return <SuiteRunReviewContent {...props} />;
+  if (ownLaunch) return <SuiteRunReviewContent {...props} />;
   const loadingSetups =
     withoutSetups &&
     (capabilities === undefined ||
@@ -566,6 +643,7 @@ export function ConfiguredSuiteRunReview(
       disabledReason={blocked}
       matrix={{
         count: runInSaved ? (savedEnvironment ? 1 : 0) : plan.length,
+        signature: JSON.stringify([selections, group, runInSaved, savedId]),
         render: (starting) => (
           <div className="space-y-5">
             {sdkSuite ? (
@@ -672,8 +750,8 @@ function SdkRunSource({
   return (
     <div className="space-y-2">
       <p className="text-xs text-muted-foreground">
-        This suite reports runs from your CI. Pick what to run it with here;
-        the suite itself is not changed.
+        This suite reports runs from your CI. Pick what to run it with here; the
+        suite itself is not changed.
       </p>
       {offerSaved ? (
         <ToggleGroup

@@ -1,4 +1,7 @@
 import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
+import { hostConfigNeedsAccount } from "@/lib/host-config-computer";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
 import { HOSTED_MODE } from "@/lib/config";
@@ -195,7 +198,13 @@ export function CreateHostDialog({
       : !selectedTemplateInput
       ? "Selected client template is unavailable."
       : null;
+  // Claude Code, Codex and Cursor clients run on a computer tied to an account,
+  // so a guest is asked to sign in rather than shown a save the backend refuses.
+  const isMemberActor = useIsMemberActor();
+  const needsSignIn =
+    isMemberActor === false && hostConfigNeedsAccount(selectedTemplateInput);
   const canCreate =
+    !needsSignIn &&
     canManageClients &&
     Boolean(name.trim()) &&
     !isSaving &&
@@ -421,6 +430,13 @@ export function CreateHostDialog({
           </p>
         )}
         {!HOSTED_MODE && selectedLocalHarness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
+        {needsSignIn && (
+          <GuestSignInMessage
+            compact
+            location="create_client_dialog"
+            message={`Sign in to use ${selectedTemplateLabel || "this client"}. It runs on a cloud computer tied to your account, so it's off for guests.`}
+          />
+        )}
         {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={handleClose}>

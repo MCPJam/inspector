@@ -123,6 +123,7 @@ import {
   captureAndPersistWidgetSnapshotsForSession,
   runSyntheticHostSession,
 } from "../runner.js";
+import { SPONSORED_CAPACITY_MESSAGE } from "../../../../shared/swarm-sponsorship.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -662,6 +663,78 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     const result = await runSyntheticHostSession(baseAdapter() as never);
 
     expect(result.outcome).toBe("rate_limited");
+  });
+
+  // A started sponsored conversation keeps its unit even when it produced
+  // nothing, so the platform being unable to serve it must end the target's
+  // sponsored run (the swarm runner stops on `platform_capacity`) rather than
+  // let the next conversation be claimed and lost the same way. The 503
+  // (`platform_generation_unavailable`) and the 429 (`platform_capacity`) are
+  // one stop to the runner, so the core folds both into it.
+  describe("a sponsored session the platform could not serve", () => {
+    const sponsoredAdapter = () =>
+      baseAdapter({
+        runtime: { sponsorship: { targetId: "target-1", sessionIdx: 0 } },
+      }) as never;
+
+    it.each([
+      [
+        "503 platform_generation_unavailable",
+        "MCPJam could not generate a response (platform_generation_unavailable, HTTP 503)",
+      ],
+      [
+        "429 platform_capacity",
+        "MCPJam platform capacity is exhausted (platform_capacity, HTTP 429)",
+      ],
+    ])(
+      "ends on a %s as a platform capacity failure",
+      async (_name, message) => {
+        createBrowserSessionContextMock.mockReturnValue(
+          buildFakeBrowserContext({ computerUse: false }),
+        );
+        runAssistantTurnMock.mockRejectedValue(new Error(message));
+
+        const result = await runSyntheticHostSession(sponsoredAdapter());
+
+        // Never `rate_limited`: that would hand it to the whole-run spend-cap stop.
+        expect(result).toMatchObject({
+          outcome: "failed",
+          errorReason: "platform_capacity",
+          errorMessage: SPONSORED_CAPACITY_MESSAGE,
+        });
+      },
+    );
+
+    it("does not retry it", async () => {
+      createBrowserSessionContextMock.mockReturnValue(
+        buildFakeBrowserContext({ computerUse: false }),
+      );
+      runAssistantTurnMock.mockRejectedValue(
+        new Error(
+          "MCPJam could not generate a response (platform_generation_unavailable, HTTP 503)",
+        ),
+      );
+
+      await runSyntheticHostSession(sponsoredAdapter());
+
+      expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves the same 503 on a credit-funded session as an ordinary failure", async () => {
+      createBrowserSessionContextMock.mockReturnValue(
+        buildFakeBrowserContext({ computerUse: false }),
+      );
+      runAssistantTurnMock.mockRejectedValue(
+        new Error(
+          "MCPJam could not generate a response (platform_generation_unavailable, HTTP 503)",
+        ),
+      );
+
+      const result = await runSyntheticHostSession(baseAdapter() as never);
+
+      expect(result.errorReason).not.toBe("platform_capacity");
+      expect(result.errorMessage).not.toBe(SPONSORED_CAPACITY_MESSAGE);
+    });
   });
 });
 

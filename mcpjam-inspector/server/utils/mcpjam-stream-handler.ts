@@ -352,6 +352,7 @@ import {
 } from "./model-request-payload";
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
+import { serviceCredentialHeaders } from "../services/service-credential.js";
 
 const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -2065,6 +2066,7 @@ export function parseStreamErrorChunkText(errorText: string): {
   message: string;
   code?: string;
   statusCode?: number;
+  isRetryable?: boolean;
   details?: string;
 } {
   try {
@@ -2072,6 +2074,7 @@ export function parseStreamErrorChunkText(errorText: string): {
       code?: unknown;
       message?: unknown;
       statusCode?: unknown;
+      isRetryable?: unknown;
       details?: unknown;
     };
     if (body && typeof body === "object") {
@@ -2084,6 +2087,9 @@ export function parseStreamErrorChunkText(errorText: string): {
         ...(typeof body.code === "string" ? { code: body.code } : {}),
         ...(typeof body.statusCode === "number"
           ? { statusCode: body.statusCode }
+          : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
           : {}),
         ...(typeof body.details === "string" ? { details: body.details } : {}),
       };
@@ -2675,7 +2681,9 @@ async function processStream(
               : {}),
             ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
               ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
-              : {}),
+              : parsed.code
+                ? { clientErrorText: JSON.stringify(parsed) }
+                : {}),
           });
         }
 
@@ -3705,10 +3713,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // Sponsored study inference must come through the trusted execution path
   // that resolves the study's model and tools. This proof is required even
   // when there is no client IP to forward. The viewer bearer remains intact.
-  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (scenarioId && scenarioServiceToken) {
-    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
-  }
+  if (scenarioId) Object.assign(convexHeaders, serviceCredentialHeaders());
   // A platform-billing claim rides the user's own sign-in: Convex authorizes
   // it on the bearer above, so a self-hosted install with no service token
   // sends it as is. When this deployment does have the token (hosted), it is
@@ -3716,10 +3721,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // it with an IP hash and other backend checks still read it.
   const billingFeature = extraBodyFields?.billingFeature;
   if (billingFeature !== undefined) {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-    if (serviceToken) {
-      convexHeaders["x-inspector-service-token"] = serviceToken;
-    }
+    Object.assign(convexHeaders, serviceCredentialHeaders());
   }
   // A claimed turn goes to the PLATFORM route and NEVER falls back to the
   // ordinary one. Falling back is the whole failure being fixed: the ordinary
@@ -5551,11 +5553,21 @@ export async function runChatEngineLoop(
         });
         emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
-        // Site (3) — outer agentic-loop catch. No structured body,
-        // no stepIndex.
+        // Site (3) — outer agentic-loop catch. Mid-stream provider errors
+        // retain their envelope; parser/transport failures may be plain text.
         const loopInfra = attachedInfraEvidence(error);
+        const streamFailure = parseStreamErrorChunkText(
+          attachedClientErrorText(error) ?? errorText,
+        );
         safelyEmitEngineError(onEngineError, {
           message: errorText,
+          ...(streamFailure.statusCode !== undefined
+            ? { httpStatus: streamFailure.statusCode }
+            : {}),
+          ...(streamFailure.isRetryable !== undefined
+            ? { isRetryable: streamFailure.isRetryable }
+            : {}),
+          ...(streamFailure.details ? { details: streamFailure.details } : {}),
           ...(loopFailureCode ? { code: loopFailureCode } : {}),
           ...(loopInfra ? { infra: loopInfra } : {}),
           rawText: errorText,
@@ -5668,6 +5680,20 @@ export async function runChatEngineLoop(
         } finally {
           await onFinishEngine(context.writer);
         }
+      },
+      // The engine's own catch writes a described error. Anything that
+      // escapes it would reach the chat as the SDK's bare "An error
+      // occurred.", which says nothing about what failed.
+      onError: (error) => {
+        logger.error(
+          "[mcpjam-stream-handler] Error escaped the chat stream",
+          error,
+        );
+        const detail =
+          error instanceof Error && error.message.trim()
+            ? ` (${error.message.trim().slice(0, 200)})`
+            : "";
+        return `MCPJam hit an unexpected error while writing this reply, so it stopped. Send your message again to retry.${detail}`;
       },
     });
     const response = createUIMessageStreamResponse({ stream });

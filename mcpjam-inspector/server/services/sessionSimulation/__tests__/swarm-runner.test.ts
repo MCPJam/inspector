@@ -65,8 +65,10 @@ import {
   classifyRateLimit,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
 import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
+import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 
@@ -862,6 +864,118 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
       ),
     ).toBe(false);
   });
+  // `user_rate_limit` is the credit denial. Stored beside a sentence that is not
+  // a hold it reads as an empty wallet, and the run opens the credits dialog
+  // and locks hosted models. A busy reservation stops the target the same way
+  // but is not about credits, so the sessions it stops keep its own code.
+  it("keeps a busy reservation's own code on the sessions it stops", async () => {
+    // "spend" in the sentence is what folds the turn into rate_limited.
+    const message =
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam could not reserve spend capacity.","isRetryable":true}';
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? {
+            outcome: "rate_limited",
+            errorMessage: message,
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    // The session that tripped the stop carries the busy code too, so the run
+    // reads the whole stop the same way (a bare `rate_limited` reads as the
+    // user's provider throttling their key).
+    expect(
+      terminals.find((t) => t.hostId === "host-1" && t.sessionIdx === 0),
+    ).toMatchObject({
+      status: "rate_limited",
+      errorCode: "spending_reservation_busy",
+    });
+    const stopped = terminals.filter(
+      (t) => t.hostId === "host-1" && t.sessionIdx > 0,
+    );
+    expect(stopped.map((t) => t.sessionIdx).sort()).toEqual([1, 2]);
+    for (const row of stopped) {
+      expect(row).toMatchObject({
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+      });
+      // How the run reads the stored pair: not an empty wallet.
+      expect(
+        isCreditExhaustion({ code: row.errorCode, message: row.errorMessage }),
+      ).toBe(false);
+    }
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(3);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+  // The core folds a failure into `rate_limited` by its WORDS (`spend`, `cap`,
+  // `quota`, ...). The backend's current sentence says "spending capacity", which
+  // has none of them, so the core returns `failed` and the stop was never
+  // reached for it: whether a busy reservation stopped its target depended on
+  // how the backend worded it. Its structured code decides instead, the way a
+  // hold's does.
+  it("stops the target's remaining sessions on a busy refusal worded as the backend words it today", async () => {
+    const message =
+      'swarm-agent https://example.test/turn failed (503): {"code":"spending_reservation_busy","isRetryable":true,"retryAfter":2000,"error":"MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry."}';
+    // The premise: nothing in it is a word the core folds on.
+    expect(classifyTurnFailure(message)).toBe("failed");
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? {
+            outcome: "failed",
+            errorMessage: message,
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    // The session that hit it waited on MCPJam, so it is not a failure of its
+    // own, and the rest of its target stops the same way.
+    const host1 = terminals.filter((t) => t.hostId === "host-1");
+    expect(host1.map((t) => t.sessionIdx).sort()).toEqual([0, 1, 2]);
+    for (const row of host1) {
+      expect(row).toMatchObject({
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+      });
+    }
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(3);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
   it("reports an in-flight session that the spend-cap abort cancelled as rate_limited/spend_cap_exceeded (NOT session_failed), while a genuinely-succeeded session keeps its outcome", async () => {
     // Concurrent barrier: host-1 trips the org spend cap while host-2 has a
     // session PARKED in-flight. The cap's `runStop.abort()` cancels host-2's
@@ -917,6 +1031,48 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
     expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
       terminalStatus: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
+  });
+  // A busy reservation stops its target as a wait, but a session the run's own
+  // stop cancelled is an abort artifact whatever its last refusal was: the run
+  // is over because of the cap, not because MCPJam was busy.
+  it("keeps a session the spend-cap abort cancelled an abort artifact even when its last refusal was a busy reservation", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.hostId === "host-1") {
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      }
+      return await new Promise((resolve) => {
+        const finish = () =>
+          resolve({
+            outcome: "failed",
+            errorMessage:
+              'swarm-agent https://example.test/turn failed (503): {"code":"spending_reservation_busy","error":"MCPJam could not reserve spending capacity."}',
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          });
+        if (adapter.abortSignal?.aborted) {
+          finish();
+          return;
+        }
+        adapter.abortSignal?.addEventListener("abort", finish, { once: true });
+      });
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 1 }),
+    );
+
+    const host2 = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.hostId === "host-2" && a.status !== "running")!;
+    expect(host2).toMatchObject({
+      status: "rate_limited",
       errorCode: "spend_cap_exceeded",
     });
   });
@@ -1115,6 +1271,40 @@ describe("swarm runner — live stream emit", () => {
     expect(seen).toContain("text_delta");
     expect(seen).toContain("run_complete");
     expect(getRunningJourneyStreamHub("run-1")).toBeUndefined();
+  });
+
+  // The humanized message the live event carries has dropped the code, so the
+  // run screen could not tell a busy reservation (MCPJam's own wait) from the
+  // user's provider throttling their key until the attempt row arrived.
+  it("carries the code the attempt is stored under on the terminal attempt_status", async () => {
+    const events: any[] = [];
+    runSyntheticHostSessionMock.mockImplementation(async () => {
+      getRunningJourneyStreamHub("run-1")!.subscribe((e) => events.push(e));
+      return {
+        outcome: "rate_limited",
+        errorMessage:
+          'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+        errorRefusal: { code: "spending_reservation_busy", httpStatus: 503 },
+      };
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = events.find(
+      (e) => e.type === "attempt_status" && e.status === "rate_limited",
+    );
+    expect(terminal).toMatchObject({
+      errorCode: "spending_reservation_busy",
+      errorMessage: "MCPJam is temporarily busy. Please retry.",
+    });
+    // The same pair the attempt row is written with.
+    const row = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status === "rate_limited");
+    expect(row).toMatchObject({
+      errorCode: terminal.errorCode,
+      errorMessage: terminal.errorMessage,
+    });
   });
 
   it("wires emit on the adapter for every session", async () => {

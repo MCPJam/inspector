@@ -114,6 +114,10 @@ import {
 import { toXaaConnectFailure } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  requireServiceCredential,
+  WORKOS_API_KEY_FEATURE,
+} from "../../services/service-credential.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -658,14 +662,7 @@ export function buildConvexAuthHeaders(
     "Content-Type": "application/json",
   };
   if (caller.authMethod === "workos_api_key") {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-    if (!serviceToken) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth",
-      );
-    }
+    const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
     // NOT the Convex user `_id`: the backend resolves the delegated user by
     // externalId. Sending the Convex id here would 404 as UNKNOWN_DELEGATED_USER.

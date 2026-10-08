@@ -1646,6 +1646,19 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
+  it("PATCH case preserves null as the instruction to clear its scenario", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { scenario: null },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestCase",
+    )![1];
+    expect(args.scenario).toBeNull();
+  });
+
   it("PATCH prompt-case steps never forward caseType", async () => {
     // CASE_DOC.caseType === "prompt"; patching with prompt steps keeps the kind
     // and must not forward caseType to updateTestCase (which rejects it).

@@ -18,6 +18,8 @@ const change = handle.extend({
   operationId: z.string().uuid(),
   sequence: z.number().int().positive(),
   params: pluginModelContextParamsSchema,
+  /** The person was using the App when it sent this update. */
+  attach: z.literal("user").optional(),
 });
 const removal = handle.extend({
   operationId: z.string().uuid(),

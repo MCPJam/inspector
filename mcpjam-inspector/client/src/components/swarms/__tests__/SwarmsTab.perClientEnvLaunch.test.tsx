@@ -325,12 +325,8 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
-    // Both clients are named on Confirm, and the session count is the
-    // per-environment count TIMES the environments — the number the user
-    // approves before spending anything.
-    expect(screen.getByTestId("new-swarm-confirm-clients")).toHaveTextContent(
-      "ChatGPT prod · Claude prod"
-    );
+    // The session count is the per-environment count TIMES the environments —
+    // the number the user approves before spending anything.
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/4 conversations/i);

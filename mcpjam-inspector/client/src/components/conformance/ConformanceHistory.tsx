@@ -268,6 +268,9 @@ export function ConformanceHistory({
         <EmptyState
           icon={FlaskConical}
           title="No conformance runs yet"
+          // The default viewport height would fill the page and push the
+          // suites below (in a shrink-0 container) out of view.
+          className="h-auto"
           description={
             scope === "current"
               ? "Run the suites below to record history for this server, or switch to All runs."

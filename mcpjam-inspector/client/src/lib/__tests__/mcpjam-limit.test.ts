@@ -1,5 +1,5 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   describeAgentRefusalMessage,
   describeMCPJamLimitMessage,
@@ -55,6 +55,16 @@ const INSUFFICIENT_BODY = JSON.stringify({
 });
 
 describe("isMCPJamModelLimitError", () => {
+  it("does not sell MCPJam credits for an Anthropic BYOK balance", () => {
+    const error = {
+      code: "provider_error",
+      message: "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.",
+      isRetryable: false,
+    };
+    expect(isMCPJamModelLimitError(error)).toBe(false);
+    expect(isMCPJamModelLimitError({ message: JSON.stringify(error) })).toBe(false);
+  });
+
   it("detects the canonical rate-limit code", () => {
     expect(isMCPJamModelLimitError({ code: "mcpjam_rate_limit" })).toBe(true);
   });
@@ -544,6 +554,26 @@ describe("credits held by in-flight requests", () => {
     expect(describeMCPJamLimitMessage(nested)).toBe(retry);
     useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
     expect(notifyMCPJamLimitError({ message: nested })).toBe(false);
+  });
+
+  // The runner stores the sessions a busy reservation stopped under the busy
+  // code. A busy reservation is a wait on MCPJam's side, never an empty wallet,
+  // so it must not sell credits (it used to be stored as `user_rate_limit`,
+  // which this classifier reads as exhaustion).
+  it("does not open for a busy reservation", () => {
+    useMCPJamLimitDialogStore.getState().setAuthStatus("signedIn");
+    const busy =
+      "MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry.";
+
+    expect(
+      notifyMCPJamLimitError({
+        runId: "run-busy",
+        code: "spending_reservation_busy",
+        message: busy,
+        surface: "swarm",
+      }),
+    ).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
   it("words a refusal the way the dialog reads it, so the panel never contradicts an open dialog", () => {
@@ -2001,4 +2031,29 @@ it("recognizes the new credit-exhaustion wording without losing recovery actions
   expect(describeMCPJamLimitMessage("Out of MCPJam credits.")).toContain(
     "Out of MCPJam credits.",
   );
+});
+
+describe("sponsored swarm platform stops never open the customer limit dialog", () => {
+  it.each([
+    { code: "platform_capacity", message: "capacity (platform_capacity, HTTP 429)" },
+    {
+      code: "swarm_sponsorship_rejected",
+      message: "could not confirm this conversation as sponsored",
+    },
+    {
+      message:
+        "MCPJam's sponsored capacity was unavailable, so this conversation stopped before it finished. Evidence gathered so far is kept. You can run it again later.",
+    },
+  ])("does not notify for %o", (input) => {
+    const notify = vi.fn();
+    const unsubscribe = useMCPJamLimitDialogStore.subscribe(notify);
+    try {
+      expect(
+        notifyMCPJamLimitError({ ...input, details: input, surface: "swarm" }),
+      ).toBe(false);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
 });
