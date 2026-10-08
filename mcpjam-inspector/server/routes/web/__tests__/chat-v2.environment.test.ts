@@ -1012,12 +1012,12 @@ describe("web chat-v2 — environment execution target", () => {
       ).toBe(false);
     });
 
-    it("a harness turn keeps its environment's skills (the harness has no project pool here)", async () => {
+    function runOnHarness(spec: Record<string, unknown> = ADHOC_SPEC) {
       convexQueryMock.mockImplementation(async (ref: string) =>
         ref === "projectSkills:listSkills"
           ? PROJECT_SKILLS
           : {
-              ...ADHOC_SPEC,
+              ...spec,
               host: {
                 ...ENV_SPEC.host,
                 runtimeConfig: {
@@ -1027,14 +1027,66 @@ describe("web chat-v2 — environment execution target", () => {
               },
             }
       );
+    }
+
+    it("a harness turn asks the harness for the project's pool beside the environment's skills", async () => {
+      runOnHarness();
       const args = await sendEnvironmentTurn({ includeProjectSkills: true });
       expect(args.skillsSource).toBeUndefined();
       const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      // The environment's own skills travel unchanged; the harness adds the
+      // pool itself (it writes skills to the box, so it reads the pool with
+      // its own tri-state fetch).
       expect(
         handlerArgs.runtimeSkillsOverride.map(
           (skill: { name: string }) => skill.name
         )
       ).toEqual(["release-notes"]);
+      expect(handlerArgs.includeProjectSkills).toBe(true);
+      expect(handlerArgs.effectiveCapabilities).toBeDefined();
+      // The route itself does not read the pool for a harness turn.
+      expect(
+        convexQueryMock.mock.calls.some(
+          ([ref]) => ref === "projectSkills:listSkills"
+        )
+      ).toBe(false);
+    });
+
+    it.each([
+      ["a named environment", { ...ENV_SPEC, environmentOrigin: "named" }],
+      ["a backend that does not say the origin", ENV_SPEC],
+    ])(
+      "%s's harness turn is not asked for the pool, even when the body asks",
+      async (_label, spec) => {
+        runOnHarness(spec);
+        await sendEnvironmentTurn({ includeProjectSkills: true });
+        const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+        // Only the route's verified value reaches the harness.
+        expect(handlerArgs.includeProjectSkills).toBeUndefined();
+        expect(
+          handlerArgs.runtimeSkillsOverride.map(
+            (skill: { name: string }) => skill.name
+          )
+        ).toEqual(["release-notes"]);
+      }
+    );
+
+    it("an environment harness turn without the flag keeps exactly its own set", async () => {
+      runOnHarness();
+      await sendEnvironmentTurn({});
+      const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(handlerArgs.includeProjectSkills).toBeUndefined();
+      expect(
+        handlerArgs.runtimeSkillsOverride.map(
+          (skill: { name: string }) => skill.name
+        )
+      ).toEqual(["release-notes"]);
+    });
+
+    it("an emulated turn's handler is not asked for the pool (its union rides the merged set)", async () => {
+      await sendEnvironmentTurn({ includeProjectSkills: true });
+      const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(handlerArgs.includeProjectSkills).toBeUndefined();
     });
   });
 });

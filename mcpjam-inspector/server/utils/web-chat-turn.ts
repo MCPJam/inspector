@@ -307,6 +307,12 @@ export interface WebChatTurnPersistContext {
    */
   runtimeSkillsOverride?: RuntimeSkill[];
   /**
+   * The Playground's HIDDEN environment, HARNESS side: the turn delivers the
+   * project's live skill pool beside `runtimeSkillsOverride` (the harness's
+   * `live_plus` source). Forwarded verbatim; never inferred downstream.
+   */
+  includeProjectSkills?: boolean;
+  /**
    * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
    * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
    * this is what the Computer delivery path needs on top of it — the resolved
@@ -1782,6 +1788,7 @@ export async function streamWebChatTurn(
     ...(persist.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
       : {}),
+    ...(persist.includeProjectSkills ? { includeProjectSkills: true } : {}),
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),

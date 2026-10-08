@@ -1312,6 +1312,10 @@ chatV2.post("/", async (c) => {
     // plugins, so the project's pool is delivered beside the environment's own
     // union, exactly as a client turn delivers it. It widens nothing: the pool
     // is read with the caller's own bearer, which a client turn does anyway.
+    // A harness turn never takes this gate (its skills are written to the box,
+    // not offered as tools); it gets the same union from the harness itself,
+    // through `includeProjectSkills` on the persist context below — this same
+    // verified value, never the body's.
     //
     // The body only ASKS. It is honored only when the resolved spec says the
     // row is ad-hoc: a named environment chose its skills, and a request must
@@ -2809,6 +2813,13 @@ chatV2.post("/", async (c) => {
           // Presence (even empty) is what makes it authoritative downstream.
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
+            : {}),
+          // The Playground's hidden environment on a harness: the harness adds
+          // the project's live pool to the environment's own skills, as the
+          // plain client turn this stands in for would deliver it. Explicit,
+          // so a named environment's turn keeps exactly its own set.
+          ...(includeProjectSkills && resolvedExecution.harness
+            ? { includeProjectSkills: true }
             : {}),
           ...(turnProvenance ? { turnProvenance } : {}),
           // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
