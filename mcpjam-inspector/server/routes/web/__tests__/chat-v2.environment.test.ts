@@ -1008,12 +1008,12 @@ describe("web chat-v2 — environment execution target", () => {
       ).toBe(false);
     });
 
-    function runOnHarness() {
+    function runOnHarness(spec: Record<string, unknown> = ADHOC_SPEC) {
       convexQueryMock.mockImplementation(async (ref: string) =>
         ref === "projectSkills:listSkills"
           ? PROJECT_SKILLS
           : {
-              ...ADHOC_SPEC,
+              ...spec,
               host: {
                 ...ENV_SPEC.host,
                 runtimeConfig: {
@@ -1048,7 +1048,26 @@ describe("web chat-v2 — environment execution target", () => {
       ).toBe(false);
     });
 
-    it("a named environment's harness turn keeps exactly its own set", async () => {
+    it.each([
+      ["a named environment", { ...ENV_SPEC, environmentOrigin: "named" }],
+      ["a backend that does not say the origin", ENV_SPEC],
+    ])(
+      "%s's harness turn is not asked for the pool, even when the body asks",
+      async (_label, spec) => {
+        runOnHarness(spec);
+        await sendEnvironmentTurn({ includeProjectSkills: true });
+        const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+        // Only the route's verified value reaches the harness.
+        expect(handlerArgs.includeProjectSkills).toBeUndefined();
+        expect(
+          handlerArgs.runtimeSkillsOverride.map(
+            (skill: { name: string }) => skill.name
+          )
+        ).toEqual(["release-notes"]);
+      }
+    );
+
+    it("an environment harness turn without the flag keeps exactly its own set", async () => {
       runOnHarness();
       await sendEnvironmentTurn({});
       const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
