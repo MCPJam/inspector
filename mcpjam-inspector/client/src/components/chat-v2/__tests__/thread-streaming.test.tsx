@@ -65,9 +65,10 @@ const parentMessage: UIMessage = {
 // Keep the real Thread and its cleanup effect; stub presentation/host services.
 // The external-store driver matches AI SDK 6, used by the affected 3.13 release.
 describe("Thread streaming", () => {
-  it.each([false, true])(
-    "handles a buffered burst (existing app invocation: %s) and prunes removed tools",
-    async (withInvocation) => {
+  it.each(["empty", "retained", "removed"] as const)(
+    "handles a buffered burst (app invocation: %s) and prunes removed tools",
+    async (mode) => {
+      const withInvocation = mode !== "empty";
       let messages: UIMessage[] = withInvocation ? [parentMessage] : [];
       const listeners = new Set<() => void>();
       const subscribe = (listener: () => void) => {
@@ -118,11 +119,16 @@ describe("Thread streaming", () => {
             }),
           );
         }
+        if (mode === "removed") {
+          // Remove the parent while cleanup still competes with chunk renders.
+          publish([]);
+          await Promise.resolve();
+        }
         // Promise jobs without task breaks reproduce buffered stream chunks.
         // act() around this loop would drain pending work and hide the failure.
         for (let i = 1; i <= 100; i++) {
           publish([
-            ...(withInvocation ? [parentMessage] : []),
+            ...(mode === "retained" ? [parentMessage] : []),
             {
               id: "reply",
               role: "assistant",
@@ -133,12 +139,15 @@ describe("Thread streaming", () => {
         }
         await act(async () => {});
         expect(host.textContent).toContain("Chunk 100");
-        if (withInvocation) {
+        if (mode === "retained") {
           expect(
             host.querySelector('[data-testid="app-invocation"]'),
           ).toHaveTextContent("Retained tool");
           const reply = messages[messages.length - 1]!;
           await act(async () => publish([reply]));
+        }
+        if (withInvocation) {
+          const reply = messages[messages.length - 1]!;
           // Reintroducing its former parent must not resurrect a pruned call.
           await act(async () => publish([parentMessage, reply]));
           expect(
