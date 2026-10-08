@@ -98,14 +98,16 @@ function externalizeBareImports(): Plugin {
       // does not exist. Bundle them instead.
       if (source.startsWith("#")) return null;
 
-      // The evaluator workspace exposes ESM import conditions only. Leaving it
+      // These packages expose ESM import conditions only. Leaving it
       // external makes Electron's CommonJS main bundle call `require()` on a
       // package path that intentionally has no `require` export, so the
       // embedded API fails before the desktop window can initialize. Bundle
-      // this workspace in development just as the production build does.
+      // them in development just as the production build does.
       if (
         source === "@mcpjam/evaluators" ||
-        source.startsWith("@mcpjam/evaluators/")
+        source.startsWith("@mcpjam/evaluators/") ||
+        source === "@openai/mcp-extensions" ||
+        source.startsWith("@openai/mcp-extensions/")
       ) {
         return null;
       }
