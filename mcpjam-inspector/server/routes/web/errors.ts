@@ -129,7 +129,8 @@ export const ErrorCode = {
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 export class WebRouteError extends Error {
-  setupFailureSource?: "oauth_refresh" | "xaa_mint" | "authorization_required";
+  setupFailureSource?:
+    "oauth_refresh" | "xaa_mint" | "authorization_required" | "secret_reveal";
   status: number;
   code: ErrorCode;
   details?: Record<string, unknown>;

@@ -1702,8 +1702,10 @@ export type PlatformEvalRunGroupEntry =
        * The RUN's status (always `"running"` at launch). Named apart from the
        * entry's own `status` on purpose — two fields called `status` in one
        * object is how a reader ends up branching on the wrong one.
-       */
+      */
       runStatus: string;
+      /** True when this target replays a run already started with this key. */
+      deduped?: boolean;
       servers?: Array<{ id: string; name?: string }>;
       environment?: PlatformEvalRunEnvironment | null;
       caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
