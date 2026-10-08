@@ -5592,7 +5592,7 @@ const caseFieldsShape = {
     .boolean()
     .optional()
     .describe("When true, the case passes if the expectation is NOT met."),
-  scenario: z.string().trim().min(1).optional(),
+  scenario: z.string().trim().min(1).nullable().optional(),
   models: z
     .array(caseModelSchema)
     .optional()
