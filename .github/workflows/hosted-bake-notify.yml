@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ask the backend to build and stage this commit's template
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
         with:

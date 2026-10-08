@@ -175,7 +175,7 @@ jobs:
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
 
@@ -351,7 +351,7 @@ jobs:
             npx tsx scripts/verify-local-harness-pack.ts "$DIGEST" "$PACK_VERSION" "$HARNESS"
 
       - name: Upload the pack
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: local-harness-pack-${{ inputs.harness }}-${{ matrix.platform_key }}-${{ inputs.pack_version }}
           path: ${{ runner.temp }}/pack-out/local-harness-pack-*
@@ -408,7 +408,7 @@ jobs:
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
 
@@ -505,12 +505,12 @@ jobs:
       # gate can prove (`gh attestation verify`) that a pinned asset was built
       # by THIS workflow on main, not merely signed by a key.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             packs/local-harness-pack-*.tar.gz
             packs/local-harness-pack-*.manifest.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: signed-local-harness-pack-${{ inputs.harness }}-${{ inputs.pack_version }}
           path: packs/local-harness-pack-*

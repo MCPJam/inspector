@@ -95,9 +95,9 @@ jobs:
       run-id: ${{ steps.run.outputs.run_id }}
       verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -181,7 +181,7 @@ jobs:
 
       - name: Save the reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mcp-dogfood-evals-${{ github.run_attempt }}
           path: |

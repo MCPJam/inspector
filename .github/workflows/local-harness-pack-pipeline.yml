@@ -88,7 +88,7 @@ jobs:
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
 
@@ -121,7 +121,7 @@ jobs:
             --kind up-to-date --version "$PINNED" --out "$RUNNER_TEMP/pin/intent.json"
 
       - if: steps.plan.outputs.action == 'up-to-date'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: local-harness-pin-${{ inputs.harness }}
           path: ${{ runner.temp }}/pin
@@ -168,7 +168,7 @@ jobs:
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
 
@@ -193,7 +193,7 @@ jobs:
       # The record's bytes are attested exactly as committed: the release gate
       # runs `gh attestation verify` on the file in the repository.
       - name: Attest the equivalence record
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.record.outputs.file }}
 
@@ -214,7 +214,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pin/files/$(dirname "$RECORD")"
           cp "$RECORD" "$RUNNER_TEMP/pin/files/$RECORD"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: local-harness-pin-${{ inputs.harness }}
           path: ${{ runner.temp }}/pin
@@ -276,7 +276,7 @@ jobs:
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
 
@@ -372,7 +372,7 @@ jobs:
             --previous "$PREVIOUS" --permit-previous "$PERMIT" --permit-reason "$PERMIT_REASON" \
             --run "$RUN_URL" --out "$RUNNER_TEMP/pin/intent.json"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: local-harness-pin-${{ inputs.harness }}
           path: ${{ runner.temp }}/pin
