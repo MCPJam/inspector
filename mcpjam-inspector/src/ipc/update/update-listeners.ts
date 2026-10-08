@@ -8,6 +8,15 @@ import {
 } from "electron";
 import log from "electron-log";
 import {
+  configureUpdateDiagnostics,
+  recordUpdateDiagnostic,
+  recordUpdatePower,
+  safeUpdateError,
+  watchUpdateDownload,
+  stopUpdateDownloadWatch,
+  type UpdateTrigger,
+} from "./update-diagnostics.js";
+import {
   rememberInstallFailure,
   reportPendingInstallResults,
 } from "./update-outcome.js";
@@ -56,6 +65,8 @@ let pollTimer: ReturnType<typeof setInterval> | undefined;
 let downloadTimeoutMs = DEFAULT_STALLED_DOWNLOAD_TIMEOUT_MS;
 let quitTimeoutMs = DEFAULT_STALLED_QUIT_TIMEOUT_MS;
 let generation = 0;
+let checkTrigger: UpdateTrigger = "unknown";
+let checkRequestedAt: number | undefined;
 
 function markerPath(): string {
   return attemptPath(app.getPath("userData"));
@@ -73,13 +84,31 @@ function stopPolling(): void {
   pollTimer = undefined;
 }
 function ensureAttempt(): UpdateAttempt {
-  return (attempt ??= newAttempt(app.getVersion()));
+  if (!attempt) {
+    attempt = newAttempt(app.getVersion());
+    if (checkRequestedAt !== undefined)
+      recordUpdateDiagnostic(
+        attempt.id,
+        "check_requested",
+        { trigger: checkTrigger },
+        checkRequestedAt,
+      );
+    recordUpdateDiagnostic(attempt.id, "attempt_started", {
+      trigger: checkTrigger,
+    });
+  }
+  return attempt;
 }
 function persist(): boolean {
   return !app.isPackaged || (!!attempt && saveAttempt(markerPath(), attempt));
 }
 function report(reason: UpdateFailureReason): void {
   const a = ensureAttempt();
+  recordUpdateDiagnostic(
+    a.id,
+    reason === "download_timeout" ? "download_timeout" : "failure",
+    { reason },
+  );
   if (app.isPackaged) {
     const shutdown =
       a.phase === "installing" &&
@@ -158,6 +187,7 @@ function startBudget(
 
 function startDownloadTimer(): void {
   if (downloadClock) return;
+  watchUpdateDownload(ensureAttempt().id);
   startBudget(downloadTimeoutMs, true, () => {
     // A JS deadline cannot cancel Squirrel's native download. Only a confirmed
     // native error permits a new check in this process; otherwise relaunch.
@@ -166,10 +196,12 @@ function startDownloadTimer(): void {
 }
 
 function onSuspend(): void {
+  recordUpdatePower(true);
   suspended = true;
   downloadClock?.suspend();
 }
 function onResume(): void {
+  recordUpdatePower(false);
   suspended = false;
   downloadClock?.resume();
 }
@@ -187,7 +219,7 @@ function configureFeed(): void {
   feedConfigured = true;
 }
 
-function checkForUpdate(): void {
+function checkForUpdate(trigger: UpdateTrigger = checkTrigger): void {
   if (
     !app.isReady() ||
     nativeBusy ||
@@ -199,6 +231,10 @@ function checkForUpdate(): void {
     currentStatus.kind === "downloaded"
   )
     return;
+  checkTrigger = trigger;
+  checkRequestedAt = Date.now();
+  if (attempt)
+    recordUpdateDiagnostic(attempt.id, "check_requested", { trigger });
   try {
     configureFeed();
   } catch {
@@ -208,12 +244,22 @@ function checkForUpdate(): void {
   nativeBusy = true;
   try {
     autoUpdater.checkForUpdates();
-  } catch {
+  } catch (error) {
+    if (attempt)
+      recordUpdateDiagnostic(
+        attempt.id,
+        "native_error",
+        safeUpdateError(error),
+      );
     handleUpdaterError("updater_error");
   }
 }
 
 function beginDownload(): void {
+  checkTrigger =
+    attempt?.downloadRequested && !attempt.downloadRetries
+      ? "user_retry"
+      : "automatic_retry";
   clearDownloadTimer();
   const a = ensureAttempt();
   a.phase = "downloading";
@@ -240,6 +286,12 @@ function retryDownloadFailure(): void {
     finishFailure("updater_error", "retry-download");
     return;
   }
+  stopUpdateDownloadWatch();
+  recordUpdateDiagnostic(a.id, "retry_scheduled", {
+    trigger: "automatic_retry",
+    retry: a.downloadRetries + 1,
+    delay_ms: DOWNLOAD_RETRY_DELAYS[a.downloadRetries],
+  });
   const delay = DOWNLOAD_RETRY_DELAYS[a.downloadRetries++];
   a.phase = "retry_waiting";
   a.at = Date.now();
@@ -284,6 +336,10 @@ function recover(): void {
     )
       return;
     try {
+      recordUpdateDiagnostic(a.id, "restart_requested", {
+        trigger: "recovery_restart",
+      });
+      beginUpdateShutdown(a.id, "recovery");
       app.relaunch();
       quitTimer = setTimeout(
         () => finishFailure("shutdown_stuck"),
@@ -338,6 +394,13 @@ function install(onQuit = false): void {
   )
     return;
   const a = ensureAttempt();
+  recordUpdateDiagnostic(a.id, "install_requested", {
+    trigger: onQuit
+      ? "normal_quit"
+      : a.retries
+        ? "recovery_restart"
+        : "user_install",
+  });
   a.phase = "installing";
   a.at = Date.now();
   installingOnQuit = onQuit;
@@ -352,7 +415,7 @@ function install(onQuit = false): void {
   quitAndInstallCalled = true;
   isQuittingForUpdate = true;
   try {
-    beginUpdateShutdown();
+    beginUpdateShutdown(a.id);
     autoUpdater.quitAndInstall();
     // The call can synchronously emit an error. Do not re-arm a watchdog after
     // its error handler has already switched to recovery or failure.
@@ -362,7 +425,8 @@ function install(onQuit = false): void {
         quitTimeoutMs,
       );
     }
-  } catch {
+  } catch (error) {
+    recordUpdateDiagnostic(a.id, "native_error", safeUpdateError(error));
     handleFailure("install_threw");
   }
 }
@@ -382,6 +446,17 @@ function restoreAttempt(): void {
     return;
   }
   attempt = loaded.attempt;
+  recordUpdateDiagnostic(attempt.id, "launch_verification", {
+    result:
+      !attempt.targetVersion ||
+      attempt.fromVersion === "unknown" ||
+      !updateVersion(app.getVersion())
+        ? "unknown"
+        : installedVersionMatches(attempt, app.getVersion())
+          ? "installed"
+          : "not_installed",
+  });
+  if (attempt.retries) checkTrigger = "recovery_restart";
   if (installedVersionMatches(attempt, app.getVersion())) {
     if (attempt.retries || attempt.downloadRetries || attempt.reported.length)
       reportUpdateFailure(attempt, "install_verified");
@@ -523,6 +598,10 @@ function handleUpdaterError(reason: UpdateFailureReason): void {
 }
 
 export function setupAutoUpdaterEvents(): void {
+  configureUpdateDiagnostics(
+    app.isPackaged ? app.getPath("userData") : undefined,
+    () => net.isOnline(),
+  );
   const currentGeneration = generation;
   void app.whenReady().then(() => {
     if (currentGeneration !== generation || powerListenersRegistered) return;
@@ -543,6 +622,9 @@ export function setupAutoUpdaterEvents(): void {
       return;
     nativeBusy = true;
     const a = ensureAttempt();
+    recordUpdateDiagnostic(a.id, "download_available", {
+      trigger: checkTrigger,
+    });
     setStatus({
       kind: "pending",
       installRequested: a.userRequested,
@@ -560,6 +642,8 @@ export function setupAutoUpdaterEvents(): void {
       return;
     nativeBusy = false;
     clearDownloadTimer();
+    stopUpdateDownloadWatch();
+    if (attempt) recordUpdateDiagnostic(attempt.id, "no_update");
     if (attempt?.userRequested) handleFailure("no_update");
     else {
       if (!removeAttempt(markerPath())) {
@@ -575,8 +659,22 @@ export function setupAutoUpdaterEvents(): void {
     if (
       error.domain === "RACCommandErrorDomain" ||
       /AutoUpdater process .* is already running/i.test(error.message)
-    )
+    ) {
+      if (attempt)
+        recordUpdateDiagnostic(
+          attempt.id,
+          "native_error_ignored",
+          safeUpdateError(error),
+        );
       return;
+    }
+    stopUpdateDownloadWatch();
+    if (attempt)
+      recordUpdateDiagnostic(
+        attempt.id,
+        "native_error",
+        safeUpdateError(error),
+      );
     handleUpdaterError(
       error.message?.includes("No update available, can't quit and install")
         ? "install_refused"
@@ -599,6 +697,8 @@ export function setupAutoUpdaterEvents(): void {
     nativeBusy = false;
     terminal = false;
     const a = ensureAttempt();
+    stopUpdateDownloadWatch();
+    recordUpdateDiagnostic(a.id, "download_completed");
     a.targetVersion = updateVersion(releaseName || "");
     if (lateDownload) a.userRequested = false;
     if (
@@ -636,9 +736,9 @@ export function startUpdatePolling(): void {
   )
     return;
   pollTimer = setInterval(() => {
-    if (currentStatus.kind !== "retry-waiting") checkForUpdate();
+    if (currentStatus.kind !== "retry-waiting") checkForUpdate("scheduled");
   }, UPDATE_POLL_INTERVAL_MS);
-  checkForUpdate();
+  checkForUpdate(checkTrigger === "unknown" ? "startup" : checkTrigger);
 }
 
 function isTrusted(senderId: number): boolean {
@@ -686,6 +786,9 @@ export function registerUpdateListeners(window: BrowserWindow): void {
     )
       return;
     attempt = newAttempt(app.getVersion());
+    recordUpdateDiagnostic(attempt.id, "attempt_started", {
+      trigger: "user_retry",
+    });
     attempt.downloadRequested = true;
     terminal = false;
     beginDownload();
@@ -703,6 +806,9 @@ export function registerUpdateListeners(window: BrowserWindow): void {
       return;
     }
     attempt = newAttempt(app.getVersion());
+    recordUpdateDiagnostic(attempt.id, "attempt_started", {
+      trigger: "user_retry",
+    });
     attempt.downloadRequested = true;
     attempt.downloadRecoveryRequested = true;
     terminal = false;
@@ -748,6 +854,9 @@ export function installUpdateOnQuit(): boolean {
 }
 
 export function __resetUpdateStateForTests(): void {
+  configureUpdateDiagnostics();
+  checkTrigger = "unknown";
+  checkRequestedAt = undefined;
   generation++;
   if (powerListenersRegistered) {
     powerMonitor.removeListener("suspend", onSuspend);
