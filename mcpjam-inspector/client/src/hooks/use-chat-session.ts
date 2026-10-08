@@ -308,7 +308,7 @@ import { fetchArtifact } from "@/lib/artifact-urls";
 // attempted) and intentionally maps to no toast.
 const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
   "sandbox-replaced":
-    "Started a new session — this conversation's cloud computer was recycled after 30 idle minutes, so earlier context isn't available.",
+    "Started a new session — this conversation's computer was replaced, so earlier context isn't available.",
   "resume-failed":
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "runtime-changed":
