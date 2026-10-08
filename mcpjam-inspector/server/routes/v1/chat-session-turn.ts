@@ -130,9 +130,13 @@ import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+  type PlaygroundBoxReason,
 } from "../../utils/harness/playground-box.js";
 import type { HarnessBox } from "../../utils/harness/harness-box.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   assertHarnessDispatchable,
   assertHostPointerAgreement,
@@ -1872,29 +1876,75 @@ async function handleTurn(c: Context): Promise<Response> {
     // `projectComputers` row. Acquired before the model call so a refused box
     // spends nothing.
     if (engine.kind === "harness") {
+      // A harness that signs in with the customer's own account (Cursor) is
+      // on the box for its credential, as in the Playground.
+      const boxReason: PlaygroundBoxReason = harnessUsesExternalAccount(
+        engine.harness,
+      )
+        ? "credential"
+        : "conversation";
       const unavailable = playgroundHarnessBoxUnavailableReason(
         engine.harness,
-        "conversation",
+        boxReason,
       );
       if (unavailable) {
         return v1Error(c, "FEATURE_NOT_SUPPORTED", unavailable, {
           reason: "NOT_A_DATA_PLANE",
         });
       }
+      // The environment whose grant the box carries: the session's own when it
+      // pins one; otherwise, for a `credential` harness on a host, the same
+      // HIDDEN ad-hoc environment selecting the member's key that the
+      // Playground mints. Refused here, before any box, when there is no key.
+      let boxEnvironmentId = pins.environmentId;
+      if (boxReason === "credential") {
+        if (!boxEnvironmentId && target.host) {
+          const hidden = await resolvePlaygroundCredentialEnvironment({
+            bearer: authHeader,
+            projectId,
+            hostId: target.host.hostId,
+            harnessId: engine.harness,
+          });
+          if (!hidden.ok) {
+            return v1Error(
+              c,
+              hidden.status === 409 ? "CONFLICT" : "INTERNAL_ERROR",
+              hidden.message,
+              { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+            );
+          }
+          boxEnvironmentId = hidden.environmentId;
+        }
+        // The credential check `runHarnessTurn` would fail, run BEFORE the box
+        // is booted: a refused turn must not pay for a box, nor fail past
+        // `modelCallStarted` and hold the lease to its TTL. Same function and
+        // inputs as the turn's own check — this surface hands the harness no
+        // materialized secrets, so only a brokered key can satisfy it.
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: engine.harness,
+          secretEnv: undefined,
+          bearer: authHeader,
+          projectId,
+          ...(boxEnvironmentId ? { environmentId: boxEnvironmentId } : {}),
+        });
+        if (credentialRefusal) {
+          return v1Error(c, "CONFLICT", credentialRefusal, {
+            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+          });
+        }
+      }
       const acquired = await acquirePlaygroundHarnessBox({
         bearer: authHeader.replace(/^Bearer\s+/i, ""),
         projectId,
         chatSessionId: runtimeChatSessionId,
-        ...(pins.environmentId
-          ? { projectEnvironmentId: pins.environmentId }
-          : {}),
+        ...(boxEnvironmentId ? { projectEnvironmentId: boxEnvironmentId } : {}),
         harness: engine.harness,
         signal: abortController.signal,
       });
       if (!acquired.ok) {
         const described = describePlaygroundBoxRefusal(
           engine.harness,
-          "conversation",
+          boxReason,
           acquired.refusal,
         );
         return v1Error(

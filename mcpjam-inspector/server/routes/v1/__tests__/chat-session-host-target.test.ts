@@ -44,6 +44,8 @@ const {
   getToolsMock,
   acquirePlaygroundHarnessBoxMock,
   releaseBoxMock,
+  resolvePlaygroundCredentialEnvironmentMock,
+  playgroundCredentialRefusalMock,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
@@ -58,16 +60,23 @@ const {
   getToolsMock: vi.fn(),
   acquirePlaygroundHarnessBoxMock: vi.fn(),
   releaseBoxMock: vi.fn(),
+  resolvePlaygroundCredentialEnvironmentMock: vi.fn(),
+  playgroundCredentialRefusalMock: vi.fn(),
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
-// it and never resolves a persistent computer. Only the acquisition is faked.
+// it and never resolves a persistent computer. Only the acquisition, and the
+// two credential reads a Cursor turn makes before it, are faked.
 vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../utils/harness/playground-box.js")
   >()),
   acquirePlaygroundHarnessBox: (...args: unknown[]) =>
     acquirePlaygroundHarnessBoxMock(...args),
+  resolvePlaygroundCredentialEnvironment: (...args: unknown[]) =>
+    resolvePlaygroundCredentialEnvironmentMock(...args),
+  playgroundCredentialRefusal: (...args: unknown[]) =>
+    playgroundCredentialRefusalMock(...args),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -272,6 +281,11 @@ beforeEach(() => {
       release: releaseBoxMock,
     },
   });
+  resolvePlaygroundCredentialEnvironmentMock.mockResolvedValue({
+    ok: true,
+    environmentId: "env_hidden",
+  });
+  playgroundCredentialRefusalMock.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -396,6 +410,128 @@ describe("host targeting dispatches the real harness", () => {
     expect(resolveTurnRuntimeMock).toHaveBeenCalledWith(
       expect.not.objectContaining({ harness: expect.anything() }),
     );
+  });
+});
+
+describe("a harness that signs in with the member's own account", () => {
+  // Cursor's key reaches only a box the project provisioned, so the turn's own
+  // credential check runs BEFORE one is booted: a refused turn pays for no box
+  // and never reaches the model call that would hold the lease to its TTL.
+  // Cursor picks its own model on the customer's account, so the engine gate
+  // holds the turn's model to the runtime's sentinel. No request body can send
+  // it (the route refuses `cursor/auto` before the lease), so the resolver
+  // hands it back here: the box pre-check must not lean on that gate.
+  const CURSOR_MODEL = "cursor/auto";
+  const cursorHost = {
+    ok: true,
+    config: {
+      hostId: HOST,
+      harness: "cursor",
+      modelId: CURSOR_MODEL,
+      selectedServerIds: ["srv_1"],
+    },
+  };
+  const NO_KEY =
+    "No usable CURSOR_API_KEY. Add or fix it under Project Settings → Secrets, then send again.";
+
+  beforeEach(() => {
+    resolveHostModelDefinitionMock.mockResolvedValue({
+      id: CURSOR_MODEL,
+      provider: "cursor",
+    });
+  });
+
+  it("refuses a host-only turn with no key, before any box", async () => {
+    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+    resolvePlaygroundCredentialEnvironmentMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: NO_KEY,
+    });
+
+    const response = await turn(firstTurn({ hostId: HOST }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "CONFLICT",
+      message: NO_KEY,
+      details: { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+    });
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+    // Refused before the model call, so the caller's retry may run.
+    expect(mutationMock).toHaveBeenCalledWith(
+      "chatSessions:releaseTurnLease",
+      expect.objectContaining({ turnId: "turn_1" }),
+    );
+  });
+
+  it("refuses a turn whose environment grants no key, before any box", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "cursor", modelId: CURSOR_MODEL }),
+    );
+    playgroundCredentialRefusalMock.mockResolvedValue(
+      "The Cursor harness found a brokered CURSOR_API_KEY project secret, but the environment this run uses does not select it.",
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("CONFLICT");
+    expect(body.details.reason).toBe("EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE");
+    // The session's own environment is the grant: nothing hidden is minted.
+    expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
+    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harnessId: "cursor",
+        projectId: PROJECT,
+        environmentId: ENVIRONMENT,
+      }),
+    );
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("boots a host-only turn's box under the hidden environment that selects the key", async () => {
+    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+
+    const response = await turn(firstTurn({ hostId: HOST }));
+
+    expect(response.status).toBe(200);
+    expect(resolvePlaygroundCredentialEnvironmentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT,
+        hostId: HOST,
+        harnessId: "cursor",
+      }),
+    );
+    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: "env_hidden" }),
+    );
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harness: "cursor",
+        projectEnvironmentId: "env_hidden",
+      }),
+    );
+  });
+
+  it("a harness on MCPJam's own key makes no credential read", async () => {
+    resolveHostModelDefinitionMock.mockResolvedValue({
+      id: MODEL,
+      provider: "anthropic",
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
+    expect(playgroundCredentialRefusalMock).not.toHaveBeenCalled();
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledTimes(1);
   });
 });
 
