@@ -1182,6 +1182,10 @@ it("distinguishes scheduled checks, automatic retries, and user installation", a
         step: "retry_scheduled",
         trigger: "automatic_retry",
       }),
+      expect.objectContaining({
+        step: "check_requested",
+        trigger: "automatic_retry",
+      }),
       expect.objectContaining({ step: "native_error", code: "ECONNRESET" }),
       expect.objectContaining({
         step: "install_requested",
@@ -1238,6 +1242,12 @@ it("records a user download retry without duplicate clicks starting overlapping 
   emit("update-downloaded", {}, "", "3.11.0");
   const recovered = mocks.capture.mock.calls.at(-1)![0];
   expect(recovered.contexts.update_diagnostics.trigger).toBe("user_retry");
+  expect(
+    recovered.contexts.update_diagnostics.timeline
+      .map((line: string) => JSON.parse(line))
+      .filter((entry: { step: string }) => entry.step === "check_requested")
+      .map((entry: { trigger: string }) => entry.trigger),
+  ).toEqual(["user_retry"]);
   expect(mocks.install).not.toHaveBeenCalled();
 });
 

@@ -255,11 +255,8 @@ function checkForUpdate(trigger: UpdateTrigger = checkTrigger): void {
   }
 }
 
-function beginDownload(): void {
-  checkTrigger =
-    attempt?.downloadRequested && !attempt.downloadRetries
-      ? "user_retry"
-      : "automatic_retry";
+function beginDownload(trigger: UpdateTrigger): void {
+  checkTrigger = trigger;
   clearDownloadTimer();
   const a = ensureAttempt();
   a.phase = "downloading";
@@ -307,7 +304,7 @@ function retryDownloadFailure(): void {
     retry: a.downloadRetries,
     version: a.targetVersion,
   });
-  startBudget(delay, false, beginDownload);
+  startBudget(delay, false, () => beginDownload("automatic_retry"));
 }
 
 function recover(): void {
@@ -521,7 +518,7 @@ function restoreAttempt(): void {
     startBudget(
       DOWNLOAD_RETRY_DELAYS[attempt.downloadRetries - 1],
       false,
-      beginDownload,
+      () => beginDownload("automatic_retry"),
     );
     return;
   }
@@ -791,7 +788,7 @@ export function registerUpdateListeners(window: BrowserWindow): void {
     });
     attempt.downloadRequested = true;
     terminal = false;
-    beginDownload();
+    beginDownload("user_retry");
   });
   ipcMain.on("app:relaunch-update-download", (event) => {
     if (
