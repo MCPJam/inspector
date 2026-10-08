@@ -380,7 +380,7 @@ export function CaseRunTimeline({
         data-testid="case-run-table"
       >
         <div className="min-w-0 w-full">
-          <div className="grid grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,1.4fr)] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className="grid grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,.95fr)] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <span className="min-w-0 break-words">Run</span>
             <span className="min-w-0 break-words">Iteration</span>
             <span className="min-w-0 break-words">Client / Model</span>
@@ -416,7 +416,7 @@ export function CaseRunTimeline({
                     else onSelectLive?.();
                     setDrawerOpen(true);
                   }}
-                  className="grid w-full grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,1.4fr)] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
+                  className="grid w-full grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,.95fr)] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
                 >
                   <span
                     className="truncate font-medium"
@@ -498,7 +498,12 @@ export function CaseRunTimeline({
                   >
                     {it ? (
                       <time dateTime={new Date(it.createdAt).toISOString()}>
-                        {formatTime(it.createdAt)}
+                        <span className="block">
+                          {new Date(it.createdAt).toLocaleDateString()}
+                        </span>
+                        <span className="block">
+                          {new Date(it.createdAt).toLocaleTimeString()}
+                        </span>
                       </time>
                     ) : (
                       "just now"

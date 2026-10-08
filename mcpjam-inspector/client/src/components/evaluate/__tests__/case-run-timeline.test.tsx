@@ -165,7 +165,10 @@ describe("CaseRunTimeline", () => {
       expect(within(row).getByText("#1", { exact: true })).toBeVisible();
       const date = within(row).getByTestId("case-run-date");
       expect(row.lastElementChild).toBe(date);
-      expect(date).toHaveTextContent(new Date(trials[index].createdAt).toLocaleString());
+      const timestamp = new Date(trials[index].createdAt);
+      expect(date).toHaveAttribute("title", timestamp.toLocaleString());
+      expect(within(date).getByText(timestamp.toLocaleDateString())).toHaveClass("block");
+      expect(within(date).getByText(timestamp.toLocaleTimeString())).toHaveClass("block");
       expect(date.querySelector("time")).toHaveAttribute("datetime", new Date(trials[index].createdAt).toISOString());
     }
     await userEvent.setup().click(screen.getByRole("button", { name: "ChatGPT · model", exact: true }));
