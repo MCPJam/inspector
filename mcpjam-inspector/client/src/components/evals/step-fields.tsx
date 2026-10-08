@@ -208,7 +208,10 @@ export function InteractActionFields({
           onChange(defaultInteractAction(next as InteractAction["kind"]))
         }
       >
-        <SelectTrigger className="h-7 w-[120px] text-[11px]">
+        <SelectTrigger
+          aria-label="Interaction type"
+          className="h-7 w-[120px] text-[11px]"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -343,29 +346,65 @@ export function WidgetAssertionFields({
   onChange,
   availableTools,
   readOnly = false,
+  paper = false,
 }: {
   value: WidgetAssertion;
   onChange: (next: WidgetAssertion) => void;
   availableTools: AvailableTool[];
   readOnly?: boolean;
+  paper?: boolean;
 }) {
   const target =
     "target" in value ? (value.target as ElementLocator) : undefined;
   const viewTools = invokableTools(availableTools);
+  const fieldClass = paper ? "h-9 text-[13px]" : "h-7 text-[11px]";
+  const assertionKindPicker = (
+    <div className="space-y-1">
+      <Label className="text-[11px]">Assertion</Label>
+      <Select
+        value={value.kind}
+        onValueChange={(next) =>
+          onChange(
+            defaultWidgetAssertion(
+              next as WidgetAssertion["kind"],
+              value.toolName,
+            ),
+          )
+        }
+      >
+        <SelectTrigger aria-label="Assertion kind" className={fieldClass}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {WIDGET_ASSERTION_KINDS.map((k) => (
+            <SelectItem key={k} value={k} className="text-[11px]">
+              {WIDGET_ASSERTION_LABELS[k]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
   return (
     <div className="flex flex-col gap-2">
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className={paper ? "space-y-2" : "grid gap-2 sm:grid-cols-2"}>
         <div className="space-y-1">
-          <Label className="text-[11px]">View (tool)</Label>
+          <Label className="text-xs">{paper ? "View" : "View (tool)"}</Label>
           {viewTools.length > 0 ? (
             <Select
               value={value.toolName || undefined}
               onValueChange={(next) => onChange({ ...value, toolName: next })}
             >
-              <SelectTrigger className="h-7 text-[11px]">
+              <SelectTrigger aria-label="View" className={fieldClass}>
                 <SelectValue placeholder="Pick a view tool…" />
               </SelectTrigger>
               <SelectContent>
+                {value.toolName &&
+                !viewTools.some((tool) => tool.name === value.toolName) ? (
+                  <SelectItem value={value.toolName}>
+                    {value.toolName}
+                  </SelectItem>
+                ) : null}
                 {Array.from(new Set(viewTools.map((t) => t.name))).map(
                   (name) => (
                     <SelectItem key={name} value={name} className="text-[11px]">
@@ -377,56 +416,41 @@ export function WidgetAssertionFields({
             </Select>
           ) : (
             <Input
+              aria-label="View"
               value={value.toolName}
               onChange={(e) => onChange({ ...value, toolName: e.target.value })}
               placeholder="view tool name…"
-              className="h-7 text-[11px]"
+              className={fieldClass}
             />
           )}
         </div>
-        <div className="space-y-1">
-          <Label className="text-[11px]">Assertion</Label>
-          <Select
-            value={value.kind}
-            onValueChange={(next) =>
-              onChange(
-                defaultWidgetAssertion(
-                  next as WidgetAssertion["kind"],
-                  value.toolName,
-                ),
-              )
-            }
-          >
-            <SelectTrigger className="h-7 text-[11px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {WIDGET_ASSERTION_KINDS.map((k) => (
-                <SelectItem key={k} value={k} className="text-[11px]">
-                  {WIDGET_ASSERTION_LABELS[k]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {!paper ? assertionKindPicker : null}
       </div>
       {value.kind === "textVisible" ? (
-        <Input
-          value={value.text}
-          onChange={(e) => onChange({ ...value, text: e.target.value })}
-          placeholder="visible text…"
-          className="h-7 text-[11px]"
-        />
+        <div className="space-y-1">
+          {paper ? <Label className="text-xs">Text</Label> : null}
+          <Input
+            aria-label="Text"
+            value={value.text}
+            onChange={(e) => onChange({ ...value, text: e.target.value })}
+            placeholder="Visible text…"
+            className={fieldClass}
+          />
+        </div>
       ) : null}
       {value.kind === "widgetToolCalled" ? (
-        <Input
-          value={value.calledToolName}
-          onChange={(e) =>
-            onChange({ ...value, calledToolName: e.target.value })
-          }
-          placeholder="called tool name…"
-          className="h-7 text-[11px]"
-        />
+        <div className="space-y-1">
+          {paper ? <Label className="text-xs">Tool</Label> : null}
+          <Input
+            aria-label="Called tool"
+            value={value.calledToolName}
+            onChange={(e) =>
+              onChange({ ...value, calledToolName: e.target.value })
+            }
+            placeholder="Called tool name…"
+            className={fieldClass}
+          />
+        </div>
       ) : null}
       {target !== undefined &&
       (value.kind === "elementVisible" ||
@@ -441,12 +465,22 @@ export function WidgetAssertionFields({
         />
       ) : null}
       {value.kind === "inputValue" ? (
-        <Input
-          value={value.equals}
-          onChange={(e) => onChange({ ...value, equals: e.target.value })}
-          placeholder="equals…"
-          className="h-7 text-[11px]"
-        />
+        <div className="space-y-1">
+          {paper ? <Label className="text-xs">Value</Label> : null}
+          <Input
+            aria-label="Expected input value"
+            value={value.equals}
+            onChange={(e) => onChange({ ...value, equals: e.target.value })}
+            placeholder="Equals…"
+            className={fieldClass}
+          />
+        </div>
+      ) : null}
+      {paper ? (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Check settings</summary>
+          <div className="pt-2">{assertionKindPicker}</div>
+        </details>
       ) : null}
     </div>
   );

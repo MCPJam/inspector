@@ -41,6 +41,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@mcpjam/design-system/popover";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Trash2, Plus, X } from "lucide-react";
 import { Combobox } from "@/components/ui/combobox";
@@ -170,13 +175,45 @@ const InvalidDraftRegistry = createContext<
   ((editorId: string, invalid: boolean) => void) | null
 >(null);
 
-function useInvalidDraftRegistration(invalid: boolean): void {
+export function useInvalidDraftRegistration(invalid: boolean): void {
   const report = useContext(InvalidDraftRegistry);
   const editorId = useId();
   useEffect(() => {
     report?.(editorId, invalid);
     return () => report?.(editorId, false);
   }, [report, editorId, invalid]);
+}
+
+/** Invalid local text must block Save even though it has not replaced the last valid value. */
+export function CheckDraftBoundary({
+  children,
+  onValidityChange,
+}: {
+  children: ReactNode;
+  onValidityChange?: (invalid: boolean) => void;
+}) {
+  const [invalidIds, setInvalidIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const report = useCallback((id: string, invalid: boolean) => {
+    setInvalidIds((previous) => {
+      if (previous.has(id) === invalid) return previous;
+      const next = new Set(previous);
+      if (invalid) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const invalid = invalidIds.size > 0;
+  useEffect(() => {
+    onValidityChange?.(invalid);
+  }, [invalid, onValidityChange]);
+  useEffect(() => () => onValidityChange?.(false), [onValidityChange]);
+  return (
+    <InvalidDraftRegistry.Provider value={report}>
+      {children}
+    </InvalidDraftRegistry.Provider>
+  );
 }
 
 /**
@@ -464,7 +501,11 @@ export interface CheckRowProps {
   noun?: string;
   /** Reveal issues on untouched fields too — the Save-attempt case. */
   showAllErrors?: boolean;
+  /** Paper manual-case field layout; other authoring surfaces keep their layout. */
+  paper?: boolean;
 }
+
+const PaperFieldsContext = createContext<Predicate["type"] | null>(null);
 
 export function CheckRow({
   predicate,
@@ -480,6 +521,7 @@ export function CheckRow({
   globalGate = false,
   noun = "check",
   showAllErrors = false,
+  paper = false,
 }: CheckRowProps) {
   // Zod-validate the current row. Callers gate Save on the same schema via
   // `areAllChecksValid`; this copy of the verdict is what the fields show,
@@ -542,7 +584,11 @@ export function CheckRow({
     <div
       className={cn(
         embedded
-          ? "min-w-0 space-y-3"
+          ? cn(
+              "min-w-0 space-y-3",
+              paper &&
+                "[&_input:not([type=number])]:h-9 [&_input:not([type=number])]:text-[13px] [&_label]:text-xs",
+            )
           : cn(
               "rounded-md border p-3",
               anyErrorShown
@@ -569,16 +615,18 @@ export function CheckRow({
           ) : null}
 
           <FieldValidationContext.Provider value={fieldValidation}>
-            <CheckFields
-              predicate={predicate}
-              onChange={onChange}
-              availableTools={availableTools}
-              widgetToolNames={widgetToolNames}
-              toolArgSchemas={toolArgSchemas}
-              toolOutputSchemas={toolOutputSchemas}
-              readOnly={readOnly}
-              compactGlobalGate={globalGate}
-            />
+            <PaperFieldsContext.Provider value={paper ? predicate.type : null}>
+              <CheckFields
+                predicate={predicate}
+                onChange={onChange}
+                availableTools={availableTools}
+                widgetToolNames={widgetToolNames}
+                toolArgSchemas={toolArgSchemas}
+                toolOutputSchemas={toolOutputSchemas}
+                readOnly={readOnly}
+                compactGlobalGate={globalGate}
+              />
+            </PaperFieldsContext.Provider>
           </FieldValidationContext.Provider>
 
           {showRowLevelError ? (
@@ -630,6 +678,8 @@ function OnlyToolsField({
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [toolName, setToolName] = useState("");
   const options = (availableTools ?? []).filter(
     (tool) => !value.includes(tool),
@@ -641,6 +691,101 @@ function OnlyToolsField({
       setToolName("");
     }
   };
+  if (paper)
+    return (
+      <div className="space-y-2">
+        {value.length ? (
+          <ul className="flex flex-wrap gap-1">
+            {value.map((name) => (
+              <li key={name}>
+                <button
+                  type="button"
+                  disabled={readOnly}
+                  aria-label={`Remove ${name}`}
+                  onClick={() =>
+                    onChange(value.filter((tool) => tool !== name))
+                  }
+                  className="rounded-full border border-border px-2 py-0.5 text-[11px]"
+                >
+                  {name}
+                  {readOnly ? null : (
+                    <X aria-hidden className="ml-1 inline size-3" />
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            No tool should be called.
+          </p>
+        )}
+        {!readOnly ? (
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 text-xs">
+                Add a tool
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-1">
+              <Input
+                aria-label="Find or enter a tool"
+                value={toolName}
+                onChange={(event) => setToolName(event.target.value)}
+                placeholder="Tool name"
+                className="h-8 text-xs"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !availableTools?.length) {
+                    event.preventDefault();
+                    addTool();
+                    setPickerOpen(false);
+                  }
+                }}
+              />
+              {availableTools?.length ? (
+                <div className="max-h-48 overflow-auto">
+                  {options
+                    .filter((name) =>
+                      name.toLowerCase().includes(toolName.toLowerCase()),
+                    )
+                    .map((name) => (
+                      <Button
+                        key={name}
+                        variant="ghost"
+                        className="h-8 w-full justify-start text-xs"
+                        onClick={() => {
+                          onChange([...value, name]);
+                          setToolName("");
+                          setPickerOpen(false);
+                        }}
+                      >
+                        {name}
+                      </Button>
+                    ))}
+                  {options.length === 0 ? (
+                    <p className="p-2 text-xs text-muted-foreground">
+                      All tools have been added.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  className="h-8 text-xs"
+                  disabled={!toolName.trim() || value.includes(toolName.trim())}
+                  onClick={() => {
+                    addTool();
+                    setPickerOpen(false);
+                  }}
+                >
+                  Add a tool
+                </Button>
+              )}
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
+    );
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] text-muted-foreground">
@@ -734,6 +879,28 @@ function CheckFields({
   compactGlobalGate?: boolean;
 }) {
   const widgetTools = widgetToolNames ?? availableTools;
+  const paper = useContext(PaperFieldsContext);
+  if (
+    paper &&
+    (predicate.type === "tokenBudgetUnder" ||
+      predicate.type === "turnCountUnder")
+  ) {
+    const field = predicate.type === "tokenBudgetUnder" ? "tokens" : "turns";
+    return (
+      <PaperNumberField
+        value={
+          predicate.type === "tokenBudgetUnder"
+            ? predicate.tokens
+            : predicate.turns
+        }
+        unit={field === "tokens" ? "tokens" : "user turns"}
+        readOnly={readOnly}
+        onChange={(number) =>
+          onChange({ ...predicate, [field]: number } as Predicate)
+        }
+      />
+    );
+  }
   switch (predicate.type) {
     case "toolDescriptionsPresent":
       return (
@@ -911,10 +1078,16 @@ function CheckFields({
     case "noEndingQuestion":
       return (
         <div className="text-xs text-muted-foreground">
-          Notices answers whose last non-empty line ends with a question mark.
-          It cannot tell an offer ("Would you like a breakdown?") from a request
-          for something missing, so it reports what it saw and never fails an
-          iteration.
+          {paper ? (
+            "Passes when the reply does not end in a question."
+          ) : (
+            <>
+              Notices answers whose last non-empty line ends with a question
+              mark. It cannot tell an offer ("Would you like a breakdown?") from
+              a request for something missing, so it reports what it saw and
+              never fails an iteration.
+            </>
+          )}
         </div>
       );
     case "tokenBudgetUnder":
@@ -1130,6 +1303,12 @@ function ToolNameField({
   path?: "toolName" | "beforeToolName";
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
+  const inline =
+    paper &&
+    ["toolCalledAtLeastOnce", "toolNeverCalled", "firstToolWas"].includes(
+      paper,
+    );
   const errorId = `${id}-error`;
   // When a suite has attached servers and we know the tool list, prefer a
   // dropdown to prevent typos. Fall back to free text otherwise (legacy
@@ -1151,9 +1330,11 @@ function ToolNameField({
   return (
     <div
       className={
-        compact
-          ? "grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-2 pr-7"
-          : "space-y-1"
+        inline
+          ? "flex flex-wrap items-center gap-2"
+          : compact
+            ? "grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-2 pr-7"
+            : "space-y-1"
       }
     >
       <Label htmlFor={id} className="text-[11px]">
@@ -1174,9 +1355,13 @@ function ToolNameField({
           <SelectTrigger
             id={id}
             className={
-              compact
-                ? "h-7 w-full border-0 bg-transparent font-mono text-xs shadow-none"
-                : "h-8 text-xs"
+              inline
+                ? "h-7 w-auto min-w-24 text-xs"
+                : paper
+                  ? "h-9 w-full text-[13px]"
+                  : compact
+                    ? "h-7 w-full border-0 bg-transparent font-mono text-xs shadow-none"
+                    : "h-8 text-xs"
             }
             aria-label={label}
             aria-invalid={error ? true : undefined}
@@ -1209,8 +1394,14 @@ function ToolNameField({
             onChange(e.target.value);
           }}
           onBlur={markTouched}
-          placeholder="e.g. search"
-          className="h-8 text-xs"
+          placeholder="Tool name"
+          className={
+            inline
+              ? "h-7 w-40 text-xs"
+              : paper
+                ? "h-9 text-[13px]"
+                : "h-8 text-xs"
+          }
           disabled={readOnly}
         />
       )}
@@ -1263,6 +1454,7 @@ export function ToolCalledWithFields({
   toolArgSchemas,
   readOnly,
   compact = false,
+  paper = false,
 }: {
   predicate: Extract<Predicate, { type: "toolCalledWith" }>;
   onChange: (next: Predicate) => void;
@@ -1270,12 +1462,57 @@ export function ToolCalledWithFields({
   toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
   compact?: boolean;
+  paper?: boolean;
 }) {
   const minCountId = useId();
   // Schema properties for the currently-selected tool, if known. Drives the
   // argument-name dropdown + value type hints below; empty/undefined falls
   // back to free-text keys.
   const argProperties = toolArgSchemas?.[predicate.toolName];
+  const contextPaper = useContext(PaperFieldsContext);
+  if (paper || contextPaper)
+    return (
+      <PaperFieldsContext.Provider value="toolCalledWith">
+        <div className="space-y-2">
+          <ToolNameField
+            value={predicate.toolName}
+            onChange={(toolName) => onChange({ ...predicate, toolName })}
+            availableTools={availableTools}
+            readOnly={readOnly}
+          />
+          {predicate.args.argumentMatching === "ignore" ? (
+            <p className="text-xs text-muted-foreground">
+              Arguments are ignored.
+            </p>
+          ) : (
+            <RawArgsJsonEditor
+              paper
+              value={predicate.args.args ?? {}}
+              mode={predicate.args.argumentMatching ?? "partial"}
+              readOnly={readOnly}
+              onChange={(args) =>
+                onChange({ ...predicate, args: { ...predicate.args, args } })
+              }
+            />
+          )}
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Argument settings</summary>
+            <div className="pt-2">
+              <PaperFieldsContext.Provider value={null}>
+                <ToolCalledWithFields
+                  predicate={predicate}
+                  onChange={onChange}
+                  availableTools={availableTools}
+                  toolArgSchemas={toolArgSchemas}
+                  readOnly={readOnly}
+                  compact
+                />
+              </PaperFieldsContext.Provider>
+            </div>
+          </details>
+        </div>
+      </PaperFieldsContext.Provider>
+    );
   return (
     <div className={compact ? "space-y-1" : "space-y-3"}>
       <ToolNameField
@@ -1609,8 +1846,7 @@ function StructuredArgsRow({
   const argKeys = argProperties ? Object.keys(argProperties) : [];
   const useKeyDropdown = argKeys.length > 0;
   const argSchema = argProperties?.[persistedKey] as
-    | { type?: string; description?: string }
-    | undefined;
+    { type?: string; description?: string } | undefined;
   // A freshly-added row uses a synthetic `arg`/`argN` key that isn't a real
   // schema property — show the placeholder so the user is prompted to pick.
   const isPlaceholderKey =
@@ -1621,8 +1857,7 @@ function StructuredArgsRow({
     .filter((k) => k === persistedKey || !isKeyTaken(k))
     .map((k) => {
       const schema = argProperties![k] as
-        | { type?: string; description?: string }
-        | undefined;
+        { type?: string; description?: string } | undefined;
       let description = schema?.description || "";
       if (schema?.type) {
         description += description
@@ -1747,16 +1982,18 @@ function RawArgsJsonEditor({
   onChange,
   mode,
   readOnly,
+  paper = false,
 }: {
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
   mode: ArgMatchMode;
   readOnly: boolean;
+  paper?: boolean;
 }) {
   const argsId = useId();
   const formatValue = (v: unknown): string => {
     try {
-      return JSON.stringify(v ?? {}, null, 2);
+      return paper ? JSON.stringify(v ?? {}) : JSON.stringify(v ?? {}, null, 2);
     } catch {
       return "{}";
     }
@@ -1785,19 +2022,25 @@ function RawArgsJsonEditor({
   return (
     <div className="space-y-1">
       <Label htmlFor={argsId} className="text-[11px]">
-        Expected args (JSON)
-        {mode === "partial" ? (
+        {paper ? "Arguments" : "Expected args (JSON)"}
+        {!paper && mode === "partial" ? (
           <span className="ml-2 text-muted-foreground font-normal">
             Placeholders allowed: "string", "number", "boolean", "object",
             "array", "null", "any"
           </span>
         ) : null}
       </Label>
-      <textarea
+      <Textarea
         id={argsId}
-        className={`min-h-[80px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
-          jsonError ? "border-destructive/60" : "border-border/60"
-        }`}
+        rows={paper ? 1 : undefined}
+        aria-invalid={jsonError ? true : undefined}
+        className={
+          paper
+            ? "min-h-9 h-9 resize-y border-input px-3 py-2 font-sans text-[13px] md:text-[13px]"
+            : `min-h-[80px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
+                jsonError ? "border-destructive/60" : "border-border/60"
+              }`
+        }
         value={draftJson}
         onChange={(e) => {
           const next = e.target.value;
@@ -1830,6 +2073,7 @@ function ResponseContainsFields({
   onChange: (next: Predicate) => void;
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const needleId = useId();
   const csId = useId();
   const { error, markTouched } = useFieldValidation(
@@ -1840,7 +2084,7 @@ function ResponseContainsFields({
     <div className="space-y-2">
       <div className="space-y-1">
         <Label htmlFor={needleId} className="text-[11px]">
-          Needle
+          {paper ? "Text" : "Needle"}
         </Label>
         <Input
           id={needleId}
@@ -1853,7 +2097,7 @@ function ResponseContainsFields({
           }}
           onBlur={markTouched}
           placeholder="e.g. refund issued"
-          className="h-8 text-xs"
+          className={paper ? "h-9 text-[13px]" : "h-8 text-xs"}
           disabled={readOnly}
         />
         {error ? (
@@ -1862,19 +2106,21 @@ function ResponseContainsFields({
           </p>
         ) : null}
       </div>
-      <div className="flex items-center gap-2">
-        <Switch
-          id={csId}
-          checked={predicate.caseSensitive ?? false}
-          onCheckedChange={(checked) =>
-            onChange({ ...predicate, caseSensitive: checked })
-          }
-          disabled={readOnly}
-        />
-        <Label htmlFor={csId} className="text-[11px]">
-          Case sensitive
-        </Label>
-      </div>
+      {paper ? null : (
+        <div className="flex items-center gap-2">
+          <Switch
+            id={csId}
+            checked={predicate.caseSensitive ?? false}
+            onCheckedChange={(checked) =>
+              onChange({ ...predicate, caseSensitive: checked })
+            }
+            disabled={readOnly}
+          />
+          <Label htmlFor={csId} className="text-[11px]">
+            Case sensitive
+          </Label>
+        </div>
+      )}
     </div>
   );
 }
@@ -1889,6 +2135,7 @@ function ResponseMatchesFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   // Live-validate the regex on input. An invalid pattern shows inline as soon
   // as it is typed — the user wrote it, so it is not an untouched-field
   // message. The empty case goes through the touched rule like every other
@@ -1910,7 +2157,7 @@ function ResponseMatchesFields({
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Regex pattern (no surrounding slashes)
+        {paper ? "Pattern" : "Regex pattern (no surrounding slashes)"}
       </Label>
       <Input
         id={id}
@@ -2550,6 +2797,27 @@ function WidgetLatencyFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
+  if (paper)
+    return (
+      <div className="space-y-2">
+        <PaperNumberField
+          value={predicate.ms}
+          unit="ms"
+          readOnly={readOnly}
+          onChange={(ms) => onChange({ ...predicate, ms })}
+        />
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">View filter</summary>
+          <WidgetToolFilterField
+            value={predicate.toolName}
+            onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+            availableTools={availableTools}
+            readOnly={readOnly}
+          />
+        </details>
+      </div>
+    );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -2614,6 +2882,7 @@ function ResultToolFilterField({
   /** The no-filter choice, e.g. "Any tool" where one matching result is enough. */
   anyLabel?: string;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const id = useId();
   // The all-tools option and a real tool name live in ONE value space, so the
   // sentinel must be unreachable by any tool name rather than merely unlikely:
@@ -2635,13 +2904,20 @@ function ResultToolFilterField({
           value={value === undefined ? ALL : encode(value)}
           onValueChange={(next) => onChange(decode(next))}
         >
-          <SelectTrigger id={id} className="h-8 text-xs" aria-label={label}>
+          <SelectTrigger
+            id={id}
+            className={paper ? "h-9 text-[13px]" : "h-8 text-xs"}
+            aria-label={label}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL} className="text-xs">
               {anyLabel}
             </SelectItem>
+            {value && !availableTools!.includes(value) ? (
+              <SelectItem value={encode(value)}>{value}</SelectItem>
+            ) : null}
             {availableTools!.map((t) => (
               <SelectItem key={t} value={encode(t)} className="text-xs">
                 {t}
@@ -2658,7 +2934,7 @@ function ResultToolFilterField({
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
           placeholder={anyLabel}
-          className="h-8 text-xs"
+          className={paper ? "h-9 text-[13px]" : "h-8 text-xs"}
           disabled={readOnly}
         />
       )}
@@ -2716,17 +2992,18 @@ function ToolOrderFields({
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   return (
     <div className="space-y-2">
       <ToolNameField
-        label="Must be called first"
+        label={paper ? "First tool" : "Must be called first"}
         value={predicate.toolName}
         onChange={(toolName) => onChange({ ...predicate, toolName })}
         availableTools={availableTools}
         readOnly={readOnly}
       />
       <ToolNameField
-        label="Before this tool"
+        label={paper ? "Second tool" : "Before this tool"}
         path="beforeToolName"
         value={predicate.beforeToolName}
         onChange={(beforeToolName) =>
@@ -2777,8 +3054,51 @@ function ToolResultNumberFields<
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const id = useId();
   const value = (predicate as Record<string, unknown>)[field] as number;
+  if (paper)
+    return (
+      <div className="space-y-2">
+        {field !== "count" ? (
+          <ResultToolFilterField
+            value={predicate.toolName}
+            onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+            availableTools={availableTools}
+            readOnly={readOnly}
+            label="Tool"
+          />
+        ) : null}
+        <PaperNumberField
+          value={value}
+          prefix={field === "count" ? undefined : "Under"}
+          unit={
+            field === "ms"
+              ? "ms"
+              : field === "maxBytes"
+                ? "bytes"
+                : "tool calls"
+          }
+          readOnly={readOnly}
+          onChange={(number) =>
+            onChange({ ...predicate, [field]: number } as Predicate)
+          }
+        />
+        {field === "count" ? (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Tool filter</summary>
+            <ResultToolFilterField
+              value={predicate.toolName}
+              onChange={(toolName) =>
+                onChange(withToolName(predicate, toolName))
+              }
+              availableTools={availableTools}
+              readOnly={readOnly}
+            />
+          </details>
+        ) : null}
+      </div>
+    );
   return (
     <div className="space-y-2">
       <div className="space-y-1">
@@ -2825,15 +3145,25 @@ function ToolResultContainsFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   const { error, markTouched } = useFieldValidation(
     "needle",
     "Enter the text the result must contain",
   );
   return (
     <div className="space-y-2">
+      {paper ? (
+        <ResultToolFilterField
+          label="Tool"
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
       <div className="space-y-1">
         <Label htmlFor={id} className="text-[11px]">
-          Text the result must contain
+          {paper ? "Text" : "Text the result must contain"}
         </Label>
         <Input
           id={id}
@@ -2855,12 +3185,14 @@ function ToolResultContainsFields({
           </p>
         ) : null}
       </div>
-      <ResultToolFilterField
-        value={predicate.toolName}
-        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
-        availableTools={availableTools}
-        readOnly={readOnly}
-      />
+      {!paper ? (
+        <ResultToolFilterField
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2979,6 +3311,46 @@ function ToolResultSchemaFields({
         availableTools={availableTools}
         readOnly={readOnly}
       />
+    </div>
+  );
+}
+
+function PaperNumberField({
+  value,
+  onChange,
+  unit,
+  prefix,
+  readOnly,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  unit: string;
+  prefix?: string;
+  readOnly: boolean;
+}) {
+  const id = useId();
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-secondary-foreground dark:text-muted-foreground">
+      {prefix ? (
+        <Label htmlFor={id} className="text-xs font-medium">
+          {prefix}
+        </Label>
+      ) : null}
+      <Input
+        id={id}
+        aria-label={`Strictly under (${unit})`}
+        type="number"
+        min={1}
+        step={1}
+        value={value}
+        onChange={(event) => {
+          const number = Number(event.target.value);
+          if (Number.isFinite(number)) onChange(Math.floor(number));
+        }}
+        disabled={readOnly}
+        className="h-7 w-16 px-2 text-[13px]"
+      />
+      <label htmlFor={id}>{unit}</label>
     </div>
   );
 }
@@ -3440,7 +3812,8 @@ function ResponseCloseToFields({
         Compares characters, not meaning. Zero requires an exact match after
         normalization. Inputs are limited to 100,000 characters. Unequal text
         that needs more than 4 million edit-distance cells is ungradable, not a
-        failed assertion; equal prefixes and suffixes do not consume that budget.
+        failed assertion; equal prefixes and suffixes do not consume that
+        budget.
       </p>
     </div>
   );
