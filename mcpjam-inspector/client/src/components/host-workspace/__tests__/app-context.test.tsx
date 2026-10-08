@@ -68,7 +68,7 @@ describe("retained App composer context", () => {
     await expect(update({ content: [] })).rejects.toThrow();
     expect(context).toHaveBeenCalledTimes(2);
   });
-  it("presents each block by type and removes all of an App's context one block at a time", async () => {
+  it("presents each block by type and removes all of an App's context in one request", async () => {
     const png =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
     let state: { updateId: string; content: unknown[] } | null = {
@@ -104,11 +104,13 @@ describe("retained App composer context", () => {
     };
     let revision = 1;
     context.mockReset().mockImplementation(
-      async (_token: string, action: string, request: { index: number }) => {
-        if (action !== "remove") throw new Error(action);
+      async (_token: string, action: string, request: { index: "all" }) => {
+        if (action !== "remove" || request.index !== "all")
+          throw new Error(action);
         state = {
           updateId: `u${revision}`,
-          content: state!.content.filter((_, i) => i !== request.index),
+          // Only the assistant-only block is left.
+          content: state!.content.slice(-1),
         };
         revision++;
         return { revision, sequence: 1, state };
@@ -158,8 +160,8 @@ describe("retained App composer context", () => {
       rows[0]!.group!.removeAll!();
     });
     await vi.waitFor(() => expect(result.current.attachments).toEqual([]));
-    // Each visible block was removed explicitly; the hidden one stays.
-    expect(context).toHaveBeenCalledTimes(5);
+    // One request removed every visible block; the hidden one stays.
+    expect(context).toHaveBeenCalledTimes(1);
     expect(state!.content).toHaveLength(1);
   });
 
@@ -168,25 +170,19 @@ describe("retained App composer context", () => {
     // removal refused ("outcome unknown"), so "Remove all" kept the chip.
     const two = {
       updateId: "u1",
-      content: [{ type: "text", text: "Selected view" }],
-      structuredContent: { part: "triangle" },
+      content: [
+        { type: "text", text: "Selected view" },
+        { type: "text", text: "Part notes" },
+      ],
     };
     let server: typeof two | null = two;
     context.mockReset().mockImplementation(
-      async (_token: string, action: string, request: { index?: number }) => {
+      async (_token: string, action: string, request: { index?: unknown }) => {
         if (action === "update") throw new Error("network");
         if (action === "read") return { revision: 1, sequence: 1, state: server };
-        server =
-          request.index === 1
-            ? { ...server!, updateId: "u2", structuredContent: undefined as never }
-            : null;
-        return {
-          revision: server ? 2 : 3,
-          sequence: 1,
-          state: server
-            ? { updateId: server.updateId, content: server.content }
-            : null,
-        };
+        if (request.index !== "all") throw new Error("expected one removal");
+        server = null;
+        return { revision: 2, sequence: 1, state: null };
       },
     );
     const { result } = renderHook(() =>

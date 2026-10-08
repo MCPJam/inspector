@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { pluginModelContextParamsSchema } from "../../../shared/plugin-model-context.js";
+import {
+  pluginContextRemovalIndexSchema,
+  pluginModelContextParamsSchema,
+} from "../../../shared/plugin-model-context.js";
 import {
   pluginInstances,
   type PluginInstanceIdentity,
@@ -24,7 +27,7 @@ const change = handle.extend({
 const removal = handle.extend({
   operationId: z.string().uuid(),
   updateId: z.string().uuid(),
-  index: z.number().int().nonnegative(),
+  index: pluginContextRemovalIndexSchema,
 });
 export function pluginContextRoutes(ports: {
   route: (c: Context, action: () => Promise<Response>) => Promise<Response>;

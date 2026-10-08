@@ -11,7 +11,7 @@ import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
 
 /** How one App context block reads in its App's Context popover. */
 export interface ContextAttachmentBlock {
-  kind: "text" | "resource_link" | "resource" | "image" | "structured";
+  kind: "text" | "resource_link" | "resource" | "image";
   /** Text excerpt, or the URI of a resource link / embedded resource. */
   detail?: string;
   /** Image format label, e.g. "PNG". */
@@ -95,10 +95,11 @@ function Thumbnail({ src }: { src: string }) {
 }
 
 /**
- * One chip per App: its plugin icon and "Context". Opening it lists each
- * block by type (text: title and text; resource link and embedded resource:
- * title and URI; image: title, format and thumbnail). Each row is removable,
- * and × on the chip removes all of that App's context.
+ * One chip per App: its plugin icon, "Context" and how many blocks it
+ * holds. Opening it lists each block by type (text: title and text;
+ * resource link and embedded resource: title and URI; image: title, format
+ * and thumbnail). Each row is removable, and × on the chip removes all of
+ * that App's context.
  */
 export function ContextGroupChip({
   group,
@@ -131,6 +132,13 @@ export function ContextGroupChip({
               serverIcons={group.serverIcons}
             />
             Context
+            <span
+              data-testid="context-group-count"
+              aria-hidden="true"
+              className="tabular-nums text-muted-foreground"
+            >
+              · {items.length}
+            </span>
           </Button>
         </PopoverTrigger>
         {group.removeAll && (

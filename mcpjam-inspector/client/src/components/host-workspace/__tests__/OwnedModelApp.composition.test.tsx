@@ -206,6 +206,7 @@ describe("a later send and Remove all", () => {
   it("references the App only while it has context, and Remove all clears the chip and tells the App null", async () => {
     let server: { updateId: string; content: unknown[] } | null = null;
     let revision = 0;
+    let removals = 0;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
       const body = JSON.parse(init.body as string);
       if (url.endsWith("/model/open")) return reply(handle);
@@ -220,8 +221,10 @@ describe("a later send and Remove all", () => {
         });
       }
       if (url.endsWith("/model/context/remove")) {
-        const content = server!.content.filter((_, i) => i !== body.index);
-        server = content.length ? { updateId: `${updateId}-${revision}`.slice(0, 36), content } : null;
+        // × removes every visible block in one request.
+        expect(body.index).toBe("all");
+        removals++;
+        server = null;
         revision++;
         return reply({ revision, sequence: 1, state: server });
       }
@@ -253,6 +256,7 @@ describe("a later send and Remove all", () => {
       ).not.toBeInTheDocument(),
     );
     expect(server).toBeNull();
+    expect(removals).toBe(1);
     expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
     expect(mocks.notifications.at(-1)).toBeNull();
     // The next send no longer depends on this App.
@@ -332,8 +336,7 @@ describe("inline App and composer composition", () => {
     expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
     expect(mocks.notifications.at(-1)).toBeNull();
     expect(mocks.sourceEffects).toBe(1);
-    // Structured state also uses the same removable composer chip and the
-    // existing authenticated removal/notification protocol.
+    // Structured-only state is background context: attached, but no chip.
     const structured = {
       content: [],
       structuredContent: { fixture: true, value: 42 },
@@ -366,21 +369,8 @@ describe("inline App and composer composition", () => {
     });
     frame.remove();
     expect(mocks.fetch.mock.lastCall![1].body).toContain('"attach":"user"');
-    expect(
-      screen.getByRole("button", { name: "Remove App context" }),
-    ).toBeInTheDocument();
-    const previousRemoval = finishRemoval;
-    fireEvent.click(screen.getByRole("button", { name: "Remove App context" }));
-    await waitFor(() => expect(finishRemoval).not.toBe(previousRemoval));
-    await act(async () => {
-      finishRemoval(reply({ revision: 4, sequence: 2, state: null }));
-    });
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Remove App context" }),
-      ).not.toBeInTheDocument(),
-    );
-    expect(screen.getByTestId("guest-context")).toHaveTextContent("null");
+    expect(screen.getByTestId("guest-context")).toHaveTextContent(updateId);
+    expect(screen.queryByTestId("context-group-chip")).not.toBeInTheDocument();
     expect(mocks.sourceEffects).toBe(1);
     // Keep the old leaf mounted deliberately: scope change must fence it before
     // passive cleanup, and returning cannot revive its former publications.

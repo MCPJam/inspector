@@ -108,53 +108,64 @@ export function pluginInlineContentBlock(
   return { type: "image", mimeType, data };
 }
 
-/** Presentation only. Exactly assistant-only blocks remain background context. */
+/**
+ * Presentation only: one removable attachment per content block, as the spec
+ * says. `structuredContent` is not a content block, so like assistant-only
+ * blocks it stays background context: sent to the model, never a row.
+ */
 export function pluginContextAttachments(snapshot: PluginContextSnapshot) {
-  const attachments = (snapshot.state?.content ?? []).flatMap(
-    (block, index) => {
-      if (
-        block.annotations?.audience?.length === 1 &&
-        block.annotations.audience[0] === "assistant"
-      )
-        return [];
-      const title = block._meta?.["openai/title"];
-      const inline = pluginInlineContentBlock(block);
-      return [
-        {
-          index,
-          block,
-          title:
-            typeof title === "string" && title.trim()
-              ? title.trim().slice(0, 256)
-              : inline.type === "text"
-                ? inline.text.slice(0, 80) || "App context"
-                : inline.type === "resource_link"
-                  ? (inline.reference.title ?? inline.reference.name).slice(
-                      0,
-                      256,
-                    )
-                  : "App image",
-          image: inline.type === "image" ? inline : undefined,
-          thumbnail:
-            block.type === "text"
-              ? block._meta?.["openai/thumbnail"]
-              : undefined,
-        },
-      ];
-    },
-  );
-  return snapshot.state?.structuredContent
-    ? [
-        ...attachments,
-        {
-          index: snapshot.state.content.length,
-          block: undefined,
-          title: "App context",
-          image: undefined,
-          thumbnail: undefined,
-        },
-      ]
-    : attachments;
+  return (snapshot.state?.content ?? []).flatMap((block, index) => {
+    if (
+      block.annotations?.audience?.length === 1 &&
+      block.annotations.audience[0] === "assistant"
+    )
+      return [];
+    const title = block._meta?.["openai/title"];
+    const inline = pluginInlineContentBlock(block);
+    return [
+      {
+        index,
+        block,
+        title:
+          typeof title === "string" && title.trim()
+            ? title.trim().slice(0, 256)
+            : inline.type === "text"
+              ? inline.text.slice(0, 80) || "App context"
+              : inline.type === "resource_link"
+                ? (inline.reference.title ?? inline.reference.name).slice(
+                    0,
+                    256,
+                  )
+                : "App image",
+        image: inline.type === "image" ? inline : undefined,
+        thumbnail:
+          block.type === "text" ? block._meta?.["openai/thumbnail"] : undefined,
+      },
+    ];
+  });
+}
+
+/** What a composer removal drops: one visible block by index, or every
+ * visible block (the chip's ×) in a single request. */
+export const pluginContextRemovalIndexSchema = z.union([
+  z.number().int().nonnegative(),
+  z.literal("all"),
+]);
+export type PluginContextRemovalIndex = z.infer<
+  typeof pluginContextRemovalIndexSchema
+>;
+
+/** The content indices a removal drops from this snapshot, or `undefined`
+ * when it no longer matches what the person sees (nothing to remove). */
+export function pluginContextRemovalIndices(
+  snapshot: PluginContextSnapshot,
+  index: PluginContextRemovalIndex,
+): ReadonlySet<number> | undefined {
+  const visible = pluginContextAttachments(snapshot).map((item) => item.index);
+  if (index === "all") return visible.length ? new Set(visible) : undefined;
+  return Number.isSafeInteger(index) && visible.includes(index)
+    ? new Set([index])
+    : undefined;
 }
 
 /** Supplied text/image bytes and inert link data; unsupported binary/audio refuses. */

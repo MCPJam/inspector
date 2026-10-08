@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { pluginModelContextParamsSchema } from "../../../shared/plugin-model-context.js";
+import {
+  pluginContextRemovalIndexSchema,
+  pluginModelContextParamsSchema,
+} from "../../../shared/plugin-model-context.js";
 import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import type { PluginInstanceIdentity } from "../../services/plugin-host/instances.js";
 import type { PluginWorkspaceAdmission } from "../../services/plugin-host/admission.js";
@@ -142,7 +145,7 @@ export function pluginModelAppRoutes(ports: {
             ? handle.extend({
                 operationId: z.string().uuid(),
                 updateId: z.string().uuid(),
-                index: z.number().int().nonnegative(),
+                index: pluginContextRemovalIndexSchema,
               })
             : handle;
         const body = schema.parse(raw);

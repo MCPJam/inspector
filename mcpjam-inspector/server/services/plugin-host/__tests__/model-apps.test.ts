@@ -97,45 +97,55 @@ describe("trusted completed model App ownership", () => {
   });
 });
 
-it("removes structured context independently and acknowledges retry without resurrecting it", () => {
+it("keeps structured context as background, removes blocks, and acknowledges retry without resurrecting them", () => {
   const registry = new ModelAppRegistry();
   const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
   const { context, owner: source } = registry.get(token, actor);
   const id = source.owner.instanceId;
-  const update = context.update(id, 1, {
+  const structured = context.update(id, 1, {
     operationId: "structured",
     sequence: 1,
     params: { content: [], structuredContent: { fixture: true } },
   });
+  // Not a content block, so nothing to remove.
+  expect(() =>
+    context.remove(id, 1, {
+      operationId: "remove-structured",
+      updateId: structured._meta["openai/modelContext"].updateId,
+      index: 0,
+    }),
+  ).toThrow("INSTANCE_CONTEXT_REMOVAL_STALE");
+  const update = context.update(id, 1, {
+    operationId: "text",
+    sequence: 2,
+    params: {
+      content: [{ type: "text", text: "Drop text" }],
+      structuredContent: { fixture: true },
+    },
+  });
   const request = {
-    operationId: "remove-structured",
+    operationId: "remove-text",
     updateId: update._meta["openai/modelContext"].updateId,
     index: 0,
   };
   const removed = context.remove(id, 1, request);
-  expect(removed.state).toBeNull();
+  expect(removed.state?.content).toEqual([]);
+  expect(removed.state?.structuredContent).toEqual({ fixture: true });
   expect(context.remove(id, 1, request)).toEqual(removed);
   // The removal holds: the App's own update is refused; the person using the
   // App attaches again.
   const resend = {
     operationId: "mixed",
-    sequence: 2,
+    sequence: 3,
     params: {
       content: [{ type: "text", text: "Keep text" }],
       structuredContent: { fixture: true },
     },
   };
   expect(() => context.update(id, 1, resend)).toThrow("INSTANCE_CONTEXT_HELD");
-  expect(context.snapshot(id, 1).state).toBeNull();
+  expect(context.snapshot(id, 1).state?.content).toEqual([]);
   const mixed = context.update(id, 1, { ...resend, attach: "user" });
-  const mixedRemoved = context.remove(id, 1, {
-    operationId: "remove-mixed",
-    updateId: mixed._meta["openai/modelContext"].updateId,
-    index: 1,
-  });
-  expect(mixedRemoved.state?.content).toEqual([
-    { type: "text", text: "Keep text" },
-  ]);
-  expect(mixedRemoved.state?.structuredContent).toBeUndefined();
+  expect(mixed._meta["openai/modelContext"].updateId).toBeTypeOf("string");
+  expect(context.snapshot(id, 1).state).toMatchObject(resend.params);
   registry.close(token, actor);
 });

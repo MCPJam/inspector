@@ -58,11 +58,10 @@ export function appContextBlock(item: ContextItem): {
 } {
   const raw = item.block;
   const titled =
-    typeof raw?._meta?.["openai/title"] === "string" &&
+    typeof raw._meta?.["openai/title"] === "string" &&
     raw._meta["openai/title"].trim()
       ? raw._meta["openai/title"].trim().slice(0, 256)
       : undefined;
-  if (!raw) return { title: "App context", block: { kind: "structured" } };
   if (raw.type === "text") {
     const json = plainJson(raw.text);
     return {
@@ -212,29 +211,24 @@ export function useAppContext(
   const serverIcons = presentation.serverIcons;
   const attachments = useMemo<ContextAttachment[]>(() => {
     if (!handle.contextEnabled) return [];
-    // × on the App's chip removes every visible block, one explicit removal
-    // at a time against the current state, so the App hears each change.
+    // × on the App's chip removes every visible block in one request
+    // against the current state; the App hears the result once.
+    const removeVisible = async () => {
+      const current = owned.latest.snapshot;
+      if (current.state && pluginContextAttachments(current).length)
+        await owned.controller.remove(current.state.updateId, "all");
+    };
     const removeAll = () => {
       setRemoving(REMOVE_ALL);
       setError(undefined);
-      void (async () => {
-        let reconciled = false;
-        for (let guard = 0; guard <= 65; guard++) {
-          const current = owned.latest.snapshot;
-          const last = pluginContextAttachments(current).at(-1);
-          if (!last || !current.state) return;
-          try {
-            await owned.controller.remove(current.state.updateId, last.index);
-          } catch (error) {
-            // The App replaced its context first, or an earlier request's
-            // outcome is unknown: read the current state once and carry on
-            // removing from it.
-            if (reconciled) throw error;
-            reconciled = true;
-            await owned.controller.refresh();
-          }
-        }
-      })()
+      void removeVisible()
+        .catch(async () => {
+          // The App replaced its context first, or an earlier request's
+          // outcome is unknown: read the current state once and remove
+          // what it shows.
+          await owned.controller.refresh();
+          await removeVisible();
+        })
         .catch(() => {
           setDetached({ key, revision: owned.latest.snapshot.revision });
           setError("Couldn't remove App context. Refresh and try again.");

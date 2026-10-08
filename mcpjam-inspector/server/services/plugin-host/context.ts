@@ -10,7 +10,8 @@ import {
 } from "@mcpjam/sdk/internal/plugin-host";
 import {
   parsePluginModelContext,
-  pluginContextAttachments,
+  pluginContextRemovalIndices,
+  type PluginContextRemovalIndex,
   type PluginContextSnapshot,
   type PluginModelContext,
 } from "../../../shared/plugin-model-context.js";
@@ -32,7 +33,7 @@ export type PluginContextUpdate = {
 export type PluginContextRemoval = {
   operationId: string;
   updateId: string;
-  index: number;
+  index: PluginContextRemovalIndex;
 };
 /** Removal receipts kept for idempotent retries. Older receipts are compacted
  * away: a retry of a compacted removal is refused as stale (its updateId no
@@ -277,7 +278,8 @@ export class PluginContextWorkspace {
     };
   }
 
-  /** An explicit composer action removes one current visible block, never app-supplied replacement data. */
+  /** An explicit composer action removes one current visible block, or all of
+   * them, never app-supplied replacement data. */
   remove(
     instanceId: string,
     generation: number,
@@ -295,13 +297,11 @@ export class PluginContextWorkspace {
     }
     if (!request.operationId || request.operationId.length > 128)
       throw new PluginInvocationError("INSTANCE_CONTEXT_REMOVAL_INVALID");
+    const removed = pluginContextRemovalIndices(snapshot, request.index);
     if (
       !snapshot.state ||
       snapshot.state.updateId !== request.updateId ||
-      !Number.isSafeInteger(request.index) ||
-      !pluginContextAttachments(snapshot).some(
-        (item) => item.index === request.index,
-      )
+      !removed
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_REMOVAL_STALE");
     const current = this.state.instances[instanceId].context!;
@@ -310,11 +310,8 @@ export class PluginContextWorkspace {
       instanceId,
       generation,
       updateId: randomUUID(),
-      content: current.content.filter((_, index) => index !== request.index),
-      structuredContent:
-        request.index === current.content.length
-          ? undefined
-          : current.structuredContent,
+      content: current.content.filter((_, index) => !removed.has(index)),
+      structuredContent: current.structuredContent,
       metadata: current.metadata,
     });
     if (transition.rejection)

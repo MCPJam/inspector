@@ -2100,6 +2100,9 @@ describe("ChatInput", () => {
         />
       );
       expect(screen.getAllByTestId("context-group-chip")).toHaveLength(2);
+      expect(
+        screen.getAllByTestId("context-group-count").map((n) => n.textContent)
+      ).toEqual(["· 2", "· 1"]);
       // Mentions keep their own chip.
       expect(screen.getByText("Joystick cap")).toBeInTheDocument();
       expect(screen.queryByText("Current view")).toBeNull();

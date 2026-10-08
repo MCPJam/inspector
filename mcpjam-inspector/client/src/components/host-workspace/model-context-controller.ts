@@ -1,6 +1,7 @@
 import {
   parsePluginModelContext,
-  pluginContextAttachments,
+  pluginContextRemovalIndices,
+  type PluginContextRemovalIndex,
   type PluginModelContextParams,
   pluginContextSnapshotSchema,
   type PluginContextSnapshot,
@@ -30,7 +31,7 @@ export function createModelContextController({
   sendRemoval?: (request: {
     operationId: string;
     updateId: string;
-    index: number;
+    index: PluginContextRemovalIndex;
   }) => Promise<unknown>;
   onSnapshot?: (snapshot: PluginContextSnapshot) => void;
   read?: () => Promise<unknown>;
@@ -142,15 +143,12 @@ export function createModelContextController({
         if (!acceptSnapshot(current)) throw new Error("Stale app context read");
         uncertain = false;
       }, true),
-    remove: (updateId: string, index: number) =>
+    remove: (updateId: string, index: PluginContextRemovalIndex) =>
       enqueue(async () => {
         if (
           !sendRemoval ||
           snapshot.state?.updateId !== updateId ||
-          !Number.isSafeInteger(index) ||
-          !pluginContextAttachments(snapshot).some(
-            (item) => item.index === index,
-          )
+          !pluginContextRemovalIndices(snapshot, index)
         )
           throw new PluginContextUpdateRejected(
             "App context changed; review the current attachment",

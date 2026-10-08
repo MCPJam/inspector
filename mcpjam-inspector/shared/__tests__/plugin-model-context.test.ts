@@ -273,20 +273,24 @@ describe("plugin per-turn context boundary", () => {
   });
 });
 
-it("projects structured-only state as one removable generic context attachment", () => {
-  const snapshot = {
-    revision: 1,
-    sequence: 1,
-    state: {
-      updateId: "structured",
-      content: [],
-      structuredContent: { private: "data" },
-    },
+it("keeps structuredContent as background context, never an attachment", () => {
+  const state = {
+    updateId: "structured",
+    content: [] as { type: "text"; text: string }[],
+    structuredContent: { private: "data" },
   };
-  expect(pluginContextAttachments(snapshot)).toMatchObject([
-    { index: 0, title: "App context" },
+  expect(
+    pluginContextAttachments({ revision: 1, sequence: 1, state }),
+  ).toEqual([]);
+  const mixed = {
+    revision: 2,
+    sequence: 2,
+    state: { ...state, content: [{ type: "text" as const, text: "Shown" }] },
+  };
+  expect(pluginContextAttachments(mixed)).toMatchObject([
+    { index: 0, title: "Shown" },
   ]);
-  expect(JSON.stringify(pluginContextAttachments(snapshot))).not.toContain(
+  expect(JSON.stringify(pluginContextAttachments(mixed))).not.toContain(
     "private",
   );
 });
