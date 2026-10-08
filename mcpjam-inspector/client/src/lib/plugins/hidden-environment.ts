@@ -15,11 +15,25 @@ import type { PluginNoticePlugin } from "@/lib/plugins/plugin-notice-display";
  *
  * Only a project with at least one runnable plugin takes this path. Every other
  * chat keeps today's client turn, request body included.
+ *
+ * Only REMOTE components are ever composed. The plugins are read for the
+ * hosted venue in every build, so a plugin with a component that would run on
+ * this computer (or in a computer) is skipped as `placement`: nothing the
+ * member did not pick starts a process on their machine. An environment they
+ * choose explicitly is still how such a plugin runs.
  */
 
-/** A plugin whose active version contributes to a turn right now. */
+/**
+ * A plugin whose active version contributes to a turn right now. Every one of
+ * its servers must be remote: the hosted-venue read already skips the rest,
+ * and this holds the line if a read ever did not.
+ */
 export function isRunnablePlugin(plugin: ActivePluginRow): boolean {
-  return plugin.status === "active" && !!plugin.pluginVersionId;
+  return (
+    plugin.status === "active" &&
+    !!plugin.pluginVersionId &&
+    plugin.servers.every((server) => server.placement === "remote")
+  );
 }
 
 /** The runnable plugins' active versions, in plugin order, deduped. */
@@ -114,10 +128,24 @@ export function skippedPluginsForNotice(
             name: plugin.name,
             displayName: plugin.displayName,
             reason: plugin.reason,
+            ...(plugin.reason === "placement"
+              ? { placement: skippedPlacement(plugin) }
+              : {}),
           },
         ]
       : [],
   );
+}
+
+/** Where the component a `placement` skip names would have run. */
+function skippedPlacement(plugin: ActivePluginRow): "local" | "computer" {
+  const named = plugin.servers.find(
+    (server) => server.componentKey === plugin.componentKey,
+  );
+  const placement =
+    named?.placement ??
+    plugin.servers.find((server) => server.placement !== "remote")?.placement;
+  return placement === "computer" ? "computer" : "local";
 }
 
 // ── One retry when a plugin changed under the chat ──────────────────────────

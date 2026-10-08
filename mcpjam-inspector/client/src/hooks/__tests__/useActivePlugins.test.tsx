@@ -148,9 +148,19 @@ describe("useActivePlugins", () => {
     });
   });
 
+  it("asks for the venue a caller names instead, in any build", () => {
+    renderHook(() => useActivePlugins(PROJECT_ID, { runtimeVenue: "hosted" }));
+    expect(state.calls.at(-1)?.args).toEqual({
+      projectId: PROJECT_ID,
+      content: false,
+      runtimeVenue: "hosted",
+    });
+  });
+
   it("is loading until the answer arrives", () => {
     const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
     expect(hook.current.isLoading).toBe(true);
+    expect(hook.current.failed).toBe(false);
   });
 
   it("splits active plugins from skipped ones and lists only active servers", () => {
@@ -189,5 +199,7 @@ describe("useActivePlugins", () => {
     expect(hook.current.plugins).toEqual([]);
     expect(hook.current.activeServers).toEqual([]);
     expect(hook.current.isLoading).toBe(false);
+    // Distinguishable from "no plugins" for a caller that must not guess.
+    expect(hook.current.failed).toBe(true);
   });
 });

@@ -1,7 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toastInfo = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/toast", () => ({ toast: { info: toastInfo } }));
+const config = vi.hoisted(() => ({ hostedMode: false }));
+vi.mock("@/lib/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/config")>()),
+  get HOSTED_MODE() {
+    return config.hostedMode;
+  },
+}));
 
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import {
@@ -30,7 +37,10 @@ describe("describePluginNotice", () => {
     expect(describePluginNotice(bitsNeedsAuth)).toBe(
       "Bits & Bolts was skipped: sign in to its server first.",
     );
-    expect(
+  });
+
+  describe("a plugin skipped for where it runs", () => {
+    const placement = (where?: "local" | "computer") =>
       describePluginNotice({
         kind: "skipped",
         plugins: [
@@ -39,10 +49,36 @@ describe("describePluginNotice", () => {
             name: "bits-and-bolts",
             displayName: null,
             reason: "placement",
+            ...(where ? { placement: where } : {}),
           },
         ],
-      }),
-    ).toBe("bits-and-bolts was skipped: its server runs on a local runtime.");
+      });
+
+    afterEach(() => {
+      config.hostedMode = false;
+    });
+
+    it("says, on this computer, that it is not started automatically", () => {
+      expect(placement("local")).toBe(
+        "bits-and-bolts was skipped: it runs on this computer and isn't started automatically.",
+      );
+      expect(placement()).toBe(
+        "bits-and-bolts was skipped: it runs on this computer and isn't started automatically.",
+      );
+    });
+
+    it("says a computer component is not started automatically either", () => {
+      expect(placement("computer")).toBe(
+        "bits-and-bolts was skipped: it runs in a computer and isn't started automatically.",
+      );
+    });
+
+    it("says, in the hosted app, that it runs on a local runtime", () => {
+      config.hostedMode = true;
+      expect(placement("local")).toBe(
+        "bits-and-bolts was skipped: its server runs on a local runtime.",
+      );
+    });
   });
 
   it("says the chat ran without its plugins when they couldn't be set up", () => {
