@@ -1947,9 +1947,16 @@ async function handleTurn(c: Context): Promise<Response> {
           boxReason,
           acquired.refusal,
         );
+        const rateLimited =
+          described.status === 429 || described.status === 503;
+        // The control plane's own wait, so a caller backs off for as long as
+        // it asked instead of guessing.
+        const retryAfterMs = rateLimited
+          ? acquired.refusal.retryAfterMs
+          : undefined;
         return v1Error(
           c,
-          described.status === 429 || described.status === 503
+          rateLimited
             ? "RATE_LIMITED"
             : described.status === 403
               ? "FORBIDDEN"
@@ -1961,6 +1968,13 @@ async function handleTurn(c: Context): Promise<Response> {
             reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
             ...(described.code ? { code: described.code } : {}),
           },
+          retryAfterMs !== undefined
+            ? {
+                "Retry-After": String(
+                  Math.max(1, Math.ceil(retryAfterMs / 1000)),
+                ),
+              }
+            : undefined,
         );
       }
       conversationBox = acquired.box;
@@ -2431,7 +2445,14 @@ async function handleTurn(c: Context): Promise<Response> {
     throw error;
   } finally {
     clearTimeout(wallClock);
-    await conversationBox?.release();
+    // Not awaited: the release stops the heartbeat at once, and its `ended`
+    // touch (up to 10s) must not hold the response. Every exit path reaches
+    // this line.
+    void conversationBox?.release().catch((error: unknown) => {
+      logger.warn("[v1/chat-sessions] conversation box release failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     if (browserOutbox)
       await flushBrowserEvidence(browserOutbox);
 

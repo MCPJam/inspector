@@ -74,6 +74,8 @@ export interface PlaygroundBoxRefusal {
   status: number;
   error: string;
   code?: string;
+  /** The control plane's own wait on a 429/503, in milliseconds. */
+  retryAfterMs?: number;
 }
 
 /**
@@ -275,6 +277,9 @@ export async function acquirePlaygroundHarnessBox(args: {
             status: result.status,
             error: result.error,
             ...(result.code ? { code: result.code } : {}),
+            ...(result.retryAfterMs !== undefined
+              ? { retryAfterMs: result.retryAfterMs }
+              : {}),
           },
         };
       }

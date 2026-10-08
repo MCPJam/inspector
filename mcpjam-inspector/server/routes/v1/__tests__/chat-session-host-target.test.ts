@@ -413,6 +413,137 @@ describe("host targeting dispatches the real harness", () => {
   });
 });
 
+describe("the conversation's box is released on every exit", () => {
+  beforeEach(() => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+  });
+
+  it("answers without waiting on the release", async () => {
+    // The release's `ended` touch can take up to 10s; the caller must not.
+    releaseBoxMock.mockReturnValue(new Promise<void>(() => {}));
+
+    const answered = await Promise.race([
+      turn(firstTurn({ environmentId: ENVIRONMENT })).then((r) => r.status),
+      new Promise<"held">((resolve) =>
+        setTimeout(() => resolve("held"), 1_000),
+      ),
+    ]);
+
+    expect(answered).toBe(200);
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "throws",
+      () => runUnifiedAssistantTurnMock.mockRejectedValue(new Error("boom")),
+    ],
+    [
+      "reports a failure",
+      () =>
+        runUnifiedAssistantTurnMock.mockImplementation(
+          async (args: { onEngineError: (e: { message: string }) => void }) => {
+            args.onEngineError({ message: "engine failed" });
+            return {
+              messages: [],
+              assistantMessages: [],
+              toolCalls: [],
+              toolResults: [],
+              aborted: false,
+            };
+          },
+        ),
+    ],
+  ])("releases it when the engine %s", async (_label, fail) => {
+    fail();
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(500);
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases it when the caller goes away mid-turn", async () => {
+    const request = new AbortController();
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      request.abort();
+      return {
+        messages: [],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        aborted: true,
+      };
+    });
+    const app = new Hono();
+    app.onError(v1OnError);
+    app.route("/api/v1", chatSessions);
+
+    await app.request("/api/v1/chat-sessions/messages", {
+      method: "POST",
+      body: JSON.stringify(firstTurn({ environmentId: ENVIRONMENT })),
+      headers: { "content-type": "application/json" },
+      signal: request.signal,
+    });
+
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a refused box provision", () => {
+  beforeEach(() => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+  });
+
+  it("maps a 403 to FORBIDDEN", async () => {
+    acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+      ok: false,
+      refusal: { status: 403, error: "not_member" },
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.code).toBe("FORBIDDEN");
+    expect(body.details.reason).toBe("PLAYGROUND_SANDBOX_PROVISION_FAILED");
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a 503 at capacity to RATE_LIMITED and keeps the control plane's wait", async () => {
+    acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+      ok: false,
+      refusal: {
+        status: 503,
+        error: "Playground computer capacity did not become available in time",
+        code: "at_capacity",
+        retryAfterMs: 2_500,
+      },
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const body = await response.json();
+
+    // The public contract has no 503: capacity is a rate limit to the caller.
+    expect(response.status).toBe(429);
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.details).toMatchObject({
+      reason: "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+      code: "at_capacity",
+    });
+    expect(response.headers.get("retry-after")).toBe("3");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("a harness that signs in with the member's own account", () => {
   // Cursor's key reaches only a box the project provisioned, so the turn's own
   // credential check runs BEFORE one is booted: a refused turn pays for no box

@@ -372,6 +372,26 @@ describe("acquirePlaygroundHarnessBox", () => {
     expect(touchMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the control plane's retry hint on a refusal", async () => {
+    provisionMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      error: "at capacity",
+      code: "at_capacity",
+      retryAfterMs: 2_500,
+    });
+    const result = await acquirePlaygroundHarnessBox(args);
+    expect(result).toEqual({
+      ok: false,
+      refusal: {
+        status: 503,
+        error: "at capacity",
+        code: "at_capacity",
+        retryAfterMs: 2_500,
+      },
+    });
+  });
+
   it("turns a throw into a 502 refusal instead of failing the turn's setup", async () => {
     provisionMock.mockRejectedValue(new Error("socket hang up"));
     const result = await acquirePlaygroundHarnessBox(args);
