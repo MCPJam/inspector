@@ -144,6 +144,7 @@ vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
 
 import { resolveHostTools } from "../../../utils/built-in-tools/registry.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
+import { logger } from "../../../utils/logger.js";
 
 /** Two environment servers; the body will claim a DIFFERENT, single server. */
 const ENV_SPEC = {
@@ -894,11 +895,33 @@ describe("web chat-v2 — environment execution target", () => {
       },
     ];
 
-    beforeEach(() => {
+    // The resolver says which kind of row it read; only an ad-hoc one may
+    // take the project's pool.
+    const ADHOC_SPEC = { ...ENV_SPEC, environmentOrigin: "adhoc" };
+
+    function resolveTo(spec: unknown) {
       convexQueryMock.mockImplementation(async (ref: string) =>
-        ref === "projectSkills:listSkills" ? PROJECT_SKILLS : ENV_SPEC
+        ref === "projectSkills:listSkills" ? PROJECT_SKILLS : spec
       );
+    }
+
+    beforeEach(() => {
+      resolveTo(ADHOC_SPEC);
     });
+
+    function deliveredRefs(args: {
+      skillsSource: { capabilities: { standaloneSkills: { ref: string }[] } };
+    }) {
+      return args.skillsSource.capabilities.standaloneSkills.map(
+        (skill) => skill.ref
+      );
+    }
+
+    function projectPoolWasRead() {
+      return convexQueryMock.mock.calls.some(
+        ([ref]) => ref === "projectSkills:listSkills"
+      );
+    }
 
     async function sendEnvironmentTurn(extra: Record<string, unknown>) {
       const { app, token } = createWebTestApp();
@@ -935,6 +958,41 @@ describe("web chat-v2 — environment execution target", () => {
       ).toBe(true);
     });
 
+    it("a NAMED environment ignores it: its own skills only, the pool never read", async () => {
+      resolveTo({ ...ENV_SPEC, environmentOrigin: "named" });
+      const warn = vi.spyOn(logger, "warn");
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
+      expect(projectPoolWasRead()).toBe(false);
+      const ignored = warn.mock.calls.filter(([message]) =>
+        String(message).includes("includeProjectSkills ignored")
+      );
+      // Once, with ids only.
+      expect(ignored).toHaveLength(1);
+      expect(ignored[0][1]).toEqual({
+        environmentId: "env_1",
+        projectId: "project-1",
+        environmentOrigin: "named",
+      });
+      warn.mockRestore();
+    });
+
+    it("a backend that does not say the origin is treated as named", async () => {
+      resolveTo(ENV_SPEC);
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
+      expect(projectPoolWasRead()).toBe(false);
+    });
+
+    it("an unknown origin value is treated as named", async () => {
+      resolveTo({ ...ENV_SPEC, environmentOrigin: "hidden" });
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(projectPoolWasRead()).toBe(false);
+    });
+
     it("an environment turn without it never reads the project's pool", async () => {
       const args = await sendEnvironmentTurn({});
       expect(
@@ -955,7 +1013,7 @@ describe("web chat-v2 — environment execution target", () => {
         ref === "projectSkills:listSkills"
           ? PROJECT_SKILLS
           : {
-              ...ENV_SPEC,
+              ...ADHOC_SPEC,
               host: {
                 ...ENV_SPEC.host,
                 runtimeConfig: {

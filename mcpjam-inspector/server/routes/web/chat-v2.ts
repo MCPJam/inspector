@@ -1314,10 +1314,28 @@ chatV2.post("/", async (c) => {
     // is read with the caller's own bearer, which a client turn does anyway.
     // A harness turn never takes this gate (its skills are written to the box,
     // not offered as tools); it gets the same union from the harness itself,
-    // through `includeProjectSkills` on the persist context below.
-    const includeProjectSkills =
+    // through `includeProjectSkills` on the persist context below — this same
+    // verified value, never the body's.
+    //
+    // The body only ASKS. It is honored only when the resolved spec says the
+    // row is ad-hoc: a named environment chose its skills, and a request must
+    // not be able to add the project's pool to it. A backend too old to say
+    // (`environmentOrigin` absent) is treated as named.
+    const requestedProjectSkills =
       executionTarget.kind === "environment" &&
       (rawBody as Record<string, unknown>).includeProjectSkills === true;
+    const includeProjectSkills =
+      requestedProjectSkills && environmentSpec?.environmentOrigin === "adhoc";
+    if (requestedProjectSkills && !includeProjectSkills) {
+      logger.warn(
+        "[chat-v2] includeProjectSkills ignored: not an ad-hoc environment",
+        {
+          environmentId: environmentSpec?.environmentRef.environmentId ?? null,
+          projectId: hostedBody.projectId ?? null,
+          environmentOrigin: environmentSpec?.environmentOrigin ?? null,
+        },
+      );
+    }
     const cloudSkillsEnabled =
       (!environmentServers || includeProjectSkills) &&
       shouldEnableCloudSkillTools({

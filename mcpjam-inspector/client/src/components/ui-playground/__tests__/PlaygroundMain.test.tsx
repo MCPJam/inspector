@@ -1027,6 +1027,48 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.messages = [];
     });
 
+    it("says plugins don't run in comparisons once per comparison, not once per tab", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      installBits();
+      const models = [
+        {
+          id: "anthropic/claude-sonnet-4.5",
+          name: "Sonnet",
+          provider: "anthropic",
+        },
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+      ];
+      mockUseChatSession.availableModels = models as any;
+      mockUseChatSession.multiModelEnabled = true;
+      try {
+        const props = { ...defaultProps, enableMultiModelChat: true };
+        const { rerender } = render(<PlaygroundMain {...props} />);
+        const compare = { kind: "off", reason: "compare" };
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-1"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+
+        // A later comparison in the same tab is a new chat: it says so again.
+        mockUseChatSession.chatSessionId = "chat-session-2";
+        rerender(<PlaygroundMain {...props} />);
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-2"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+      } finally {
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.multiModelEnabled = false;
+      }
+    });
+
     it("shows no plugin servers on a turn that runs without them", () => {
       installBits();
       mockUseChatSession.hiddenEnvironmentActive = false;
