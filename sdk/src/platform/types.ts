@@ -4236,6 +4236,13 @@ export interface PlatformGoalRunSession {
   lastActivityAt: number | null;
 }
 
+/** How a launched run's conversations are funded. */
+export interface PlatformSwarmFunding {
+  sponsored: number;
+  credits: number;
+  total: number;
+}
+
 export interface PlatformGoalRunLaunched {
   /** The run id. Poll `getGoalRun` with it, or stop it with `cancel`. */
   id: string;
@@ -4253,6 +4260,12 @@ export interface PlatformGoalRunLaunched {
    * is how you tell "I launched it" from "it was already going".
    */
   deduped: boolean;
+  /**
+   * How the run's conversations were funded: `sponsored` are paid from MCPJam's
+   * per-user allowance, `credits` from the organization's. Absent when the
+   * server does not report it.
+   */
+  funding?: PlatformSwarmFunding;
 }
 
 export interface PlatformGoalRunCanceled {
@@ -4505,6 +4518,8 @@ export interface PlatformJourneyRunLaunched {
    * is how you tell "I launched it" from "it was already going".
    */
   deduped: boolean;
+  /** See {@link PlatformGoalRunLaunched.funding}. */
+  funding?: PlatformSwarmFunding;
 }
 
 /** Result of `POST /projects/{p}/journey-runs/{runId}/cancel`. */
@@ -5850,12 +5865,13 @@ export interface PlatformServerConnectionCreateBody {
 // ── Directory readiness ─────────────────────────────────────────────────
 
 /**
- * The two words the public vocabulary uses.
+ * The words the public vocabulary uses.
  *
- * Never `anthropic`/`chatgpt`: a caller writes what the product says, and the
- * product says "Claude directory readiness" and "OpenAI plugin directory".
+ * Never `anthropic`/`chatgpt`/`meta`: a caller writes what the product says,
+ * and the product says "Claude directory readiness", "OpenAI plugin
+ * directory" and "Muse".
  */
-export type PlatformReadinessKind = "claude" | "openai";
+export type PlatformReadinessKind = "claude" | "openai" | "muse";
 
 /**
  * The submission shapes a HOSTED run may grade.
@@ -5871,9 +5887,9 @@ export type PlatformReadinessSubmissionMode =
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
 /**
- * Every lane either publisher grades, as one union.
+ * Every lane any publisher grades, as one union.
  *
- * Claude uses five of these and OpenAI seven; the union is their sum rather
+ * Claude uses five of these, OpenAI seven and Muse four; the union is their sum rather
  * than two types, because a client renders a run whose publisher it learns at
  * runtime. Spelled out rather than left as `string` so a `switch` over lane
  * copy is exhaustiveness-checked — a lane added here becomes a compile error
@@ -5886,7 +5902,8 @@ export type PlatformReadinessLane =
   | "submission-artifacts"
   | "experience-insights"
   | "plugin-package"
-  | "release-contract";
+  | "release-contract"
+  | "tool-policy";
 
 /**
  * What one lane managed to look at, reported separately from what it found.
@@ -6019,6 +6036,18 @@ export interface PlatformOpenAIReadinessStartBody
    */
   submissionMode: PlatformReadinessSubmissionMode;
 }
+
+/**
+ * Body for a Muse start: the replay guard only.
+ *
+ * No `includeLlmObservations` — Muse has no observation catalogue and the
+ * platform refuses the opt-in — and no submission mode, which belongs to the
+ * OpenAI plugin directory.
+ */
+export type PlatformMuseReadinessStartBody = Pick<
+  PlatformReadinessStartBody,
+  "idempotencyKey"
+>;
 
 /** Suites the hosted agent/API surface can start. OAuth is refused. */
 export type PlatformConformanceSuiteKind = "protocol" | "apps" | "tasks";

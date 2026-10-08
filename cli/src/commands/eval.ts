@@ -1029,6 +1029,39 @@ function validateOpInput<TInput>(
   return parsed.data as TInput;
 }
 
+/**
+ * Default deadline for a hosted eval operation.
+ *
+ * One timer covers the WHOLE operation, not each request inside it: the
+ * abort controller wraps the entire callback, which for a file sync is
+ * several round trips. (The message it raises says "Request timed out",
+ * which is its own small lie and is why this comment exists.)
+ *
+ * The program's `--timeout` defaults to 30s, which is right for what it was
+ * written for: one MCP probe against a local server. A hosted eval call is not
+ * that. Syncing a suite file resolves the project, negotiates the vocabulary,
+ * validates every authored tool reference against the live server, writes the
+ * cases and then launches — several round trips, the slowest of which is bound
+ * by someone else's server. It finishes well inside 30s from a warm laptop and
+ * exceeded it on a cold CI runner, which failed `eval run --file` with a bare
+ * TIMEOUT on the workflow our own CI docs teach.
+ *
+ * An explicit `--timeout` still wins; `getGlobalOptions` keys off the option's
+ * SOURCE, so this only applies when the caller said nothing.
+ */
+const EVAL_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * `getGlobalOptions` for every hosted eval command.
+ *
+ * Exists so a new subcommand cannot inherit the 30s probe default by writing
+ * the obvious thing. A test forbids a bare `evalGlobalOptions(command)` in this
+ * file for exactly that reason.
+ */
+function evalGlobalOptions(command: Command) {
+  return getGlobalOptions(command, EVAL_REQUEST_TIMEOUT_MS);
+}
+
 /** Run an operation with a pre-validated input and print the result. */
 async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
@@ -1036,7 +1069,7 @@ async function executeOp<TInput, TOutput>(
   options: PlatformOptions & { project?: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const inputProject =
     options.project === undefined &&
     typeof (input as { project?: unknown }).project === "string"
@@ -1570,7 +1603,7 @@ async function runEvalGate(
     },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   // Enforced here rather than by commander — see the option's declaration. A
   // usage error, so the exit code is 2 exactly as it was when commander did
   // the checking, and it is raised before any flag parsing spends a request.
@@ -2171,7 +2204,7 @@ async function runEvalGateWaive(
   options: { reason: string; expiresIn: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const scope = gateSubcommandScope(command);
   // Parsed BEFORE any network call, like every other flag in this file: a
   // malformed duration exits 2 without spending a request.
@@ -2243,7 +2276,7 @@ async function runEvalGateUnwaive(
   options: { waiver?: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const scope = gateSubcommandScope(command);
   const resolved = resolveCloudProjectArgs(scope);
 
@@ -2318,7 +2351,7 @@ async function runEvalCompare(
     },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   // Parsed BEFORE any network call, so a malformed flag exits 2 without
   // spending a request — and cannot be mistaken for an infrastructure failure.
   const policy = comparePolicyFromOptions(options);
@@ -2559,7 +2592,7 @@ async function runEvalPull(
   },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const lockPath = resolveCorpusLockPath(options.lock);
   const resolved = resolveCloudProjectArgs(options);
 
@@ -2996,7 +3029,7 @@ async function runProjectValidation(
   command: Command,
   resolved: ResolvedEvalSuiteFile
 ): Promise<NonNullable<ValidateResult["projectValidation"]>> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const scope = resolveCloudProjectArgs(options);
   return runPlatformCommand(
     platformOptionsOf(command),
@@ -3025,7 +3058,7 @@ async function runEvalValidate(
   options: PlatformOptions & { file: string; project?: string },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const source = readSuiteFileInput(options.file);
   const label = options.file === "-" ? "<stdin>" : options.file;
   const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
@@ -3134,7 +3167,7 @@ async function runEvalExport(
   },
   command: Command
 ): Promise<void> {
-  const globalOptions = getGlobalOptions(command);
+  const globalOptions = evalGlobalOptions(command);
   const resolved = resolveCloudProjectArgs(options);
 
   // The dialect is the author's choice, never inferred: an offline file has no
@@ -3360,7 +3393,7 @@ export function registerEvalCommands(program: Command): void {
     )
     .option("--host <id-or-name...>", "Deprecated alias for --client")
     .action(async (options: CreateOptions, command) => {
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = evalGlobalOptions(command);
       const input = loadSuiteDefinition(options);
       const resolved = resolveCloudProjectArgs(options, {
         inputProject:
@@ -3390,12 +3423,16 @@ export function registerEvalCommands(program: Command): void {
     )
     .action(
       async (options: PlatformOptions & { project?: string }, command) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const result = await runCloudOp(
           command,
           options,
           ({ client, signal }, project) =>
-            listEvalSuitesOperation.execute(project, { client, signal })
+            listEvalSuitesOperation.execute(project, { client, signal }),
+          // `runCloudOp` resolves the options a second time, so without this
+          // it hands back the 30s probe default no matter what this command
+          // computed for itself.
+          { defaultTimeoutMs: EVAL_REQUEST_TIMEOUT_MS }
         );
         writeResult(result, globalOptions.format);
       }
@@ -3478,7 +3515,8 @@ export function registerEvalCommands(program: Command): void {
   evals
     .command("run")
     .description(
-      "Start an eval run of an existing suite, or upload a versioned suite file and run it"
+      "Start an eval run of an existing suite, or upload a versioned suite file and run it. " +
+        "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead."
     )
     .option("--suite <id-or-name>", "Eval suite name or ID")
     .option(
@@ -3679,7 +3717,7 @@ export function registerEvalCommands(program: Command): void {
           throw usageError("--wait-timeout requires --wait.");
         }
         const approvals = parseApprovalFlags(options);
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const reporter = parseReporterFormat(options.reporter);
         const waitTimeoutMs =
           options.waitTimeout !== undefined
@@ -4267,7 +4305,7 @@ export function registerEvalCommands(program: Command): void {
         },
         command
       ) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         let webOrigin = DEFAULT_PLATFORM_ORIGIN;
         let decisionSummary: EvalRunDecisionSummary | undefined;
         const resolved = resolveCloudProjectArgs(options);
@@ -4772,7 +4810,7 @@ export function registerEvalCommands(program: Command): void {
       if (options.dryRun && options.wait) {
         throw usageError("--dry-run starts nothing, so it cannot --wait.");
       }
-      const globalOptions = getGlobalOptions(command);
+      const globalOptions = evalGlobalOptions(command);
       const format = options.json ? "json" : globalOptions.format;
       const waitTimeoutMs =
         options.waitTimeout !== undefined
@@ -5607,7 +5645,7 @@ export function registerEvalCommands(program: Command): void {
         },
         command
       ) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const index =
           options.index !== undefined
             ? parsePositiveInteger(options.index, "--index")
@@ -5800,7 +5838,7 @@ export function registerEvalCommands(program: Command): void {
         },
         command
       ) => {
-        const globalOptions = getGlobalOptions(command);
+        const globalOptions = evalGlobalOptions(command);
         const resolved = resolveCloudProjectArgs(options);
         const result = await runPlatformCommand(
           platformOptionsOf(command),
@@ -6009,7 +6047,7 @@ export function registerEvalCommands(program: Command): void {
                 );
                 const message =
                   "No grading change: the suite already has these values.";
-                const format = getGlobalOptions(command).format;
+                const format = evalGlobalOptions(command).format;
                 if (!hasOtherEdits) {
                   if (format === "human") process.stdout.write(`${message}\n`);
                   else writeResult({ noop: true, message }, format);

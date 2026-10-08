@@ -88,6 +88,7 @@ import {
   markPendingDirectScopeStepUpReplayReady,
 } from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
+import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import {
   FIRST_RUN_OAUTH_CANCELLED_EVENT,
   getFirstRunOAuthReturnServerName,
@@ -900,7 +901,7 @@ const SERVER_NOT_SAVED: ServerSyncResult = { ok: false, reason: "not-saved" };
 
 export function useServerState({
   appState,
-  dispatch,
+  dispatch: rawDispatch,
   isLoading,
   isAuthenticated,
   hasSignedInUser,
@@ -919,6 +920,12 @@ export function useServerState({
   requestSignIn,
   logger,
 }: UseServerStateParams) {
+  // Every connect outcome below is a CONNECT_SUCCESS / CONNECT_FAILURE
+  // dispatch; wrapping once records each attempt's end without touching them.
+  const dispatch = useMemo(
+    () => connectOutcomeTracker.wrapDispatch(rawDispatch),
+    [rawDispatch],
+  );
   const callbackLocation = useCurrentLocationParts();
   const oauthAccessRef = useRef({
     loading: isAuthLoading,

@@ -39,6 +39,11 @@ let evalQuotaState:
     }
   | undefined = undefined;
 let evalQuotaLoadingState = false;
+let allowanceState: { remaining: number; granted: number } | null = null;
+
+vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
+  useSwarmSponsorshipAllowance: () => allowanceState,
+}));
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -116,7 +121,25 @@ describe("CreditBalanceCard", () => {
     isLoadingState = false;
     evalQuotaState = undefined;
     evalQuotaLoadingState = false;
+    allowanceState = null;
     window.location.hash = "";
+  });
+
+  it("shows the remaining sponsored swarm conversations beside the credit meters", () => {
+    allowanceState = { remaining: 37, granted: 500 };
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    const row = screen.getByTestId("usage-swarm-sponsored");
+    expect(row).toHaveTextContent("Sponsored swarm conversations");
+    expect(row).toHaveTextContent("37 / 500 remaining");
+    expect(row).not.toHaveTextContent(/free|guarantee/i);
+  });
+
+  it("omits the sponsored row when there is no allowance to show", () => {
+    render(<CreditBalanceCard organizationId="org-1" />);
+    expect(
+      screen.queryByTestId("usage-swarm-sponsored"),
+    ).not.toBeInTheDocument();
   });
 
   it("opens organization usage from the See Usage action", async () => {

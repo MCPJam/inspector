@@ -50,6 +50,19 @@ describe("client sentry init", () => {
     expect(config.sendDefaultPii).toBe(false);
   });
 
+  it("initializes desktop identity without dropping deployment tags", async () => {
+    const installationId = "installation:12345678-1234-4321-8123-123456789abc";
+    vi.stubGlobal("window", {
+      location: { origin: "http://localhost:6274", pathname: "/" },
+      electronAPI: { sentry: { installationId } },
+    });
+    const { initSentry } = await import("../sentry");
+    initSentry();
+    expect(init.mock.calls[0][0].initialScope).toEqual({
+      user: { id: installationId },
+      tags: { deployment: "self_hosted", actor_kind: "installation" },
+    });
+  });
   it("reports the build surface as dist so artifacts resolve per build", async () => {
     // The release alone is the bare app version, which the web, npm and
     // desktop builds all share. Without `dist` here, Sentry symbolicates this

@@ -557,10 +557,10 @@ describe("web chat-v2 — environment execution target", () => {
 
     // Direct-chat persistence + resume config.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
-    expect(persistArgs.hostConfig.selectedServerIds).toEqual([
-      "env-server-1",
-      "env-server-2",
-    ]);
+    // The trace's host config carries only the environment's own servers:
+    // ingestion refuses a plugin server id there and would drop the whole
+    // host config (`validateServerScope` → `out_of_scope_servers`).
+    expect(persistArgs.hostConfig.selectedServerIds).toEqual(["env-server-1"]);
     // INS-4: "asana" is the PLUGIN-contributed server. It ran this turn, but
     // `resumeConfig` is a durable reconnect instruction replayed with no
     // plugin lifecycle check — a plugin server belongs to its environment at

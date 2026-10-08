@@ -66,6 +66,7 @@ import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runti
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
+import { sentryRequestIdentityMiddleware } from "./utils/sentry-request-identity.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import {
@@ -540,6 +541,7 @@ app.use("*", cors(CORS_OPTIONS));
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
+app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes

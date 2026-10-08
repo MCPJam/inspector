@@ -99,6 +99,55 @@ test("goals run forwards the batch id under BOTH flag spellings", async () => {
   }
 });
 
+test("goals run forwards --expected-sponsored, including 0, into the launch body", async () => {
+  for (const value of ["0", "12"]) {
+    const requests = captureRequests();
+    await buildProgram().parseAsync(
+      [
+        "cloud",
+        "goals",
+        "run",
+        "--goal-id",
+        "goal-1",
+        "--expected-sponsored",
+        value,
+        "--api-key",
+        "sk_test",
+      ],
+      { from: "user" }
+    );
+    const launch = requests.find((r) => r.url.includes("/runs"));
+    assert.ok(launch, "expected a launch request");
+    assert.deepEqual(JSON.parse(String(launch.init?.body)), {
+      expectedSponsored: Number(value),
+    });
+  }
+});
+
+test("goals run refuses a malformed --expected-sponsored before launching", async () => {
+  for (const value of ["-1", "2.5", "many", "", "  ", "0x5", "1e1"]) {
+    const requests = captureRequests();
+    await assert.rejects(
+      buildProgram().parseAsync(
+        [
+          "cloud",
+          "goals",
+          "run",
+          "--goal-id",
+          "goal-1",
+          "--expected-sponsored",
+          value,
+          "--api-key",
+          "sk_test",
+        ],
+        { from: "user" }
+      ),
+      /expected-sponsored/
+    );
+    assert.equal(requests.filter((r) => r.url.includes("/runs")).length, 0);
+  }
+});
+
 test("goals run refuses both batch-id spellings rather than picking one", async () => {
   const requests = captureRequests();
   await assert.rejects(

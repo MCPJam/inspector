@@ -24,6 +24,7 @@ import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
+import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
   formatEvalIterationResetTime,
   getEvalIterationQuotaLabel,
@@ -62,6 +63,9 @@ export function CreditBalanceCard({
     useEvalIterationQuota({
       organizationId,
     });
+  const sponsoredAllowance = useSwarmSponsorshipAllowance(
+    Boolean(organizationId),
+  );
   const topUpEligible = balance?.topUpEligible !== false;
   const [isTopupOpen, setIsTopupOpen] = useState(false);
   const [isAutoManageOpen, setIsAutoManageOpen] = useState(false);
@@ -349,6 +353,26 @@ export function CreditBalanceCard({
             }
             isLoading={isEvalIterationQuotaLoading}
             testId="usage-eval-iterations"
+          />
+        ) : null}
+
+        {sponsoredAllowance ? (
+          <UsageRow
+            label="Sponsored swarm conversations"
+            tooltip="Swarm conversations MCPJam pays for, counted against your personal allowance before your organization's credits are used. Which conversations qualify depends on the model and environment, and sponsored capacity can run out."
+            rightText={`${sponsoredAllowance.remaining.toLocaleString()} / ${sponsoredAllowance.granted.toLocaleString()} remaining`}
+            fillPercent={Math.min(
+              100,
+              Math.max(
+                0,
+                (sponsoredAllowance.remaining / sponsoredAllowance.granted) *
+                  100,
+              ),
+            )}
+            ariaLabel="Sponsored swarm conversations remaining"
+            ariaValueText={`${sponsoredAllowance.remaining.toLocaleString()} of ${sponsoredAllowance.granted.toLocaleString()} sponsored swarm conversations remaining`}
+            isLoading={false}
+            testId="usage-swarm-sponsored"
           />
         ) : null}
 
