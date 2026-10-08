@@ -265,6 +265,7 @@
     "@types/ws": "^8.18.2",
     "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-react": "^6.1.1",
+    "@vitejs/plugin-react-electron": "npm:@vitejs/plugin-react@^5.2.0",
     "@vitest/coverage-v8": "^4.1.11",
     "@workos/emulate": "0.13.1",
     "autoprefixer": "^10.6.1",
