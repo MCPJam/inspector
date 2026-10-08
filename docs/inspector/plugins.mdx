@@ -164,9 +164,54 @@ The dialog stays open across close and reopen so an in-progress import is not lo
 - **Inspection failed** (the bundle was uploaded but not yet inspected) — click **Resume inspection** to re-drive the inspect step.
 - **Terminal failure** — click **Start a new import** to upload the bundle again.
 
-## Plugins section
+## Plugin servers on the Servers tab
 
-Once at least one plugin is installed, a **Plugins** section appears above the server grid on the Connect tab. Each plugin is shown as a group card.
+Once a plugin is installed and has an active version, each MCP server it declares appears as a server card in the Servers tab grid, alongside your project's own servers. The card shows:
+
+- The plugin's icon and the server's declared name.
+- A **from \<plugin\>** badge identifying which plugin added it.
+- A status indicator where a project server's connect switch would sit.
+
+### Plugin server status
+
+| Status | Meaning |
+|--------|---------|
+| Active | The plugin is running and chats will use it |
+| Needs sign-in | The plugin requires authorization before it can run |
+| Needs setup | At least one credential or environment variable has not been configured |
+| Disabled | The plugin has been disabled |
+| Skipped: \<reason\> | The plugin was skipped for a specific reason |
+
+Plugin server cards are not reorderable — they belong to the plugin's version, not your project's server list.
+
+### Opening a plugin server's settings
+
+Click a plugin server card, or click **⋮ → Configure**, to open its **Settings**. The Settings panel contains:
+
+- **Plugin section** — the plugin's status, active version, and other available versions. Click **Activate** next to a version to make it the active one. Activating a version changes what chats run from the next message.
+- **Setup** — per-server component readiness and a **Configure** button to supply credential values.
+- **Set up \<plugin\>** — appears when the plugin's version declares an onboarding flow.
+- **Disable / Enable** — temporarily disable the plugin without uninstalling it.
+- **Uninstall plugin…** — soft-uninstall the plugin (project admins only).
+
+Lifecycle actions (Activate, Disable/Enable, Uninstall) require project admin. Project members can view the settings and configure credential values.
+
+### Plugins with no active version
+
+A plugin that has been installed but has no active version ("Install only") shows a single card labelled with the plugin's name. Click it to open Settings, where you can activate a version or uninstall the plugin.
+
+## Plugin skills on the Skills tab
+
+Plugin skills appear as a source in the Skills tab list alongside local, library, and connected-server skills. Each row is badged **Plugin · \<plugin name\>** and is counted in the tab's skill total.
+
+Click a plugin skill row to open its read-only detail, which shows:
+
+- The skill's `SKILL.md` content.
+- Its model reference.
+- **Plugin settings** — a link to the plugin's server Settings (or an inline Plugin section for a skills-only plugin with no servers).
+- **Detach as copy** — creates an independent, editable copy of the skill in your project store (project admins only).
+
+## Removed: plugin group card
 
 ### Plugin group card
 
