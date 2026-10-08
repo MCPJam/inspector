@@ -63,7 +63,21 @@ describe("describePluginStatus", () => {
     ).toBe("Needs sign-in");
     expect(
       describePluginStatus({ enabled: true, activeVersionId: null }).label,
-    ).toBe("No active version");
+    ).toBe("Not activated");
+  });
+
+  it("says an installed plugin with no active version is not activated", () => {
+    expect(
+      describePluginStatus({
+        enabled: true,
+        activeVersionId: null,
+        row: { status: "skipped", reason: "no_active_version" },
+      }),
+    ).toEqual({ label: "Not activated", tone: "muted" });
+    // A disabled one still says Disabled first.
+    expect(
+      describePluginStatus({ enabled: false, activeVersionId: null }).label,
+    ).toBe("Disabled");
   });
 
   it("uses role tokens for the dot", () => {

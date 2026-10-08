@@ -993,7 +993,7 @@ export function ServersTab({
     !!pendingDashboardOAuth &&
     pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
     pendingDashboardOAuthServer?.connectionStatus !== "failed";
-  const hasAnyServers = connectedCount > 0 || pluginParts.hasPluginServers;
+  const hasAnyServers = connectedCount > 0 || pluginParts.hasPluginCards;
   const shouldShowServerActionsInChrome =
     !!selectedProject && !isLoadingProjects && !isBillingContextPending;
   const showServerActionsInHostsHeader =

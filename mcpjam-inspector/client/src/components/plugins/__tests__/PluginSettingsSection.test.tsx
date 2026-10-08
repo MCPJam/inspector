@@ -207,6 +207,48 @@ describe("PluginSettingsSection", () => {
     expect(h.activateVersion).toHaveBeenCalledWith("pl_1", "pv_2");
   });
 
+  it("lists an install-only plugin's ready versions to activate, unfolded", async () => {
+    h.detail.value = {
+      ...(h.detail.value as Record<string, unknown>),
+      activeVersionId: undefined,
+    };
+    h.version.value = undefined;
+    h.activeRows.value = [
+      {
+        pluginId: "pl_1",
+        pluginVersionId: null,
+        name: "demo",
+        displayName: "Demo",
+        status: "skipped",
+        reason: "no_active_version",
+        servers: [],
+        skills: [],
+      },
+    ];
+    renderSection();
+    expect(screen.getByTestId("plugin-status").textContent).toBe(
+      "Not activated",
+    );
+    expect(
+      screen.getByText(/No version is active yet\. Activate one/),
+    ).toBeTruthy();
+    // Nothing to fold under: the ready versions are listed directly.
+    expect(screen.queryByRole("button", { name: /other version/ })).toBeNull();
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Activate aa11bb22cc33" }),
+      );
+    });
+    expect(h.activateVersion).toHaveBeenCalledWith("pl_1", "pv_1");
+    expect(
+      screen.getByRole("button", { name: "Activate bb22cc33dd44" }),
+    ).toBeTruthy();
+    // Uninstall is here too.
+    expect(
+      screen.getByRole("button", { name: /Uninstall plugin/ }),
+    ).toBeTruthy();
+  });
+
   it("disables and re-enables through the lifecycle mutation", async () => {
     renderSection();
     await act(async () => {

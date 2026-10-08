@@ -1835,6 +1835,49 @@ describe("ServersTab installed plugins", () => {
     expect(screen.queryByTestId("plugin-server-modal")).toBeNull();
   });
 
+  it("keeps an installed plugin with no active version reachable, even with no other servers", () => {
+    const installOnly = { ...plugin, activeVersionId: undefined };
+    mockUseQuery.mockImplementation((name: unknown, args: unknown) => {
+      if (args === "skip") return undefined;
+      switch (name) {
+        case "plugins:listProjectPlugins":
+          return [installOnly];
+        case "plugins:resolveActivePlugins":
+          return {
+            enabled: true,
+            plugins: [
+              {
+                pluginId: "pl_bits",
+                pluginVersionId: null,
+                name: "bits-and-bolts",
+                displayName: "Bits & Bolts",
+                status: "skipped",
+                reason: "no_active_version",
+                servers: [],
+                skills: [],
+              },
+            ],
+          };
+        default:
+          return undefined;
+      }
+    });
+    render(<ServersTab {...props} projectServers={{}} />);
+
+    expect(screen.queryByTestId("plugin-server-card")).toBeNull();
+    const card = screen.getByTestId("plugin-card");
+    expect(card).toHaveTextContent("Bits & Bolts");
+    expect(screen.getByTestId("plugin-server-status")).toHaveTextContent(
+      "Not activated"
+    );
+
+    // Its Settings: where a version is activated or the plugin uninstalled.
+    fireEvent.click(card);
+    expect(screen.getByTestId("plugin-server-modal")).toHaveTextContent(
+      "Bits & Bolts"
+    );
+  });
+
   it("shows no plugin cards outside the plugins rollout", () => {
     mockEnabledFlags.clear();
     render(<ServersTab {...props} />);

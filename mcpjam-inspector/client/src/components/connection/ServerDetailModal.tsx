@@ -184,12 +184,15 @@ function PluginServerDetailModal({
               Plugin section below says whether chats run the plugin now. */}
           <DialogTitle className="flex items-center gap-2 min-w-0 pr-6">
             <span className="truncate">{plugin.serverName}</span>
-            <Badge
-              variant="secondary"
-              className="flex-shrink-0 text-[10px] font-normal"
-            >
-              from {plugin.pluginLabel}
-            </Badge>
+            {/* Without a server, the title is the plugin itself. */}
+            {plugin.serverId ? (
+              <Badge
+                variant="secondary"
+                className="flex-shrink-0 text-[10px] font-normal"
+              >
+                from {plugin.pluginLabel}
+              </Badge>
+            ) : null}
           </DialogTitle>
           <DialogDescription className="sr-only">
             The plugin that adds this server: its versions, setup and lifecycle.

@@ -112,12 +112,14 @@ export function useServersTabPlugins({
     /** A permalink named a plugin this viewer cannot see. */
     routeUnavailable: routeState.kind === "unavailable",
     /**
-     * Whether any installed plugin may add a server card. Without an answer
-     * from the active-plugins read, an activated plugin is assumed to.
+     * Whether any installed plugin adds a card to the grid: a server card, or
+     * its own card when no version is active. Without an answer from the
+     * active-plugins read, an activated plugin is assumed to add servers.
      */
-    hasPluginServers: plugins.some((plugin) => {
+    hasPluginCards: plugins.some((plugin) => {
+      if (!plugin.activeVersionId) return true;
       const row = rowFor(plugin.pluginId);
-      return row ? row.servers.length > 0 : Boolean(plugin.activeVersionId);
+      return row ? row.servers.length > 0 : true;
     }),
     detail,
     setDetail,

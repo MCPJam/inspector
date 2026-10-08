@@ -51,6 +51,11 @@ export function describePluginStatus(input: {
     return { label: "Active", tone: "active" };
   }
   const reason = input.row?.status === "skipped" ? input.row.reason : undefined;
+  // Installed without an active version ("Install only"): nothing runs until
+  // one is activated in its Settings.
+  if (!input.activeVersionId || reason === "no_active_version") {
+    return { label: "Not activated", tone: "muted" };
+  }
   if (
     reason === "needs_auth" ||
     (!reason && input.readiness === "needs_auth")
@@ -68,9 +73,6 @@ export function describePluginStatus(input: {
       label: `Skipped: ${describeSkipReason(reason)}`,
       tone: "attention",
     };
-  }
-  if (!input.activeVersionId) {
-    return { label: "No active version", tone: "muted" };
   }
   if (input.readiness === "ready") return { label: "Ready", tone: "muted" };
   return { label: "Installed", tone: "muted" };

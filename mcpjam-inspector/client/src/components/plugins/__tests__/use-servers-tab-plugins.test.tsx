@@ -141,13 +141,31 @@ describe("useServersTabPlugins permalinks", () => {
     expect(result.current.plugins).toEqual([]);
   });
 
-  it("knows whether any installed plugin adds a server card", () => {
+  it("knows whether any installed plugin adds a card", () => {
     h.activeRows.value = [
       { pluginId: "pl_bits", status: "active", servers: [], skills: [] },
     ];
     const { result } = renderHook(() =>
       useServersTabPlugins({ projectId: "p_1", routePluginId: null }),
     );
-    expect(result.current.hasPluginServers).toBe(false);
+    // Skills only: its skills are on the Skills tab, not a card here.
+    expect(result.current.hasPluginCards).toBe(false);
+  });
+
+  it("counts an installed plugin with no active version, which has its own card", () => {
+    h.installed.value = [{ ...plugin, activeVersionId: undefined }];
+    h.activeRows.value = [
+      {
+        pluginId: "pl_bits",
+        status: "skipped",
+        reason: "no_active_version",
+        servers: [],
+        skills: [],
+      },
+    ];
+    const { result } = renderHook(() =>
+      useServersTabPlugins({ projectId: "p_1", routePluginId: null }),
+    );
+    expect(result.current.hasPluginCards).toBe(true);
   });
 });

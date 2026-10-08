@@ -223,6 +223,59 @@ describe("InstalledPluginServerCards", () => {
     );
   });
 
+  it("gives an installed plugin with no active version its own card, opening its Settings", async () => {
+    const installOnly = { ...plugin, activeVersionId: undefined };
+    const onOpenSettings = vi.fn();
+    render(
+      <InstalledPluginServerCards
+        plugin={installOnly}
+        row={{
+          ...activeRow,
+          pluginVersionId: null,
+          status: "skipped",
+          reason: "no_active_version",
+          servers: [],
+        }}
+        canManage
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    expect(screen.queryByTestId("plugin-server-card")).toBeNull();
+    const card = screen.getByTestId("plugin-card");
+    for (const cls of SERVER_CARD_CLASS_NAME.split(" ")) {
+      expect(card.className).toContain(cls);
+    }
+    expect(screen.getByText("Bits & Bolts")).toBeTruthy();
+    // No "from" badge: the card is the plugin itself.
+    expect(screen.queryByTestId("plugin-server-badge")).toBeNull();
+    expect(screen.getByTestId("plugin-server-status").textContent).toBe(
+      "Not activated",
+    );
+
+    fireEvent.click(card);
+    expect(onOpenSettings).toHaveBeenCalledWith({
+      pluginId: "pl_bits",
+      pluginLabel: "Bits & Bolts",
+      serverId: null,
+      serverName: "Bits & Bolts",
+    });
+
+    // Uninstall is on its menu too.
+    fireEvent.pointerDown(
+      screen.getByRole("button", {
+        name: "Open actions menu for Bits & Bolts",
+      }),
+      { button: 0, ctrlKey: false, pointerType: "mouse" },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Uninstall plugin…" }),
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    });
+    expect(h.softDeletePlugin).toHaveBeenCalledWith("pl_bits");
+  });
+
   it("renders nothing for a plugin with only skills", () => {
     const { container } = render(
       <InstalledPluginServerCards

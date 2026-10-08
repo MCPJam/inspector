@@ -45,6 +45,12 @@ export function pluginCardServers(
   }));
 }
 
+/**
+ * One installed plugin on the Servers tab: a card per server it adds. A
+ * plugin with no active version ("Install only") has no servers or skills to
+ * show anywhere, so it gets one card of its own instead, which opens the
+ * Settings where a version is activated or the plugin uninstalled.
+ */
 export function InstalledPluginServerCards({
   plugin,
   row,
@@ -62,6 +68,27 @@ export function InstalledPluginServerCards({
   const setupStatus = usePluginSetupStatus(activeVersionId);
   const cards = pluginCardServers(plugin, version, row);
   const pluginLabel = plugin.displayName || plugin.name;
+  if (!activeVersionId) {
+    return (
+      <PluginServerCard
+        plugin={plugin}
+        status={describePluginStatus({
+          enabled: plugin.enabled,
+          activeVersionId,
+          row,
+        })}
+        canManage={canManage}
+        onOpenSettings={() =>
+          onOpenSettings({
+            pluginId: plugin.pluginId,
+            pluginLabel,
+            serverId: null,
+            serverName: pluginLabel,
+          })
+        }
+      />
+    );
+  }
   return (
     <>
       {cards.map((card) => {

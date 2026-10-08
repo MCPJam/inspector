@@ -195,6 +195,10 @@ export function PluginSettingsSection({
               Active
             </Badge>
           </div>
+        ) : otherVersions.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No version is active yet. Activate one to run this plugin in chats.
+          </p>
         ) : (
           <p className="text-xs text-muted-foreground">
             No version is active. Import the plugin again and choose “Install
@@ -203,24 +207,28 @@ export function PluginSettingsSection({
         )}
         {otherVersions.length > 0 ? (
           <div className="space-y-1.5">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              aria-expanded={showOtherVersions}
-              onClick={() => setShowOtherVersions((open) => !open)}
-            >
-              <ChevronRight
-                className={cn(
-                  "h-3 w-3 transition-transform",
-                  showOtherVersions && "rotate-90",
-                )}
-                aria-hidden
-              />
-              {otherVersions.length === 1
-                ? "1 other version"
-                : `${otherVersions.length} other versions`}
-            </button>
-            {showOtherVersions ? (
+            {/* Nothing active ("Install only"): its ready versions are the
+                point of this section, so they are listed, not folded. */}
+            {activeVersion ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                aria-expanded={showOtherVersions}
+                onClick={() => setShowOtherVersions((open) => !open)}
+              >
+                <ChevronRight
+                  className={cn(
+                    "h-3 w-3 transition-transform",
+                    showOtherVersions && "rotate-90",
+                  )}
+                  aria-hidden
+                />
+                {otherVersions.length === 1
+                  ? "1 other version"
+                  : `${otherVersions.length} other versions`}
+              </button>
+            ) : null}
+            {showOtherVersions || !activeVersion ? (
               <>
                 <p className="text-[11px] text-muted-foreground">
                   Activating a version changes what chats run from the next

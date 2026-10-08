@@ -44,6 +44,10 @@ export interface PluginServerCardServer {
  * every message that carries the plugin — so where a project server's connect
  * switch sits, this card says whether chats run the plugin right now. Clicking the card (or ⋮ → Configure)
  * opens its Settings, where the plugin's versions, setup and lifecycle live.
+ *
+ * Without a `server` it is the plugin's own card: an installed plugin with
+ * no active version has no servers yet, and this is where it is activated
+ * or uninstalled from.
  */
 export function PluginServerCard({
   plugin,
@@ -53,17 +57,19 @@ export function PluginServerCard({
   onOpenSettings,
 }: {
   plugin: PluginSummary;
-  server: PluginServerCardServer;
+  /** Omitted for the plugin's own card (no active version, so no servers). */
+  server?: PluginServerCardServer;
   status: PluginStatusPresentation;
   /** Project admin: lifecycle actions are refused for anyone else. */
   canManage: boolean;
-  onOpenSettings: (serverId: string) => void;
+  onOpenSettings: (serverId: string | null) => void;
 }) {
   const management = usePluginManagementActions();
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [pending, setPending] = useState(false);
   const pluginLabel = plugin.displayName || plugin.name;
+  const title = server?.name ?? pluginLabel;
 
   const uninstall = async () => {
     setPending(true);
@@ -88,10 +94,10 @@ export function PluginServerCard({
           SERVER_CARD_CLASS_NAME,
           SERVER_CARD_INTERACTIVE_CLASS_NAME,
         )}
-        data-testid="plugin-server-card"
+        data-testid={server ? "plugin-server-card" : "plugin-card"}
         onClick={() => {
           if (menuOpen) return;
-          onOpenSettings(server.serverId);
+          onOpenSettings(server?.serverId ?? null);
         }}
       >
         <div className="p-4">
@@ -110,15 +116,17 @@ export function PluginServerCard({
                   }
                 />
                 <h3 className="truncate text-sm font-semibold text-foreground">
-                  {server.name}
+                  {title}
                 </h3>
-                <Badge
-                  variant="secondary"
-                  className="shrink-0 text-[10px] font-normal"
-                  data-testid="plugin-server-badge"
-                >
-                  from {pluginLabel}
-                </Badge>
+                {server ? (
+                  <Badge
+                    variant="secondary"
+                    className="shrink-0 text-[10px] font-normal"
+                    data-testid="plugin-server-badge"
+                  >
+                    from {pluginLabel}
+                  </Badge>
+                ) : null}
               </div>
             </div>
 
@@ -146,7 +154,7 @@ export function PluginServerCard({
                 <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                   <DropdownMenuTrigger asChild>
                     <Button
-                      aria-label={`Open actions menu for ${server.name}`}
+                      aria-label={`Open actions menu for ${title}`}
                       variant="ghost"
                       size="sm"
                       className="h-7 w-7 cursor-pointer p-0 text-muted-foreground/70 hover:text-foreground"
@@ -161,7 +169,7 @@ export function PluginServerCard({
                         track("edit_server_clicked", {
                           location: "plugin_server_card",
                         });
-                        onOpenSettings(server.serverId);
+                        onOpenSettings(server?.serverId ?? null);
                       }}
                     >
                       <Edit className="mr-2 h-3 w-3" />
@@ -193,11 +201,11 @@ export function PluginServerCard({
           <div className="mt-2 rounded-md border border-border/50 bg-muted/30 p-2 font-mono text-xs text-muted-foreground">
             <div className="break-all">
               {[
-                server.placement
+                server?.placement
                   ? describePluginPlacement(server.placement)
                   : null,
                 plugin.name,
-                server.componentKey,
+                server?.componentKey,
               ]
                 .filter(Boolean)
                 .join(" · ")}
