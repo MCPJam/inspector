@@ -121,14 +121,17 @@ Click **History** in the trial header to open a list of past iterations. Selecti
 
 While a trial is frozen, an **Inspecting** banner appears at the top of the left column. If the current draft differs from the frozen snapshot, a **Changed** indicator appears. Click **Edit case** to return to the live draft; the selected trial stays visible on the right.
 
-### Next run sheet
+### Setup Run for a single case
 
-Click the **Model**, **Trials**, or **Host** chip above the form to open the **Next run** sheet. It separates two kinds of settings:
+Click **Setup Run** in the case workspace to open the same run-configuration sheet the suite uses. It shows the suite's current clients, models, and iteration count so you can confirm or adjust before launching.
 
-- **Saved with this case** — *Trials* and *Model* are written to the case before every quick run and on Save. Changes here persist.
-- **For this run** — *Host* applies only to the next run and is not saved to the case.
+- **Client and model selection** — add or remove clients and models for this run. You can add an existing client or configure a new one directly in the sheet.
+- **Iteration count** — set how many times this case runs per client/model combination. The count is independent of the suite's saved minimum and is not written back to the suite.
+- **Overrides are ephemeral** — changes made here apply only to this one case run. The suite's saved setup is never modified.
 
-Click **Suite settings** in the sheet to configure hosts and other suite-level defaults.
+The sheet opens only once the suite's configuration is known. If the suite is still loading, the button waits rather than opening an empty sheet. Any unsaved edits to the case are saved automatically before the run launches; if the save is refused (for example, because a required field is empty), the launch is also refused and the sheet stays open.
+
+Quota and sandbox errors are shown inline in the sheet rather than dismissing it, so you can see what blocked the run without losing your configuration.
 
 ## Case attachments
 
