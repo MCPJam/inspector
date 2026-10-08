@@ -306,6 +306,32 @@ describe("OAuthFlowTab — advanceOauthFlow", () => {
       error: { code: "invalid_request" },
     });
   });
+
+  it("refuses to run registration for a pre-registered target with no client id", async () => {
+    const prereg = httpServer("databricks");
+    prereg.oauthFlowProfile = {
+      ...prereg.oauthFlowProfile!,
+      registrationStrategy: "preregistered",
+    };
+    renderTab({
+      serverConfigs: { databricks: prereg },
+      selectedServerName: "databricks",
+    });
+    machineCtl.onAdvance = (update) =>
+      update({ currentStep: "received_authorization_server_metadata" });
+    await dispatch({ type: "advanceOauthFlow", payload: {} });
+
+    let advances = 0;
+    machineCtl.onAdvance = () => {
+      advances += 1;
+    };
+    const response = await dispatch({ type: "advanceOauthFlow", payload: {} });
+    expect(response).toMatchObject({
+      status: "error",
+      error: { code: "invalid_request" },
+    });
+    expect(advances).toBe(0);
+  });
 });
 
 // The AS rejected the exchange (expired/used code): the SDK machine clears the
