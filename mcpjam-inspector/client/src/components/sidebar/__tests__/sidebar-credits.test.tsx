@@ -14,6 +14,7 @@ let balanceState:
       walletLocked: boolean;
       billingModel?: "daily" | "monthly_per_seat" | "monthly_flat";
       monthlyAllowanceTotal?: number;
+      rolloverCreditsRemaining?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
     }
@@ -127,6 +128,18 @@ describe("SidebarCredits", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("uses the same rollover capacity as Billing for low credits", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: 5000,
+      monthlyAllowanceRemaining: 550,
+      rolloverCreditsRemaining: 550,
+    };
+    renderCredits();
+    expect(screen.getByText("Low credits")).toBeInTheDocument();
   });
 
   it("does not label a monthly balance with an unknown allowance as low", () => {

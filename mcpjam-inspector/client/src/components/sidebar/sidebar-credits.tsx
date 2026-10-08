@@ -81,6 +81,11 @@ export function SidebarCredits({
     balance?.billingModel === "monthly_flat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const rolloverRemaining = Math.min(
+    Math.max(0, balance?.rolloverCreditsRemaining ?? 0),
+    Math.max(0, monthlyRemaining),
+  );
+  const meterCapacity = monthlyTotal + rolloverRemaining;
   const resetText = balance
     ? showMonthly
       ? formatMonthlyResetText(balance.monthlyResetAt, {
@@ -176,8 +181,8 @@ export function SidebarCredits({
                 fillPercent={
                   balance
                     ? showMonthly
-                      ? monthlyTotal > 0
-                        ? (monthlyRemaining / monthlyTotal) * 100
+                      ? meterCapacity > 0
+                        ? (monthlyRemaining / meterCapacity) * 100
                         : 0
                       : balance.freeDailyCreditsTotal > 0
                         ? (balance.freeDailyCreditsRemaining /
