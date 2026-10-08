@@ -10,7 +10,10 @@ import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-en
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { ActivePluginServer } from "@/hooks/useActivePlugins";
 import { buildExtensionServers } from "./playground-plugins";
-import { skippedPluginsForNotice } from "@/lib/plugins/hidden-environment";
+import {
+  isRunnablePlugin,
+  skippedPluginsForNotice,
+} from "@/lib/plugins/hidden-environment";
 import {
   showPluginNotice,
   type PluginNoticeData,
@@ -2755,11 +2758,6 @@ export function PlaygroundMain({
   // which installed plugins its turns skip and why, that it couldn't be set
   // up to run them, or why this message ran without them. Said when a
   // message is SENT in the chat — never just for opening one.
-  const sentUserTurns = useMemo(
-    () =>
-      messages.reduce((n, message) => n + (message.role === "user" ? 1 : 0), 0),
-    [messages],
-  );
   const pluginNotices = useMemo((): PluginNoticeData[] => {
     const notices: PluginNoticeData[] = [];
     const skipped = skippedPluginsForNotice(hiddenEnvironment.plugins);
@@ -2774,37 +2772,16 @@ export function PlaygroundMain({
     hiddenEnvironment.failed,
     hiddenEnvironmentOffReason,
   ]);
-  const pluginNoticeTurnRef = useRef<{
-    chatSessionId: string;
-    turns: number;
-  } | null>(null);
+  // A send is the chat's status entering "submitted". Opening a chat, or a
+  // restored transcript landing in it, changes the messages but never the
+  // status, so neither says anything.
+  const pluginNoticeStatusRef = useRef(status);
   useEffect(() => {
-    const previous = pluginNoticeTurnRef.current;
-    pluginNoticeTurnRef.current = { chatSessionId, turns: sentUserTurns };
-    if (
-      !previous ||
-      previous.chatSessionId !== chatSessionId ||
-      sentUserTurns <= previous.turns
-    ) {
-      return;
-    }
+    const previous = pluginNoticeStatusRef.current;
+    pluginNoticeStatusRef.current = status;
+    if (status !== "submitted" || previous === "submitted") return;
     for (const notice of pluginNotices) showPluginNotice(chatSessionId, notice);
-  }, [chatSessionId, sentUserTurns, pluginNotices]);
-  // Compare columns each run a plain client turn: say so once per comparison.
-  // Keyed by the chat and by the compare lanes' generation, which a new or
-  // cleared chat moves on, so every later comparison in the tab says it too.
-  useEffect(() => {
-    if (!isCompareMode || !hiddenEnvironment.wanted) return;
-    showPluginNotice(
-      `${chatSessionId}:compare:${multiModelSessionGeneration}`,
-      { kind: "off", reason: "compare" },
-    );
-  }, [
-    isCompareMode,
-    hiddenEnvironment.wanted,
-    chatSessionId,
-    multiModelSessionGeneration,
-  ]);
+  }, [status, chatSessionId, pluginNotices]);
 
   useEffect(() => {
     if (isMultiModelMode && modelCompareCards[0]) {
@@ -5283,12 +5260,26 @@ export function PlaygroundMain({
       captureProps?: Record<string, unknown>,
     ) => {
       trackSendMessage(captureProps);
+      // Compare columns each run a plain client turn: say so on the first
+      // send of each comparison. Keyed by the chat and by the compare lanes'
+      // generation, which a new or cleared chat moves on.
+      if (hiddenEnvironment.plugins.some(isRunnablePlugin)) {
+        showPluginNotice(
+          `${chatSessionId}:compare:${multiModelSessionGeneration}`,
+          { kind: "off", reason: "compare" },
+        );
+      }
       setBroadcastRequest({
         ...request,
         id: Date.now(),
       });
     },
-    [trackSendMessage],
+    [
+      trackSendMessage,
+      hiddenEnvironment.plugins,
+      chatSessionId,
+      multiModelSessionGeneration,
+    ],
   );
 
   const mergedToolRenderOverrides = useMemo(
