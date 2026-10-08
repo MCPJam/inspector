@@ -4,6 +4,7 @@ import { createStore } from "zustand/vanilla";
 
 const CHANNEL = "mcpjam.guest-transition.v1";
 const RELOAD_KEY = `${CHANNEL}.reloaded`;
+const HANDLED_KEY = `${CHANNEL}.handled`;
 export const GUEST_RECOVERY_TIMEOUT_MS = 15_000;
 const MAX_AGE_MS = 60_000;
 type Phase = "started" | "completed" | "failed";
@@ -51,6 +52,41 @@ export function createGuestTabRecovery(deps: {
     status: "idle",
     attempt: null,
   }));
+  // Session storage survives reloads without consuming another tab's message.
+  // Retain only IDs whose transitions can still pass the age check.
+  const handled = new Map<string, number>();
+  try {
+    const saved: unknown = JSON.parse(
+      sessionStorage.getItem(HANDLED_KEY) ?? "[]",
+    );
+    if (Array.isArray(saved)) {
+      for (const entry of saved) {
+        if (
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          /^[a-zA-Z0-9-]{1,80}$/.test(entry[0]) &&
+          Number.isFinite(entry[1]) &&
+          entry[1] <= Date.now() + 1000 &&
+          Date.now() - entry[1] <= MAX_AGE_MS
+        ) {
+          handled.set(entry[0], entry[1]);
+        }
+      }
+    }
+  } catch {
+    /* Keep in-memory protection when storage is unavailable. */
+  }
+  const markHandled = (message: GuestTransition) => {
+    for (const [id, at] of handled) {
+      if (Date.now() - at > MAX_AGE_MS) handled.delete(id);
+    }
+    handled.set(message.attempt, message.startedAt);
+    try {
+      sessionStorage.setItem(HANDLED_KEY, JSON.stringify([...handled]));
+    } catch {
+      /* Recovery must not depend on storage. */
+    }
+  };
   let guestId: string | null = null;
   let current: GuestTransition | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -83,7 +119,13 @@ export function createGuestTabRecovery(deps: {
   };
   const receive = (value: unknown) => {
     const message = parse(value);
-    if (!message || !guestId || message.guestId !== guestId) return;
+    if (
+      !message ||
+      !guestId ||
+      message.guestId !== guestId ||
+      handled.has(message.attempt)
+    )
+      return;
     if (
       current &&
       (message.startedAt < current.startedAt ||
@@ -96,11 +138,19 @@ export function createGuestTabRecovery(deps: {
     current = message;
     clearTimeout(timer);
     store.setState({ status: "waiting", attempt: message.attempt });
-    if (message.phase === "failed") fail();
-    else if (message.phase === "completed") reload(true);
-    else
+    if (message.phase === "failed") {
+      fail();
+      markHandled(message);
+    } else if (message.phase === "completed") {
+      // Persist before navigation can discard this module's memory.
+      markHandled(message);
+      reload(true);
+    } else
       timer = setTimeout(
-        fail,
+        () => {
+          fail();
+          markHandled(message);
+        },
         Math.max(
           0,
           GUEST_RECOVERY_TIMEOUT_MS - (Date.now() - message.startedAt),

@@ -6,6 +6,7 @@ import {
 
 describe("guest tab recovery", () => {
   beforeEach(() => {
+    sessionStorage.clear();
     vi.useFakeTimers();
     vi.setSystemTime(100_000);
   });
@@ -30,6 +31,80 @@ describe("guest tab recovery", () => {
     });
     return { sender, receiver, reload, allow, messages };
   }
+  it.each(["completed", "failed", "timeout"] as const)(
+    "does not replay a handled %s attempt after a reload",
+    (outcome) => {
+      const first = tabs();
+      const message: GuestTransition = {
+        guestId: "guest-a",
+        attempt: "persisted",
+        startedAt: Date.now(),
+        phase: outcome === "timeout" ? "started" : outcome,
+      };
+      localStorage.setItem(
+        "mcpjam.guest-transition.v1",
+        JSON.stringify(message),
+      );
+      first.receiver.receive(message);
+      if (outcome === "timeout") vi.advanceTimersByTime(15_000);
+      first.receiver.dispose();
+      const reloaded = tabs();
+      reloaded.receiver.receive(message);
+      reloaded.receiver.receive({ ...message, phase: "completed" });
+      expect(reloaded.receiver.store.getState().status).toBe("idle");
+      expect(reloaded.reload).not.toHaveBeenCalled();
+      expect(localStorage.getItem("mcpjam.guest-transition.v1")).toBe(
+        JSON.stringify(message),
+      );
+      localStorage.clear();
+    },
+  );
+  it("does not consume started before a later completion, even across reload", () => {
+    const first = tabs();
+    const message: GuestTransition = {
+      guestId: "guest-a",
+      attempt: "pending",
+      startedAt: Date.now(),
+      phase: "started",
+    };
+    first.receiver.receive(message);
+    expect(
+      sessionStorage.getItem("mcpjam.guest-transition.v1.handled"),
+    ).toBeNull();
+    first.receiver.dispose();
+    const reloaded = tabs();
+    reloaded.receiver.receive({ ...message, phase: "completed" });
+    expect(reloaded.reload).toHaveBeenCalledTimes(1);
+    reloaded.receiver.dispose();
+  });
+  it("retains in-memory replay protection when session storage throws", () => {
+    const get = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw Error("blocked");
+      });
+    const set = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw Error("blocked");
+      });
+    try {
+      const t = tabs();
+      const message: GuestTransition = {
+        guestId: "guest-a",
+        attempt: "memory",
+        startedAt: Date.now(),
+        phase: "failed",
+      };
+      expect(() => t.receiver.receive(message)).not.toThrow();
+      t.receiver.dispose();
+      t.receiver.receive(message);
+      expect(t.receiver.store.getState().status).toBe("idle");
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
+  });
   it("blocks another guest tab before promotion and reloads only after nested retirement finishes", () => {
     const t = tabs();
     const finish = t.sender.begin("guest-a");
