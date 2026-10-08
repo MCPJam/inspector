@@ -992,20 +992,17 @@ describe("PlaygroundMain", () => {
         ...nothing,
         plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
       };
-      const userTurn = (id: string) => ({
-        id,
-        role: "user",
-        parts: [{ type: "text", text: id }],
-      });
-      mockUseChatSession.messages = [];
       const { rerender } = render(<PlaygroundMain {...defaultProps} />);
       // Opening a chat says nothing.
       expect(showPluginNotice).not.toHaveBeenCalled();
 
-      mockUseChatSession.messages = [userTurn("u1")];
-      rerender(<PlaygroundMain {...defaultProps} />);
-      mockUseChatSession.messages = [userTurn("u1"), userTurn("u2")];
-      rerender(<PlaygroundMain {...defaultProps} />);
+      // Two sends: the status enters "submitted" each time.
+      for (let send = 0; send < 2; send += 1) {
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "ready";
+        rerender(<PlaygroundMain {...defaultProps} />);
+      }
 
       const skipped = {
         kind: "skipped",
@@ -1024,10 +1021,84 @@ describe("PlaygroundMain", () => {
       expect(
         vi.mocked(showPluginNotice).mock.results.map((r) => r.value),
       ).toEqual([true, false]);
-      mockUseChatSession.messages = [];
     });
 
-    it("says plugins don't run in comparisons once per comparison, not once per tab", () => {
+    it("names a plugin it did not start because it runs on this computer", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [
+          {
+            ...bitsRow,
+            status: "skipped",
+            reason: "placement",
+            componentKey: "cad",
+            servers: [{ ...bitsRow.servers[0], placement: "local" }],
+          },
+        ],
+      };
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", {
+          kind: "skipped",
+          plugins: [
+            {
+              pluginId: "plg_bits",
+              name: "bits-and-bolts",
+              displayName: "Bits & Bolts",
+              reason: "placement",
+              placement: "local",
+            },
+          ],
+        });
+      } finally {
+        mockUseChatSession.status = "ready";
+      }
+    });
+
+    it("says nothing when a restored chat is opened, however many turns it has", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
+      };
+      const userTurn = (id: string) => ({
+        id,
+        role: "user",
+        parts: [{ type: "text", text: id }],
+      });
+      mockUseChatSession.messages = [userTurn("u1")];
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        // Another session opens: its id changes first, then its transcript
+        // (more user turns than the last one) lands. Neither is a send.
+        mockUseChatSession.chatSessionId = "chat-session-restored";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.messages = [
+          userTurn("r1"),
+          userTurn("r2"),
+          userTurn("r3"),
+        ];
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).not.toHaveBeenCalled();
+
+        // A send in it does.
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith(
+          "chat-session-restored",
+          expect.objectContaining({ kind: "skipped" }),
+        );
+      } finally {
+        mockUseChatSession.status = "ready";
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.messages = [];
+      }
+    });
+
+    it("says plugins don't run in comparisons on each comparison's first send", async () => {
       vi.mocked(showPluginNotice).mockClear();
       installBits();
       const models = [
@@ -1042,8 +1113,24 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.multiModelEnabled = true;
       try {
         const props = { ...defaultProps, enableMultiModelChat: true };
+        // Through the composer's own handlers: in compare mode there is one
+        // input per column.
+        const compareSend = async (text: string) => {
+          await act(async () => {
+            (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onChange(text);
+          });
+          await act(async () => {
+            await (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onSubmit({
+              preventDefault: () => {},
+            });
+          });
+        };
         const { rerender } = render(<PlaygroundMain {...props} />);
+        // Entering a comparison says nothing; its first send does.
+        expect(showPluginNotice).not.toHaveBeenCalled();
+        await compareSend("first");
         const compare = { kind: "off", reason: "compare" };
+        expect(showPluginNotice).toHaveBeenCalledTimes(1);
         expect(showPluginNotice).toHaveBeenLastCalledWith(
           expect.stringContaining("chat-session-1"),
           compare,
@@ -1051,10 +1138,16 @@ describe("PlaygroundMain", () => {
         expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
           true,
         );
+        // Not again in the same comparison.
+        await compareSend("second");
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          false,
+        );
 
         // A later comparison in the same tab is a new chat: it says so again.
         mockUseChatSession.chatSessionId = "chat-session-2";
         rerender(<PlaygroundMain {...props} />);
+        await compareSend("third");
         expect(showPluginNotice).toHaveBeenLastCalledWith(
           expect.stringContaining("chat-session-2"),
           compare,

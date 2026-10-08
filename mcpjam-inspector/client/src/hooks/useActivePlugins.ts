@@ -27,6 +27,11 @@ export interface ActivePluginsState {
   activeServers: ActivePluginServer[];
   /** True while the read is in flight. False when skipped or settled. */
   isLoading: boolean;
+  /**
+   * The read failed (an error, or a backend without it). The lists read as
+   * empty, so a caller that must not mistake this for "no plugins" checks it.
+   */
+  failed: boolean;
 }
 
 const EMPTY_ROWS: ActivePluginRow[] = [];
@@ -61,8 +66,9 @@ export function activePluginServers(
 }
 
 /**
- * The venue a chat turn in this deployment resolves plugins for. Both the
- * reactive read below and a one-off re-read before a retry ask with it.
+ * The venue a chat turn in this deployment resolves plugins for, and the
+ * read below's default. The Playground's hidden environment never uses it: it
+ * asks for "hosted" in every build, so it only ever composes remote components.
  */
 export function activePluginsRuntimeVenue(): "hosted" | "local" {
   return HOSTED_MODE ? "hosted" : "local";
@@ -83,10 +89,13 @@ export function activePluginsRuntimeVenue(): "hosted" | "local" {
  * any other error all read as "no plugins" instead of throwing into render.
  *
  * Asks with the venue this deployment runs chat turns in, so a plugin a turn
- * would refuse for placement shows as skipped here too.
+ * would refuse for placement shows as skipped here too. A caller that must
+ * only ever see remote components (the Playground's hidden environment) asks
+ * for `"hosted"` instead.
  */
 export function useActivePlugins(
   projectId: string | null | undefined,
+  options?: { runtimeVenue?: "hosted" | "local" },
 ): ActivePluginsState {
   const flagEnabled = usePluginsEnabled();
   const { isAuthenticated } = useConvexAuth();
@@ -98,7 +107,7 @@ export function useActivePlugins(
       ? {
           projectId,
           content: false,
-          runtimeVenue: activePluginsRuntimeVenue(),
+          runtimeVenue: options?.runtimeVenue ?? activePluginsRuntimeVenue(),
         }
       : "skip",
   );
@@ -115,6 +124,7 @@ export function useActivePlugins(
       activePlugins,
       activeServers: activePluginServers(plugins),
       isLoading: ready && data === undefined && error === undefined,
+      failed: ready && error !== undefined,
     };
   }, [plugins, ready, data, error]);
 }

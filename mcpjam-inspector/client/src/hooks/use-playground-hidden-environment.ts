@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import {
   activePluginServers,
-  activePluginsRuntimeVenue,
   useActivePlugins,
   type ActivePluginServer,
 } from "@/hooks/useActivePlugins";
 import { useEnsureAdhocEnvironment } from "@/hooks/useProjectEnvironments";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { useProjectSecrets } from "@/hooks/useProjectSecrets";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import type { HiddenEnvironmentRecovery } from "@/lib/hosted-runtime-context";
 import type {
   ActivePluginRow,
@@ -34,7 +35,25 @@ import {
  * when that composition first appears or changes, never per message, and the
  * backend dedupes it by fingerprint. Without a runnable plugin nothing is
  * composed and the chat stays a plain client turn.
+ *
+ * Until the plugin read has answered, the chat cannot know whether it has
+ * plugins, so sends wait (as they do while composing) rather than going out
+ * without them. That wait is bounded: past {@link HIDDEN_ENVIRONMENT_WAIT_MS},
+ * or if the read fails, the chat runs as a plain client turn and says its
+ * plugins couldn't load.
  */
+
+/**
+ * The venue the hidden composition is resolved for, in EVERY build. Only
+ * remote components are composed: a plugin with a component that would start
+ * a process on this computer (or in a computer) is skipped as `placement`,
+ * because the member never chose to run it. An environment they pick
+ * explicitly is how such a plugin runs.
+ */
+export const HIDDEN_ENVIRONMENT_VENUE = "hosted" as const;
+
+/** How long sends wait for the plugin read before running without plugins. */
+export const HIDDEN_ENVIRONMENT_WAIT_MS = 5000;
 
 export interface PlaygroundHiddenEnvironmentInput {
   projectId: string | null;
@@ -67,7 +86,10 @@ export interface PlaygroundHiddenEnvironmentState {
   environmentId: string | null;
   /** The servers the composed environment's plugins add. */
   pluginServerIds: string[];
-  /** Composing failed; the chat runs as a plain client turn. */
+  /**
+   * Composing failed, the plugin read failed, or it did not answer in time;
+   * the chat runs as a plain client turn.
+   */
   failed: boolean;
   /** Re-read the plugins and recompose (one retry after a refusal). */
   recover: () => Promise<HiddenEnvironmentRecovery>;
@@ -99,9 +121,23 @@ export function usePlaygroundHiddenEnvironment(
   input: PlaygroundHiddenEnvironmentInput,
 ): PlaygroundHiddenEnvironmentState {
   const { projectId, eligible, hostId, harnessId, hostResolved } = input;
-  const isMember = useIsMemberActor() === true;
-  const active = useActivePlugins(eligible && isMember ? projectId : null);
+  const pluginsEnabled = usePluginsEnabled();
+  const memberActor = useIsMemberActor();
+  const isMember = memberActor === true;
+  const active = useActivePlugins(eligible && isMember ? projectId : null, {
+    runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
+  });
   const plugins = active.plugins;
+  // No authoritative answer yet: who this is, or which plugins it has. An
+  // empty list here is not "no plugins". Only for a chat that could have
+  // plugins at all (the flag is on, a real project and a client).
+  const pluginsPending =
+    eligible &&
+    pluginsEnabled &&
+    !!hostId &&
+    shouldQueryProjectId(projectId) &&
+    (memberActor === undefined || (isMember && active.isLoading));
+  const readFailed = eligible && isMember && active.failed;
 
   const runnable = useMemo(() => plugins.filter(isRunnablePlugin), [plugins]);
   const pluginVersionIds = useMemo(
@@ -152,6 +188,7 @@ export function usePlaygroundHiddenEnvironment(
   }, [needsCredential, projectSecrets, harnessId]);
 
   const composition = useMemo((): Composition | "loading" | null => {
+    if (pluginsPending) return "loading";
     if (!eligible || !isMember || !projectId || !hostId) return null;
     if (pluginVersionIds.length === 0) return null;
     if (!hostResolved) return "loading";
@@ -172,6 +209,7 @@ export function usePlaygroundHiddenEnvironment(
       ...(secretSelection ? { secretSelection } : {}),
     };
   }, [
+    pluginsPending,
     eligible,
     isMember,
     projectId,
@@ -185,6 +223,25 @@ export function usePlaygroundHiddenEnvironment(
   compositionRef.current = composition;
   const compositionKey =
     composition && composition !== "loading" ? composition.key : null;
+
+  // Sends wait while the composition is pending, but not forever.
+  const waitKey =
+    composition === "loading"
+      ? `${projectId ?? ""}\u0000${hostId ?? ""}`
+      : null;
+  const [timedOutKey, setTimedOutKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (waitKey === null) {
+      setTimedOutKey(null);
+      return;
+    }
+    const timer = setTimeout(
+      () => setTimedOutKey(waitKey),
+      HIDDEN_ENVIRONMENT_WAIT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [waitKey]);
+  const waitTimedOut = waitKey !== null && timedOutKey === waitKey;
   // Moves on every time the composition's key does, including through
   // "nothing composed". A key alone cannot tell an A→B→A switch from no
   // switch at all; this can.
@@ -278,7 +335,7 @@ export function usePlaygroundHiddenEnvironment(
         {
           projectId: target.projectId,
           content: false,
-          runtimeVenue: activePluginsRuntimeVenue(),
+          runtimeVenue: HIDDEN_ENVIRONMENT_VENUE,
         } as never,
       )) as ActivePluginsResult | null | undefined;
       const rows =
@@ -318,6 +375,7 @@ export function usePlaygroundHiddenEnvironment(
       : null;
   const wanted =
     composition !== null &&
+    !waitTimedOut &&
     current?.status !== "none" &&
     current?.status !== "failed";
 
@@ -328,7 +386,7 @@ export function usePlaygroundHiddenEnvironment(
     environmentId: current?.status === "ready" ? current.environmentId : null,
     pluginServerIds:
       current?.status === "ready" ? current.pluginServerIds : pluginServerIds,
-    failed: current?.status === "failed",
+    failed: current?.status === "failed" || waitTimedOut || readFailed,
     recover,
   };
 }

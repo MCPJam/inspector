@@ -61,6 +61,37 @@ describe("runnable plugins", () => {
     expect(runnablePluginVersionIds(rows)).toEqual(["ver_a", "ver_b"]);
     expect(runnablePluginServerIds(rows)).toEqual(["srv_a", "srv_b"]);
   });
+
+  it("never treats a plugin with a local or computer component as runnable", () => {
+    // The hosted-venue read skips these; this holds even if a read did not.
+    const local = row("local", {
+      servers: [
+        { serverId: "srv_l", name: "l", componentKey: "s", placement: "local" },
+      ],
+    });
+    const mixed = row("mixed", {
+      servers: [
+        {
+          serverId: "srv_r",
+          name: "r",
+          componentKey: "r",
+          placement: "remote",
+        },
+        {
+          serverId: "srv_c",
+          name: "c",
+          componentKey: "c",
+          placement: "computer",
+        },
+      ],
+    });
+    expect(runnablePluginVersionIds([local, mixed, row("a")])).toEqual([
+      "ver_a",
+    ]);
+    expect(runnablePluginServerIds([local, mixed, row("a")])).toEqual([
+      "srv_a",
+    ]);
+  });
 });
 
 describe("hiddenEnvironmentCompositionKey", () => {
@@ -119,6 +150,29 @@ describe("skippedPluginsForNotice", () => {
         reason: "needs_auth",
       },
     ]);
+  });
+
+  it("says where a placement skip's component would have run", () => {
+    const skipped = (placement: "local" | "computer") =>
+      row(placement, {
+        status: "skipped",
+        reason: "placement",
+        componentKey: "cad",
+        servers: [
+          {
+            serverId: "srv_r",
+            name: "r",
+            componentKey: "r",
+            placement: "remote",
+          },
+          { serverId: "srv_x", name: "x", componentKey: "cad", placement },
+        ],
+      });
+    expect(
+      skippedPluginsForNotice([skipped("local"), skipped("computer")]).map(
+        (plugin) => plugin.placement,
+      ),
+    ).toEqual(["local", "computer"]);
   });
 });
 
