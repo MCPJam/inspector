@@ -233,7 +233,7 @@ describe("POST /api/mcp/conformance/oauth/complete", () => {
 // ── Directory readiness (local, deterministic, free) ────────────────────
 
 describe("POST /api/mcp/conformance/readiness/:publisher", () => {
-  it("refuses a publisher outside the two vocabulary words", async () => {
+  it("refuses a publisher outside the vocabulary words", async () => {
     const app = createTestApp(createMockManager());
     const res = await postJson(app, "/api/mcp/conformance/readiness/gemini", {
       serverId: "s1",
@@ -365,5 +365,29 @@ describe("POST /api/mcp/conformance/readiness/:publisher", () => {
     // Free by construction: a local run has no requester, so nothing could
     // have been charged.
     expect(body.result.llmObservations.status).toBe("not-requested");
+  });
+
+  it("grades a Muse run and answers 200", async () => {
+    const manager = createMockManager({
+      getServerConfig: vi
+        .fn()
+        .mockReturnValue({ url: new URL("https://unreachable.invalid/mcp") }),
+    });
+    const app = createTestApp(manager);
+    const res = await postJson(app, "/api/mcp/conformance/readiness/muse", {
+      serverId: "s1",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.result.readinessKind).toBe("muse-directory-readiness");
+    expect(
+      body.result.lanes.map((lane: { lane: string }) => lane.lane),
+    ).toEqual([
+      "runtime-compatibility",
+      "tool-policy",
+      "submission-artifacts",
+      "experience-insights",
+    ]);
   });
 });

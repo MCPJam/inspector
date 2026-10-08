@@ -16,6 +16,10 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
+import {
+  resetShownPluginNotices,
+  showPluginNotice,
+} from "@/lib/plugins/plugin-notice-display";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -207,6 +211,35 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
 
+// The project's installed plugins, as the hidden environment reads them.
+// Nothing installed unless a test installs one.
+const mockHiddenEnvironment = vi.hoisted(() => ({
+  calls: [] as any[],
+  state: {
+    plugins: [] as any[],
+    pluginServers: [] as any[],
+    wanted: false,
+    environmentId: null as string | null,
+    pluginServerIds: [] as string[],
+    failed: false,
+    recover: async () => ({ ok: false as const }),
+  },
+}));
+// Spied, not replaced: the real dedupe decides what is said.
+vi.mock("@/lib/plugins/plugin-notice-display", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/plugins/plugin-notice-display")
+    >();
+  return { ...actual, showPluginNotice: vi.fn(actual.showPluginNotice) };
+});
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: (input: unknown) => {
+    mockHiddenEnvironment.calls.push(input);
+    return mockHiddenEnvironment.state;
+  },
+}));
+
 // Mock convex/react
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
@@ -324,6 +357,8 @@ const mockUseChatSession = {
   isStreaming: false,
   disableForAuthentication: false,
   submitBlocked: false,
+  hiddenEnvironmentActive: false,
+  hiddenEnvironmentOffReason: null,
 } as any;
 let capturedChatSessionOptions: any = null;
 
@@ -858,6 +893,283 @@ describe("PlaygroundMain", () => {
     mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
+  });
+
+  describe("installed plugins (hidden environment)", () => {
+    const bitsServer = {
+      serverId: "srv_bits",
+      name: "bits-cad",
+      pluginId: "plg_bits",
+      pluginLabel: "Bits & Bolts",
+    };
+    const bitsRow = {
+      pluginId: "plg_bits",
+      pluginVersionId: "ver_bits",
+      name: "bits-and-bolts",
+      displayName: "Bits & Bolts",
+      status: "active",
+      servers: [
+        {
+          serverId: "srv_bits",
+          name: "bits-cad",
+          componentKey: "cad",
+          placement: "remote",
+        },
+      ],
+      skills: [],
+    };
+    const nothing = { ...mockHiddenEnvironment.state };
+    const recover = vi.fn(async () => ({ ok: false as const }));
+
+    function installBits(environmentId: string | null = "env_hidden") {
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [bitsRow],
+        pluginServers: [bitsServer],
+        wanted: true,
+        environmentId,
+        pluginServerIds: ["srv_bits"],
+        recover,
+      };
+    }
+
+    afterEach(() => {
+      mockHiddenEnvironment.state = { ...nothing };
+      mockHiddenEnvironment.calls = [];
+      mockUseChatSession.hiddenEnvironmentActive = false;
+      mockUseChatSession.hiddenEnvironmentOffReason = null;
+      resetShownPluginNotices();
+    });
+
+    it("composes for the previewed client only while the environments UI is hidden", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(mockHiddenEnvironment.calls.at(-1)).toMatchObject({
+        eligible: true,
+      });
+    });
+
+    it("hands the chat hook the composition beside the ordinary client-turn context", () => {
+      installBits();
+      render(<PlaygroundMain {...defaultProps} />);
+      const hosted = capturedChatSessionOptions.hostedContext;
+      expect(hosted.hiddenEnvironment).toEqual({
+        environmentId: "env_hidden",
+        pluginServerIds: ["srv_bits"],
+        recover,
+      });
+      // Not an explicit environment: the chat hook decides per turn whether
+      // the web route can carry it, so the client-turn fields stay.
+      expect(hosted).not.toHaveProperty("executionTarget");
+      expect(hosted).not.toHaveProperty("environmentOverrides");
+      // The plugin's server never enters the chat's own selection.
+      expect(capturedChatSessionOptions.selectedServers).not.toContain(
+        "bits-cad",
+      );
+      expect(hosted.selectedServerIds).not.toContain("srv_bits");
+    });
+
+    it("leaves the chat-hook context exactly as it was without a runnable plugin", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+      const plain = capturedChatSessionOptions.hostedContext;
+      expect(plain).not.toHaveProperty("hiddenEnvironment");
+      expect(plain.requiresWebChatApi).toBeUndefined();
+    });
+
+    it("shows the plugin's servers as on and read-only while the chat carries them", () => {
+      installBits();
+      mockUseChatSession.hiddenEnvironmentActive = true;
+      render(<PlaygroundMain {...defaultProps} />);
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([bitsServer]);
+      // No environment chrome: the environments UI is hidden.
+      expect(composer.environmentServers).toBeUndefined();
+      expect(composer.executionTarget).toBeUndefined();
+    });
+
+    it("says once per chat, when a message is sent, which plugins were skipped and why", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
+      };
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      // Opening a chat says nothing.
+      expect(showPluginNotice).not.toHaveBeenCalled();
+
+      // Two sends: the status enters "submitted" each time.
+      for (let send = 0; send < 2; send += 1) {
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "ready";
+        rerender(<PlaygroundMain {...defaultProps} />);
+      }
+
+      const skipped = {
+        kind: "skipped",
+        plugins: [
+          {
+            pluginId: "plg_bits",
+            name: "bits-and-bolts",
+            displayName: "Bits & Bolts",
+            reason: "needs_auth",
+          },
+        ],
+      };
+      // Asked on each send; the real dedupe says it once for the chat.
+      expect(showPluginNotice).toHaveBeenCalledTimes(2);
+      expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", skipped);
+      expect(
+        vi.mocked(showPluginNotice).mock.results.map((r) => r.value),
+      ).toEqual([true, false]);
+    });
+
+    it("names a plugin it did not start because it runs on this computer", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [
+          {
+            ...bitsRow,
+            status: "skipped",
+            reason: "placement",
+            componentKey: "cad",
+            servers: [{ ...bitsRow.servers[0], placement: "local" }],
+          },
+        ],
+      };
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", {
+          kind: "skipped",
+          plugins: [
+            {
+              pluginId: "plg_bits",
+              name: "bits-and-bolts",
+              displayName: "Bits & Bolts",
+              reason: "placement",
+              placement: "local",
+            },
+          ],
+        });
+      } finally {
+        mockUseChatSession.status = "ready";
+      }
+    });
+
+    it("says nothing when a restored chat is opened, however many turns it has", () => {
+      vi.mocked(showPluginNotice).mockClear();
+      mockHiddenEnvironment.state = {
+        ...nothing,
+        plugins: [{ ...bitsRow, status: "skipped", reason: "needs_auth" }],
+      };
+      const userTurn = (id: string) => ({
+        id,
+        role: "user",
+        parts: [{ type: "text", text: id }],
+      });
+      mockUseChatSession.messages = [userTurn("u1")];
+      try {
+        const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+        // Another session opens: its id changes first, then its transcript
+        // (more user turns than the last one) lands. Neither is a send.
+        mockUseChatSession.chatSessionId = "chat-session-restored";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        mockUseChatSession.messages = [
+          userTurn("r1"),
+          userTurn("r2"),
+          userTurn("r3"),
+        ];
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).not.toHaveBeenCalled();
+
+        // A send in it does.
+        mockUseChatSession.status = "submitted";
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(showPluginNotice).toHaveBeenCalledWith(
+          "chat-session-restored",
+          expect.objectContaining({ kind: "skipped" }),
+        );
+      } finally {
+        mockUseChatSession.status = "ready";
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.messages = [];
+      }
+    });
+
+    it("says plugins don't run in comparisons on each comparison's first send", async () => {
+      vi.mocked(showPluginNotice).mockClear();
+      installBits();
+      const models = [
+        {
+          id: "anthropic/claude-sonnet-4.5",
+          name: "Sonnet",
+          provider: "anthropic",
+        },
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+      ];
+      mockUseChatSession.availableModels = models as any;
+      mockUseChatSession.multiModelEnabled = true;
+      try {
+        const props = { ...defaultProps, enableMultiModelChat: true };
+        // Through the composer's own handlers: in compare mode there is one
+        // input per column.
+        const compareSend = async (text: string) => {
+          await act(async () => {
+            (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onChange(text);
+          });
+          await act(async () => {
+            await (mockChatInputProps.mock.calls.at(-1)?.[0] as any).onSubmit({
+              preventDefault: () => {},
+            });
+          });
+        };
+        const { rerender } = render(<PlaygroundMain {...props} />);
+        // Entering a comparison says nothing; its first send does.
+        expect(showPluginNotice).not.toHaveBeenCalled();
+        await compareSend("first");
+        const compare = { kind: "off", reason: "compare" };
+        expect(showPluginNotice).toHaveBeenCalledTimes(1);
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-1"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+        // Not again in the same comparison.
+        await compareSend("second");
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          false,
+        );
+
+        // A later comparison in the same tab is a new chat: it says so again.
+        mockUseChatSession.chatSessionId = "chat-session-2";
+        rerender(<PlaygroundMain {...props} />);
+        await compareSend("third");
+        expect(showPluginNotice).toHaveBeenLastCalledWith(
+          expect.stringContaining("chat-session-2"),
+          compare,
+        );
+        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
+          true,
+        );
+      } finally {
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        mockUseChatSession.availableModels = [];
+        mockUseChatSession.multiModelEnabled = false;
+      }
+    });
+
+    it("shows no plugin servers on a turn that runs without them", () => {
+      installBits();
+      mockUseChatSession.hiddenEnvironmentActive = false;
+      mockUseChatSession.hiddenEnvironmentOffReason = "local_model";
+      render(<PlaygroundMain {...defaultProps} />);
+      const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
+      expect(composer.pluginServers).toEqual([]);
+    });
   });
 
   describe("rendering", () => {

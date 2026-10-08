@@ -9,6 +9,22 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-07
+
+#### Added
+
+- **Muse (Meta) connector readiness in `@mcpjam/sdk` 9.1.0** — `gatherMuseReadinessEvidence` and `gradeMuseReadiness` are a third directory-readiness publisher alongside Claude and OpenAI, graded against Meta's connector guidelines. The run has four lanes and two verdicts: `technicalStatus` (wire-only: HTTPS, redirects, tool-listing rules) and `status` (adds the §5 submission profile). `formatMuseClassificationSheet` renders the suggested Read / Write / Sensitive-write classification table §5.6 asks submitters to include in their documentation. See the [Muse readiness SDK reference](/sdk/reference/muse-readiness).
+
+#### Changed
+
+- **Claude Code: subagent steps visible while running** — an Agent card now shows its subagent's steps while it works (the files it reads, the commands it runs) and whether a background agent is still running, then folds once it is done.
+
+- **Claude Code: background agents restored for approval-free turns** — turns that run without approvals now support background agents again. The turn waits for them to report back, so their answer lands in the same reply instead of being lost. Turns that pause for approvals keep background tasks off and run subagents in the foreground.
+
+- **Claude Code: model aliases pinned** — Claude Code turns no longer fail with "Model not allowed for this lease" when Claude Code switches models on its own (for example, on entering plan mode). Every model Claude Code picks for itself now resolves to the model selected for the turn.
+
+- **Evals setup run preflight** — the Setup Run sheet now flags problems before you start: a suite server that isn't connected (with a Connect button), one the project no longer has or an environment the backend refuses to launch (both block Start), and a model provider the organization hasn't enabled (with a link to model settings). Launch failures stay in the sheet instead of a toast, and local environment suites connect their servers before launching.
+
 ### 2026-10-06
 
 #### Added

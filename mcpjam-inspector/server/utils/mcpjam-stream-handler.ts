@@ -1005,6 +1005,15 @@ export interface MCPJamHandlerOptions {
    */
   runtimeSkillsOverride?: RuntimeSkill[];
   /**
+   * The Playground's HIDDEN environment, harness side: deliver the project's
+   * live skill pool BESIDE `runtimeSkillsOverride` instead of skipping it.
+   * Selects the `live_plus` skill source explicitly — a turn that merely
+   * carries an environment's override and capability set never gets it. Only
+   * the web chat route sets it, and only for an environment target that asked
+   * for the project's skills.
+   */
+  includeProjectSkills?: boolean;
+  /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
    * what the flat skill list structurally cannot — per-skill SUPPORTING FILES
@@ -2066,6 +2075,7 @@ export function parseStreamErrorChunkText(errorText: string): {
   message: string;
   code?: string;
   statusCode?: number;
+  isRetryable?: boolean;
   details?: string;
 } {
   try {
@@ -2073,6 +2083,7 @@ export function parseStreamErrorChunkText(errorText: string): {
       code?: unknown;
       message?: unknown;
       statusCode?: unknown;
+      isRetryable?: unknown;
       details?: unknown;
     };
     if (body && typeof body === "object") {
@@ -2085,6 +2096,9 @@ export function parseStreamErrorChunkText(errorText: string): {
         ...(typeof body.code === "string" ? { code: body.code } : {}),
         ...(typeof body.statusCode === "number"
           ? { statusCode: body.statusCode }
+          : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
           : {}),
         ...(typeof body.details === "string" ? { details: body.details } : {}),
       };
@@ -2676,7 +2690,9 @@ async function processStream(
               : {}),
             ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
               ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
-              : {}),
+              : parsed.code
+                ? { clientErrorText: JSON.stringify(parsed) }
+                : {}),
           });
         }
 
@@ -5546,11 +5562,21 @@ export async function runChatEngineLoop(
         });
         emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
-        // Site (3) — outer agentic-loop catch. No structured body,
-        // no stepIndex.
+        // Site (3) — outer agentic-loop catch. Mid-stream provider errors
+        // retain their envelope; parser/transport failures may be plain text.
         const loopInfra = attachedInfraEvidence(error);
+        const streamFailure = parseStreamErrorChunkText(
+          attachedClientErrorText(error) ?? errorText,
+        );
         safelyEmitEngineError(onEngineError, {
           message: errorText,
+          ...(streamFailure.statusCode !== undefined
+            ? { httpStatus: streamFailure.statusCode }
+            : {}),
+          ...(streamFailure.isRetryable !== undefined
+            ? { isRetryable: streamFailure.isRetryable }
+            : {}),
+          ...(streamFailure.details ? { details: streamFailure.details } : {}),
           ...(loopFailureCode ? { code: loopFailureCode } : {}),
           ...(loopInfra ? { infra: loopInfra } : {}),
           rawText: errorText,

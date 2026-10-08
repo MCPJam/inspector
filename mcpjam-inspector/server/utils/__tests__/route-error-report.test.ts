@@ -7,10 +7,12 @@ vi.mock("@sentry/node", () => ({
 
 const mockIngest = vi.fn();
 vi.mock("@axiomhq/js", () => ({
-  Axiom: vi.fn().mockImplementation(() => ({
-    ingest: mockIngest,
-    flush: vi.fn().mockResolvedValue(undefined),
-  })),
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: mockIngest,
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 import * as Sentry from "@sentry/node";

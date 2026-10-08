@@ -24,6 +24,14 @@ import {
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 import { retireConsoleOnStreamError } from "./log-console-safety.js";
+import { loadSentryInstallationId } from "./sentry-installation.js";
+import { initializeDesktopSentryIdentity } from "../shared/desktop-sentry-state.js";
+import { installDesktopSentryIdentity } from "./sentry-identity-electron.js";
+import { SENTRY_INSTALLATION_ARGUMENT } from "../shared/sentry-identity.js";
+
+const installationIdentity = initializeDesktopSentryIdentity(
+  loadSentryInstallationId(app.getPath("userData")),
+);
 
 // `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
 // a packaged build, so the previous NODE_ENV check reported every shipped
@@ -39,9 +47,13 @@ Sentry.init({
     deployment: "self_hosted",
   }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
+  initialScope: {
+    user: { id: installationIdentity.id },
+    tags: { deployment: "self_hosted", actor_kind: installationIdentity.kind },
+  },
   // Promotes crashed/oom from breadcrumbs to captured events — see
   // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
-  // already on by default in @sentry/electron 5.12 and is left alone.
+  // already on by default in @sentry/electron 7 and is left alone.
   integrations: crashReportingIntegrations,
   // Drops the ONE rejection the app cannot catch: Electron leaves
   // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
@@ -52,6 +64,7 @@ Sentry.init({
 });
 
 const desktopDiagnostics = installDesktopDiagnostics();
+const desktopSentryIdentity = installDesktopSentryIdentity();
 
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
@@ -673,12 +686,16 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       // true in dev too, and the two differ on whether a Playwright browser can
       // be launched at all (forge packages `.vite` only, so `import("playwright")`
       // always rejects in the shipped app).
-      additionalArguments: app.isPackaged ? ["--mcpjam-packaged"] : [],
+      additionalArguments: [
+        ...(app.isPackaged ? ["--mcpjam-packaged"] : []),
+        `${SENTRY_INSTALLATION_ARGUMENT}${installationIdentity.id}`,
+      ],
     },
     show: false, // Don't show until ready
   });
 
   desktopDiagnostics.bind(window, rendererDevServerUrl ?? serverUrl);
+  desktopSentryIdentity.bind(window, rendererDevServerUrl ?? serverUrl);
 
   // Load the app
   setAgentBrowserRendererOrigin(rendererDevServerUrl ?? serverUrl);

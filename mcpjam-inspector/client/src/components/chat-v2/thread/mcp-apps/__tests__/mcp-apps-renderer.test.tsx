@@ -54,7 +54,8 @@ const {
   const appBridgeArgsRef = { current: null as any };
   const mockAppBridgeCtor = vi
     .fn()
-    .mockImplementation((client, hostInfo, hostCapabilities, options) => {
+    // Constructed with `new`, which Vitest 4 rejects for arrow implementations.
+    .mockImplementation(function (client, hostInfo, hostCapabilities, options) {
       appBridgeArgsRef.current = {
         client,
         hostInfo,

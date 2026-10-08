@@ -10,7 +10,9 @@
 export {
   PLATFORM_V1_ERROR_CODES,
   PlatformApiError,
+  SWARM_FUNDING_CHANGED_CODE,
   describePlatformRefusal,
+  describeSwarmFundingChange,
   isFeatureUnavailable,
   isPlatformApiError,
   platformRefusalHint,
@@ -18,6 +20,7 @@ export {
   type PlatformApiErrorOptions,
   type PlatformRefusal,
   type PlatformV1ErrorCode,
+  type SwarmFundingChange,
 } from "./errors.js";
 
 export {
@@ -136,6 +139,7 @@ export type {
   PlatformEvalReplayVideoMeta,
   PlatformEvalInfraError,
   PlatformEvalIteration,
+  PlatformMuseReadinessStartBody,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,
   PlatformReadinessLaneCoverage,
@@ -495,6 +499,7 @@ export {
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -652,6 +657,7 @@ export {
   type CheckHostCompatibilityResult,
   type StartClaudeReadinessInput,
   type StartOpenAIReadinessInput,
+  type StartMuseReadinessInput,
   type StartReadinessResult,
   type ReadinessRunScopedInput,
   type GetReadinessRunResult,

@@ -17,6 +17,7 @@ import {
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -223,6 +224,7 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
     operations: [
       startClaudeReadinessRunOperation,
       startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
       getReadinessRunOperation,
       listReadinessRunsOperation,
       cancelReadinessRunOperation,
@@ -337,6 +339,7 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,

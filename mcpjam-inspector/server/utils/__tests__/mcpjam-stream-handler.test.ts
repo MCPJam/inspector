@@ -4208,6 +4208,70 @@ describe("mcpjam-stream-handler", () => {
       expect(event.rawText).toBe("upstream broke");
     });
 
+    it.each([
+      { statusCode: 400, code: "provider_error", isRetryable: false },
+      { statusCode: 401, code: "provider_auth_error", isRetryable: false },
+      { statusCode: 429, code: "provider_rate_limit", isRetryable: true },
+      { statusCode: 503, code: "provider_error", isRetryable: true },
+    ].flatMap(error => [false, true].map(partial => ({ ...error, partial }))))(
+      "preserves HTTP $statusCode provider error once (partial: $partial)",
+      async ({ partial, statusCode, code, isRetryable }) => {
+        const error = {
+          message: statusCode === 400
+            ? "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key."
+            : `Provider rejected the request (${statusCode}).`,
+          code,
+          statusCode,
+          isRetryable,
+          details: "Original provider diagnostic",
+        };
+        global.fetch = vi.fn().mockResolvedValue(
+          createSseResponse([
+            { type: "start" },
+            ...(partial
+              ? [
+                  { type: "text-start", id: "text" },
+                  { type: "text-delta", id: "text", delta: "Partial answer" },
+                  { type: "text-end", id: "text" },
+                ]
+              : []),
+            { type: "error", errorText: JSON.stringify(error) },
+          ]),
+        );
+        vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+        const onEngineError = vi.fn();
+        await handleMCPJamFreeChatModel({
+          messages: [{ role: "user", content: "hello" }] as any,
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          onEngineError,
+        });
+        await lastExecution;
+        const errors = writtenChunks.filter((chunk) => chunk.type === "error");
+        expect(errors).toHaveLength(1);
+        expect(JSON.parse(errors[0].errorText)).toEqual(error);
+        expect(onEngineError).toHaveBeenCalledTimes(1);
+        expect(onEngineError.mock.calls[0][0]).toMatchObject({
+          message: error.message,
+          code: error.code,
+          httpStatus: statusCode,
+          isRetryable,
+          details: error.details,
+        });
+        if (partial)
+          expect(writtenChunks).toContainEqual(
+            expect.objectContaining({
+              type: "text-delta",
+              delta: "Partial answer",
+            }),
+          );
+      },
+    );
+
     it("fires `onEngineError` (via outer catch) when SSE parser fails mid-stream (PR 5b-followup-2 review — CodeRabbit Major 'Parser failures bypass onEngineError')", async () => {
       // CodeRabbit followup-2 review fix: the pre-fix
       // `if (!value?.success)` branch in processStream wrote an error

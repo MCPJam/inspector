@@ -11405,6 +11405,70 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/readiness-runs/muse": {
+      "post": {
+        "operationId": "startMuseReadinessRun",
+        "tags": ["Directory readiness"],
+        "summary": "Start a Muse connector readiness run",
+        "description": "Grades the saved server against Meta's Muse connector guidelines and returns `202` with a run id. Free: Muse readiness has no AI observations, so the body has no field that can spend, and no submission mode, which belongs to the OpenAI plugin directory. The submission-ready verdict stays `incomplete` on a hosted run, because Muse's submission requirements are declared by the submitter and only the CLI accepts a submission profile. Meta reviews every submission by hand, so `ready` is a preflight, not a prediction of approval.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Deduplicates a retried POST. More load-bearing here than usual: a readiness run dials a third party's server, and a retried start that created a second run would do that twice."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRunReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body carried an unknown key (including `includeLlmObservations`, which Muse does not offer), or the server uses a transport no directory can list."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/readiness-runs": {
       "get": {
         "operationId": "listReadinessRuns",
@@ -11420,9 +11484,9 @@
             "required": false,
             "schema": {
               "type": "string",
-              "enum": ["claude", "openai"]
+              "enum": ["claude", "openai", "muse"]
             },
-            "description": "Narrow to one publisher. Omitted lists both, newest first."
+            "description": "Narrow to one publisher. Omitted lists all, newest first."
           },
           {
             "name": "serverId",
@@ -28478,6 +28542,11 @@
             },
             "minItems": 1,
             "description": "Fan out across THESE environments instead of the goal's authored targets. NON-EMPTY when present: `[]` is a caller saying \"across these\" while naming none, and would have silently launched the authored targets instead. Silently running something other than what was asked for is bad anywhere; on an operation that spends it is worse. Omit the field to mean \"as authored\"."
+          },
+          "expectedSponsored": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` whose `details.code` is `swarm_funding_changed` (with `expectedSponsored`, `actualSponsored` and `totalConversations`) and nothing is created. Omit it to accept whatever split applies."
           }
         }
       },
@@ -28503,6 +28572,22 @@
           "deduped": {
             "type": "boolean",
             "description": "True when an `Idempotency-Key` replayed onto a run that ALREADY existed, so nothing new was started. The response is otherwise identical, which is how a retry of a dropped request tells \"I launched it\" from \"it was already going\" without a second read."
+          },
+          "funding": {
+            "type": "object",
+            "description": "How the run's conversations are funded. `sponsored` conversations are paid from MCPJam's per-user allowance; the `credits` remainder is paid from your organization's credits. Absent when the server does not report it.",
+            "required": ["sponsored", "credits", "total"],
+            "properties": {
+              "sponsored": {
+                "type": "integer"
+              },
+              "credits": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            }
           }
         }
       },
@@ -30567,9 +30652,10 @@
               "submission-artifacts",
               "experience-insights",
               "plugin-package",
-              "release-contract"
+              "release-contract",
+              "tool-policy"
             ],
-            "description": "Anthropic defines five lanes and OpenAI seven, overlapping on four. Which subset applies is decided by the run's `readinessKind`."
+            "description": "Anthropic defines five lanes, OpenAI seven and Muse four. Which subset applies is decided by the run's `readinessKind`."
           },
           "status": {
             "type": "string",
@@ -30620,7 +30706,8 @@
                 "submission-artifacts",
                 "experience-insights",
                 "plugin-package",
-                "release-contract"
+                "release-contract",
+                "tool-policy"
               ]
             },
             "description": "The lanes this stage rolled up, so the verdict is reproducible by hand."
@@ -30696,7 +30783,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "serverId": {
             "type": "string",
@@ -30818,7 +30905,7 @@
           },
           "readinessKind": {
             "type": "string",
-            "enum": ["claude", "openai"]
+            "enum": ["claude", "openai", "muse"]
           },
           "status": {
             "type": "string",

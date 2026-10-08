@@ -114,12 +114,13 @@ export default defineConfig(({ command, mode }) => {
           target: serverOrigin,
           changeOrigin: true,
         },
-        // Proxy WorkOS API calls during Electron local dev to avoid browser CORS
-        // issues and match the web client Vite config behavior.
+        // Keep AuthKit on the embedded server's session proxy, matching web dev.
+        // It stores refresh tokens in local HttpOnly cookies and restores them
+        // for subsequent refresh requests from AuthKit.
         "/user_management": {
-          target: "https://api.workos.com",
+          target: serverOrigin,
           changeOrigin: true,
-          secure: true,
+          secure: false,
         },
         // PostHog same-origin relay (server/routes/relay.ts) — matches the
         // web client Vite config; without it Electron dev requests to /relay

@@ -37,6 +37,7 @@ import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
 import { useProjectQueries, shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "@/lib/hosted-oauth-resume";
+import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type { ServerWithName } from "@/state/app-types";
@@ -170,8 +171,7 @@ function isHistoryRestore(event: PageTransitionEvent): boolean {
   if (event.persisted) return true;
 
   const navigationEntry = performance.getEntriesByType?.("navigation").at(0) as
-    | PerformanceNavigationTiming
-    | undefined;
+    PerformanceNavigationTiming | undefined;
   return navigationEntry?.type === "back_forward";
 }
 
@@ -225,8 +225,8 @@ export function useAppState({
         auth: isWorkOsLoading
           ? "loading"
           : currentUserId
-          ? "signed_in"
-          : "guest",
+            ? "signed_in"
+            : "guest",
         version: __APP_VERSION__,
       });
     report();
@@ -285,8 +285,8 @@ export function useAppState({
   const activeOrganizationId = isPendingOAuthMarkerOrgValid
     ? pendingOAuthMarkerOrgId
     : isStoredActiveOrganizationValid
-    ? storedActiveOrganizationId
-    : fallbackActiveOrganizationId;
+      ? storedActiveOrganizationId
+      : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
       setActiveOrganizationSelection({
@@ -544,11 +544,14 @@ export function useAppState({
         pendingServer?.connectionStatus === "connecting" ||
         pendingServer?.connectionStatus === "oauth-flow"
       ) {
-        dispatch({
-          type: "CONNECT_FAILURE",
+        const cancelled = {
+          type: "CONNECT_FAILURE" as const,
           name: pendingOAuth.serverName,
           error: OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
-        });
+        };
+        dispatch(cancelled);
+        // Outside `useServerState`'s wrapped dispatch, so record it here.
+        connectOutcomeTracker.observe(cancelled);
       }
     };
 

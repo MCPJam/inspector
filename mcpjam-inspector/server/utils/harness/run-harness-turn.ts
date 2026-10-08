@@ -103,6 +103,7 @@ import {
   emitToolInput,
   emitToolOutput,
   emitToolOutputDenied,
+  emitToolOutputError,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import { needsApprovalFor } from "@/shared/tool-approval";
@@ -118,6 +119,7 @@ import {
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
+  skillsHashWithPlugins,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import { participantSafeStudyError } from "../scenario-runtime-config.js";
@@ -190,7 +192,10 @@ import {
 } from "./external-account-credentials.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
-import { selectHarnessSkillSource } from "./skill-delivery.js";
+import {
+  composeLivePlusSkills,
+  selectHarnessSkillSource,
+} from "./skill-delivery.js";
 import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
   handOffLegacySkillDirs,
@@ -216,7 +221,9 @@ import {
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
+  harnessPlanFromRaw,
   harnessSubagentStepFromRaw,
+  harnessToolOutputFromRaw,
   type HarnessBackgroundTaskInfo,
   type HarnessResetReason,
 } from "@/shared/harness-session";
@@ -704,6 +711,45 @@ export function harnessRuntimeFingerprint(parts: {
 const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
 /** How often a turn waiting on background agents writes a keepalive chunk. */
 const HARNESS_DRAIN_KEEPALIVE_MS = 20_000;
+/** Live output forwarded per command; the result carries the rest. */
+const HARNESS_LIVE_OUTPUT_MAX_CHARS = 64 * 1024;
+
+/**
+ * A failed harness tool call's error, as the text its card shows. A failed
+ * command's error is its result (`{ status, exitCode, output }` from Codex),
+ * so its output, under its exit code, is the readable part.
+ */
+function harnessToolErrorText(part: unknown): string {
+  const error =
+    (part as { error?: unknown }).error ??
+    (part as { errorText?: unknown }).errorText;
+  let text: string;
+  if (typeof error === "string") text = error;
+  else if (error instanceof Error) text = error.message;
+  else if (
+    error &&
+    typeof error === "object" &&
+    typeof (error as { output?: unknown }).output === "string"
+  ) {
+    const { output, exitCode } = error as {
+      output: string;
+      exitCode?: unknown;
+    };
+    text = [
+      typeof exitCode === "number" ? `Exit code ${exitCode}` : "",
+      output.trim(),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  } else {
+    try {
+      text = JSON.stringify(error) ?? "";
+    } catch {
+      text = "";
+    }
+  }
+  return (text.trim() || "Tool call failed").slice(0, 4000);
+}
 
 /** Sealed-policy envelope lifetime when the caller doesn't set one. Long enough
  *  for a real harness turn, short enough to bound a leaked seal (§3's
@@ -759,6 +805,7 @@ export async function runHarnessTurn(
     scenarioParticipant,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
+    includeProjectSkills,
     effectiveCapabilities,
     environmentId,
     environmentUnresolvedReason,
@@ -1243,6 +1290,10 @@ export async function runHarnessTurn(
       | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
       | undefined;
     let drainKeepalive: ReturnType<typeof setInterval> | undefined;
+    // Live command output already sent, per tool call (Codex).
+    const liveOutputChars = new Map<string, number>();
+    // A plan whose notification names no turn still gets one part per turn.
+    const harnessPlanFallbackId = crypto.randomUUID();
     const writeBackgroundTaskChunk = (data: HarnessBackgroundTaskInfo) => {
       writer.write({
         type: "data-harness-background-task",
@@ -1613,20 +1664,57 @@ export async function runHarnessTurn(
       // even EMPTY — so the live skills query is SKIPPED entirely and
       // `skillsHash` derives from the supplied artifacts. Legacy callers
       // (neither present) keep the live tri-state fetch unchanged.
+      //
+      // `live_plus` (the Playground's hidden environment) fetches like `live`
+      // and adds the environment's own skills — but ONLY when that fetch
+      // succeeded: a failed fetch leaves the whole set unknown, so nothing new
+      // is delivered and nothing is reconciled (`runtimeSkills === null`
+      // below), exactly as a plain client turn behaves on the same failure.
       const skillSource = selectHarnessSkillSource({
         pinnedHarnessSkills,
         runtimeSkillsOverride,
+        ...(includeProjectSkills ? { includeProjectSkills } : {}),
       });
       const skillsArePinned = skillSource.mode === "pinned";
       const skillsFetch =
-        skillSource.mode !== "live"
+        skillSource.mode === "pinned" || skillSource.mode === "environment"
           ? { ok: true as const, skills: skillSource.skills }
           : projectId && authHeader
           ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
           : { ok: true as const, skills: [] };
-      const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
+      const livePlusSkills =
+        skillSource.mode === "live_plus"
+          ? composeLivePlusSkills(
+              skillsFetch.ok ? skillsFetch.skills : null,
+              skillSource.environmentSkills,
+            )
+          : undefined;
+      if (livePlusSkills && livePlusSkills.problems.length > 0) {
+        // Ids and codes only: a skill name is user-authored content.
+        logger.warn("[harness] skills left out: box folder taken", {
+          problems: livePlusSkills.problems.map((problem) => ({
+            code: problem.code,
+            skillId: problem.skillId,
+          })),
+        });
+      }
+      const runtimeSkills = livePlusSkills
+        ? livePlusSkills.skills
+        : skillsFetch.ok
+          ? skillsFetch.skills
+          : null;
+      // A `live_plus` set mixes the project's pool with plugin skills, so the
+      // plugin versions that ran fold into its hash: a version change re-writes
+      // the box's skills even when their text reads the same.
       const skillsHash =
-        runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
+        runtimeSkills === null
+          ? undefined
+          : skillSource.mode === "live_plus"
+            ? skillsHashWithPlugins(
+                skillsFingerprint(runtimeSkills),
+                effectiveCapabilities?.pluginVersions ?? [],
+              )
+            : skillsFingerprint(runtimeSkills);
 
       // MATERIALIZED PROJECT SECRETS, taken from the CALLER — never fetched
       // here, and the difference is load-bearing rather than a wiring detail.
@@ -2756,6 +2844,88 @@ export async function runHarnessTurn(
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
             }
+            // LIVE_PLUS (the Playground's hidden environment): the project's
+            // pool AND the environment's own skills, in ONE materialize pass —
+            // the writer prunes every delivered folder it is given no files
+            // for, so two passes would each delete the other's files. The
+            // environment's entries take their files from its capability set
+            // (the only source of a plugin skill's), the pool's from the
+            // project-wide query. If that query FAILS, only the environment's
+            // folders are touched: the pool's files are left exactly as they
+            // are.
+            else if (
+              skillSource.mode === "live_plus" &&
+              livePlusSkills &&
+              deliveredSkills.length > 0
+            ) {
+              const environmentNamesById = new Map(
+                [...deliveredSkillNamesById].filter(([skillId]) =>
+                  livePlusSkills.environmentSkillIds.has(skillId),
+                ),
+              );
+              const environmentFiles = effectiveCapabilities
+                ? capabilitySkillFiles(effectiveCapabilities).filter((file) =>
+                    environmentNamesById.has(file.skillId),
+                  )
+                : [];
+              const projectFileResult =
+                projectId &&
+                authHeader &&
+                livePlusSkills.projectSkillIds.size > 0
+                  ? await fetchRuntimeSkillFiles(
+                      authHeader,
+                      projectId,
+                      executionScope,
+                    ).catch(() => ({ ok: false } as const))
+                  : ({ ok: true, files: [] } as const);
+              await materializeSkillFiles({
+                session,
+                files: projectFileResult.ok
+                  ? [
+                      ...projectFileResult.files.filter((file) =>
+                        livePlusSkills.projectSkillIds.has(file.skillId),
+                      ),
+                      ...environmentFiles,
+                    ]
+                  : environmentFiles,
+                skillNamesById: projectFileResult.ok
+                  ? deliveredSkillNamesById
+                  : environmentNamesById,
+                skillsBase: skillsBaseDir!,
+                ...(uploadQuotaComputerId
+                  ? { computerId: uploadQuotaComputerId }
+                  : {}),
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              }).catch(() => {});
+              if (effectiveCapabilities) {
+                const deliveredPluginSet = {
+                  ...effectiveCapabilities,
+                  pluginSkills: effectiveCapabilities.pluginSkills.filter(
+                    (skill) => environmentNamesById.has(skill.skillId),
+                  ),
+                };
+                const pluginSkills =
+                  pluginSkillDeliverySummary(deliveredPluginSet);
+                if (pluginSkills.length > 0) {
+                  logger.info("[harness] delivered plugin skills", {
+                    boxKind: box?.kind ?? "local-native",
+                    boxId: computerId,
+                    skills: pluginSkills,
+                  });
+                }
+                const skillOrigins = deliveredPluginSkillOrigins({
+                  set: deliveredPluginSet,
+                  skillsBaseDir: skillsBaseDir!,
+                  deliveredNameBySkillId: deliveredSkillNamesById,
+                });
+                if (skillOrigins.length > 0) {
+                  logger.info("[harness] plugin skill origins", {
+                    harness: harnessAdapter.id,
+                    origins: skillOrigins,
+                  });
+                }
+              }
+            }
             // Materialize supporting files AFTER the pre-seed (each SKILL.md is
             // written and adapter-owned; reconcile removed stale managed dirs),
             // so the files land in dirs the adapter's turn-time write will not
@@ -3269,6 +3439,7 @@ export async function runHarnessTurn(
           { serverId?: string; toolName: string }
         >();
         const toolStartMs = new Map<string, number>();
+        const failedToolCallIds = new Set<string>();
         const finishStep = () => {
           // Usage is only known at the harness `finish`, so intermediate steps
           // carry what's settled (driver reads its cumulative `usage`).
@@ -3324,9 +3495,24 @@ export async function runHarnessTurn(
           // missing file, a failed Edit), not `tool-result`: it is no longer
           // in flight either way.
           if (type === "tool-error" || type === "tool-output-error") {
-            drainOpenToolCalls.delete(
-              String((part as { toolCallId?: unknown }).toolCallId ?? ""),
+            const failedToolCallId = String(
+              (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
+            drainOpenToolCalls.delete(failedToolCallId);
+            // ...and its card settles as failed. The UI only: the transcript,
+            // spans and evals keep recording a failed built-in as before.
+            // Without it the card stayed "running" for good.
+            if (
+              toolMeta.has(failedToolCallId) &&
+              !failedToolCallIds.has(failedToolCallId)
+            ) {
+              failedToolCallIds.add(failedToolCallId);
+              emitToolOutputError(writer, {
+                toolCallId: failedToolCallId,
+                errorText: harnessToolErrorText(part),
+                providerExecuted: true,
+              });
+            }
           }
           if (
             type === "reasoning-start" ||
@@ -3823,6 +4009,36 @@ export async function runHarnessTurn(
                 data: subagentStep,
                 transient: true,
               } as unknown as UIMessageChunk);
+              continue;
+            }
+            // Codex's plan for the turn: one checklist part, replaced in
+            // place on every update (the notification carries the whole plan).
+            const plan = harnessPlanFromRaw(rawValue);
+            if (plan) {
+              writer.write({
+                type: "data-harness-plan",
+                id: `harness-plan-${plan.turnId ?? harnessPlanFallbackId}`,
+                data: plan.plan,
+              } as unknown as UIMessageChunk);
+              continue;
+            }
+            // A running Codex command's output, live. Bounded per command:
+            // the full output still arrives as the tool call's result.
+            const toolOutput = harnessToolOutputFromRaw(rawValue);
+            if (toolOutput) {
+              const sent = liveOutputChars.get(toolOutput.toolCallId) ?? 0;
+              if (sent < HARNESS_LIVE_OUTPUT_MAX_CHARS) {
+                const delta = toolOutput.delta.slice(
+                  0,
+                  HARNESS_LIVE_OUTPUT_MAX_CHARS - sent,
+                );
+                liveOutputChars.set(toolOutput.toolCallId, sent + delta.length);
+                writer.write({
+                  type: "data-harness-tool-output",
+                  data: { toolCallId: toolOutput.toolCallId, delta },
+                  transient: true,
+                } as unknown as UIMessageChunk);
+              }
               continue;
             }
             // Otherwise a passthrough of the runtime's own protocol message.

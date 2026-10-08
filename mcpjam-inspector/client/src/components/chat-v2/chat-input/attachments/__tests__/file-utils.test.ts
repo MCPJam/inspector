@@ -235,7 +235,9 @@ describe("attachmentsToFileUIParts", () => {
     };
     vi.stubGlobal(
       "FileReader",
-      vi.fn(() => mockFileReader),
+      vi.fn(function () {
+        return mockFileReader;
+      }),
     );
   });
 

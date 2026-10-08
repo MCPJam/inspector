@@ -26,14 +26,15 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "vitest": ">=3.2.0 <4"
+    "vitest": ">=3.2.0 <5"
   },
   "dependencies": {
     "@mcpjam/sdk": "^9.0.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.3",
     "tsup": "^8.3.5",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   }
 }

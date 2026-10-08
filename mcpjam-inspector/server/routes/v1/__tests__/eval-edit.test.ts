@@ -45,12 +45,14 @@ vi.mock("../../web/auth.js", async () => {
 });
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-    action: convexActionMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+      action: convexActionMock,
+    };
+  }),
 }));
 
 import { deriveItemIdempotencyKey } from "../../../utils/idempotency.js";
@@ -1644,6 +1646,19 @@ describe("v1 eval-edit routes", () => {
       maxExtraToolCalls: null,
       argumentMatching: "exact",
     });
+  });
+
+  it("PATCH case preserves null as the instruction to clear its scenario", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { scenario: null },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestCase",
+    )![1];
+    expect(args.scenario).toBeNull();
   });
 
   it("PATCH prompt-case steps never forward caseType", async () => {

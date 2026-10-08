@@ -108,13 +108,14 @@ describe("the route's first resolution as the invoker's first authorization", ()
   it("is reused once, through the fence the route resolved with", async () => {
     const f = fixture({ firstRead });
     expect((await post(f.app)).status).toBe(200);
-    // Route's first resolution, the invoker's second, then delivery.
-    expect(f.reads).toEqual([firstRead, fenced, undefined]);
+    // Route's first resolution, then the invoker's second; delivery stands
+    // on that last one (nothing ran after it).
+    expect(f.reads).toEqual([firstRead, fenced]);
   });
   it("is never reused without a route fence", async () => {
     const f = fixture({});
     expect((await post(f.app)).status).toBe(200);
-    expect(f.reads).toEqual([undefined, fenced, fenced, undefined]);
+    expect(f.reads).toEqual([undefined, fenced, fenced]);
   });
   it.each([
     ["for another tool", { firstName: "other" }],
@@ -122,7 +123,7 @@ describe("the route's first resolution as the invoker's first authorization", ()
   ])("is not reused %s", async (_case, extra) => {
     const f = fixture({ firstRead, ...extra });
     expect((await post(f.app)).status).toBe(200);
-    expect(f.resolve).toHaveBeenCalledTimes(4);
+    expect(f.resolve).toHaveBeenCalledTimes(3);
   });
   it("is dropped by any receipt work before the first authorization", async () => {
     h.receipts = {
@@ -138,7 +139,7 @@ describe("the route's first resolution as the invoker's first authorization", ()
     });
     expect((await post(f.app)).status).toBe(200);
     expect(h.receipts.read).toHaveBeenCalledOnce();
-    expect(f.reads).toEqual([firstRead, fenced, fenced, undefined]);
+    expect(f.reads).toEqual([firstRead, fenced, fenced]);
   });
   it("is dropped after the approval check reads a saved receipt", async () => {
     h.receipts = {
@@ -149,6 +150,6 @@ describe("the route's first resolution as the invoker's first authorization", ()
     const f = fixture({ firstRead, requiresApproval: true });
     expect((await post(f.app)).status).toBe(200);
     expect(h.receipts.read).toHaveBeenCalledOnce();
-    expect(f.reads).toEqual([firstRead, fenced, fenced, undefined]);
+    expect(f.reads).toEqual([firstRead, fenced, fenced]);
   });
 });

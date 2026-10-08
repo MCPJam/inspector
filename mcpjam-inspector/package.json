@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.14.0",
+  "version": "3.14.1",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -152,15 +152,15 @@
     "@hookform/resolvers": "^5.9.1",
     "@lezer/highlight": "^1.2.5",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^9.0.0",
+    "@mcpjam/sdk": "^9.1.0",
     "@modelcontextprotocol/client": "2.2.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
     "@openai/mcp-extensions": "0.1.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "@sentry/electron": "^5.10.0",
-    "@sentry/node": "8.55.0",
-    "@sentry/react": "8.55.0",
+    "@sentry/electron": "7.20.0",
+    "@sentry/node": "10.75.0",
+    "@sentry/react": "10.75.0",
     "@sentry/vite-plugin": "^5.4.0",
     "@tanstack/react-virtual": "^3.14.13",
     "@workos-inc/authkit-react": "^0.16.3",
@@ -265,7 +265,7 @@
     "@types/ws": "^8.18.2",
     "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-react": "^6.1.1",
-    "@vitest/coverage-v8": "^3.2.7",
+    "@vitest/coverage-v8": "^4.1.11",
     "@workos/emulate": "0.13.1",
     "autoprefixer": "^10.6.1",
     "concurrently": "^10.0.5",
@@ -287,7 +287,7 @@
     "typescript": "^5",
     "vite": "^8.3.0",
     "vite-tsconfig-paths": "^6.0.4",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "tmp": "0.2.5",

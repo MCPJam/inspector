@@ -10,6 +10,25 @@ import type {
 } from "./log-events.js";
 import { scrubLogPayload } from "./log-scrubber.js";
 import { isOriginCaptureHandled } from "./error-capture-stamp.js";
+import { sentryIdentityMetadata } from "./sentry-request-identity.js";
+
+function withIdentityCapture(capture: () => void): void {
+  const identity = sentryIdentityMetadata();
+  if (!("user" in identity)) {
+    capture();
+    return;
+  }
+  // Sentry merges users from several scopes. Strip ambient identity AFTER
+  // that merge so an old email or another request's user cannot survive.
+  Sentry.withScope((scope) => {
+    scope.addEventProcessor((event) => ({
+      ...event,
+      user: identity.user?.id ? { id: identity.user.id } : undefined,
+      tags: { ...event.tags, ...identity.tags },
+    }));
+    capture();
+  });
+}
 
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
@@ -133,7 +152,14 @@ export function captureOriginErrorToSentry(
     fingerprint?: string[];
   },
 ): void {
-  Sentry.captureException(error, options);
+  const identity = sentryIdentityMetadata();
+  withIdentityCapture(() =>
+    Sentry.captureException(error, {
+      ...options,
+      ...identity,
+      tags: { ...options.tags, ...identity.tags },
+    }),
+  );
 }
 
 /**
@@ -162,9 +188,12 @@ export const logger = {
     // without this check every declined user-fault error would be re-captured
     // here — rebuilding the noise the origin policy exists to remove.
     if (!isOriginCaptureHandled(error)) {
-      Sentry.captureException(error ?? new Error(message), {
-        extra: { message, ...context },
-      });
+      withIdentityCapture(() =>
+        Sentry.captureException(error ?? new Error(message), {
+          extra: { message, ...context },
+          ...sentryIdentityMetadata(),
+        }),
+      );
     }
 
     ingestToAxiom("error", message, {
@@ -324,17 +353,25 @@ function emit(
 
   if (options?.sentry === true) {
     if (options.error instanceof Error) {
-      Sentry.captureException(options.error, { extra: fullPayload });
+      withIdentityCapture(() =>
+        Sentry.captureException(options.error, {
+          extra: fullPayload,
+          ...sentryIdentityMetadata(),
+        }),
+      );
     } else {
-      Sentry.captureMessage(eventName, {
-        level: "error",
-        extra: {
-          ...fullPayload,
-          ...(options.error !== undefined
-            ? { rawError: String(options.error) }
-            : {}),
-        },
-      });
+      withIdentityCapture(() =>
+        Sentry.captureMessage(eventName, {
+          level: "error",
+          ...sentryIdentityMetadata(),
+          extra: {
+            ...fullPayload,
+            ...(options.error !== undefined
+              ? { rawError: String(options.error) }
+              : {}),
+          },
+        }),
+      );
     }
   }
 

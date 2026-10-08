@@ -40,6 +40,9 @@ jobs:
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
+      - name: Verify MCP deploy workflow path filters
+        run: node --test .github/scripts/mcp-workflow-paths.test.mjs
+
       # The scripts behind prepare-release.yml, release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a
       # break shows up first.

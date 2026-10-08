@@ -168,6 +168,7 @@ const PLAIN_TOOLS = [
   // and a report is a document to read rather than a card to render.
   "start_claude_readiness_run",
   "start_openai_readiness_run",
+  "start_muse_readiness_run",
   "get_readiness_run",
   "list_readiness_runs",
   "cancel_readiness_run",
