@@ -83,7 +83,7 @@ describe("SharedSlackChannelCard", () => {
       screen.getByLabelText("Loading shared Slack channel")
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Set up your shared Slack channel")
+      screen.queryByText("Set up Slack Connect with the MCPJam team")
     ).not.toBeInTheDocument();
   });
 
@@ -101,13 +101,139 @@ describe("SharedSlackChannelCard", () => {
     mockUseQuery.mockReturnValue(dto());
     render(<SharedSlackChannelCard organizationId="org_1" />);
     expect(
-      screen.getByText("Set up your shared Slack channel")
+      screen.getByRole("heading", { name: "Slack Connect" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Set up Slack Connect with the MCPJam team")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Your Slack admin may need to approve it/)
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set up" })).toBeInTheDocument();
     expect(trackMock).toHaveBeenCalledWith("home_shared_slack_card_viewed", {
       location: "home",
       state: "none",
     });
+  });
+
+  it("says the invite is on its way while automatic onboarding is pending, with no Set up button", () => {
+    mockUseQuery.mockReturnValue(dto({ automaticInvitePending: true }));
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.getByText("Your Slack invite is on its way")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Slack will email the invite to this organization's owner/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Set up" })
+    ).not.toBeInTheDocument();
+    expect(trackMock).toHaveBeenCalledWith("home_shared_slack_card_viewed", {
+      location: "home",
+      state: "automatic_invite_pending",
+    });
+  });
+
+  it("shows the channel row, not the pending state, once one exists", () => {
+    mockUseQuery.mockReturnValue(
+      dto({
+        automaticInvitePending: true,
+        channel: { status: "error", errorCode: "owner_changed", openUrl: null },
+      })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.queryByText("Your Slack invite is on its way")
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/owner changed during setup/)).toBeInTheDocument();
+    // The automatic worker still owns this row, so no competing manual Retry.
+    expect(
+      screen.queryByRole("button", { name: "Retry" })
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "owner_changed",
+      /We'll retry and invite the new owner/,
+      /Try again to finish setting it up/,
+    ],
+    [
+      "not_paid",
+      /Setup paused while your plan was inactive/,
+      /no longer has an active paid plan/,
+    ],
+    [
+      "stale_claim",
+      /We'll retry automatically/,
+      /Channel setup was interrupted. Try again/,
+    ],
+    [
+      "invite_outcome_unknown",
+      /We'll keep looking for it automatically/,
+      /retry to look for it again/,
+    ],
+    ["rate_limited", /busy. We'll retry automatically/, /Try again in a minute/],
+    [
+      "unrecognized_code",
+      /shared Slack channel. We'll retry automatically/,
+      /shared Slack channel. Try again/,
+    ],
+  ])(
+    "for %s, says we'll retry only while the worker owns the row",
+    (errorCode, retryingCopy, manualCopy) => {
+      for (const automaticInvitePending of [true, false]) {
+        mockUseQuery.mockReturnValue(
+          dto({
+            automaticInvitePending,
+            channel: { status: "error", errorCode, openUrl: null },
+          })
+        );
+        const { unmount } = render(
+          <SharedSlackChannelCard organizationId="org_1" />
+        );
+        const [shown, hidden] = automaticInvitePending
+          ? [retryingCopy, manualCopy]
+          : [manualCopy, retryingCopy];
+        expect(screen.getByText(shown)).toBeInTheDocument();
+        expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Retry" }) !== null).toBe(
+          !automaticInvitePending
+        );
+        unmount();
+      }
+    }
+  );
+
+  it("shows a member that the invite is on its way to their owner", () => {
+    mockUseQuery.mockReturnValue(
+      dto({
+        canProvision: false,
+        canManageInvite: false,
+        automaticInvitePending: true,
+      })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.getByText("Your Slack invite is on its way")
+    ).toBeInTheDocument();
+    expect(trackMock).toHaveBeenCalledWith("home_shared_slack_card_viewed", {
+      location: "home",
+      state: "automatic_invite_pending",
+    });
+  });
+
+  it("shows Slack's real logo, not a placeholder glyph or Slackbot", () => {
+    mockUseQuery.mockReturnValue(dto());
+    const { container } = render(
+      <SharedSlackChannelCard organizationId="org_1" />
+    );
+    const logo = container.querySelector("img");
+    const src = logo?.getAttribute("src");
+    expect(src).toMatch(/slack-mark\.png/);
+    expect(src).not.toMatch(/slack_logo/);
+    // Transparent: no tinted tile behind the logo.
+    expect(logo?.parentElement?.className).not.toMatch(/\bbg-/);
   });
 
   it("shows a spinner while provisioning", () => {
@@ -239,6 +365,110 @@ describe("SharedSlackChannelCard", () => {
     expect(mockProvision).toHaveBeenCalledWith({ organizationId: "org_1" });
   });
 
+  it.each([
+    ["invite_outcome_unknown", /Retrying won't send a second invite/, true],
+    ["owner_changed", /Try again to finish setting it up/, true],
+    ["not_paid", /no longer has an active paid plan/, true],
+    ["stale_claim", /Channel setup was interrupted/, true],
+    ["provision_outcome_unknown", /Contact support to finish setting it up/, false],
+    [
+      "possible_existing_channel",
+      /paused setup to avoid creating a second one/,
+      false,
+    ],
+  ])(
+    "shows copy for %s and offers Retry only when the backend allows it",
+    (errorCode, copy, retryable) => {
+      mockUseQuery.mockReturnValue(
+        dto({ channel: { status: "error", errorCode, openUrl: null } })
+      );
+      render(<SharedSlackChannelCard organizationId="org_1" />);
+      expect(screen.getByText(copy)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Retry" }) !== null).toBe(
+        retryable
+      );
+    }
+  );
+
+  it("tells the invitee to check their email, without talking about a missing in-app link", () => {
+    mockUseQuery.mockReturnValue(
+      dto({
+        channel: {
+          status: "invite_sent",
+          invitedEmail: "sam@acme.com",
+          openUrl: null,
+        },
+      })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(screen.getByText(/Invite sent to sam@acme.com/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Check your email for Slack's invite.")
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/convenience/)).not.toBeInTheDocument();
+  });
+
+  it("never promises an automatic resend for an expired invite", () => {
+    for (const automaticInvitePending of [true, false]) {
+      mockUseQuery.mockReturnValue(
+        dto({
+          automaticInvitePending,
+          channel: { status: "invite_expired", openUrl: null },
+        })
+      );
+      const { unmount } = render(
+        <SharedSlackChannelCard organizationId="org_1" />
+      );
+      expect(screen.getByText(/Request a new one/)).toBeInTheDocument();
+      expect(screen.queryByText(/automatically/)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it.each(["invite_expired", "invite_declined"] as const)(
+    "keeps Retry for a %s invite even while an automatic job is pending",
+    (status) => {
+      mockUseQuery.mockReturnValue(
+        dto({
+          automaticInvitePending: true,
+          channel: { status, openUrl: null },
+        })
+      );
+      render(<SharedSlackChannelCard organizationId="org_1" />);
+      // Automation never resends these, so Retry is the only way forward.
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    }
+  );
+
+  it("explains a declined invite: free Slack needs an upgrade or trial, not that it can never accept", () => {
+    mockUseQuery.mockReturnValue(
+      dto({ channel: { status: "invite_declined", openUrl: null } })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.getByText(/need to upgrade or start a trial to accept it/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/cannot accept/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("says the team will reach out when setup is paused, without promising an email", () => {
+    mockUseQuery.mockReturnValue(
+      dto({
+        channel: {
+          status: "error",
+          errorCode: "possible_existing_channel",
+          openUrl: null,
+        },
+      })
+    );
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    expect(
+      screen.getByText(/Our team will reach out to connect you/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/email/i)).not.toBeInTheDocument();
+  });
+
   it("hides Retry when the viewer cannot manage the invite", () => {
     mockUseQuery.mockReturnValue(
       dto({
@@ -270,6 +500,18 @@ describe("SharedSlackChannelCard", () => {
     );
     await vi.waitFor(() => {
       expect(toastError).toHaveBeenCalledWith("limit hit");
+    });
+  });
+
+  it("falls back to the busy copy when a rate-limited error carries no message", async () => {
+    mockUseQuery.mockReturnValue(dto());
+    mockProvision.mockRejectedValue({ data: { code: "rate_limited" } });
+    render(<SharedSlackChannelCard organizationId="org_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    await vi.waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith(
+        "Slack setup is busy. Try again in a minute."
+      );
     });
   });
 });
