@@ -154,7 +154,7 @@
     "@mcp-ui/client": "^5.9.0",
     "@mcpjam/sdk": "^9.1.0",
     "@modelcontextprotocol/client": "2.2.0",
-    "@modelcontextprotocol/ext-apps": "^1.7.4",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@novnc/novnc": "^1.7.0",
     "@openai/mcp-extensions": "0.1.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
