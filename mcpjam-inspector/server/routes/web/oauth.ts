@@ -32,6 +32,8 @@ const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
 const LOCAL_RECOVERY_TTL_MS = 15 * 60 * 1000;
 const LOCAL_RECOVERY_MAX_RECORDS = 128;
 const LOCAL_RECOVERY_MAX_HEADER_BYTES = 64 * 1024;
+const LOCAL_RECOVERY_MAX_SERVER_NAME_LENGTH = 256;
+const LOCAL_RECOVERY_MAX_SERVER_URL_LENGTH = 4096;
 const localRecoveryHeaders = new Map<
   string,
   { expiresAt: number; headers: Record<string, string> }
@@ -60,10 +62,7 @@ function localRecoveryPrincipal(c: Context): string {
 }
 
 function parseRecoveryHandle(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !/^[A-Za-z0-9_-]{32,128}$/.test(value)
-  ) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(value)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -71,6 +70,43 @@ function parseRecoveryHandle(value: unknown): string {
     );
   }
   return value;
+}
+
+function parseRecoveryBinding(body: unknown): {
+  serverName: string;
+  serverUrl: string;
+} {
+  const record =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const serverName =
+    typeof record.serverName === "string" ? record.serverName : "";
+  const serverUrl =
+    typeof record.serverUrl === "string" ? record.serverUrl : "";
+  if (
+    !serverName ||
+    serverName.length > LOCAL_RECOVERY_MAX_SERVER_NAME_LENGTH ||
+    !serverUrl ||
+    serverUrl.length > LOCAL_RECOVERY_MAX_SERVER_URL_LENGTH
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Missing or invalid OAuth recovery binding",
+    );
+  }
+  try {
+    const parsed = new URL(serverUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("unsupported protocol");
+    }
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Missing or invalid OAuth recovery binding",
+    );
+  }
+  return { serverName, serverUrl };
 }
 
 function localRecoveryKey(input: {
@@ -357,16 +393,7 @@ oauthWeb.post("/recovery-headers", async (c) => {
     const body = await c.req.json();
     const projectId = typeof body?.projectId === "string" ? body.projectId : "";
     const serverId = typeof body?.serverId === "string" ? body.serverId : "";
-    const serverName =
-      typeof body?.serverName === "string" ? body.serverName : "";
-    const serverUrl = typeof body?.serverUrl === "string" ? body.serverUrl : "";
-    if (!serverName || !serverUrl) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Missing OAuth recovery binding",
-      );
-    }
+    const { serverName, serverUrl } = parseRecoveryBinding(body);
     if (projectId && serverId) {
       const secrets = await fetchRuntimeServerSecrets({
         bearerToken,
@@ -409,12 +436,10 @@ oauthWeb.post("/recovery-headers", async (c) => {
 oauthWeb.post("/recovery-headers/stage", async (c) => {
   try {
     const body = await c.req.json();
-    const serverName =
-      typeof body?.serverName === "string" ? body.serverName : "";
-    const serverUrl = typeof body?.serverUrl === "string" ? body.serverUrl : "";
+    const { serverName, serverUrl } = parseRecoveryBinding(body);
     const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
     const headers = parseRecoveryHeaders(body?.headers);
-    if (!serverName || !serverUrl || Object.keys(headers).length === 0) {
+    if (Object.keys(headers).length === 0) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,

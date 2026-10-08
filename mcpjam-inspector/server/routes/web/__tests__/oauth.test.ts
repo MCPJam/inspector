@@ -310,6 +310,40 @@ describe("web routes — oauth requires bearer token", () => {
     expect((await expectJson(response)).status).toBe(400);
   });
 
+  it.each([
+    {
+      label: "server name",
+      serverName: "n".repeat(257),
+      serverUrl: "http://127.0.0.1:4003/mcp",
+    },
+    {
+      label: "server URL",
+      serverName: "oversized-url",
+      serverUrl: `https://example.com/${"u".repeat(4096)}`,
+    },
+    {
+      label: "non-HTTP URL",
+      serverName: "invalid-url",
+      serverUrl: "file:///tmp/mcp.sock",
+    },
+  ])(
+    "rejects an invalid recovery $label before retaining it",
+    async (binding) => {
+      const response = await postJson(
+        app,
+        "/api/web/oauth/recovery-headers/stage",
+        {
+          serverName: binding.serverName,
+          serverUrl: binding.serverUrl,
+          recoveryHandle: "f".repeat(48),
+          headers: { "X-Tenant": "tenant" },
+        },
+        token,
+      );
+      expect((await expectJson(response)).status).toBe(400);
+    },
+  );
+
   it("GET /metadata succeeds with bearer token", async () => {
     fetchOAuthMetadataMock.mockResolvedValueOnce({
       metadata: { issuer: "https://example.com" },
