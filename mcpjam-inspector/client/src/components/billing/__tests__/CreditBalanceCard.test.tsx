@@ -291,6 +291,13 @@ describe("CreditBalanceCard", () => {
     expect(screen.getByTestId("usage-paid")).toHaveTextContent("1,500 credits");
   });
 
+  it("does not report low credits when the balance query fails", () => {
+    balanceState = undefined;
+    isLoadingState = false;
+    render(<CreditBalanceCard />);
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
   it("does not flash legacy allowances while V2 balances load", () => {
     balanceState = undefined;
     isLoadingState = true;

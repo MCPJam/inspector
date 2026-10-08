@@ -231,7 +231,7 @@ export function CreditBalanceCard({
             }
             isLoading={isLoading}
             showCoin
-            isCreditMeter
+            isCreditMeter={balance != null}
             testId="usage-monthly"
           />
         ) : (
@@ -259,7 +259,7 @@ export function CreditBalanceCard({
             }
             isLoading={isLoading}
             showCoin
-            isCreditMeter
+            isCreditMeter={balance != null}
             testId="usage-daily"
           />
         )}

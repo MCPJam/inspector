@@ -37,7 +37,7 @@ it("forwards Electron login and session refresh to its own embedded backend", as
     });
     response.end(JSON.stringify({ access_token: "test-access-token" }));
   });
-  await new Promise<void>((resolve) => backend!.listen(0, "localhost", resolve));
+  await new Promise<void>((resolve) => backend!.listen(0, resolve));
   vi.stubEnv("SERVER_PORT", String((backend.address() as AddressInfo).port));
   const config = await (rendererConfig as UserConfigFn)({
     command: "serve",
@@ -49,7 +49,7 @@ it("forwards Electron login and session refresh to its own embedded backend", as
     logLevel: "silent",
     server: {
       ...config.server,
-      host: "localhost",
+      host: "127.0.0.1",
       port: 0,
       open: false,
       hmr: false,
@@ -57,7 +57,7 @@ it("forwards Electron login and session refresh to its own embedded backend", as
   });
   await renderer.listen();
   const port = (renderer.httpServer!.address() as AddressInfo).port;
-  const endpoint = `http://localhost:${port}/user_management/authenticate`;
+  const endpoint = `http://127.0.0.1:${port}/user_management/authenticate`;
   const login = {
     client_id: "test-client",
     grant_type: "authorization_code",
