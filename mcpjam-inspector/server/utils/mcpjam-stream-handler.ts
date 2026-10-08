@@ -1005,6 +1005,15 @@ export interface MCPJamHandlerOptions {
    */
   runtimeSkillsOverride?: RuntimeSkill[];
   /**
+   * The Playground's HIDDEN environment, harness side: deliver the project's
+   * live skill pool BESIDE `runtimeSkillsOverride` instead of skipping it.
+   * Selects the `live_plus` skill source explicitly — a turn that merely
+   * carries an environment's override and capability set never gets it. Only
+   * the web chat route sets it, and only for an environment target that asked
+   * for the project's skills.
+   */
+  includeProjectSkills?: boolean;
+  /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
    * what the flat skill list structurally cannot — per-skill SUPPORTING FILES

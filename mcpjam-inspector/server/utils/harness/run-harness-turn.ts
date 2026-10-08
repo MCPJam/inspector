@@ -119,6 +119,7 @@ import {
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
+  skillsHashWithPlugins,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import { participantSafeStudyError } from "../scenario-runtime-config.js";
@@ -191,7 +192,10 @@ import {
 } from "./external-account-credentials.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
-import { selectHarnessSkillSource } from "./skill-delivery.js";
+import {
+  composeLivePlusSkills,
+  selectHarnessSkillSource,
+} from "./skill-delivery.js";
 import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
   handOffLegacySkillDirs,
@@ -801,6 +805,7 @@ export async function runHarnessTurn(
     scenarioParticipant,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
+    includeProjectSkills,
     effectiveCapabilities,
     environmentId,
     environmentUnresolvedReason,
@@ -1659,20 +1664,57 @@ export async function runHarnessTurn(
       // even EMPTY — so the live skills query is SKIPPED entirely and
       // `skillsHash` derives from the supplied artifacts. Legacy callers
       // (neither present) keep the live tri-state fetch unchanged.
+      //
+      // `live_plus` (the Playground's hidden environment) fetches like `live`
+      // and adds the environment's own skills — but ONLY when that fetch
+      // succeeded: a failed fetch leaves the whole set unknown, so nothing new
+      // is delivered and nothing is reconciled (`runtimeSkills === null`
+      // below), exactly as a plain client turn behaves on the same failure.
       const skillSource = selectHarnessSkillSource({
         pinnedHarnessSkills,
         runtimeSkillsOverride,
+        ...(includeProjectSkills ? { includeProjectSkills } : {}),
       });
       const skillsArePinned = skillSource.mode === "pinned";
       const skillsFetch =
-        skillSource.mode !== "live"
+        skillSource.mode === "pinned" || skillSource.mode === "environment"
           ? { ok: true as const, skills: skillSource.skills }
           : projectId && authHeader
           ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
           : { ok: true as const, skills: [] };
-      const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
+      const livePlusSkills =
+        skillSource.mode === "live_plus"
+          ? composeLivePlusSkills(
+              skillsFetch.ok ? skillsFetch.skills : null,
+              skillSource.environmentSkills,
+            )
+          : undefined;
+      if (livePlusSkills && livePlusSkills.problems.length > 0) {
+        // Ids and codes only: a skill name is user-authored content.
+        logger.warn("[harness] skills left out: box folder taken", {
+          problems: livePlusSkills.problems.map((problem) => ({
+            code: problem.code,
+            skillId: problem.skillId,
+          })),
+        });
+      }
+      const runtimeSkills = livePlusSkills
+        ? livePlusSkills.skills
+        : skillsFetch.ok
+          ? skillsFetch.skills
+          : null;
+      // A `live_plus` set mixes the project's pool with plugin skills, so the
+      // plugin versions that ran fold into its hash: a version change re-writes
+      // the box's skills even when their text reads the same.
       const skillsHash =
-        runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
+        runtimeSkills === null
+          ? undefined
+          : skillSource.mode === "live_plus"
+            ? skillsHashWithPlugins(
+                skillsFingerprint(runtimeSkills),
+                effectiveCapabilities?.pluginVersions ?? [],
+              )
+            : skillsFingerprint(runtimeSkills);
 
       // MATERIALIZED PROJECT SECRETS, taken from the CALLER — never fetched
       // here, and the difference is load-bearing rather than a wiring detail.
@@ -2801,6 +2843,88 @@ export async function runHarnessTurn(
                 skillsBase: skillsBaseDir!,
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
+            }
+            // LIVE_PLUS (the Playground's hidden environment): the project's
+            // pool AND the environment's own skills, in ONE materialize pass —
+            // the writer prunes every delivered folder it is given no files
+            // for, so two passes would each delete the other's files. The
+            // environment's entries take their files from its capability set
+            // (the only source of a plugin skill's), the pool's from the
+            // project-wide query. If that query FAILS, only the environment's
+            // folders are touched: the pool's files are left exactly as they
+            // are.
+            else if (
+              skillSource.mode === "live_plus" &&
+              livePlusSkills &&
+              deliveredSkills.length > 0
+            ) {
+              const environmentNamesById = new Map(
+                [...deliveredSkillNamesById].filter(([skillId]) =>
+                  livePlusSkills.environmentSkillIds.has(skillId),
+                ),
+              );
+              const environmentFiles = effectiveCapabilities
+                ? capabilitySkillFiles(effectiveCapabilities).filter((file) =>
+                    environmentNamesById.has(file.skillId),
+                  )
+                : [];
+              const projectFileResult =
+                projectId &&
+                authHeader &&
+                livePlusSkills.projectSkillIds.size > 0
+                  ? await fetchRuntimeSkillFiles(
+                      authHeader,
+                      projectId,
+                      executionScope,
+                    ).catch(() => ({ ok: false } as const))
+                  : ({ ok: true, files: [] } as const);
+              await materializeSkillFiles({
+                session,
+                files: projectFileResult.ok
+                  ? [
+                      ...projectFileResult.files.filter((file) =>
+                        livePlusSkills.projectSkillIds.has(file.skillId),
+                      ),
+                      ...environmentFiles,
+                    ]
+                  : environmentFiles,
+                skillNamesById: projectFileResult.ok
+                  ? deliveredSkillNamesById
+                  : environmentNamesById,
+                skillsBase: skillsBaseDir!,
+                ...(uploadQuotaComputerId
+                  ? { computerId: uploadQuotaComputerId }
+                  : {}),
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              }).catch(() => {});
+              if (effectiveCapabilities) {
+                const deliveredPluginSet = {
+                  ...effectiveCapabilities,
+                  pluginSkills: effectiveCapabilities.pluginSkills.filter(
+                    (skill) => environmentNamesById.has(skill.skillId),
+                  ),
+                };
+                const pluginSkills =
+                  pluginSkillDeliverySummary(deliveredPluginSet);
+                if (pluginSkills.length > 0) {
+                  logger.info("[harness] delivered plugin skills", {
+                    boxKind: box?.kind ?? "local-native",
+                    boxId: computerId,
+                    skills: pluginSkills,
+                  });
+                }
+                const skillOrigins = deliveredPluginSkillOrigins({
+                  set: deliveredPluginSet,
+                  skillsBaseDir: skillsBaseDir!,
+                  deliveredNameBySkillId: deliveredSkillNamesById,
+                });
+                if (skillOrigins.length > 0) {
+                  logger.info("[harness] plugin skill origins", {
+                    harness: harnessAdapter.id,
+                    origins: skillOrigins,
+                  });
+                }
+              }
             }
             // Materialize supporting files AFTER the pre-seed (each SKILL.md is
             // written and adapter-owned; reconcile removed stale managed dirs),
