@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
+
   useMutation: (name: string) =>
     name === "testSuites:applySuiteSettings"
       ? mocks.applySuiteSettings

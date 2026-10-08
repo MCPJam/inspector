@@ -12,12 +12,17 @@
  * adapter is a COMPILE error.
  */
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
+import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
-import { createCodex } from "@ai-sdk/harness-codex";
 import { createCursor } from "@ai-sdk/harness-cursor";
+import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
+import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
+export {
+  CURSOR_CLI_CHECKSUMS,
+  CURSOR_CLI_VERSION,
+} from "./cursor-bootstrap.js";
 import { createCodexAppServer } from "./codex-appserver/index.js";
 import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
-import { codexAppServerTransportEnabled } from "./harness-flags.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type {
   HarnessV1AuthenticationEnvironment,
@@ -77,7 +82,7 @@ export type HarnessId = Harness;
  *  of `'auto'` / `'ai-gateway'` / `'direct'`) is what keeps the adapters from
  *  reading the SERVER's own process env for a model credential — the property
  *  COMP-23 depends on. One flat type is accepted by both `createClaudeCode` and
- *  `createCodex`. */
+ *  `createCodexAppServer`. */
 export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 
 /** Escape a value for safe interpolation INSIDE a single-quoted shell word.
@@ -231,12 +236,10 @@ export type HarnessBuiltinToolInfo = {
  *    (`deliverMcpServers`), pointed at MCPJam's signed per-server proxy, and
  *    the model calls the tools through native function calling. Claude Code.
  *
- *  - `host-executed` — the runtime cannot make an MCP tool model-callable
- *    (Codex: `codex exec --experimental-json` completes the MCP handshake and
- *    answers `tools/list`, but never registers the tools as callable functions
- *    — openai/codex#19425, and see `@ai-sdk/harness-codex`'s
- *    `src/bridge/cli-relay.ts`, whose whole existence is the harness authors
- *    hitting this same wall for their OWN host tools). MCPJam instead projects
+ *  - `host-executed` — MCPJam keeps enforcement in its own process (Codex:
+ *    the retired `codex exec` transport could not make an MCP tool
+ *    model-callable at all, openai/codex#19425; on app-server the relay keeps
+ *    MCPJam's tool policy and approval gate the single authority). MCPJam projects
  *    each selected server's tools into host-executed AI SDK tools passed as the
  *    agent's `tools`, which the bridge relays back out of the sandbox and
  *    MCPJam executes IN-PROCESS against the already-authorized
@@ -386,10 +389,8 @@ type HarnessRuntimeAdapterBase = {
    *  the bundle's components into per-kind channels (skills, native MCP config)?
    *
    *  FALSE for both adapters today, and deliberately so (INS-8):
-   *   - Codex's installed harness (`@ai-sdk/harness-codex`) exposes no
-   *     plugin-install hook, and its bridge documents that MCP tools are not
-   *     model-callable through `codex exec --experimental-json` at all
-   *     (openai/codex#19425) — half a bundle is not an installed bundle.
+   *   - Codex's adapter exposes no plugin-install hook, and its MCP tools are
+   *     host-executed — half a bundle is not an installed bundle.
    *   - Claude Code's adapter delivers skills + MCP config, not a plugin unit.
    *  Advertising it means enforcing it: `runHarnessTurn` throws if an adapter
    *  sets this without `deliverPluginBundles`. */
@@ -477,6 +478,12 @@ export type HarnessCreateArgs = {
    * first), so a value arriving here is always one the adapter declared.
    */
   reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The permission mode this turn's runtime runs under, as the turn resolved
+   * it. An adapter may shape its runtime by it (Claude Code runs background
+   * tasks only under `allow-all`); absent means unknown, never permissive.
+   */
+  permissionMode?: HarnessV1PermissionMode;
   /**
    * The command-sandbox policy an UNATTENDED local turn runs under (D2), set
    * only by the local arm from the compatibility manifest
@@ -795,6 +802,68 @@ function memoizedBuiltinTools(
 // runs with `buildBrokerDummyAuth` placeholders pointed at the metered model
 // proxy, which normalizes its own per-protocol proxyBaseUrl.
 
+/**
+ * CLI environment a Claude Code turn runs with, whatever its effort: the
+ * model pins below, and whether background tasks run.
+ *
+ * Background tasks run on `allow-all` turns only. The bridge's background
+ * drain (`claude-code-background-drain.ts`) holds such a turn open until its
+ * background agents report back, so the answer reaches the chat the way it
+ * does in stock Claude Code.
+ *
+ * Every other mode turns them off. Under `allow-reads` the main thread pauses
+ * for approval on any edit, and a paused turn's model lease is revoked, so
+ * the drain stops whatever runs in the background at the first approval:
+ * background work there would be cut off almost every time. Off, the same
+ * subagent runs in the foreground and its answer comes back inside the turn
+ * that asked for it. An unknown mode counts as not `allow-all`.
+ */
+function claudeCodeTurnEnv(
+  permissionMode: HarnessV1PermissionMode | undefined,
+  modelId: string,
+): Record<string, string> {
+  return {
+    ...claudeCodeModelPins(modelId),
+    ...(permissionMode === "allow-all"
+      ? {}
+      : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
+  };
+}
+
+const CLAUDE_CODE_MODEL_FAMILIES = ["haiku", "sonnet", "opus"] as const;
+
+/**
+ * Every model Claude Code picks for ITSELF resolves to the turn's model.
+ *
+ * Besides the model it is given, the CLI reaches for its family aliases on
+ * its own: plan mode switches to the `sonnet` alias (CLI 2.1.245 sends
+ * `claude-sonnet-5` right after `EnterPlanMode`, even on a Haiku turn), and
+ * background functionality and the `Explore` subagent use `haiku`. The
+ * turn's model lease admits only the model the user picked (plus that
+ * model's own alias), so each of those calls was refused with
+ * `403 Model not allowed for this lease`, ending the turn.
+ *
+ * Pinning the OTHER families' aliases (`ANTHROPIC_DEFAULT_<FAMILY>_MODEL`) to
+ * the turn's canonical id sends those calls to the chosen model — the one
+ * the lease admits exactly and the user is billed for. The chosen family's
+ * own alias is left alone, so the main model keeps its existing path (the
+ * bridge's Gateway model overrides). An id outside the three families pins
+ * all three.
+ */
+function claudeCodeModelPins(modelId: string): Record<string, string> {
+  const native = toClaudeCodeModel(modelId);
+  const family = CLAUDE_CODE_MODEL_FAMILIES.find(
+    (candidate) =>
+      native === candidate || native?.startsWith(`claude-${candidate}-`),
+  );
+  const pins: Record<string, string> = {};
+  for (const candidate of CLAUDE_CODE_MODEL_FAMILIES) {
+    if (candidate === family) continue;
+    pins[`ANTHROPIC_DEFAULT_${candidate.toUpperCase()}_MODEL`] = modelId;
+  }
+  return pins;
+}
+
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
@@ -869,11 +938,16 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("claude-code"),
   supportsModel: supportsModelFor("claude-code"),
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, mcpJson, reasoningEffort }) {
-    const nativeModel = toClaudeCodeModel(modelId);
-    return createClaudeCodeHarness({
+  // No `model` here: the adapter no longer reads one at construction. The
+  // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
+  createHarness({ modelId, auth, mcpJson, reasoningEffort, permissionMode }) {
+    // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
+    // provider failure reaches an eval as fields rather than a sentence. A
+    // local session swaps this bootstrap for the Inspector layer's
+    // (`withLocalRuntimeBootstrap`): the bridge it runs is the one compiled
+    // into the layer and re-hashed before every exec.
+    return createHostedClaudeCodeHarness({
       mcpServers: mcpJson.mcpServers,
-      ...(nativeModel ? { model: nativeModel } : {}),
       auth,
       // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
       // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects
@@ -904,151 +978,66 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
         ? {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
-            env: { CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
+            env: {
+              ...claudeCodeTurnEnv(permissionMode, modelId),
+              CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
+            },
           }
-        : { env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" } }),
+        : {
+            env: {
+              ...claudeCodeTurnEnv(permissionMode, modelId),
+              CLAUDE_CODE_EFFORT_LEVEL: "unset",
+            },
+          }),
     });
   },
 };
 
-const codexExecAdapter: HarnessRuntimeAdapter = {
-  id: "codex",
-  // The transport that has been in production. Named explicitly now that a
-  // second one exists, so a reader of either arm can tell which is which.
-  transport: "exec",
-  displayName: "Codex",
-  // Nothing verified yet: an effort on this harness is refused, not dropped.
-  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
-  requiresComputer: true,
-  // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
-  // Anthropic one.
-  modelAccess: "broker",
-  // Codex doesn't support built-in tool approval requests — use allow-all.
-  defaultPermissionMode: "allow-all",
-  // Unlike Claude Code (see `claudeCodeAdapter`, where the pause was available
-  // all along under the right permission mode), this one is a real upstream
-  // wall, not a mode we failed to select. `@ai-sdk/harness-codex`'s bridge
-  // builds its thread with `approvalPolicy: "never"` and
-  // `sandboxMode: "danger-full-access"` HARDCODED, so Codex is never asked to
-  // pause and no `tool-approval-request` is ever emitted. The adapter drives
-  // `codex exec` (upstream's own `doCompact` docs say so), a batch mode with no
-  // channel to interrupt; the interactive `codex app-server` transport that
-  // could carry approvals is not what the AI SDK adapter speaks. Reaching it
-  // would mean authoring our own adapter, so this stays false on evidence.
-  supportsNativeToolApproval: false,
-  // Never honored while supportsNativeToolApproval is false; keep it the
-  // same as the default mode so a future flip is an explicit decision.
-  approvalPermissionMode: "allow-all",
-  // Inert for Codex either way: its MCP servers are HOST-EXECUTED (see
-  // `mcpDelivery` below), so `harnessToolApprovalRefusalReason` reads
-  // `supportsHostExecutedToolApproval` for this harness, never this flag.
-  supportsMcpToolApproval: false,
-  // Codex docs say host-executed AI SDK approvals can work, but it's not wired/
-  // tested in MCPJam yet — keep false for v1; flip without code churn later.
-  supportsHostExecutedToolApproval: false,
-  // COMP-39: Codex reaches the host's MCP servers, but NOT through
-  // `mcp_servers`. Writing `~/.codex/config.toml` merges cleanly and is a
-  // silent no-op — the codex bridge documents that codex never registers an MCP
-  // tool as model-callable in `codex exec --experimental-json` (the mode the
-  // SDK drives): the handshake completes and `tools/list` answers, but the
-  // model can't call anything (openai/codex#19425). So MCPJam projects each
-  // selected server's tools into HOST-EXECUTED AI SDK tools instead; the bridge
-  // relays the invocations back out (`cli-relay.ts`) and MCPJam runs them
-  // in-process. See `HarnessMcpDelivery` and `host-executed-mcp-tools.ts`.
-  // Read from the shared declaration — the client's Behavior tab derives from
-  // the same value, so "MCPJam builds these tools, so the host's construction
-  // knobs apply" is stated once for both sides.
-  mcpDelivery: HARNESS_MCP_DELIVERY.codex,
-  // INS-8: skills ARE delivered. `codex-harness.ts` writes every `skills` entry
-  // to `$HOME/.agents/skills/<name>/SKILL.md` during `doStart`, before it spawns
-  // the CLI, and points the process at that HOME — the same delivery contract
-  // Claude Code has. Parity with the Claude path (payload shape, on-box target
-  // paths, supporting files, name acceptance) is asserted against the REAL
-  // adapter in `__tests__/codex-skill-parity.test.ts`.
-  supportsSkills: true,
-  skillsBaseDir: CODEX_SKILLS_BASE,
-  // Mirrors `writeCodexSkills` in `@ai-sdk/harness-codex` (library default).
-  skillsWriteOptions: { trailingNewline: false },
-  prepareSkills: prepareCodexSkills,
-  // Codex has no plugin-install interface in the installed harness — MCPJam
-  // still projects a plugin's components (skills param, host-executed MCP
-  // tools), which is not the same contract as a native bundle install.
-  supportsPluginBundles: false,
-  // Codex surfaces file mutations as `file-change` stream parts (some don't
-  // originate from a model-callable tool); we render them as this native tool.
-  fileChangeToolName: "fileChange",
-  listBuiltinTools: memoizedBuiltinTools(() => createCodex()),
-  toNativeModel: toCodexModel,
-  // Codex only runs the gpt-5 family, and at the pinned 0.149.x not the
-  // tool-less gpt-5.6 line; anything else would silently fall back to Codex's
-  // default model (or run without tools), so the preflight rejects it. Both
-  // transports pin the same CLI, so the app-server arm inherits these.
-  pinnedRuntimeVersion: harnessPinnedVersion("codex"),
-  modelSupport: modelSupportFor("codex"),
-  supportsModel: supportsModelFor("codex"),
-  // SAME scheme as Claude Code, deliberately: the projected host tools are named
-  // `mcp__<sanitizedServer>__<tool>` (see `host-executed-mcp-tools.ts`), so a
-  // relayed call attributes back to its serverId exactly as a native Claude Code
-  // call does — eval assertions and trace spans written against a Claude Code
-  // run match a Codex run tool-for-tool. Codex's own natives arrive as common
-  // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
-  parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, reasoningEffort }) {
-    const nativeModel = toCodexModel(modelId);
-    // Same dual-`ai` boundary cast as Claude Code. `auth.openaiCompatible` is
-    // accepted by createCodex — the broker dummy auth always carries an
-    // explicit baseUrl so the CLI never reads the host env for it.
-    return createCodex({
-      ...(nativeModel ? { model: nativeModel } : {}),
-      // Codex's own `reasoningEffort` option (exec transport).
-      ...(reasoningEffort ? { reasoningEffort } : {}),
-      auth,
-    }) as unknown as HarnessAgentAdapter;
-  },
-};
-
 /**
- * The SAME Codex host, over the interactive `codex app-server` protocol.
+ * Codex, over MCPJam's own `codex app-server` adapter (`codex-appserver/`), in
+ * every venue: local and hosted Playground, evals and swarms.
  *
- * Selected by `MCPJAM_CODEX_APPSERVER_TRANSPORT` (see `getHarnessAdapter`).
- * Everything a user can see about their host is unchanged — same id, same
- * display name, same model rules, same skills root, same MCP delivery — because
- * this is a transport swap, not a new harness. What changes is what the runtime
- * can be asked to do.
+ * It replaced the published `@ai-sdk/harness-codex` adapter, which drove
+ * `codex exec`: that bridge built its thread with `approvalPolicy: "never"` and
+ * `danger-full-access` hardcoded and refused every permission mode but
+ * `allow-all`, so a Codex host could never pause for approval and every
+ * approval host was refused. app-server raises real
+ * `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`
+ * requests under `untrusted`, verified against the pinned binary — a denied
+ * command reports `declined` and does not run — and reports typed items for
+ * shell, patches and web search, so the trace shows what actually happened.
  *
- * The capability differences, and why each one moves:
- *
- *  - APPROVALS. `@ai-sdk/harness-codex`'s bridge builds its thread with
- *    `approvalPolicy: "never"` hardcoded and its `doStart` rejects any
- *    permission mode but `allow-all`, so no `tool-approval-request` can ever be
- *    emitted. app-server raises real `item/commandExecution/requestApproval`
- *    and `item/fileChange/requestApproval` requests under `untrusted`, verified
- *    against the pinned binary — a denied command reports `declined` and does
- *    not run. Both native and host-executed approval flip to true together
- *    because the pause is one mechanism serving both surfaces.
- *
- *  - ATTRIBUTION. The exec transport can name two tools. This one reports
- *    typed items for shell, patches and web search, so the trace shows what
- *    actually happened.
- *
- * MCP delivery stays HOST-EXECUTED, in both venues: every MCP call is relayed
- * back to this process and runs on its own manager, under the tool policy and
- * the framework's `toolApproval`, wherever the Codex process itself runs.
- * Codex 0.149.1 does raise its own approval for an MCP `tools/call` (an
+ * MCP delivery is HOST-EXECUTED, in both venues: every MCP call is relayed back
+ * to this process and runs on its own manager, under the tool policy and the
+ * framework's `toolApproval`, wherever the Codex process itself runs. Codex
+ * 0.149.1 does raise its own approval for an MCP `tools/call` (an
  * `mcp_tool_call` elicitation, PROBES.md (d)), but the relay is rendered with
  * `default_tools_approval_mode = "approve"` so MCPJam's gate is the single
  * authority instead of a second prompt nobody answers. Native delivery stays a
  * follow-up: it would move enforcement into a process MCPJam does not own.
  */
-const codexAppServerAdapter: HarnessRuntimeAdapter = {
-  ...codexExecAdapter,
+const codexAdapter: HarnessRuntimeAdapter = {
+  id: "codex",
+  // Folded into the runtime fingerprint, so a lane saved under the retired
+  // exec transport forks (with a visible "runtime-changed" reset) instead of
+  // resuming onto a different protocol.
   transport: "app-server",
+  displayName: "Codex",
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
+  requiresComputer: true,
+  // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
+  // Anthropic one.
+  modelAccess: "broker",
+  // Hosted: `never` + `danger-full-access`, the disposable box being the
+  // boundary. Locally the bridge refuses `allow-all` without an explicit
+  // workspace-write sandbox policy, so it never becomes full access there.
+  defaultPermissionMode: "allow-all",
   liveApprovalRuntime: true,
   // `turn/start.sandboxPolicy`; the bridge refuses `allow-all` without it
   // whenever it is supervised locally.
   acceptsSandboxPolicy: true,
-  // The pause is real on this transport. `HarnessAgent` also refuses to
-  // construct with a non-allow-all mode unless the underlying harness declares
+  // The pause is real. `HarnessAgent` also refuses to construct with a
+  // non-allow-all mode unless the underlying harness declares
   // `supportsBuiltinToolApprovals`, which `createCodexAppServer` does.
   supportsNativeToolApproval: true,
   // "allow-reads" for the same reason as Claude Code and Cursor: it is the
@@ -1061,19 +1050,50 @@ const codexAppServerAdapter: HarnessRuntimeAdapter = {
   // MCPJam's tools run in MCPJam's process and the framework gates them there,
   // before `execute`, through `HarnessAgent`'s `toolApproval` map. This is the
   // flag `harnessToolApprovalRefusalReason` reads for Codex, because Codex's
-  // MCP delivery is host-executed — so leaving it false would refuse every
-  // approval host with a server attached even though the pause works.
+  // MCP delivery is host-executed.
   supportsHostExecutedToolApproval: true,
   // False because MCP delivery is host-executed: MCPJam's own gate applies to
   // relayed calls (above), and codex's MCP approval is configured off for the
   // relay. Only relevant if MCP delivery ever becomes native.
   supportsMcpToolApproval: false,
+  // COMP-39: MCPJam projects each selected server's tools into HOST-EXECUTED
+  // AI SDK tools; the bridge relays the invocations back out and MCPJam runs
+  // them in-process. See `HarnessMcpDelivery` and `host-executed-mcp-tools.ts`.
+  // Read from the shared declaration — the client's Behavior tab derives from
+  // the same value, so "MCPJam builds these tools, so the host's construction
+  // knobs apply" is stated once for both sides.
+  mcpDelivery: HARNESS_MCP_DELIVERY.codex,
+  // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
+  // `$HOME/.agents/skills/<name>/SKILL.md` before it starts Codex, the same
+  // root the retired exec transport used.
+  supportsSkills: true,
+  skillsBaseDir: CODEX_SKILLS_BASE,
+  skillsWriteOptions: { trailingNewline: false },
+  prepareSkills: prepareCodexSkills,
+  // Codex has no plugin-install interface — MCPJam still projects a plugin's
+  // components (skills param, host-executed MCP tools), which is not the same
+  // contract as a native bundle install.
+  supportsPluginBundles: false,
   // The bridge emits patches as a real `tool-call`/`tool-result` pair (an
   // approval must attach to a tool call, and a `file-change` part has no
   // toolCallId), so the turn runner's synthetic file-change tool naming is not
   // wanted here.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
+  toNativeModel: toCodexModel,
+  // Codex only runs the gpt-5 family, and at the pinned 0.149.x not the
+  // tool-less gpt-5.6 line; anything else would silently fall back to Codex's
+  // default model (or run without tools), so the preflight rejects it.
+  pinnedRuntimeVersion: harnessPinnedVersion("codex"),
+  modelSupport: modelSupportFor("codex"),
+  supportsModel: supportsModelFor("codex"),
+  // SAME scheme as Claude Code, deliberately: the projected host tools are named
+  // `mcp__<sanitizedServer>__<tool>` (see `host-executed-mcp-tools.ts`), so a
+  // relayed call attributes back to its serverId exactly as a native Claude Code
+  // call does — eval assertions and trace spans written against a Claude Code
+  // run match a Codex run tool-for-tool. Codex's own natives arrive as common
+  // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
+  parseToolName: parseHarnessToolName,
   createHarness({ modelId, auth, sandboxPolicy, reasoningEffort }) {
     const nativeModel = toCodexModel(modelId);
     return createCodexAppServer({
@@ -1109,7 +1129,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // environment, set once by an admin under Project Settings → Secrets.
   // Missing ⇒ the turn is refused up front with copy that says so, never
   // defaulted.
-  externalAccountCredentialEnv: ["CURSOR_API_KEY"],
+  externalAccountCredentialEnv: [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env],
   // …and it can be BROKERED, which is the preferred delivery and the only
   // one hosted evals and swarms accept at all (they refuse an environment that
   // selects materialized secrets — `evalSandboxes.ts`'s
@@ -1124,13 +1144,16 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // `Authorization: Bearer <CURSOR_API_KEY>`. MCPJam's egress transform is
   // host-scoped rather than path-scoped, so brokering the host covers that
   // exchange and any sibling call that authenticates the same way.
+  //
+  // Declared in `shared/external-credential-selection.ts` so the composer and
+  // the setup step that creates the secret use the SAME binding. (Lowercase
+  // header: `validateBrokerBinding` canonicalizes stored rows that way, so this
+  // is what a saved secret compares equal to.)
   externalAccountBrokerBinding: {
-    CURSOR_API_KEY: {
-      hosts: ["api2.cursor.sh"],
-      // LOWERCASE: `validateBrokerBinding` canonicalizes stored rows that way,
-      // so this is what a saved secret compares equal to.
-      header: "authorization",
-      template: "Bearer {}",
+    [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env]: {
+      hosts: [...EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.hosts],
+      header: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.header,
+      template: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.template,
     },
   },
   defaultPermissionMode: "allow-all",
@@ -1204,8 +1227,8 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // model gate for an external-account harness, because the model MCPJam knows
   // about is not the model that runs (the sentinel rule replaces them). Read
   // from the same table anyway — it says `cursor/auto` only — so a picker that
-  // asks gets the same answer. The CLI version is not pinned (see
-  // `runtimeVersionCommand`), and every Cursor row is version-independent.
+  // asks gets the same answer. The CLI build is pinned (see
+  // `cursor-bootstrap.ts`), and every Cursor row is version-independent.
   pinnedRuntimeVersion: harnessPinnedVersion("cursor"),
   modelSupport: modelSupportFor("cursor"),
   supportsModel: supportsModelFor("cursor"),
@@ -1218,11 +1241,12 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // — the adapter's own `isMcpToolCall` predicate keys off exactly those three
   // fields), so this hook is what makes Cursor MCP calls attributable at all.
   attributeToolCall: attributeCursorToolCall,
-  // The installed CLI is whatever `curl https://cursor.com/install | bash`
-  // fetched at bootstrap — the adapter pins its own version but NOT the CLI's,
-  // and two observed builds are four months of behaviour apart. Recording the
-  // version per session is what makes a silent upstream change attributable
-  // instead of a mystery regression.
+  // The CLI is PINNED: `pinCursorHarnessBootstrap` replaces the vendor's
+  // `curl https://cursor.com/install | bash` (which serves whatever Cursor
+  // shipped that day) with a checksummed download of `HARNESS_PINNED_VERSIONS
+  // .cursor`. Recording the version per session still earns its place: it is
+  // what makes a box that somehow runs another build — a stale template, a
+  // custom image — attributable instead of a mystery regression.
   runtimeVersionCommand: (sessionWorkDir) =>
     // Layout taken from the adapter's own bootstrap: `bootstrapDir` is
     // `.harness-bootstrap/<harnessId>` under the session workdir, and
@@ -1239,24 +1263,27 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     )}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version`,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return createCursor({
-      // The customer's own CURSOR_API_KEY, as the environment arm of
-      // HarnessV1Authentication. Passing an explicit env map (rather than
-      // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading the
-      // SERVER's process env for a credential — and the routing modes would
-      // only produce a warning here anyway, since Cursor cannot be re-routed.
-      auth,
-      // REQUIRED by this arm's signature: `session-config` delivery has no
-      // other channel, so a construction that forgot the servers would be a
-      // silently tool-less turn. The type makes that unwritable.
-      mcpServers: toAcpMcpServers(mcpJson),
-    }) as unknown as HarnessAgentAdapter;
+    return pinCursorHarnessBootstrap(
+      createCursor({
+        // The customer's own CURSOR_API_KEY, as the environment arm of
+        // HarnessV1Authentication. Passing an explicit env map (rather than
+        // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading
+        // the SERVER's process env for a credential — and the routing modes
+        // would only produce a warning here anyway, since Cursor cannot be
+        // re-routed.
+        auth,
+        // REQUIRED by this arm's signature: `session-config` delivery has no
+        // other channel, so a construction that forgot the servers would be a
+        // silently tool-less turn. The type makes that unwritable.
+        mcpServers: toAcpMcpServers(mcpJson),
+      }) as unknown as HarnessAgentAdapter,
+    );
   },
 };
 
 const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
   "claude-code": claudeCodeAdapter,
-  codex: codexExecAdapter,
+  codex: codexAdapter,
   cursor: cursorAdapter,
 };
 
@@ -1270,43 +1297,12 @@ export function isHarnessId(value: unknown): value is HarnessId {
   );
 }
 
-export function getHarnessAdapter(
-  id: string,
-  options: {
-    /**
-     * Is this lookup for a turn that runs on the user's own machine? Local
-     * Codex ALWAYS gets the app-server arm, whatever the hosted transport flag
-     * says: the exec arm cannot surface approvals, refuses every mode but
-     * `allow-all`, and is never a local runtime. Every call that decides
-     * something about a local turn — the preflight, the dispatch backstop, the
-     * turn's fingerprint, approval mode and tool catalog — must pass this, or
-     * the preflight and the turn can disagree about which adapter runs.
-     */
-    localExecution?: boolean;
-  } = {},
-): HarnessRuntimeAdapter {
+export function getHarnessAdapter(id: string): HarnessRuntimeAdapter {
   // Own-property guard: a prototype key (`__proto__`, `constructor`, …) would
   // otherwise resolve to an inherited value and slip past the `!adapter` check,
   // yielding a 500 downstream instead of a controlled unsupported-harness error.
   if (!isHarnessId(id)) {
     throw new Error(`Unsupported harness: ${id}`);
-  }
-  /*
-   * Codex's TRANSPORT is chosen here, at every lookup, rather than baked into
-   * the map at module load. Two reasons, and the second is the load-bearing
-   * one: tests toggle the flag between cases, and a value captured at import
-   * time would make them silently test the wrong arm.
-   *
-   * The id is unchanged either way — this is one host with two protocols, not
-   * two harnesses — so nothing downstream branches on which arm it got. What
-   * keeps a live session from crossing between them is the runtime
-   * fingerprint's `transport` dimension, which forks the lane on a flip.
-   */
-  if (
-    id === "codex" &&
-    (options.localExecution === true || codexAppServerTransportEnabled())
-  ) {
-    return codexAppServerAdapter;
   }
   return HARNESS_ADAPTERS[id];
 }

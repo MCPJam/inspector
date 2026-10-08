@@ -38,9 +38,9 @@ harness.use("/harness/:harnessId/builtin-tools", requireVerifiedAuth());
 harness.use("/harness/:harnessId/capabilities", requireVerifiedAuth());
 
 /** Resolve the adapter or answer 404 — never a 500 for an unknown id. */
-function readAdapter(harnessId: string, options: { localExecution?: boolean } = {}) {
+function readAdapter(harnessId: string) {
   try {
-    return getHarnessAdapter(harnessId, options);
+    return getHarnessAdapter(harnessId);
   } catch {
     throw new WebRouteError(
       404,
@@ -57,13 +57,11 @@ harness.get("/harness/:harnessId/builtin-tools", async (c) => {
 
 // GET /v1/harness/:harnessId/capabilities
 harness.get("/harness/:harnessId/capabilities", async (c) => {
-  // Where THIS Inspector would run the harness's turns. A harness that can run
-  // on this machine runs on its local arm (local Codex is always the
-  // app-server transport, which can pause for approval), so the answer is that
-  // arm's — the editor would otherwise gray out a switch that works here.
+  // Where THIS Inspector would run the harness's turns: reported so the editor
+  // can say "this machine". The capabilities are the same in either venue.
   const harnessId = c.req.param("harnessId");
   const localExecution = isLocalHarnessVenue(harnessId);
-  const adapter = readAdapter(harnessId, { localExecution });
+  const adapter = readAdapter(harnessId);
   return v1Resource(c, {
     harnessId: adapter.id,
     ...(localExecution ? { localExecution: true } : {}),

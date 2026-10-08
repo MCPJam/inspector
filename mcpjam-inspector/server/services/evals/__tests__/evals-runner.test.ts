@@ -122,6 +122,43 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   })),
 }));
 
+// Spies, not stubs: both delegate to the real module unless a test says so.
+// `resolveHarnessSandbox` is the personal-computer fallback an eval must never
+// reach; the sandbox-need override lets a test open the gap the runner's last
+// check exists to close.
+const resolveHarnessSandboxSpy = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/harness/resolve-sandbox", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../../utils/harness/resolve-sandbox")
+    >();
+  return {
+    ...actual,
+    resolveHarnessSandbox: (
+      ...args: Parameters<typeof actual.resolveHarnessSandbox>
+    ) => {
+      resolveHarnessSandboxSpy(...args);
+      return actual.resolveHarnessSandbox(...args);
+    },
+  };
+});
+const sandboxNeedOverride = vi.hoisted(() => ({
+  current: undefined as
+    | { needed: boolean; runtimeKind: "terminal" | "desktop-browser" }
+    | undefined,
+}));
+vi.mock("../needs-ephemeral-sandbox", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../needs-ephemeral-sandbox")>();
+  return {
+    ...actual,
+    needsEphemeralEvalSandbox: (
+      args: Parameters<typeof actual.needsEphemeralEvalSandbox>[0],
+    ) =>
+      sandboxNeedOverride.current ?? actual.needsEphemeralEvalSandbox(args),
+  };
+});
+
 import { withPluginExecutionServers } from "../plugin-execution-servers";
 import {
   createConcurrencyLimiter,
@@ -195,6 +232,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
     streamTextMock.mockReset();
     preparedToolsOverride.current = undefined;
+    sandboxNeedOverride.current = undefined;
     // PR 4b of the engine consolidation: `runIterationWithAiSdk` now
     // drives `runDirectChatTurn` (which calls `streamText`). Provide a
     // default streamText return shape so suite-style tests using
@@ -205,6 +243,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-5-mini",
         messages: [{ role: "assistant", content: "Done" }],
       }),
+      responseMessages: Promise.resolve([
+        { role: "assistant", content: "Done" },
+      ]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -529,6 +570,68 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(streamTextMock).not.toHaveBeenCalled();
   });
 
+  describe("a hosted harness quick run never reaches a personal computer", () => {
+    function hostedHarnessQuickRun() {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].model = "claude-haiku-4.5";
+      config.config.tests[0].provider = "anthropic";
+      return {
+        ...config,
+        modelApiKeys: {},
+        orgModelConfigTarget: { projectId: "project-1" },
+        harnessRuntimeVenue: "hosted",
+        suiteHostConfig: { harness: "claude-code" },
+      } as any;
+    }
+
+    // The box is keyed to the iteration row. A record the backend refused (a
+    // quota or spend refusal, a transient error) used to be swallowed, and the
+    // harness then ran with no box on the member's own computer.
+    it.each([
+      [
+        "the backend refuses the record",
+        async () => {
+          throw new Error("Free-tier spend limit reached");
+        },
+        /hosted harness run needs to provision its own computer.*Free-tier spend limit reached/,
+      ],
+      [
+        "the backend returns no row",
+        async () => ({}),
+        /returned no iteration id/,
+      ],
+    ])(
+      "refuses the run when its iteration is not recorded (%s)",
+      async (_label, startIteration, reason) => {
+        convexClient.action.mockImplementation(async (name: string) =>
+          name === "testSuites:startQuickRunIteration"
+            ? startIteration()
+            : undefined,
+        );
+        await expect(
+          runEvalSuiteWithAiSdk(hostedHarnessQuickRun()),
+        ).rejects.toThrow(reason);
+        expect(resolveHarnessSandboxSpy).not.toHaveBeenCalled();
+        // Nothing reached the control plane: no box, no computer, no turn.
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("fails the iteration before its first turn when no box was booted", async () => {
+      // A gap in the sandbox rule must not become a personal-computer run.
+      sandboxNeedOverride.current = { needed: false, runtimeKind: "terminal" };
+      await runEvalSuiteWithAiSdk(hostedHarnessQuickRun());
+      const update = convexClient.action.mock.calls.find(
+        (call) => call[0] === "testSuites:updateTestIteration",
+      )?.[1] as { error?: string } | undefined;
+      expect(update?.error).toContain(
+        "refused rather than run on a personal computer",
+      );
+      expect(resolveHarnessSandboxSpy).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("surfaces a clear error when the selected server is not connected at runtime", async () => {
     mcpClientManager.getToolsForAiSdk.mockRejectedValueOnce(
       new Error('Unknown MCP server "srv-1".'),
@@ -594,6 +697,21 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           },
         ],
       }),
+      responseMessages: Promise.resolve([
+        {
+          role: "assistant",
+          content: expectedToolCall
+            ? [
+                {
+                  type: "tool-call",
+                  toolName,
+                  toolCallId: "policy-call",
+                  input: {},
+                },
+              ]
+            : "Done",
+        },
+      ]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 1,
@@ -1486,6 +1604,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-5-mini",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 4,
@@ -1508,6 +1629,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-5-mini",
         messages: [{ role: "assistant", content: "Done" }],
       }),
+      responseMessages: Promise.resolve([
+        { role: "assistant", content: "Done" },
+      ]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 40,
@@ -1834,6 +1958,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         response: Promise.resolve({
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
       };
     });
 
@@ -3753,6 +3880,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: matchedCallMessages,
         }),
+        responseMessages: Promise.resolve(matchedCallMessages),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
@@ -3797,6 +3925,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: matchedCallMessages,
         }),
+        responseMessages: Promise.resolve(matchedCallMessages),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
@@ -3913,6 +4042,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-4-turbo",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 0,
@@ -3947,6 +4077,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-4-turbo",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 0,
@@ -4071,6 +4202,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             { role: "assistant", content: "Partial assistant content" },
           ],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Partial assistant content" },
+        ]),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
@@ -4147,6 +4281,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Step 1 content" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Step 1 content" },
+        ]),
         steps: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 3,
@@ -4206,6 +4343,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         modelId: "gpt-4-turbo",
         messages: [],
       }),
+      responseMessages: Promise.resolve([]),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
         inputTokens: 7,
@@ -4484,6 +4622,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         response: Promise.resolve({
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
       }));
 
       await streamTestCase({
@@ -4549,6 +4690,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         })(),
         steps: Promise.resolve([]),
         response: Promise.resolve({ messages: [] }),
+        responseMessages: Promise.resolve([]),
       }));
 
       // However the call settles — a cooperative return or the abort reason
@@ -4627,6 +4769,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
           outputTokens: 1,
@@ -4697,6 +4842,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
           outputTokens: 1,
@@ -4878,6 +5026,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 0,
           outputTokens: 0,
@@ -4913,6 +5062,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 0,
           outputTokens: 0,
@@ -4962,6 +5112,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [{ role: "assistant", content: "Done" }],
         }),
+        responseMessages: Promise.resolve([
+          { role: "assistant", content: "Done" },
+        ]),
         totalUsage: Promise.resolve({
           inputTokens: 1,
           outputTokens: 1,
@@ -5111,6 +5264,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         totalUsage: Promise.resolve({
           inputTokens: 0,
           outputTokens: 0,
@@ -5165,6 +5319,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               { role: "assistant", content: "Recovered from tool failure." },
             ],
           }),
+          responseMessages: Promise.resolve([
+            { role: "assistant", content: "Recovered from tool failure." },
+          ]),
           totalUsage: Promise.resolve({
             inputTokens: 1,
             outputTokens: 1,
@@ -5251,6 +5408,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           modelId: "gpt-4-turbo",
           messages: [],
         }),
+        responseMessages: Promise.resolve([]),
         // Model billed tokens despite zero completed steps.
         totalUsage: Promise.resolve({
           inputTokens: 9,
@@ -5322,6 +5480,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             modelId: "gpt-4-turbo",
             messages: [{ role: "assistant", content: "Done" }],
           }),
+          responseMessages: Promise.resolve([
+            { role: "assistant", content: "Done" },
+          ]),
           totalUsage: Promise.resolve({
             inputTokens: 2,
             outputTokens: 3,

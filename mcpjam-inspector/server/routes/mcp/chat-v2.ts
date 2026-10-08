@@ -44,6 +44,16 @@ import {
 import { buildLiveEffectiveCapabilities } from "../../services/environments/effective-capabilities.js";
 import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
 import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  acquirePlaygroundHarnessBox,
+  describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
+  playgroundHarnessBoxReason,
+  playgroundHarnessBoxUnavailableReason,
+  resolvePlaygroundCredentialEnvironment,
+  releaseBoxWhenStreamEnds,
+} from "../../utils/harness/playground-box.js";
+import type { HarnessBox } from "../../utils/harness/harness-box.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import {
@@ -62,11 +72,17 @@ import {
   HOSTED_MODE,
   WEBMCP_INSPECTOR_ENABLED,
 } from "../../config";
-import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
+import {
+  fetchScenarioRuntimeConfig,
+  readComputerSandboxHarness,
+  SCENARIO_HARNESS_REPUBLISH_REQUIRED,
+  scenarioHarnessRepublishRefusal,
+} from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   checkHarnessRuntimeAvailable,
   externalAccountHostModelRefusalReason,
+  harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
@@ -157,7 +173,12 @@ import {
   LOCAL_CONSENT_HEADER,
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
-import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
+import {
+  classifyChatRequestActor,
+  isGuestOrAnonymousRequest,
+  isVerifiedMember,
+  type ChatRequestActor,
+} from "../../utils/computers/local-engine-request.js";
 import {
   resolveBrowserRollout,
   guestBrowserProject,
@@ -760,8 +781,18 @@ function streamDirectChatWithLiveTrace(options: {
 const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
+  // The conversation's disposable box, held for this turn when the Playground
+  // turn can't run on the member's personal computer (see playground-box.ts).
+  // Its heartbeat ends with the turn's stream; EVERY other way out of this
+  // handler (an early refusal, a throw) releases it in `finally`, so a box
+  // acquired for a turn that never started is not held for the heartbeat's
+  // 4-hour cap.
+  let playgroundHarnessBox: HarnessBox | undefined;
+  let playgroundHarnessBoxHandedOff = false;
   try {
     const body = (await readRequestJson(c)) as ChatV2Request & {
+      /** A Playground compare column: its harness gets a computer of its own. */
+      comparePane?: boolean;
       // Phase F: when the local inspector serves an owner-preview of a
       // scenario (the share-link surface running in /mcp), the client
       // passes the resolved scenario identity so persistence reads
@@ -984,6 +1015,25 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+    // Who is asking, each answer computed at most once per turn and only when
+    // a decision needs it:
+    //  - `requestIsGuestOrAnonymous`: no bearer, or a guest of the SELECTED
+    //    guest authority. Enough where the next hop verifies the member itself
+    //    (local-harness readiness, a bearer forwarded to Convex).
+    //  - `requestActor`: a POSITIVE classification — a verified AuthKit
+    //    member, or not. Required where nothing downstream checks, i.e. local
+    //    bash. A guest, an expired or forged bearer, and no bearer are never
+    //    members. See `classifyChatRequestActor`.
+    let guestCheckPromise: Promise<boolean> | undefined;
+    const requestIsGuestOrAnonymous = () =>
+      (guestCheckPromise ??= isGuestOrAnonymousRequest(
+        c.req.header("authorization"),
+      ));
+    let requestActorPromise: Promise<ChatRequestActor> | undefined;
+    const requestActor = () =>
+      (requestActorPromise ??= classifyChatRequestActor(
+        c.req.header("authorization"),
+      ));
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
       overrides: {
@@ -1013,7 +1063,7 @@ chatV2.post("/", async (c) => {
         typeof body.projectId === "string" &&
         body.projectId &&
         c.req.header("authorization") &&
-        !isGuestChatRequest(c.req.header("authorization"))
+        !(await requestIsGuestOrAnonymous())
       ) {
         try {
           enabled = await readLocalBrowserSetting(
@@ -1111,8 +1161,12 @@ chatV2.post("/", async (c) => {
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+            code: "FEATURE_NOT_SUPPORTED",
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: "model-unsupported",
           },
-          503,
+          422,
         );
       }
     }
@@ -1432,7 +1486,7 @@ chatV2.post("/", async (c) => {
       actingUserId: localHarnessActingUserId,
       serverEnabled: localSelected,
       actorEligible:
-        !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
+        !(await requestIsGuestOrAnonymous()) && !isScenarioSession,
     });
     if (harnessTargetParse.kind === "refused") {
       return c.json({ error: harnessTargetParse.reason }, 400);
@@ -1442,7 +1496,9 @@ chatV2.post("/", async (c) => {
         ? harnessTargetParse.target
         : undefined;
 
-    if (localSelected && !isGuestChatRequest(requestAuthHeader) && !isScenarioSession) {
+    // Readiness verifies the member positively (`verifyLocalHarnessMember`);
+    // this keeps guests of the selected authority from reaching it at all.
+    if (localSelected && !(await requestIsGuestOrAnonymous()) && !isScenarioSession) {
       if (typeof body.projectId !== "string" || !requestAuthHeader) return c.json({ error: `Sign in and choose a project to run ${localHarnessName} locally` }, 403);
       try {
         harnessExecutionTarget = (await ensureLocalHarnessTarget({ bearer: requestAuthHeader, projectId: body.projectId, scope: "attended", harnessId: localHarnessId, requireToolApproval: resolvedExecution.requireToolApproval })).target;
@@ -1451,6 +1507,49 @@ chatV2.post("/", async (c) => {
         // error (setup / Retry), never a silent switch to the cloud.
         return c.json({ error: error instanceof Error ? error.message : `${localHarnessName} is not ready`, ...(error instanceof LocalAutoApproveConsentRequiredError ? { status: error.status } : {}) }, 409);
       }
+    }
+
+    // A scenario whose backend runs its harness on the conversation's
+    // DISPOSABLE box (`computerSandbox.harness`) cannot run here: this route
+    // has no box to provision, and the only other machine is the member's
+    // personal computer, which that harness must never run on. Refused before
+    // anything starts, naming where it does run. Without that field (an older
+    // backend, or a shell-only marker) the harness keeps today's behaviour.
+    if (
+      isScenarioSession &&
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      readComputerSandboxHarness(hostRuntimeConfig)
+    ) {
+      return c.json(
+        {
+          error: `This scenario runs the ${resolvedExecution.harness} harness on a disposable computer, which this inspector can't provision. Open the scenario in the MCPJam web app.`,
+          code: "SANDBOX_UNAVAILABLE",
+          reason: "not_a_data_plane",
+        },
+        409,
+      );
+    }
+    // No marker on a SCENARIO-scoped harness: a host-backed scenario, whose
+    // harness has no box to run on anywhere — the only other machine is a
+    // persistent computer, which the backend refuses for a scenario scope.
+    // Refused before the turn starts, as the web route does, rather than as a
+    // 500 from inside the harness.
+    if (
+      isScenarioSession &&
+      resolvedExecution.harness &&
+      !harnessExecutionTarget &&
+      (hostRuntimeConfig?.executionScope as ExecutionScope | undefined)
+        ?.kind === "swarm"
+    ) {
+      const refusal = scenarioHarnessRepublishRefusal({
+        harness: resolvedExecution.harness,
+        accessKind: hostRuntimeConfig?.accessKind,
+      });
+      return c.json(
+        { error: refusal.message, code: SCENARIO_HARNESS_REPUBLISH_REQUIRED },
+        409,
+      );
     }
 
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).
@@ -1502,13 +1601,133 @@ chatV2.post("/", async (c) => {
         );
       }
       if (!availability.ok) {
+        // 422 when this turn's settings are the problem; 503 for an operator
+        // state (broker delivery off, no computers data plane).
+        const status = harnessUnavailableHttpStatus(availability.kind);
         return c.json(
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+            ...(status === 422 ? { code: "FEATURE_NOT_SUPPORTED" } : {}),
+            reason: "HARNESS_UNAVAILABLE",
+            harness: resolvedExecution.harness,
+            kind: availability.kind,
+          },
+          status,
+        );
+      }
+    }
+
+    // PLAYGROUND FALLBACK — after the availability check, so a turn refused
+    // there never boots a box. A harness that signs in with the member's own
+    // account (Cursor), and every compare column, runs on this conversation's
+    // disposable computer — never the personal one, which holds no credentials
+    // and is one machine however many columns ask. Same decision, same box
+    // holder and same refusals as the hosted route (`web/chat-v2.ts`).
+    const playgroundBoxReason = playgroundHarnessBoxReason({
+      harnessId: resolvedExecution.harness,
+      localExecution: Boolean(harnessExecutionTarget),
+      isScenarioSession,
+      comparePane: body.comparePane === true,
+    });
+    // Anonymous (no bearer) or project-less turns have no project to hold a box
+    // for and no personal computer to protect: they keep their existing path.
+    if (
+      playgroundBoxReason &&
+      resolvedExecution.harness &&
+      typeof body.projectId === "string" &&
+      requestAuthHeader
+    ) {
+      const unavailable = playgroundHarnessBoxUnavailableReason(
+        resolvedExecution.harness,
+        playgroundBoxReason,
+      );
+      if (unavailable) {
+        return c.json(
+          {
+            error: unavailable,
+            code: "SANDBOX_UNAVAILABLE",
+            reason: "not_a_data_plane",
           },
           503,
         );
       }
+      if (!body.chatSessionId) {
+        return c.json(
+          {
+            error: `This turn runs the ${resolvedExecution.harness} harness on a disposable computer, which belongs to one conversation, and this turn named none.`,
+            code: "NO_CHAT_SESSION_ID",
+          },
+          400,
+        );
+      }
+      // A client that signs in with the member's own account runs under a
+      // HIDDEN ad-hoc environment selecting the member's key — the grant the
+      // box carries (this route never targets an environment). Then the
+      // credential check the harness turn would fail, both BEFORE the box is
+      // booted, so a refused Cursor turn provisions nothing.
+      let playgroundEnvironmentId: string | undefined;
+      if (playgroundBoxReason === "credential") {
+        if (bodyHostId) {
+          const hidden = await resolvePlaygroundCredentialEnvironment({
+            bearer: requestAuthHeader,
+            projectId: body.projectId,
+            hostId: bodyHostId,
+            harnessId: resolvedExecution.harness,
+          });
+          if (!hidden.ok) {
+            return c.json(
+              {
+                error: hidden.message,
+                code: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+              },
+              hidden.status,
+            );
+          }
+          playgroundEnvironmentId = hidden.environmentId;
+        }
+        const credentialRefusal = await playgroundCredentialRefusal({
+          harnessId: resolvedExecution.harness,
+          secretEnv: undefined,
+          bearer: requestAuthHeader,
+          projectId: body.projectId,
+          ...(playgroundEnvironmentId
+            ? { environmentId: playgroundEnvironmentId }
+            : {}),
+        });
+        if (credentialRefusal) {
+          return c.json(
+            {
+              error: credentialRefusal,
+              code: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+            },
+            409,
+          );
+        }
+      }
+      const acquired = await acquirePlaygroundHarnessBox({
+        bearer: requestAuthHeader.replace(/^Bearer\s+/i, ""),
+        projectId: body.projectId,
+        chatSessionId: body.chatSessionId,
+        ...(playgroundEnvironmentId
+          ? { projectEnvironmentId: playgroundEnvironmentId }
+          : {}),
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      });
+      if (!acquired.ok) {
+        const described = describePlaygroundBoxRefusal(
+          resolvedExecution.harness,
+          playgroundBoxReason,
+          acquired.refusal,
+        );
+        return c.json(
+          {
+            error: described.message,
+            code: described.code ?? "PLAYGROUND_SANDBOX_PROVISION_FAILED",
+          },
+          described.status,
+        );
+      }
+      playgroundHarnessBox = acquired.box;
     }
 
     // Built-in tools (e.g. web_search) bill MCPJam credits via a Convex
@@ -1538,16 +1757,23 @@ chatV2.post("/", async (c) => {
       rawEnginePref === "local" || rawEnginePref === "cloud"
         ? rawEnginePref
         : undefined;
-    // A GUEST must never resolve the local engine — bash on the local machine
-    // has no backend reserve gate (unlike the cloud path), so the request-level
-    // guest check IS the boundary (see isGuestChatRequest).
-    const requestIsGuest = isGuestChatRequest(requestAuthHeader);
+    // Only a POSITIVELY verified WorkOS member may resolve the local engine —
+    // bash on the local machine has no backend reserve gate (unlike the cloud
+    // path), so this check IS the boundary. A guest carrying a consent
+    // capability left over from a member session, a backend-issued guest
+    // token, an expired token, and an arbitrary bearer all land here as
+    // non-members (see classifyChatRequestActor).
+    const requestIsGuest = await requestIsGuestOrAnonymous();
+    const actorForEngine =
+      enginePref === "local" && !isScenarioSession
+        ? await requestActor()
+        : null;
     const localPrefEligible =
-      enginePref === "local" && !requestIsGuest && !isScenarioSession;
+      actorForEngine !== null && isVerifiedMember(actorForEngine);
     if (enginePref === "local" && !localPrefEligible) {
       logger.debug(
         "[mcp/chat-v2] computerEngine=local ignored for an ineligible request",
-        { isScenarioSession, isGuest: requestIsGuest },
+        { isScenarioSession, actorKind: actorForEngine?.kind ?? "scenario" },
       );
     }
     const localConsentValid = localPrefEligible
@@ -1580,9 +1806,23 @@ chatV2.post("/", async (c) => {
         ? browserRollout.actor.id
         : undefined;
     const browserConsentToken = c.req.header(BROWSER_CONSENT_HEADER);
+    // Spending a browser-consent capability on THIS machine takes a POSITIVELY
+    // verified member, or a guest the rollout explicitly admitted
+    // (`localBrowserGuestId`). `!requestIsGuest` is neither: an expired, forged
+    // or foreign bearer is "not a guest" too. Same boundary as local bash
+    // above; the actor is resolved once per turn and only when it is needed.
+    const browserActor =
+      localBrowserRequested &&
+      browserRollout.enabled &&
+      !isScenarioSession &&
+      !localBrowserGuestId
+        ? await requestActor()
+        : null;
+    const browserMemberVerified =
+      browserActor !== null && isVerifiedMember(browserActor);
     const browserConsentValid =
       browserRollout.enabled &&
-      (!requestIsGuest || Boolean(localBrowserGuestId)) &&
+      (browserMemberVerified || Boolean(localBrowserGuestId)) &&
       !isScenarioSession &&
       (await verifyLocalBrowserConsent(browserConsentToken));
     let browserEngine = resolveBrowserEngine({
@@ -2225,7 +2465,7 @@ chatV2.post("/", async (c) => {
       const inboundAbortSignalMcp = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
 
-      return handleMCPJamFreeChatModel({
+      const turnResponse = await handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         failureReporter: createRequestStreamFailureReporter(c, "chat"),
         modelId: String(modelDefinition.id),
@@ -2302,6 +2542,12 @@ chatV2.post("/", async (c) => {
         // capability, all re-verified by the availability gate before anything
         // spawns.
         ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
+        // The conversation's disposable box. Never alongside a local target.
+        ...(resolvedExecution.harness &&
+        playgroundHarnessBox &&
+        !harnessExecutionTarget
+          ? { harnessSandboxBinding: playgroundHarnessBox.binding }
+          : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).
@@ -2374,6 +2620,8 @@ chatV2.post("/", async (c) => {
             }
           : undefined,
       });
+      playgroundHarnessBoxHandedOff = true;
+      return releaseBoxWhenStreamEnds(turnResponse, playgroundHarnessBox);
     }
 
     // Org BYOK: when Convex is reachable, the request carries a projectId,
@@ -2764,6 +3012,7 @@ chatV2.post("/", async (c) => {
         : undefined,
     });
   } catch (error) {
+    // (The box, if one was acquired, is released in `finally` below.)
     // This catch wraps MCPJam's OWN request handling — config resolution,
     // backend dispatch, stream setup — not a hop into the user's MCP server,
     // so an unrecognized throw here is ours by default and the boundary
@@ -2784,6 +3033,8 @@ chatV2.post("/", async (c) => {
     return c.json({ error: "Unexpected error", origin }, 500, {
       "x-mcpjam-error-origin": origin,
     });
+  } finally {
+    if (!playgroundHarnessBoxHandedOff) await playgroundHarnessBox?.release();
   }
 });
 

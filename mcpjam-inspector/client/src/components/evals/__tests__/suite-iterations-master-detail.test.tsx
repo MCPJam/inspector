@@ -37,11 +37,16 @@ vi.mock("../test-template-editor", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
   // Per-run row loads (Evaluate only); legacy suite views request none.
-  useQueries: (queries: any) => (mocks.useQueries as any)(queries),
+  useQueries: (queries: any) => queries.selectedRun ? { selectedRun: {
+    _id: queries.selectedRun.args.runId, suiteId: "suite-1", createdBy: "u", runNumber: 1,
+    configRevision: "r", configSnapshot: { tests: [], environment: { servers: [] } },
+    status: "completed", result: "failed", createdAt: 2, completedAt: 3, source: "ui",
+  } } : (mocks.useQueries as any)(queries),
 }));
 
 // S3 — the settings sheet reads per-suite capabilities. `unavailable` is the
@@ -1013,7 +1018,7 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
       route: { type: "run-detail", suiteId: "suite-1", runId: "run-1" },
     });
 
-    const requested = Object.keys(mocks.useQueries.mock.calls.at(-1)?.[0] ?? {});
+    const requested = mocks.useQueries.mock.calls.flatMap(([queries]) => Object.keys(queries));
     expect(requested).toContain("run-1");
     expect(mocks.useQuery).not.toHaveBeenCalledWith(
       "testSuites:getAllTestCasesAndIterationsBySuite",

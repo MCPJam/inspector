@@ -634,7 +634,7 @@ export const updateProjectOperation: PlatformOperation<
   name: "update_project",
   title: "Update an MCPJam project",
   description:
-    "Rename a project or change its description, icon or visibility. Metadata only — this never adds, removes or edits the project's MCP server configurations, which have their own operations.",
+    "Rename a project or change its description, icon or visibility. Making a project private removes access for organization members who are neither admins nor explicitly granted access. Metadata only — this never adds, removes or edits the project's MCP server configurations, which have their own operations.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "project", id: result.id, projectId: result.id },
@@ -1475,7 +1475,7 @@ export const callServerToolOperation: PlatformOperation<
   name: "call_server_tool",
   title: "Call MCPJam server tool",
   description:
-    "Execute a tool on a saved MCP server and return its result. Runs with the caller's own authorization and may have side effects on the server. Get the tool name and parameter schema from list_server_tools first.",
+    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data.",
   readOnly: false,
   mayBeDestructive: true,
   permalink: noPermalink(
@@ -2002,7 +2002,17 @@ const startOpenAIReadinessInput = startReadinessInput.extend({
     ),
 });
 
+/**
+ * Muse's start: the server and the replay guard. No `includeLlmObservations`,
+ * because Muse has no observation catalogue and the platform refuses the
+ * opt-in — offering the field would invite a request that can only fail.
+ */
+const startMuseReadinessInput = serverScopedInput.extend({
+  idempotencyKey: startReadinessInput.shape.idempotencyKey,
+});
+
 export type StartClaudeReadinessInput = z.infer<typeof startReadinessInput>;
+export type StartMuseReadinessInput = z.infer<typeof startMuseReadinessInput>;
 export type StartOpenAIReadinessInput = z.infer<
   typeof startOpenAIReadinessInput
 >;
@@ -2110,6 +2120,50 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   },
 };
 
+export const startMuseReadinessRunOperation: PlatformOperation<
+  StartMuseReadinessInput,
+  StartReadinessResult
+> = {
+  name: "start_muse_readiness_run",
+  title: "Start a Muse directory readiness run",
+  description:
+    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `conformance/readiness/:runId` route: the readiness section rediscovers the LATEST run for a server and has no run-selection UI, so `/conformance?readinessRun=` is read by nothing. A link carrying it would switch the reader's project and then show them a different run — the wrong-resource landing this contract exists to end."
+  ),
+  inputSchema: startMuseReadinessInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const run = await client.startMuseReadinessRun(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      run,
+    };
+  },
+};
+
 export type GetReadinessRunResult = {
   project: SelectedProjectInfo;
   run: PlatformReadinessRun;
@@ -2150,9 +2204,9 @@ const listReadinessRunsInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   readinessKind: z
-    .enum(["claude", "openai"])
+    .enum(["claude", "openai", "muse"])
     .optional()
-    .describe("Narrow to one publisher. Omitted lists both, newest first."),
+    .describe("Narrow to one publisher. Omitted lists all, newest first."),
   server: z
     .string()
     .trim()
@@ -5538,7 +5592,7 @@ const caseFieldsShape = {
     .boolean()
     .optional()
     .describe("When true, the case passes if the expectation is NOT met."),
-  scenario: z.string().trim().min(1).optional(),
+  scenario: z.string().trim().min(1).nullable().optional(),
   models: z
     .array(caseModelSchema)
     .optional()
@@ -5879,7 +5933,7 @@ const updateEvalSuiteInput = z
           .union([z.string().trim().min(1), z.null()])
           .optional()
           .describe(
-            "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
+            "Custom sandbox image the suite's eval runs boot from, by name or id (sandbox images are managed in the MCPJam app). null uses the provider's default base image."
           ),
       })
       .optional()
@@ -6071,7 +6125,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature, plus modelSelection or the reasoningEffort shorthand for a saved model choice and its effort), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — so send whichever one the suite already uses (settings.policy on a read says which) and never convert between them. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature, plus modelSelection or the reasoningEffort shorthand for a saved model choice and its effort), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — and a read's settings.policy says which one the suite uses. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -6922,7 +6976,7 @@ export const generateEvalCasesOperation: PlatformOperation<
   risk: "none",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because a retry must not take a second slice of that quota.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time; topping up credits does not lift it. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. Idempotent on idempotencyKey: a retry with the same key does not take a second slice of that quota.",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     result.created.flatMap((testCase) =>
@@ -7079,7 +7133,7 @@ export const importEvalCasesOperation: PlatformOperation<
   risk: "none",
   title: "Import MCPJam eval cases from a document",
   description:
-    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Any text document is accepted — markdown, JSON, CSV, notes — up to 100 KiB; the model reads the shape itself. Authoring is on MCPJam, like `generate_eval_cases`. Cases the model could not finish, and cases it was unsure about, are NOT created — they come back in `skipped` with the reason, and `reviewUrl` opens the app page holding exactly those drafts for a person to read and save. To fix one, re-import ONLY that case's corrected text; re-sending the whole document re-authors every case in it. IDEMPOTENT on idempotencyKey.",
+    "Turn a document a person wrote — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases and persist them into the suite. MCPJam's model reads the document and authors complete cases (prompt, tool calls, assertions, expected outcome) grounded in the suite's server tools, so the caller does not have to structure anything itself. Any text document is accepted — markdown, JSON, CSV, notes — up to 100 KiB; the model reads the shape itself. Authoring is on MCPJam, like `generate_eval_cases`. Cases the model could not finish, and cases it was unsure about, are NOT created — they come back in `skipped` with the reason, and `reviewUrl` opens the app page holding exactly those drafts for a person to read and save. Re-sending the whole document re-authors and re-bills every case in it, and a reworded case is not recognised as a duplicate; importing only one case's corrected text re-authors just that case. Idempotent on idempotencyKey.",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     result.created.flatMap((testCase) =>
@@ -7265,7 +7319,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under per-case grading, trial under a suite-wide accuracy threshold — never assume one), the authoritative `decision` with the exact reasons a per-case-graded run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get an eval run's status and verdict and, once the run is terminal, its `decisionSummary`: the verdict and where it came from (`verdictSource`); the counts and the population they count (`measurementUnit`: `caseVariant` under per-case grading, `trial` under a suite-wide accuracy threshold); the `decision` with the reasons a per-case-graded run passed, failed, or was withheld as inconclusive; and per-iteration `diagnostics` with the user-value chain, the first failed stage, the failure category, the evidence for that stage, and one suggested next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable); it is not a failure. The chain's stages, in order: connection → discovery → selection → call → response → userValue. Each diagnostic's `chain.status` is `verified` (the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present), `unverified` (a derivation was stored but did not validate, so those fields are withheld), or `absent` (no derivation was stored). A stage row's `state` is `passed` or `failed` (measured), `notReached` (an earlier stage failed), `notMeasured` (the run captured nothing that could decide it), or `notApplicable` (the stage does not apply to the case); none of the last three says the stage was healthy. `firstFailedStage` is where the chain stopped, not its cause; that stage row's `reason` is the closest thing to a cause. `failureCategory` is a coarse bucket and can be present with no `firstFailedStage` (a setup abort or an evaluator error never reaches a stage). Diagnostics are paginated: pass diagnosticsCursor to continue; `diagnostics.complete: false` means the list is partial. Per-step results come from get_eval_run_steps and full transcripts from get_eval_iteration_trace. The result also carries an `insights` envelope of findings aggregated across iterations, with exemplar evidence. Each finding's `actionTarget` says what it concerns: only findings with actionTarget mcp_server and actionability ready describe a change to the server under test; the other targets describe agent, test or environment work.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -7563,13 +7617,12 @@ export const getEvalIterationTraceOperation: PlatformOperation<
  * that drifts is the one a reader happens to be looking at.
  */
 const STAGE_ANALYTICS_READING_RULES =
-  "Counts are returned; RATES ARE NOT. Derive a rate only with its denominator in hand, and a ZERO DENOMINATOR MEANS NOT MEASURED — never 0% and never 100%: `0/0` read as either is the single failure mode this contract is built against. " +
-  "Never sum tallies ACROSS stages: one trial is counted in every stage's tally, so adding the six counts the same trial six times. " +
-  "Never merge documents ACROSS runs: each describes one run's population, and two funnels averaged together describe no run. " +
-  "`excludedTrials` names why observations left a denominator, and the classes are not interchangeable — `notApplicable` and `notMeasured` are population facts, `reachUnknown` is deliberately kept out of the reach denominator (a trial that captured nothing is not evidence of a drop-off), and `integrity` IS A BUG REPORT: a non-zero count there means something upstream is producing chains or measurements that do not validate, and reading it as a population fact hides that. " +
-  "`materializationState` is `provisional` while any applicable judge fanout is still pending — stage attribution can still be rewritten under it — and `final` once the counts have stopped moving. " +
-  "There is NO BACKFILL: a run that terminalized before stage measurement shipped has no document and never will, and that absence is unmeasured, never zeros. " +
-  "The `user-value-chain-glossary` skill on this server defines every stage, state, reason, category and exclusion class this document uses.";
+  "Counts are returned, not rates. A zero denominator means not measured — neither 0% nor 100%. " +
+  "One iteration is counted in every stage's tally, so tallies do not add up across stages. " +
+  "Each document describes one run's population. " +
+  "`excludedTrials` says why observations left a denominator: `notApplicable` and `notMeasured` are population facts, `reachUnknown` is kept out of the reach denominator (an iteration that captured nothing is not evidence of a drop-off), and a non-zero `integrity` count means something upstream produced chains or measurements that did not validate — a defect, not a population fact. " +
+  "`materializationState` is `provisional` while an applicable judge fanout is still pending — stage attribution can still change — and `final` once the counts have stopped moving. " +
+  "There is no backfill: a run that terminalized before stage measurement shipped has no document, and that absence means unmeasured, not zeros.";
 
 export type GetEvalRunStageAnalyticsResult = {
   project: SelectedProjectInfo;
@@ -7626,9 +7679,9 @@ export const getEvalRunStageAnalyticsOperation: PlatformOperation<
   name: "get_eval_run_stage_analytics",
   title: "Get MCPJam eval run stage analytics",
   description:
-    "Get ONE run's materialized user-value-chain funnel: for each of the six stages (connection → discovery → selection → call → response → userValue), how many trials the stage applied to, how many reached it, how many were measured there, how many passed and failed, and how many were excluded and why — overall and sliced marginally by intent, model and host. This is the DENOMINATOR half of the chain story: `get_eval_run`'s `decisionSummary` says what one trial did and where it stopped, and this says how much was measured at all. " +
+    "Get one run's materialized user-value-chain funnel: for each of the six stages (connection → discovery → selection → call → response → userValue), how many iterations the stage applied to, how many reached it, how many were measured there, how many passed and failed, and how many were excluded and why — overall and sliced marginally by intent, model and host. `get_eval_run`'s `decisionSummary` says what one iteration did and where it stopped; this says how much was measured at all. " +
     STAGE_ANALYTICS_READING_RULES +
-    ' ABSENCE IS THREE DIFFERENT FACTS and this operation keeps them apart. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run WAS retrieved and its document is absent does the result say `analyticsState: "unmeasured"` with `analytics: null` — and that state is permanent, because there is no backfill.',
+    ' Absence has three distinct answers. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run was retrieved and its document is absent does the result say `analyticsState: "unmeasured"` with `analytics: null` — and that state is permanent, because there is no backfill.',
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.runId, result.suiteId, result.project?.id),
@@ -7723,7 +7776,7 @@ export const getEvalRunGateOperation: PlatformOperation<
   name: "get_eval_run_gate",
   title: "Get MCPJam eval run quality gate",
   description:
-    "Get ONE run's suite quality-gate report: the stored suite policy evaluated against this run. Outcomes are passed, failed, non_gateable, or not_configured. not_configured means the suite has no active conditions — it is a 200 report, never an absent route. The run is fetched first, so a run that does not exist or is not visible fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. A 404 after the run was retrieved is NEVER proof that no policy exists. A run waiver never covers this report; compose it with the flag/base report separately.",
+    "Get one run's suite quality-gate report: the stored suite policy evaluated against this run. Outcomes are passed, failed, non_gateable, or not_configured. not_configured means the suite has no active conditions — it is a 200 report, never an absent route. The run is fetched first, so a run that does not exist or is not visible fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. A 404 after the run was retrieved does not mean that no policy exists. A run waiver is not reflected in this report; get_eval_gate_waiver reads it separately.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.runId, result.suiteId, result.project?.id),
@@ -7798,9 +7851,9 @@ export const getEvalRunRouteFactsOperation: PlatformOperation<
   name: "get_eval_run_route_facts",
   title: "Get MCPJam eval run route facts",
   description:
-    "Get ONE run's materialized tool-route facts: which ordered tool paths the trials took, which expected tools were missing, which unexpected tools were observed, and which one-to-one in-catalog substitutions occurred — overall and per case. This is the ROUTE half of the run story: `get_eval_run`'s `decisionSummary` says where a trial stopped, and this says which paths the trials actually walked. " +
+    "Get one run's materialized tool-route facts: which ordered tool paths the iterations took, which expected tools were missing, which unexpected tools were observed, and which one-to-one in-catalog substitutions occurred — overall and per case. `get_eval_run`'s `decisionSummary` says where an iteration stopped; this says which paths the iterations actually walked. " +
     ROUTE_FACTS_READING_RULES +
-    ' ABSENCE IS THREE DIFFERENT FACTS and this operation keeps them apart. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run WAS retrieved and its document is absent does the result say `routeFactsState: "unmeasured"` with `routeFacts: null` — and that state is permanent, because there is no backfill.',
+    ' Absence has three distinct answers. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run was retrieved and its document is absent does the result say `routeFactsState: "unmeasured"` with `routeFacts: null` — and that state is permanent, because there is no backfill.',
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.runId, result.suiteId, result.project?.id),
@@ -7856,9 +7909,9 @@ export const getEvalRunRouteFactsOperation: PlatformOperation<
 
 const SERVER_FACTS_READING_RULES =
   "Everything here is a FACT ABOUT THE SERVER, and none of it is a verdict: a 57-tool surface is not a defect, a three-second connect is not a failure, and a precheck is a signal. Nothing in this document feeds a gate or changes a pass/fail. " +
-  "PAYLOAD SIZE IS THREE DIFFERENT NUMBERS and this document keeps two of them apart by name. `payload.basis` is `aggregated_catalog_json` (the catalog as the client assembled it, measured at capture) or `normalized_snapshot` (the bytes we retained, which is smaller whenever redaction dropped fields — `payload.complete` says so). The third — what the model actually saw — is a per-run HOST fact and is NOT in this document. Never compare numbers across bases and never report either as context consumption. " +
-  "TOKENS ARE AN ESTIMATE. `tokenEstimate.method` is `json_chars_div_4`; there is no tokenizer. `referenceWindowShare` is a share of a REFERENCE window (`tokenEstimate.referenceWindowTokens`), not of any model's real context. Quote the estimate with its caveat or not at all. " +
-  'A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: "spec_required"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. ' +
+  "PAYLOAD SIZE IS THREE DIFFERENT NUMBERS and this document keeps two of them apart by name. `payload.basis` is `aggregated_catalog_json` (the catalog as the client assembled it, measured at capture) or `normalized_snapshot` (the bytes we retained, which is smaller whenever redaction dropped fields — `payload.complete` says so). The third — what the model actually saw — is a per-run host fact and is not in this document. Numbers on different bases are not comparable, and neither one measures context consumption. " +
+  "TOKENS ARE AN ESTIMATE. `tokenEstimate.method` is `json_chars_div_4`; there is no tokenizer. `referenceWindowShare` is a share of a reference window (`tokenEstimate.referenceWindowTokens`), not of any model's real context. " +
+  'A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: "spec_required"` names one. A row with `protocolDependent: true` is a rule whose applicability could not be determined because the protocol version was unknown, so the server may be correct. ' +
   'RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: "sameServerId"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run\'s verdict. ' +
   "AN UNOBSERVED SETUP PHASE IS NOT A FAILED ONE: an absent `setup.connection` means nothing was recorded, and `durationMs` is measured ONCE PER RUN — a run with 200 trials did not connect 200 times.";
 
@@ -7884,7 +7937,7 @@ export const getEvalRunServerFactsOperation: PlatformOperation<
   name: "get_eval_run_server_facts",
   title: "Get MCPJam eval run server facts",
   description:
-    "Get ONE run's SERVER FACTS: the tool snapshot it ran against — per server, the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks — plus what the setup phase observed (connect and discovery outcome, attribution and wall time) and any conformance or readiness runs for the same servers. This is the SERVER half of the run story: `get_eval_run`'s `decisionSummary` says where trials stopped and `get_eval_run_route_facts` says which paths they walked; this says what they were walking through. " +
+    "Get one run's server facts: the tool snapshot it ran against — per server, the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks — plus what the setup phase observed (connect and discovery outcome, attribution and wall time) and any conformance or readiness runs for the same servers. `get_eval_run`'s `decisionSummary` says where iterations stopped and `get_eval_run_route_facts` says which paths they walked; this describes the servers they ran against. " +
     SERVER_FACTS_READING_RULES +
     ' ABSENCE IS NOT A STATE OF THIS DOCUMENT, unlike route facts. Server facts are COMPUTED ON READ, so there is no materializer and no backfill window: a run that finished years ago still answers. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error, and a deployment that does not serve this route fails as an explicit deployment error. A run with nothing to describe answers INSIDE the document, with `state: "unavailable"` and a `reason` — `snapshotMissing` (no snapshot was stored), `snapshotPartial` (some servers did not answer; the ones that did are still listed and their numbers are real), or `setupNotObserved` (no setup audit was recorded, which means unmeasured and NOT failed).',
   readOnly: true,
@@ -8184,9 +8237,9 @@ export const listEvalSuiteStageAnalyticsOperation: PlatformOperation<
   name: "list_eval_suite_stage_analytics",
   title: "List MCPJam eval suite stage analytics",
   description:
-    "List a suite's materialized user-value-chain funnels, newest run-completion first — one complete document PER RUN. This is a TREND SERIES, not an aggregate: the runs are returned side by side so you can look along them, and nothing here sums or averages them. " +
-    'BEFORE CLAIMING ANY TREND, PARTITION. Two funnels drawn beside each other IS a comparability claim, and it holds only within a partition on every field the parity contract pins: `runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`, `measurementsSchemaVersion`, and `materializationState: "final"`. An ABSENT `runGroupId`, `configRevision` or `caseSetFingerprint` BLOCKS comparability — it is never assumed compatible, because two runs that both record nothing compare equal while sharing nothing at all. A row carrying `sourceStageAnalyzerVersions` or `sourceMeasurementsSchemaVersions` aggregated more than one version and is comparable to nothing, itself included. `stageAnalyticsParityBlockers` in @mcpjam/sdk/contract names all eleven blockers and is the authority. ' +
-    'So "which stage has been failing this month" is answerable only WITHIN one parity partition, and reporting it across partitions is reporting a change in what was measured as a change in the server. ' +
+    "List a suite's materialized user-value-chain funnels, newest run-completion first — one complete document per run. It is a trend series, not an aggregate: nothing here sums or averages runs. " +
+    'Two runs\' funnels are comparable only when they match on every field the parity contract pins: `runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`, `measurementsSchemaVersion`, and `materializationState: "final"`. An absent `runGroupId`, `configRevision` or `caseSetFingerprint` makes a run incomparable, since two runs that both record nothing would otherwise match while sharing nothing. A row carrying `sourceStageAnalyzerVersions` or `sourceMeasurementsSchemaVersions` aggregated more than one version and is comparable to no other row. ' +
+    'Across non-matching runs, a difference can reflect a change in what was measured rather than a change in the server. ' +
     STAGE_ANALYTICS_READING_RULES,
   readOnly: true,
   permalink: derivePermalinks((result) =>
@@ -8496,7 +8549,7 @@ export const backtestEvalRunJudgeOperation: PlatformOperation<
   name: "backtest_eval_run_judge",
   title: "Preview MCPJam judge grading",
   description:
-    "Grade one recorded iteration against a draft rubric using the full evidence. Uses model budget; leaves the run verdict unchanged. Supply rubric.instructions and optional criteria, or null for objective-only grading. Continue with the same rubric and the returned cursor, sourceHash and reservationId. Completed page retries reuse the cached result. CLI: mcpjam cloud eval judge-backtest --run <id> --json <request>.",
+    "Grade one recorded iteration against a draft rubric using the full evidence. Uses model budget; leaves the run verdict unchanged. Supply rubric.instructions and optional criteria, or null for objective-only grading. Continue with the same rubric and the returned cursor, sourceHash and reservationId. Completed page retries reuse the cached result.",
   readOnly: false,
   risk: "spend",
   permalink: derivePermalinks((result) => [
@@ -8547,7 +8600,7 @@ export const backtestEvalRunOperation: PlatformOperation<
   name: "backtest_eval_run",
   title: "Preview MCPJam eval assertions",
   description:
-    "Preview an explicit assertion draft against stored evidence from a terminal run. Replace, extend or inherit frozen assertions explicitly. No model calls or verdict writes; reserves a one-minute deterministic-preview cooldown, independent of judge previews. Returns partial comparison and per-evaluator missing-evidence reasons. This is not a release verdict. Unsupported custom evaluators are never executed. Use mcpjam cloud eval backtest --run <id> --json <draft> from the CLI.",
+    "Preview an explicit assertion draft against stored evidence from a terminal run. Replace, extend or inherit frozen assertions explicitly. No model calls or verdict writes; reserves a one-minute deterministic-preview cooldown, independent of judge previews. Returns partial comparison and per-evaluator missing-evidence reasons. This is not a release verdict. Unsupported custom evaluators are never executed.",
   readOnly: false,
   risk: "none",
   permalink: derivePermalinks((result) => [
@@ -8588,7 +8641,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
   name: "request_eval_run_judge",
   title: "Request MCPJam eval run grading",
   description:
-    "Run LLM-as-judge grading over a finished eval run: each iteration’s full recorded trace and tool definitions are graded against its task and grading instructions. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
+    "Run LLM-as-judge grading over a finished eval run: each iteration’s full recorded trace and tool definitions are graded against its task and grading instructions. SPENDS the organization's model budget. Returns immediately with a pending receipt; results appear on get_eval_run's `judges.goalCompletion`. `force` re-grades a run that already has a result and `scope: \"failed\"` re-grades failed or ungraded iterations; both replace the stored grading for what they re-grade and spend again. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -10177,7 +10230,7 @@ export const getClientOperation: PlatformOperation<
   name: "get_client",
   title: "Show an MCPJam client",
   description:
-    "Show one client's full settings: its resolved config (model, capabilities, host context), its `configId` — the token every edit must echo back as `expectedConfigId` — and `impact`, the live environments, scenario attachments and active legacy journeys a config edit would follow. Call this before any edit.",
+    "Show one client's full settings: its resolved config (model, capabilities, host context), its `configId` — the token every edit must echo back as `expectedConfigId` — and `impact`, the live environments, scenario attachments and active legacy journeys a config edit would follow.",
   readOnly: true,
   permalink: derivePermalinks((result) => [{ type: "host", id: result.id }]),
   inputSchema: getClientInput,
@@ -10505,7 +10558,7 @@ export const updateClientOperation: PlatformOperation<
   name: "update_client",
   title: "Update an MCPJam client",
   description:
-    "Edit a client's display name and/or its config. Use `set` to change named fields (absent keeps, null resets or clears); `config` replaces the whole config. `reasoningEffort` edits the effort on the client's existing model selection (refused when it has none — send `set.modelSelection`). Requires `expectedConfigId` for a config edit and `expectedName` for a rename — call get_client first, echo those values back, and on a conflict re-read and retry. An edit that resolves to byte-identical settings writes nothing.",
+    "Edit a client's display name and/or its config. Use `set` to change named fields (absent keeps, null resets or clears); `config` replaces the whole config. `reasoningEffort` edits the effort on the client's existing model selection (refused when it has none — send `set.modelSelection`). Requires `expectedConfigId` for a config edit and `expectedName` for a rename (both from get_client); a stale value is refused with a conflict. An edit that resolves to byte-identical settings writes nothing.",
   readOnly: false,
   // OVERWRITE, so `destructive` — the taxonomy is "removes or invalidates
   // something that existed", and replacing a live setting does exactly that.
@@ -11812,7 +11865,7 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
   name: "ensure_adhoc_environment",
   title: "Compose an MCPJam environment without naming it",
   description:
-    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image, pinned skills and granted project secrets. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
+    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image, pinned skills and granted project secrets. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. An unnamed environment is for running a combination; it does not add a permanent entry to the project's environment list. Naming one is done in the MCPJam app.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -12812,6 +12865,9 @@ export const deleteImageOperation: PlatformOperation<
   },
 };
 
+const SERVER_WRITE_BODY_DESCRIPTION =
+  "Saved-server configuration, as documented in MCPJam's servers API reference (https://docs.mcpjam.com/api-reference/servers/save-a-server-into-a-project).";
+
 const serverWriteBody = z
   .object({
     name: z.string().trim().min(1).optional(),
@@ -12848,7 +12904,7 @@ export const createProjectServerOperation: PlatformOperation<
   name: "create_project_server",
   title: "Create a project MCP server",
   description:
-    "Save a new MCP server in a project, including optional credentials.",
+    "Save a new MCP server in a project, including optional credentials. `body` is the saved-server configuration of MCPJam's servers API (POST /projects/{projectId}/servers, documented at https://docs.mcpjam.com/api-reference/servers/save-a-server-into-a-project): a `name`, `enabled`, and a `transportType` of `http` (with `url`, optional `headers` and OAuth settings) or `stdio` (with `command`, `args` and `env`), the two transports of the MCP specification (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports). Names are unique per project, so a clash is refused with a conflict. Secret-bearing fields (`env`, `headers`, `clientSecret`) are encrypted at rest and never returned by any read.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "project_server", id: result.id, ...projectIdOf(result) },
@@ -12860,11 +12916,13 @@ export const createProjectServerOperation: PlatformOperation<
       .min(1)
       .optional()
       .describe(PROJECT_SELECTOR_DESCRIPTION),
-    body: serverWriteBody.extend({
-      name: z.string().trim().min(1),
-      enabled: z.boolean(),
-      transportType: z.enum(["stdio", "http"]),
-    }),
+    body: serverWriteBody
+      .extend({
+        name: z.string().trim().min(1),
+        enabled: z.boolean(),
+        transportType: z.enum(["stdio", "http"]),
+      })
+      .describe(SERVER_WRITE_BODY_DESCRIPTION),
   }),
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
@@ -12916,12 +12974,15 @@ export const updateProjectServerOperation: PlatformOperation<
 > = {
   name: "update_project_server",
   title: "Update a project MCP server",
-  description: "Update saved MCP server metadata or rotate/clear credentials.",
+  description:
+    "Update a saved MCP server's configuration, or rotate or clear its credentials. A sparse update through MCPJam's servers API (PATCH /projects/{projectId}/servers/{serverId}, documented at https://docs.mcpjam.com/api-reference/servers/update-a-saved-server): fields omitted from `body` are unchanged, a rename is refused with a conflict if the name is taken, and `clientSecret` and `clearClientSecret` are mutually exclusive. Editing a server shared as an OAuth connection requires project admin. Changing `url`, `headers` or credentials replaces what the saved server uses from then on.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "project_server", id: result.id, ...projectIdOf(result) },
   ]),
-  inputSchema: projectServerSelectorInput.extend({ body: serverWriteBody }),
+  inputSchema: projectServerSelectorInput.extend({
+    body: serverWriteBody.describe(SERVER_WRITE_BODY_DESCRIPTION),
+  }),
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
@@ -13097,7 +13158,7 @@ export const listGoalRunsOperation: PlatformOperation<
   name: "list_goal_runs",
   title: "List runs of an MCPJam goal",
   description:
-    "List a goal's runs, newest first, with each run's status and pass/fail rollup. A run someone STOPPED reports status 'failed' with canceled: true — check that flag before calling a run a failure.",
+    "List a goal's runs, newest first, with each run's status and pass/fail rollup. A run someone stopped reports status 'failed' with canceled: true, which distinguishes it from a run that failed on its own.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((run) => ({
@@ -13153,7 +13214,7 @@ export const getGoalRunOperation: PlatformOperation<
   name: "get_goal_run",
   title: "Get one MCPJam goal run",
   description:
-    "One goal run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's swarm run with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only actionTarget mcp_server with actionability ready authorizes proposing a server change.",
+    "One goal run in full: status, per-target rollups, and the per-session attempt records. Status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's swarm run with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only findings with actionTarget mcp_server and actionability ready describe a change to the MCP server.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -13275,6 +13336,14 @@ const launchGoalRunInput = z.object({
     .describe(
       "Fan out across these project environments instead of the goal's authored targets."
     ),
+  expectedSponsored: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of the organization's credits). If the actual split differs, the launch is refused with a 409 `swarm_funding_changed` and nothing is created. Omit it to accept whatever split applies."
+    ),
 });
 export type LaunchGoalRunInput = z.infer<typeof launchGoalRunInput>;
 
@@ -13291,7 +13360,7 @@ export const launchGoalRunOperation: PlatformOperation<
   risk: "spend",
   title: "Launch an MCPJam goal run",
   description:
-    "Start a goal run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_goal_run, or list_goal_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the goal twice. Behind the sandboxes-enabled beta.",
+    "Start a goal run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_goal_run, or list_goal_run_sessions for per-session detail. Idempotent on idempotencyKey: a retry with the same key does not run the goal twice. Behind the sandboxes-enabled beta.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     {
@@ -13315,6 +13384,9 @@ export const launchGoalRunOperation: PlatformOperation<
         ...(input.environmentIds?.length
           ? { environmentIds: input.environmentIds }
           : {}),
+        ...(input.expectedSponsored !== undefined
+          ? { expectedSponsored: input.expectedSponsored }
+          : {}),
       },
       {
         signal,
@@ -13335,7 +13407,7 @@ export const cancelGoalRunOperation: PlatformOperation<
   risk: "destructive",
   title: "Stop a running MCPJam goal run",
   description:
-    "Stop a goal run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+    "Request a stop for a running goal run. Acceptance returns immediately; cleanupPending means its sessions are still being settled in the background. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
   readOnly: false,
   permalink: noPermalink("mutation-only"),
   inputSchema: goalRunSelectorInput,
@@ -13577,7 +13649,7 @@ export const archiveGoalOperation: PlatformOperation<
   name: "archive_goal",
   title: "Archive an MCPJam goal",
   description:
-    "Take a goal off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the goal that produced it. A second call answers not-found.",
+    "Take a goal off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the goal that produced it. Archiving an already-archived goal succeeds again.",
   readOnly: false,
   risk: "destructive",
   permalink: noPermalink("mutation-only"),
@@ -13609,7 +13681,7 @@ export const getGoalRunScorecardOperation: PlatformOperation<
   name: "get_goal_run_scorecard",
   title: "Get a journey run's rubric scorecard",
   description:
-    "Per-criterion pass/fail counts for one run. DETERMINISTIC — no model involved — so this is the first thing to read when explaining a failure, and usually the whole answer. failedGradingCount is grading that BROKE, not a product failure; do not add it to failCount. Answers not-found when the run has no rubric.",
+    "Per-criterion pass/fail counts for one run. Deterministic — no model involved. failedGradingCount counts grading that broke, not product failures, and is separate from failCount. Answers not-found when the run has no rubric.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -13732,7 +13804,7 @@ export const listJourneyRunsOperation: PlatformOperation<
   name: "list_journey_runs",
   title: "List runs of an MCPJam journey",
   description:
-    "List a journey's runs, newest first, with each run's status and pass/fail rollup. A run someone STOPPED reports status 'failed' with canceled: true — check that flag before calling a run a failure.",
+    "List a journey's runs, newest first, with each run's status and pass/fail rollup. A run someone stopped reports status 'failed' with canceled: true, which distinguishes it from a run that failed on its own.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((run) => ({
@@ -13790,7 +13862,7 @@ export const getJourneyRunOperation: PlatformOperation<
   name: "get_journey_run",
   title: "Get one MCPJam journey run",
   description:
-    "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's wave with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only actionTarget mcp_server with actionability ready authorizes proposing a server change.",
+    "One journey run in full: status, per-target rollups, and the per-session attempt records. Status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's wave with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only findings with actionTarget mcp_server and actionability ready describe a change to the MCP server.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -13911,6 +13983,14 @@ const launchJourneyRunInput = z.object({
     .describe(
       "Fan out across these project environments instead of the journey's authored targets."
     ),
+  expectedSponsored: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of the organization's credits). If the actual split differs, the launch is refused with a 409 `swarm_funding_changed` and nothing is created. Omit it to accept whatever split applies."
+    ),
 });
 export type LaunchJourneyRunInput = z.infer<typeof launchJourneyRunInput>;
 
@@ -13953,6 +14033,9 @@ export const launchJourneyRunOperation: PlatformOperation<
         ...(input.environmentIds?.length
           ? { environmentIds: input.environmentIds }
           : {}),
+        ...(input.expectedSponsored !== undefined
+          ? { expectedSponsored: input.expectedSponsored }
+          : {}),
       },
       {
         signal,
@@ -13976,7 +14059,7 @@ export const cancelJourneyRunOperation: PlatformOperation<
   risk: "destructive",
   title: "Stop a running MCPJam journey run",
   description:
-    "Stop a journey run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
+    "Request a stop for a running journey run. Acceptance returns immediately; cleanupPending means its sessions are still being settled in the background. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
   readOnly: false,
   permalink: noPermalink("mutation-only"),
   inputSchema: journeyRunSelectorInput,
@@ -14249,7 +14332,7 @@ export const listPersonasOperation: PlatformOperation<
   name: "list_personas",
   title: "List MCPJam personas",
   description:
-    "The project's reusable synthetic characters — the cast Swarms journeys run as. A persona carries a name, a role and notes; the GOAL lives on each journey, so one persona can be pointed at many different things to try. Start here before creating a journey.",
+    "The project's reusable synthetic characters — the cast Swarms journeys run as. A persona carries a name, a role and notes; the GOAL lives on each journey, so one persona can be pointed at many different things to try.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -14346,7 +14429,7 @@ export const createPersonaOperation: PlatformOperation<
   name: "create_persona",
   title: "Create an MCPJam persona",
   description:
-    "Create a reusable synthetic character for Swarms to run as. Behind the sandboxes-enabled beta. Check get_capabilities first if you are unsure the organization has it.",
+    "Create a reusable synthetic character for Swarms to run as. Requires the Swarms feature (sandboxes-enabled); callers without it are refused with FEATURE_UNAVAILABLE.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -14532,7 +14615,7 @@ export const listSecretsOperation: PlatformOperation<
   name: "list_secrets",
   title: "List MCPJam project secrets",
   description:
-    "The project's credentials, as METADATA ONLY — name, delivery mode, host binding, sharing, when each was last delivered. No value is ever returned by this or any other operation. Shows the project-shared secrets plus your own personal ones; another member's personal secret does not appear at all. Read this to find out what an environment can grant before selecting one.",
+    "The project's credentials, as METADATA ONLY — name, delivery mode, host binding, sharing, when each was last delivered. No value is ever returned by this or any other operation. Shows the project-shared secrets plus your own personal ones; another member's personal secret does not appear at all.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -15468,7 +15551,7 @@ export const listSwarmsOperation: PlatformOperation<
   name: "list_swarms",
   title: "List MCPJam swarm containers",
   description:
-    "Swarm containers group journeys authored together and hold their shared execution config. A journey does not need one — but a project authored through the app will have them, so list here to match what a human would see.",
+    "Swarm containers group journeys authored together and hold their shared execution config. A journey does not need one, but projects authored in the app have them.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -15792,7 +15875,7 @@ export const generatePersonasOperation: PlatformOperation<
   name: "generate_personas",
   title: "Draft MCPJam personas with a model",
   description:
-    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate personas grounded in what the project's servers actually do. Nothing is saved; create_persona saves a draft. Runs a model. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -15877,7 +15960,7 @@ export const generateGoalsOperation: PlatformOperation<
   name: "generate_goals",
   title: "Draft MCPJam goals with a model",
   description:
-    "Draft candidate goals for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_goal. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate goals for a persona, grounded in the project's servers. Nothing is saved; create_goal saves a draft. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -15930,7 +16013,7 @@ export const generateJourneysOperation: PlatformOperation<
   name: "generate_journeys",
   title: "Draft MCPJam journeys with a model",
   description:
-    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time — wait until then; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
+    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Included with MCPJam; no customer credits consumed; subject to usage limits: a per-minute burst limit and the organization's daily generation quota. A refusal is RATE_LIMITED with a retry time; topping up credits does not lift it. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -15978,7 +16061,7 @@ export const getSwarmOverviewOperation: PlatformOperation<
   name: "get_swarms_overview",
   title: "Get the MCPJam swarms overview",
   description:
-    "The project's recent journey runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. Start here to answer 'how are our swarms doing'. Rates are over GRADED sessions, never attempted ones, and passRate is null (not 0) when nothing has been graded.",
+    "The project's recent journey runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. Rates are over GRADED sessions, never attempted ones, and passRate is null (not 0) when nothing has been graded.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -16016,7 +16099,7 @@ export const getJourneyRunScorecardOperation: PlatformOperation<
   name: "get_journey_run_scorecard",
   title: "Get a journey run's rubric scorecard",
   description:
-    "Per-criterion pass/fail counts for one run. DETERMINISTIC — no model involved — so this is the first thing to read when explaining a failure, and usually the whole answer. failedGradingCount is grading that BROKE, not a product failure; do not add it to failCount. Answers not-found when the run has no rubric.",
+    "Per-criterion pass/fail counts for one run. Deterministic — no model involved. failedGradingCount counts grading that broke, not product failures, and is separate from failCount. Answers not-found when the run has no rubric.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -16221,7 +16304,7 @@ export type GetWaveInsightsResult = {
  * which failures lift on their own and which are not the caller's to fix.
  */
 const INCLUDED_ANALYSIS_FAILURE_NOTE =
-  "A failed analysis carries errorCode: `platform_cap_exceeded` means MCPJam's own daily budget for this analysis is used up — nothing was charged, it resets at 00:00 UTC, and neither re-requesting nor topping up credits helps before then; `platform_unavailable` means MCPJam could not reserve capacity — try again later, not in a loop.";
+  "A failed analysis carries errorCode: `platform_cap_exceeded` means MCPJam's own daily budget for this analysis is used up — nothing was charged, it resets at 00:00 UTC, and neither re-requesting nor topping up credits helps before then; `platform_unavailable` means MCPJam could not reserve capacity at that moment; the condition is transient.";
 
 export const getSwarmRunInsightsOperation: PlatformOperation<
   GetSwarmRunInsightsInput,
@@ -16282,7 +16365,7 @@ export const requestSwarmRunInsightsOperation: PlatformOperation<
   name: "request_swarm_run_insights",
   title: "Request MCPJam swarm run insights",
   description:
-    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; poll get_swarm_run_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure.",
+    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; poll get_swarm_run_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Run scorecards (get_goal_run_scorecard) cost no quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -16470,7 +16553,7 @@ export const getCapabilitiesOperation: PlatformOperation<
   name: "get_capabilities",
   title: "Get what you may do in an MCPJam project",
   description:
-    "Your role, which betas this organization has, your plan's limits, and a `can` block of booleans to branch on. CHECK THIS BEFORE PLANNING work that authors, launches or publishes: the tool list you can see is the same for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the operation needs an admin. Finding that out from a 403 means you have already told someone you were doing it.",
+    "What you may do in one project: your organization `role` and `projectRole`; your `plan` with its seat-scaled limits and plan features (null without an organization); `features.sandboxes`, whether Swarms is enabled for you; the product `vocabulary`; and a `can` block of booleans for Swarms, user-testing and eval actions, including which need a project admin. The eval entries are always true and do not reflect plan quota or credits. No other beta feature is reported here — the tool list is the same for every caller, and an action your account cannot take is refused with 403 FORBIDDEN.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -16677,7 +16760,7 @@ export const publishStudyOperation: PlatformOperation<
   risk: "exposure",
   title: "Publish a project environment as a study",
   description:
-    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at CREATE TIME, so the study is never briefly live in a wider mode than asked for. IDEMPOTENT — publishing an already-published environment returns the existing study rather than creating a second one; `created` tells you which happened, and `overridesIgnored: true` means the overrides were discarded because the study already existed. Requires project admin.",
+    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at create time, so the study is never briefly live in a wider mode than asked for. Each call creates a new study with its own share link — an environment can back several — and a name the project already uses is refused with a conflict rather than reusing that study. Requires project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     // The study's own page. `result.study.link` is the token-bearing GUEST
@@ -16747,7 +16830,7 @@ export const unpublishStudyOperation: PlatformOperation<
   risk: "destructive",
   title: "Take a study down",
   description:
-    "Unpublish an environment's study, invalidating its share link and any live guest sessions. Idempotent — an environment with no study reports `deleted: false` rather than failing. Requires project admin.",
+    "Unpublish an environment's study, invalidating its share link and ending any live guest sessions; the study's sessions, members and insights are deleted with it. An environment with no study reports `deleted: false`; naming a `study` that no longer exists answers not-found. Requires project admin.",
   readOnly: false,
   permalink: noPermalink("mutation-only"),
   inputSchema: unpublishStudyInput,
@@ -16795,7 +16878,7 @@ export const getStudyOperation: PlatformOperation<
   name: "get_study",
   title: "Get one MCPJam study",
   description:
-    "One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its actionable-insights envelope — findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_study_insights does, and it takes a slice of the daily insight quota. Matched by id, or by name within the project.",
+    "One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its actionable-insights envelope — findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only findings with actionTarget mcp_server and actionability ready describe a change to the MCP server; agent_configuration, eval_case, environment and investigate findings describe other work. Reads never trigger generation — request_study_insights does, and it takes a slice of the daily insight quota. Matched by id, or by name within the project.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -16994,7 +17077,7 @@ export const getStudySessionOperation: PlatformOperation<
   name: "get_study_session",
   title: "Read one user-testing session's transcript",
   description:
-    "One session's conversation, paged. This is a real person talking to your product — read it when you need the words, and prefer get_user_testing_metrics or the findings when you need the pattern. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
+    "One session's conversation, paged. This is a real person's conversation with your product; get_study_metrics and the study's findings summarize sessions without returning conversation text. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.session.chatSessionId
@@ -17050,7 +17133,7 @@ export const getStudyMetricsOperation: PlatformOperation<
   name: "get_study_metrics",
   title: "Get a study's session metrics",
   description:
-    "Aggregate metrics across a study's sessions. Start here rather than reading transcripts — it answers 'how is this going' without pulling anyone's conversation into the turn.",
+    "Aggregate metrics across a study's sessions, without returning any conversation text.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -17088,7 +17171,7 @@ export const getStudyUsageOperation: PlatformOperation<
   name: "get_study_usage",
   title: "Get a study's usage breakdown",
   description:
-    "Usage rates for a study, broken down by visitor and device. READ `scan.truncated` BEFORE QUOTING ANY RATE: true means the numbers were computed over the most recent N sessions rather than all of them, so reporting them unconditionally would overstate what was measured.",
+    "Usage rates for a study, broken down by visitor and device. `scan.truncated: true` means the rates were computed over the most recent N sessions rather than all of them.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -17156,7 +17239,7 @@ export const getStudySignalsOperation: PlatformOperation<
   name: "get_study_signals",
   title: "Get a study's current window signals",
   description:
-    "The study's live analysis window, and the `windowId` you need to read its insights. Call this first when you want insights for 'the current window'.",
+    "The study's live analysis window and its signals. Once the study has an analysis window, its `windowId` is what get_study_insights takes as `window`.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -17182,7 +17265,7 @@ const studyWindowInput = studySelectorInput.extend({
     .string()
     .trim()
     .min(1)
-    .describe("Window id, from get_user_testing_signals."),
+    .describe("Window id, from get_study_signals."),
 });
 
 export type GetStudyInsightsInput = z.infer<typeof studyWindowInput>;
@@ -17248,7 +17331,7 @@ export const requestStudyInsightsOperation: PlatformOperation<
   name: "request_study_insights",
   title: "Request insights for a study",
   description:
-    "Ask a model to analyze the study's current window. Returns immediately with the windowId and status pending; poll get_study_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm-run insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+    "Ask a model to analyze the study's current window. Returns immediately with the windowId and status pending; poll get_study_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm-run insights. A 409 means the window has not been mined yet.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -17284,7 +17367,7 @@ export const cancelStudyInsightsOperation: PlatformOperation<
   name: "cancel_study_insights",
   title: "Cancel a user-testing insights request",
   description:
-    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+    "Stop an in-flight insights generation; the window's stored insights are cleared. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -17410,7 +17493,7 @@ export const setStudyGuestExecutionOperation: PlatformOperation<
   name: "set_study_guest_execution",
   title: "Set a study's guest execution caps",
   description:
-    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Read the current values first. Project admin.",
+    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Requires project admin.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -17658,7 +17741,7 @@ export const getUserTestingScenarioOperation: PlatformOperation<
   name: "get_user_testing_scenario",
   title: "Get a user-testing scenario",
   description:
-    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and it takes a slice of the daily insight quota.",
+    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only findings with actionTarget mcp_server and actionability ready describe a change to the MCP server; agent_configuration, eval_case, environment and investigate findings describe other work. Reads never trigger generation — request_user_testing_insights does, and it takes a slice of the daily insight quota.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -17838,7 +17921,7 @@ export const getUserTestingSessionOperation: PlatformOperation<
   name: "get_user_testing_session",
   title: "Read one user-testing session's transcript",
   description:
-    "One session's conversation, paged. This is a real person talking to your product — read it when you need the words, and prefer get_user_testing_metrics or the findings when you need the pattern. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
+    "One session's conversation, paged. This is a real person's conversation with your product; get_study_metrics and the study's findings summarize sessions without returning conversation text. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.session.chatSessionId
@@ -17940,7 +18023,7 @@ export const getUserTestingUsageOperation: PlatformOperation<
   name: "get_user_testing_usage",
   title: "Get a user-testing scenario's usage breakdown",
   description:
-    "Usage rates for a scenario, broken down by visitor and device. READ `scan.truncated` BEFORE QUOTING ANY RATE: true means the numbers were computed over the most recent N sessions rather than all of them, so reporting them unconditionally would overstate what was measured.",
+    "Usage rates for a scenario, broken down by visitor and device. `scan.truncated: true` means the rates were computed over the most recent N sessions rather than all of them.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -18116,7 +18199,7 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
   name: "request_user_testing_insights",
   title: "Request insights for a user-testing scenario",
   description:
-    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -18156,7 +18239,7 @@ export const cancelUserTestingInsightsOperation: PlatformOperation<
   name: "cancel_user_testing_insights",
   title: "Cancel a user-testing insights request",
   description:
-    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
+    "Stop an in-flight insights generation; the window's stored insights are cleared. The recovery path for a window stuck pending — without it the only way forward is force, which takes another slice of the daily insight quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -18290,7 +18373,7 @@ export const setUserTestingGuestExecutionOperation: PlatformOperation<
   name: "set_user_testing_guest_execution",
   title: "Set a user-testing scenario's guest execution caps",
   description:
-    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Read the current values first. Project admin.",
+    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Requires project admin.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -18589,7 +18672,7 @@ export const connectProjectServerOperation: PlatformOperation<
   name: "connect_project_server",
   title: "Connect an MCP server to a project",
   description:
-    "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries a private authorization link for the requester to open; present it privately and never repeat the URL in a shared channel. Poll get_project_server_connection_status until the status is ready or failed.",
+    "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries an authorization link meant only for the requester, since opening it acts on that person's connection request. Poll get_project_server_connection_status until the status is ready or failed. Uses MCPJam's server-connections API (POST /server-connections, documented at https://docs.mcpjam.com/api-reference/server-connections/connect-an-mcp-server); authorization follows the MCP authorization specification (https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     // The saved server, once one exists. The connection's own `handoffUrl` is
@@ -19032,7 +19115,7 @@ export const listRegistryServersOperation: PlatformOperation<
   name: "list_registry_servers",
   title: "List registry cards",
   description:
-    "List the project's organization registry cards (and any global cards; the global shelf is currently empty). Prefer an organization card over a scraped directory row when both match — cards carry config someone in the org already set up.",
+    "List the project's organization registry cards (and any global cards; the global shelf is currently empty). Cards carry configuration someone in the organization already set up.",
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -19356,7 +19439,7 @@ export const sendFeedbackOperation: PlatformOperation<
   name: "send_feedback",
   title: "Send feedback to the MCPJam team",
   description:
-    "Send feedback to the MCPJam team about MCPJam itself — a bug, a missing capability, or something confusing. SENDS YOUR TEXT TO THE MCPJAM TEAM (outside your organization); stored for 180 days. Not a rating of a chat session. Requires a signed-in account. Include requestId from a failing tool's error when you have one. Summarize; never paste secrets, tokens, or raw tool output.",
+    "Send feedback to the MCPJam team about MCPJam itself — a bug, a missing capability, or something confusing. SENDS YOUR TEXT TO THE MCPJAM TEAM (outside your organization); stored for 180 days. Not a rating of a chat session. Requires a signed-in account. Include requestId from a failing tool's error when you have one. Summarize; never paste secrets, tokens, or raw tool output. Nobody replies in the session that sent it, and `duplicate: true` in the result means the same report was already recorded.",
   readOnly: false,
   risk: "exposure",
   permalink: noPermalink("mutation-only"),
@@ -19424,6 +19507,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,

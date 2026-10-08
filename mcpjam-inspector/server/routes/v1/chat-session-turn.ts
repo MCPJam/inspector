@@ -1,5 +1,6 @@
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
+  browserFeatureUnavailable,
   getConversationBrowser,
   openConversationBrowser,
   provisionConversationBrowser,
@@ -1927,6 +1928,18 @@ async function handleTurn(c: Context): Promise<Response> {
     } as never);
 
     await runtime.finalizeUsage(result);
+    // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
+    // waiting on background agents ends that wait at the deadline and keeps
+    // the answer it already has (`claude-code-background-drain.ts`). Only the
+    // harness's own report counts; a trace alone also exists for a turn that
+    // paused for approval or a scope step-up.
+    const timedOut =
+      abortController.signal.aborted &&
+      !(
+        engine.kind === "harness" &&
+        result.backgroundDrainEnded &&
+        !lastEngineError
+      );
     if (browserAttached) {
       result.messages = redactBrowserEvidenceTree(
         result.messages,
@@ -1945,7 +1958,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     if (
       browserAttached &&
-      (abortController.signal.aborted || !result.turnTrace || lastEngineError)
+      (timedOut || !result.turnTrace || lastEngineError)
     ) {
       // The shell and incrementally uploaded screenshots survive failure; retain
       // the partial transcript/trace as well so retries can inspect what ran.
@@ -1975,7 +1988,7 @@ async function handleTurn(c: Context): Promise<Response> {
               modelId: String(modelDefinition.id),
             }),
             turnId: leaseTurnId,
-            finishReason: abortController.signal.aborted ? "timeout" : "error",
+            finishReason: timedOut ? "timeout" : "error",
             ...(browser
               ? {
                   browserAtTurn: {
@@ -1993,7 +2006,7 @@ async function handleTurn(c: Context): Promise<Response> {
         failed.outcome === "saved" || failed.outcome === "duplicate";
     }
 
-    if (abortController.signal.aborted) {
+    if (timedOut) {
       captureTurnEvent(c, {
         startedAt,
         outcome: "timeout",
@@ -2298,6 +2311,9 @@ async function handleTurn(c: Context): Promise<Response> {
         },
         error.status,
       );
+    const unavailable = browserFeatureUnavailable(error);
+    if (unavailable)
+      return v1Error(c, "FORBIDDEN", unavailable.message, unavailable.details);
     throw error;
   } finally {
     clearTimeout(wallClock);

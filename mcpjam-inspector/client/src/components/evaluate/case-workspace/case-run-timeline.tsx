@@ -22,8 +22,15 @@ import {
   targetKeySuffix,
 } from "@/lib/eval-target-key";
 import { cn } from "@mcpjam/design-system/cn";
-import { computeIterationResult } from "@/components/evals/pass-criteria";
-import type { EvalIteration, EvalSuiteRun } from "@/components/evals/types";
+import {
+  computeIterationResult,
+  computeMeasuredIterationResult,
+} from "@/components/evals/pass-criteria";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "@/components/evals/types";
 
 const UNKNOWN_MODEL = "Unknown model";
 const age = (ts: number) => {
@@ -55,7 +62,7 @@ export function CaseRunTimeline({
   caseTitle: string;
   suiteName?: string;
   iterations: EvalIteration[];
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: (EvalSuiteRun | EvalSuiteRunListItem)[];
   hostNamesById?: Map<string, string | null>;
   selectedIterationId: string | null;
   openIterationId?: string | null;
@@ -192,14 +199,17 @@ export function CaseRunTimeline({
   const showPendingRun = Boolean(
     pendingRun && pendingKey === selectedTargetKey,
   );
+  // Measured results: an infra row is in neither the pass count nor the tone.
   const completed = filtered.filter((it) =>
-    ["passed", "failed", "timed_out"].includes(computeIterationResult(it)),
+    ["passed", "failed", "timed_out"].includes(
+      computeMeasuredIterationResult(it),
+    ),
   );
   const passed = completed.filter(
-    (it) => computeIterationResult(it) === "passed",
+    (it) => computeMeasuredIterationResult(it) === "passed",
   ).length;
   const hasFailures = completed.some((it) =>
-    ["failed", "timed_out"].includes(computeIterationResult(it)),
+    ["failed", "timed_out"].includes(computeMeasuredIterationResult(it)),
   );
   const tokenAverage = average(
     completed.flatMap((it) =>
@@ -252,7 +262,11 @@ export function CaseRunTimeline({
       iteration?.iterationNumber ??
       (index >= 0 ? index + 1 : orderedRunIds.length + 1);
     const titles = [
-      ...new Set(run?.configSnapshot?.tests.map((test) => test.title) ?? []),
+      ...new Set(
+        run && "tests" in run.configSnapshot
+          ? run.configSnapshot.tests.map((test) => test.title)
+          : [],
+      ),
     ];
     const title =
       titles.length === 1
@@ -290,8 +304,10 @@ export function CaseRunTimeline({
           ))}
         </div>
       </div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,5rem),1fr))] gap-x-2 gap-y-4 rounded-xl border border-border bg-background px-4 py-4 text-foreground"
-        data-testid="case-run-averages">
+      <div
+        className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,5rem),1fr))] gap-x-2 gap-y-4 rounded-xl border border-border bg-background px-4 py-4 text-foreground"
+        data-testid="case-run-averages"
+      >
         {[
           {
             label: "Passed",
@@ -432,7 +448,9 @@ export function CaseRunTimeline({
                         and the same one the run matrix shows per iteration —
                         `duration()` reported a latency for iterations the
                         cards excluded, so a row and the header disagreed. */}
-                    {it ? formatRunCaseLatencyMs(iterationLatencyP95([it])) : "—"}
+                    {it
+                      ? formatRunCaseLatencyMs(iterationLatencyP95([it]))
+                      : "—"}
                   </span>
                   <span className="tabular-nums text-muted-foreground">
                     {it && typeof it.tokensUsed === "number"

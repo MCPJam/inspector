@@ -937,6 +937,24 @@ describe("eval export", () => {
     });
   });
 
+  test("uses a derived suite identity and preserves case scenarios on export", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        { cases: [{ scenario: "checkout" }] },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const loaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(loaded.ok, true);
+      if (!loaded.ok) return;
+      assert.equal(loaded.authored.suite.id, "s_export_s_billing");
+      assert.equal(loaded.authored.cases[0].scenario, "checkout");
+    });
+  });
+
   test("writes a file that reads back as the same suite", async () => {
     await withTempDir(async (dir) => {
       const run = await runExport({}, "--suite", "Billing smoke");
@@ -947,7 +965,7 @@ describe("eval export", () => {
       assert.equal(payload.cases, 1);
       assert.equal(
         path.relative(dir, payload.path),
-        path.join(".mcpjam", "evals", "s_billing.yaml")
+        path.join(".mcpjam", "evals", "s_export_s_billing.yaml")
       );
 
       const text = await readFile(payload.path, "utf8");
@@ -957,7 +975,7 @@ describe("eval export", () => {
       // Export writes dialect 1, whose count is spelled `repetitions`.
       assert.equal(reloaded.authored.schemaVersion, "1");
       if (reloaded.authored.schemaVersion !== "1") return;
-      assert.equal(reloaded.authored.suite.id, "s_billing");
+      assert.equal(reloaded.authored.suite.id, "s_export_s_billing");
       assert.equal(reloaded.authored.defaults.passThreshold, 0.8);
       assert.equal(reloaded.authored.defaults.repetitions, 5);
       assert.deepEqual(reloaded.authored.target.servers, [{ name: "billing" }]);
@@ -1175,11 +1193,6 @@ describe("eval export", () => {
           ],
         },
         pointer: "cases[1].models[0].provider",
-      },
-      {
-        label: "a scenario-bound case",
-        state: { cases: [{ scenario: "checkout" }] },
-        pointer: "cases[0].scenario",
       },
       {
         label: "a case that replaces the suite's checks",
@@ -3472,6 +3485,16 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(fileCaseToCreateBody(labelled).intent, "refund");
     assert.equal(fileCaseToUpdateBody(labelled).intent, "refund");
     assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).intent, null);
+  });
+
+  test("case bodies preserve and clear authored scenarios", () => {
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const contextual = { ...loaded.resolved.cases[0], scenario: "checkout" };
+    assert.equal(fileCaseToCreateBody(contextual).scenario, "checkout");
+    assert.equal(fileCaseToUpdateBody(contextual).scenario, "checkout");
+    assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).scenario, null);
   });
 
   test("case bodies preserve an authored kind and clear a removed one", () => {

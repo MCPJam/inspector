@@ -54,7 +54,17 @@ export type HarnessBrokerStartResult =
       proxyBaseUrl: string;
       delivery: "e2b-network-transform";
     }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /**
+       * The backend's machine code, when it sent one (`spend_budget_reached`,
+       * `free_tier_model_restricted`, …), so a caller can type the failure
+       * instead of reading the prose.
+       */
+      code?: string;
+    };
 
 /**
  * The LOCAL delivery's result. Structurally the cloud one plus a `lease`.
@@ -112,10 +122,11 @@ export type HarnessBrokerBox =
       computerId: string;
       /** The project to authorize + bill against. Required here, and ONLY here. */
       projectId: string;
-      /** Phase 3 scope; when present the backend runs the host-funded guest path
-       *  (re-resolve access, require harness capability, per-swarm daily cap).
-       *  A personal-computer concept — the backend rejects it on the sandbox
-       *  path, so it lives on this arm rather than beside it. */
+      /** Phase 3 scope, re-resolved by the backend. Only a `project` scope
+       *  (Playground) reaches the broker here: a scenario (`swarm`) harness
+       *  runs on its conversation's box, and the backend refuses a scenario
+       *  scope on a computer. It also rejects any scope on the sandbox path,
+       *  so it lives on this arm rather than beside it. */
       executionScope?: ExecutionScope;
     }
   | {
@@ -236,6 +247,9 @@ export async function startHarnessModelBroker(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Harness model-broker failed (${response.status})`,
+      ...(!response.ok && typeof payload?.code === "string"
+        ? { code: payload.code }
+        : {}),
     };
   }
 

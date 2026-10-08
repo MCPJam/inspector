@@ -12,6 +12,7 @@ import {
   createUIMessageStreamResponse,
   parseJsonEventStream,
   pruneMessages,
+  uiMessageChunkSchema,
   type ToolSet,
 } from "ai";
 import type {
@@ -25,7 +26,7 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
-import { zodSchema } from "@ai-sdk/provider-utils";
+import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
@@ -35,6 +36,7 @@ import {
   describeAsSlug,
   describeError,
   isNormalizedError,
+  readModelOutputImage,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -53,6 +55,10 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
+import {
+  httpStatusOrUndefined,
+  type InfraFailureEvidence,
+} from "./infra-failure-evidence.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
@@ -181,11 +187,7 @@ function isModelVisibleImageOutput(value: unknown): boolean {
         partRecord.text.startsWith("[embedded image resource omitted:")
       );
     }
-    return (
-      (partRecord.type === "media" || partRecord.type === "image-data") &&
-      typeof partRecord.mediaType === "string" &&
-      partRecord.mediaType.startsWith("image/")
-    );
+    return readModelOutputImage(partRecord) !== undefined;
   });
 }
 
@@ -302,6 +304,7 @@ async function decideToolCallApproval(args: {
   }
 }
 import { logger } from "./logger";
+import { getSystemLogger } from "./request-logger";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
@@ -349,6 +352,7 @@ import {
 } from "./model-request-payload";
 import { guestIpForwardHeaders, hashGuestSpendIp } from "./guest-spend-ip.js";
 import { isAbortError } from "@/shared/abort-errors";
+import { serviceCredentialHeaders } from "../services/service-credential.js";
 
 const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -370,6 +374,52 @@ function readLinkedMcpResourceWithManager(
   };
 }
 const streamChunkSchema = zodSchema(z.unknown());
+
+const chunkGuardLogger = getSystemLogger("mcpjam-stream-handler");
+
+/**
+ * Whether the browser's AI SDK would accept a backend chunk that
+ * `processStream` has no case for and would forward verbatim.
+ *
+ * `uiMessageChunkSchema` comes from the same `ai` the client bundles, so this
+ * is the client's own check run one hop earlier — where a failure can be
+ * dropped and reported, instead of failing the whole turn with "Type
+ * validation failed". That is what happened on 2026-10-05, when the AI SDK 7
+ * backend started streaming `{type:"custom"}` and the `default:` branch
+ * forwarded it.
+ *
+ * Only the `default:` branch asks. The explicit cases feed tool execution and
+ * the persisted message, so dropping one would silently lose a tool call;
+ * field drift there still fails loudly in the browser, which reports it.
+ *
+ * Reported once per chunk type per stream: a drifted type appears on every
+ * step of every turn.
+ */
+async function clientAcceptsBackendChunk(
+  chunk: unknown,
+  reported: Set<string>,
+): Promise<boolean> {
+  const result = await safeValidateTypes({
+    value: chunk,
+    schema: uiMessageChunkSchema,
+  });
+  if (result.success) return true;
+
+  const record =
+    chunk && typeof chunk === "object" && !Array.isArray(chunk)
+      ? (chunk as Record<string, unknown>)
+      : {};
+  const chunkType =
+    typeof record.type === "string" ? record.type.slice(0, 64) : typeof chunk;
+  if (!reported.has(chunkType)) {
+    reported.add(chunkType);
+    chunkGuardLogger.event("chat.stream.chunk_rejected", {
+      chunkType,
+      fields: Object.keys(record).slice(0, 20),
+    });
+  }
+  return false;
+}
 
 let warnedMissingAbortSignal = false;
 /**
@@ -560,6 +610,12 @@ export interface MCPJamEngineErrorEvent {
    * absence as unknown rather than as either answer.
    */
   phase?: "setup" | "stream";
+  /**
+   * Producer-typed evidence that one of OUR layers failed
+   * (`utils/infra-failure-evidence.ts`); absent ⇒ unclassified. Read only by
+   * the eval infra-error classifier.
+   */
+  infra?: InfraFailureEvidence;
   /**
    * Classified form of this failure, including its `origin` — whose fault the
    * turn dying was.
@@ -1022,6 +1078,13 @@ export interface MCPJamHandlerOptions {
    * access + per-swarm host-funded caps. Absent ⇒ legacy member path.
    */
   executionScope?: ExecutionScope;
+  /**
+   * The actor is a NON-MEMBER participant of the scenario this `swarm` scope
+   * names (the runtime config's advisory `accessKind`). Copy only: a refusal
+   * they see never names the study's credits, budget, organization or
+   * environment (`participantSafeStudyError`). Members keep the detail.
+   */
+  scenarioParticipant?: boolean;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   /** Real agent harness for this turn (absent ⇒ MCPJam's emulated engine).
@@ -1041,6 +1104,14 @@ export interface MCPJamHandlerOptions {
    * Absent ⇒ today's unpoliced bare-token path, byte-identical.
    */
   harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * HOST-EXECUTED harness delivery only (Codex): the same per-call executor an
+   * emulated Playground turn wraps its MCP tools with (OpenAI plugin forms on
+   * the composer card, owned model Apps). It runs innermost, after the tool
+   * policy gate and the harness's own approval, exactly where the emulated
+   * engine's wrapper sits. Absent ⇒ the projected tools are unchanged.
+   */
+  hostToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   /**
    * The eval ITERATION this harness turn is executing, when there is one.
    *
@@ -1995,6 +2066,7 @@ export function parseStreamErrorChunkText(errorText: string): {
   message: string;
   code?: string;
   statusCode?: number;
+  isRetryable?: boolean;
   details?: string;
 } {
   try {
@@ -2002,6 +2074,7 @@ export function parseStreamErrorChunkText(errorText: string): {
       code?: unknown;
       message?: unknown;
       statusCode?: unknown;
+      isRetryable?: unknown;
       details?: unknown;
     };
     if (body && typeof body === "object") {
@@ -2014,6 +2087,9 @@ export function parseStreamErrorChunkText(errorText: string): {
         ...(typeof body.code === "string" ? { code: body.code } : {}),
         ...(typeof body.statusCode === "number"
           ? { statusCode: body.statusCode }
+          : {}),
+        ...(typeof body.isRetryable === "boolean"
+          ? { isRetryable: body.isRetryable }
           : {}),
         ...(typeof body.details === "string" ? { details: body.details } : {}),
       };
@@ -2076,6 +2152,37 @@ function attachedFailureCode(error: unknown): string | undefined {
 }
 
 /**
+ * Infra evidence from the backend's categorized `{code, statusCode}` envelope.
+ *
+ * The status is the body's `statusCode` — the UPSTREAM provider's, which the
+ * backend copies from the error it categorized — and never the HTTP status of
+ * our own `/stream` response: that one is a bare 500 for every failure the
+ * backend could not categorize, and must not stand in for the provider's.
+ */
+function backendModelEvidence(
+  code: string,
+  statusCode: unknown,
+): InfraFailureEvidence {
+  const httpStatus = httpStatusOrUndefined(statusCode);
+  return {
+    source: "backend_model",
+    code,
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+  };
+}
+
+/** The infra evidence a thrower attached alongside {@link attachedNormalized}. */
+function attachedInfraEvidence(
+  error: unknown,
+): InfraFailureEvidence | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const evidence = (error as { infraEvidence?: unknown }).infraEvidence;
+  return evidence && typeof evidence === "object"
+    ? (evidence as InfraFailureEvidence)
+    : undefined;
+}
+
+/**
  * PR 5b-followup-2: parse a Convex `/stream` non-OK response body as
  * the standard guardrail JSON shape `{ code?, error, details? }`.
  * Falls back to a generic `<status> <text>` message when the body
@@ -2098,6 +2205,7 @@ function parseEngineErrorBody(
   | "gatedBy"
   | "scope"
   | "outstandingHolds"
+  | "infra"
 > {
   try {
     const body = JSON.parse(bodyText) as {
@@ -2106,6 +2214,7 @@ function parseEngineErrorBody(
       details?: string;
       retryAfter?: number;
       isRetryable?: boolean;
+      statusCode?: unknown;
       refusalReason?: string;
       reason?: string;
       gatedBy?: string;
@@ -2140,6 +2249,9 @@ function parseEngineErrorBody(
         ...(typeof body.scope === "string" ? { scope: body.scope } : {}),
         ...(typeof body.outstandingHolds === "number"
           ? { outstandingHolds: body.outstandingHolds }
+          : {}),
+        ...(typeof body.code === "string" && body.code
+          ? { infra: backendModelEvidence(body.code, body.statusCode) }
           : {}),
       };
     }
@@ -2207,6 +2319,7 @@ async function processStream(
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
   let firstChunkAt: number | undefined;
+  const rejectedChunkTypes = new Set<string>();
 
   const flushText = () => {
     if (pendingText) {
@@ -2555,15 +2668,31 @@ async function processStream(
           throw Object.assign(new Error(parsed.message), {
             normalized,
             ...(parsed.code ? { failureCode: parsed.code } : {}),
+            // The backend categorizing its own model call, kept STRUCTURED
+            // for site 3's `onEngineError` so an eval can tell a provider 503
+            // from a server failure without reading the sentence.
+            ...(parsed.code
+              ? {
+                  infraEvidence: backendModelEvidence(
+                    parsed.code,
+                    parsed.statusCode,
+                  ),
+                }
+              : {}),
             ...(parsed.code === PROVIDER_NOT_ALLOWLISTED_CODE
               ? { clientErrorText: providerNotAllowlistedErrorText(parsed) }
-              : {}),
+              : parsed.code
+                ? { clientErrorText: JSON.stringify(parsed) }
+                : {}),
           });
         }
 
         default:
-          // Forward other chunks (step-start, etc.)
-          writer.write(chunk);
+          // Forward other chunks (step-start, etc.) — only ones the browser
+          // can parse. One it can't would fail the whole turn.
+          if (await clientAcceptsBackendChunk(chunk, rejectedChunkTypes)) {
+            writer.write(chunk);
+          }
       }
     }
   } finally {
@@ -3584,10 +3713,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // Sponsored study inference must come through the trusted execution path
   // that resolves the study's model and tools. This proof is required even
   // when there is no client IP to forward. The viewer bearer remains intact.
-  const scenarioServiceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (scenarioId && scenarioServiceToken) {
-    convexHeaders["x-inspector-service-token"] = scenarioServiceToken;
-  }
+  if (scenarioId) Object.assign(convexHeaders, serviceCredentialHeaders());
   // A platform-billing claim rides the user's own sign-in: Convex authorizes
   // it on the bearer above, so a self-hosted install with no service token
   // sends it as is. When this deployment does have the token (hosted), it is
@@ -3595,10 +3721,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // it with an IP hash and other backend checks still read it.
   const billingFeature = extraBodyFields?.billingFeature;
   if (billingFeature !== undefined) {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
-    if (serviceToken) {
-      convexHeaders["x-inspector-service-token"] = serviceToken;
-    }
+    Object.assign(convexHeaders, serviceCredentialHeaders());
   }
   // A claimed turn goes to the PLATFORM route and NEVER falls back to the
   // ordinary one. Falling back is the whole failure being fixed: the ordinary
@@ -4690,6 +4813,12 @@ export interface ChatEngineLoopResult {
   messageHistory: ModelMessage[];
   turnTrace?: PersistedTurnTrace;
   aborted: boolean;
+  /**
+   * Harness only: a Stop or the caller's deadline ended a Claude Code turn's
+   * wait for its background agents, after the answer was delivered. The turn
+   * finished and was kept; it was not cut short.
+   */
+  backgroundDrainEnded?: true;
 }
 
 /**
@@ -5424,11 +5553,23 @@ export async function runChatEngineLoop(
         });
         emitError(safeWriter, attachedClientErrorText(error) ?? errorText);
         // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
-        // Site (3) — outer agentic-loop catch. No structured body,
-        // no stepIndex.
+        // Site (3) — outer agentic-loop catch. Mid-stream provider errors
+        // retain their envelope; parser/transport failures may be plain text.
+        const loopInfra = attachedInfraEvidence(error);
+        const streamFailure = parseStreamErrorChunkText(
+          attachedClientErrorText(error) ?? errorText,
+        );
         safelyEmitEngineError(onEngineError, {
           message: errorText,
+          ...(streamFailure.statusCode !== undefined
+            ? { httpStatus: streamFailure.statusCode }
+            : {}),
+          ...(streamFailure.isRetryable !== undefined
+            ? { isRetryable: streamFailure.isRetryable }
+            : {}),
+          ...(streamFailure.details ? { details: streamFailure.details } : {}),
           ...(loopFailureCode ? { code: loopFailureCode } : {}),
+          ...(loopInfra ? { infra: loopInfra } : {}),
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
@@ -5539,6 +5680,20 @@ export async function runChatEngineLoop(
         } finally {
           await onFinishEngine(context.writer);
         }
+      },
+      // The engine's own catch writes a described error. Anything that
+      // escapes it would reach the chat as the SDK's bare "An error
+      // occurred.", which says nothing about what failed.
+      onError: (error) => {
+        logger.error(
+          "[mcpjam-stream-handler] Error escaped the chat stream",
+          error,
+        );
+        const detail =
+          error instanceof Error && error.message.trim()
+            ? ` (${error.message.trim().slice(0, 200)})`
+            : "";
+        return `MCPJam hit an unexpected error while writing this reply, so it stopped. Send your message again to retry.${detail}`;
       },
     });
     const response = createUIMessageStreamResponse({ stream });

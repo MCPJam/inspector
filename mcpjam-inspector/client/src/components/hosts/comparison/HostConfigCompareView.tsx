@@ -100,6 +100,7 @@ import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { cn } from "@/lib/utils";
+import { useServerSupportsFeature } from "@/lib/server-capabilities";
 
 type CompareViewMode = "table" | "list";
 
@@ -246,6 +247,10 @@ export function HostConfigCompareView({
   // Catalog host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
   // read-only comparison columns even when the user cannot create them.
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  // The report/notify actions store through the server's caniuse relay, which
+  // a self-hosted server (no MCPJam service credential) refuses. `null` while
+  // unknown keeps them shown.
+  const publicSiteRelays = useServerSupportsFeature("public-site-relays");
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
@@ -701,8 +706,12 @@ export function HostConfigCompareView({
               actions={
                 presetOnly ? (
                   <div className="flex items-center gap-1.5">
-                    <ReportInconsistencyDialog />
-                    <NotifyButton />
+                    {publicSiteRelays !== false && (
+                      <>
+                        <ReportInconsistencyDialog />
+                        <NotifyButton />
+                      </>
+                    )}
                     <ShareComparisonDialog
                       selectedHostIds={selectedHostIds}
                       searchQuery={fieldSearchQuery}

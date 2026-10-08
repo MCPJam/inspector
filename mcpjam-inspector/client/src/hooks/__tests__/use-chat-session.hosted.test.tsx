@@ -226,7 +226,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
+// Soft reads (billing, credits, quota, notifications) go through useQueries;
+// withUseQueries answers them from this mock's useQuery.
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
   useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
@@ -780,6 +783,28 @@ describe("useChatSession hosted mode", () => {
     expect(result.current.isMcpJamModel).toBe(false);
     expect(result.current.traceViewsSupported).toBe(true);
     unmount();
+  });
+
+  it("preserves the conversation on equivalent JWT refresh and resets on changed authority", async () => {
+    const claims = { iss: "https://auth.example", sub: "disposable-user", org_id: "org", exp: 100, iat: 1, jti: "first" };
+    const token = (value: Record<string, unknown>) => `e30.${btoa(JSON.stringify(value)).replaceAll("=", "")}.signature`;
+    mockState.getAccessToken = vi.fn(async () => token(claims));
+    vi.mocked(generateId).mockReturnValueOnce("original-thread").mockReturnValue("changed-thread");
+    const onReset = vi.fn();
+    const { result, rerender } = renderHook(() => useChatSession({ selectedServers: [], hostedContext: { projectId: "project", hostId: "client", selectedServerIds: [] }, onReset }));
+    await waitFor(() => expect(result.current.isSessionBootstrapComplete).toBe(true));
+    mockState.setMessages.mockClear();
+    onReset.mockClear();
+    mockState.getAccessToken = vi.fn(async () => token({ ...claims, exp: 200, iat: 101, jti: "refreshed" }));
+    rerender();
+    await waitFor(() => expect(result.current.authHeaders?.Authorization).toContain(token({ ...claims, exp: 200, iat: 101, jti: "refreshed" })));
+    expect(result.current.chatSessionId).toBe("original-thread");
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+    expect(onReset).not.toHaveBeenCalled();
+    mockState.getAccessToken = vi.fn(async () => token({ ...claims, sub: "another-user" }));
+    rerender();
+    await waitFor(() => expect(result.current.chatSessionId).toBe("changed-thread"));
+    expect(onReset).toHaveBeenCalledWith("auth-bootstrap");
   });
 
   it("resets the thread when the hosted scope changes under the same auth header", async () => {

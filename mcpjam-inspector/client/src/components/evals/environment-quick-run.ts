@@ -21,10 +21,7 @@
  */
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
-import type {
-  ModelReasoningEffort,
-  ModelSelection,
-} from "@mcpjam/sdk/browser";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import { modelTarget, sameModelTarget } from "@/lib/model-target";
 import {
   chooseTemplate,
@@ -127,45 +124,45 @@ function runsModel(
   clientModelId?: (hostId: string) => string | undefined,
 ): boolean {
   if (target.modelId === undefined) return environment.modelId === undefined;
-  if (environment.modelId !== undefined) {
-    if (environment.modelId !== target.modelId) return false;
-    return (
-      !target.modelSelection ||
-      sameModelTarget(
-        modelTarget(environment.modelId, environment.modelSelection),
-        modelTarget(target.modelId, target.modelSelection),
-      )
-    );
-  }
   // An environment that inherits its client's model runs that model.
-  return clientModelId?.(environment.hostId) === target.modelId;
+  const runs = environment.modelId ?? clientModelId?.(environment.hostId);
+  if (runs !== target.modelId) return false;
+  return (
+    !target.modelSelection ||
+    sameModelTarget(
+      modelTarget(runs, environment.modelSelection),
+      modelTarget(target.modelId, target.modelSelection),
+    )
+  );
 }
 
 /**
- * The reasoning effort a quick run of `modelId` on `hostId` will run at: the
- * suite environment's own saved effort. The environment wins (a quick run
- * reuses or copies it), so the run sheet shows this read-only and offers no
- * effort control of its own. `undefined` when no environment pins one, or
- * when the client runs the model at two efforts (no single answer — the
- * quick run refuses that case as ambiguous rather than picking the first).
+ * The saved selection a plain pick of `modelId` on `hostId` runs with: the
+ * suite environment's own, which a pick with no selection of its own reuses.
+ * The run sheet starts the pick's effort menu on it, so a pick shows the
+ * effort it will really run at. `undefined` when no environment saves one for
+ * that model, or when the client runs it at two efforts (no single answer).
  */
-export function quickRunEnvironmentEffort(
+export function quickRunEnvironmentSelection(
   attached: readonly ProjectEnvironmentView[],
   hostId: string,
   modelId: string,
   clientModelId?: (hostId: string) => string | undefined,
-): ModelReasoningEffort | undefined {
+): ModelSelection | undefined {
   const target = { key: modelId, hostId, modelId };
-  const efforts = new Set(
-    attached
-      .filter(
-        (candidate) =>
-          candidate.hostId === hostId &&
-          runsModel(candidate, target, clientModelId),
-      )
-      .map((candidate) => candidate.modelSelection?.settings?.reasoningEffort),
+  const matches = attached.filter(
+    (candidate) =>
+      candidate.hostId === hostId &&
+      runsModel(candidate, target, clientModelId),
   );
-  return efforts.size === 1 ? [...efforts][0] : undefined;
+  const efforts = new Set(
+    matches.map(
+      (candidate) => candidate.modelSelection?.settings?.reasoningEffort,
+    ),
+  );
+  if (efforts.size !== 1) return undefined;
+  const selection = matches[0]?.modelSelection;
+  return selection?.modelId === modelId ? selection : undefined;
 }
 
 /**

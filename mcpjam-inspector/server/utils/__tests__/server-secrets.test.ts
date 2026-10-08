@@ -108,9 +108,12 @@ describe("fetchRuntimeServerSecrets", () => {
       accessScope: "chat_v2" as const,
     };
     delete process.env.INSPECTOR_SERVICE_TOKEN;
+    // Hosted-only: the typed error the route mapper answers as
+    // FEATURE_REQUIRES_HOSTED, never a 500 that pages someone.
     await expect(fetchRuntimeServerSecrets(args)).rejects.toMatchObject({
-      status: 500,
-      code: "INTERNAL_ERROR",
+      name: "ServiceCredentialUnavailableError",
+      code: "FEATURE_REQUIRES_HOSTED",
+      feature: "Shared scenario secrets",
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
@@ -131,6 +134,28 @@ describe("fetchRuntimeServerSecrets", () => {
     await expect(fetchRuntimeServerSecrets(args)).resolves.toMatchObject({
       boundOrigins: ["https://example.com"],
     });
+  });
+
+  it("answers hosted-only, not a 502, for an API-key reveal without the credential", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    delete process.env.INSPECTOR_SERVICE_TOKEN;
+    await expect(
+      fetchRuntimeServerSecrets({
+        expectedTargetUrl: "https://example.com/mcp",
+        bearerToken: "tester-token",
+        projectId: "project-1",
+        serverId: "server-1",
+        workosApiKeyActingAs: {
+          workosUserId: "user_1",
+          mcpjamOrganizationId: "org_1",
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: "ServiceCredentialUnavailableError",
+      code: "FEATURE_REQUIRES_HOSTED",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("forwards the backend's refusal for a repointed server", async () => {
@@ -221,7 +246,10 @@ describe("fetchRuntimeServerSecrets", () => {
         serviceName: "DCR",
         requireInspectorServiceToken: true,
       }),
-    ).rejects.toThrow(/INSPECTOR_SERVICE_TOKEN/);
+    ).rejects.toMatchObject({
+      name: "ServiceCredentialUnavailableError",
+      feature: "XAA client registration",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
 
     process.env.INSPECTOR_SERVICE_TOKEN = "service-token";

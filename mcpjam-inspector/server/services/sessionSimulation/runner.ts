@@ -44,6 +44,11 @@ import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js"
 import { resolveLocalOrgMaxSteps } from "../../utils/org-model-stream-handler.js";
 import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
 import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
+import {
+  SWARM_SPONSORED_FEATURE,
+  SWARM_SPONSORSHIP_REJECTED_CODE,
+  sponsoredPlatformFailure,
+} from "../../../shared/swarm-sponsorship.js";
 import { getHostedTurnFailure } from "../../utils/hosted-turn-failure.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
@@ -321,6 +326,13 @@ export interface SyntheticHostRuntime {
    * the swarm runner pins its own, the scenario runner keeps the default.
    */
   maxSteps?: number;
+  /**
+   * Output-token ceiling for each assistant step, sent as the hosted body's
+   * `maxOutputTokens`. Absent ⇒ the backend sizes it to the model, and holds
+   * credits against that. The swarm runner pins its own
+   * (`HOSTED_STEP_MAX_OUTPUT_TOKENS`); the scenario runner keeps the default.
+   */
+  maxOutputTokens?: number;
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
@@ -422,6 +434,14 @@ export interface SyntheticHostRuntime {
    * box that then fails vendor auth against a placeholder.
    */
   environmentId?: string;
+  /**
+   * Set only for a SPONSORED conversation (the backend allocated it to the
+   * platform-paid allowance). Every host step then carries the platform claim,
+   * and only on the MCPJam-hosted rail: a sponsored conversation never falls
+   * back to BYOK or a harness, and a platform failure ends it as a platform
+   * problem instead of surfacing as an org spend cap.
+   */
+  sponsorship?: { targetId: string; sessionIdx: number };
 }
 
 /** Attribution tags stamped onto every transcript persist for this session. */
@@ -525,6 +545,7 @@ export async function runSyntheticHostSession(
     systemPrompt,
     temperature,
     maxSteps,
+    maxOutputTokens,
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
@@ -983,18 +1004,18 @@ export async function runSyntheticHostSession(
             }
           : { kind: "none" }
         : harness || requireToolApproval || pinnedSkills.length === 0
-        ? { kind: "none" }
-        : {
-            kind: "pinned",
-            skills: pinnedSkills.map(
-              (a): PinnableSkill => ({
-                name: a.name,
-                description: a.description,
-                content: a.content,
-                contentHash: a.contentHash,
-              }),
-            ),
-          };
+          ? { kind: "none" }
+          : {
+              kind: "pinned",
+              skills: pinnedSkills.map(
+                (a): PinnableSkill => ({
+                  name: a.name,
+                  description: a.description,
+                  content: a.content,
+                  contentHash: a.contentHash,
+                }),
+              ),
+            };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -1108,9 +1129,9 @@ export async function runSyntheticHostSession(
         if (turn === 0) {
           throw Object.assign(
             new Error(
-              "The simulated user ended the session before sending the first message. The assistant was not tested. Re-run this attempt."
+              "The simulated user ended the session before sending the first message. The assistant was not tested. Re-run this attempt.",
             ),
-            { details: { reason: "persona_ended_before_start" } }
+            { details: { reason: "persona_ended_before_start" } },
           );
         }
         break;
@@ -1118,9 +1139,9 @@ export async function runSyntheticHostSession(
       if (!next.message.trim()) {
         throw Object.assign(
           new Error(
-            "The simulated user returned an empty message. No assistant turn was started for that message. Re-run this attempt."
+            "The simulated user returned an empty message. No assistant turn was started for that message. Re-run this attempt.",
           ),
-          { details: { reason: "persona_empty_message" } }
+          { details: { reason: "persona_empty_message" } },
         );
       }
 
@@ -1166,6 +1187,7 @@ export async function runSyntheticHostSession(
             systemPrompt: prepared.enhancedSystemPrompt,
             temperature: prepared.resolvedTemperature,
             ...(maxSteps !== undefined ? { maxSteps } : {}),
+            ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
             tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
@@ -1303,6 +1325,9 @@ export async function runSyntheticHostSession(
               : {}),
             ...(modelSelection ? { modelSelection } : {}),
             ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(runtime.sponsorship
+              ? { sponsorship: runtime.sponsorship }
+              : {}),
           }),
         admissionOptions,
       ).catch((error: unknown) => {
@@ -1484,9 +1509,9 @@ export async function runSyntheticHostSession(
     if (messageHistory.length === 0) {
       throw Object.assign(
         new Error(
-          "The simulation ended without starting a conversation. The assistant was not tested."
+          "The simulation ended without starting a conversation. The assistant was not tested.",
         ),
-        { details: { reason: "simulation_no_conversation" } }
+        { details: { reason: "simulation_no_conversation" } },
       );
     }
     await ensureSessionPersisted();
@@ -1520,6 +1545,34 @@ export async function runSyntheticHostSession(
       error instanceof RecordedAssistantTurnError
         ? error.errorRefusal
         : spendRefusalOf(error);
+    // A SPONSORED conversation that hit the platform's limit (or a claim the
+    // backend would not honour) is MCPJam's to explain. It is never an org
+    // spend cap, never retried, and never re-run on the organization's credits,
+    // so it must not fall through to the rate-limit fold below (whose "429"
+    // match would hand it to the whole-run spend-cap stop).
+    const sponsoredFailure = runtime.sponsorship
+      ? sponsoredPlatformFailure({
+          code: errorRefusal?.code ?? readErrorReason(error),
+          message,
+        })
+      : undefined;
+    if (sponsoredFailure) {
+      logger.warn("[sessionSimulation.runner] sponsored session stopped", {
+        runId,
+        chatSessionId,
+        code: sponsoredFailure.code,
+      });
+      emit?.({
+        type: "session_complete",
+        status: "failed",
+        errorMessage: sponsoredFailure.message,
+      });
+      return {
+        outcome: "failed",
+        errorMessage: sponsoredFailure.message,
+        errorReason: sponsoredFailure.code,
+      };
+    }
     // Single source of truth for the spend-cap / rate-limit fold — shared with
     // the per-runtime `classifyFailure` so the regex can't drift. Return the
     // message on the rate-limited branch too: the swarm fan-out runner inspects
@@ -1925,8 +1978,23 @@ export async function drainAssistantTurn(
      * `resolveTurnRuntime` on the rail it resolves.
      */
     reasoningEffort?: ModelReasoningEffort;
+    /**
+     * Per-step output-token ceiling for the hosted body (see
+     * `SyntheticHostRuntime.maxOutputTokens`). The backend reserves credits
+     * against it, so a realistic ceiling is a realistic hold. Sent on the
+     * MCPJam-hosted rail only (see `resolveTurnRuntime`), and never to a
+     * harness host's model broker (see the harness options below).
+     */
+    maxOutputTokens?: number;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
+    /**
+     * Sponsored swarm step: send the platform claim so the backend bills MCPJam
+     * instead of the organization. `sessionIdx` is omitted for the target-level
+     * setup turn. Honoured only on the MCPJam-hosted rail; anywhere else the
+     * step is refused rather than run on a paid path.
+     */
+    sponsorship?: { targetId: string; sessionIdx?: number };
   },
 ): Promise<{
   history: ModelMessage[];
@@ -1954,6 +2022,8 @@ export async function drainAssistantTurn(
     hooks,
     modelSelection,
     reasoningEffort,
+    sponsorship,
+    maxOutputTokens,
   } = args;
 
   // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
@@ -1979,6 +2049,8 @@ export async function drainAssistantTurn(
   // body as an extra field. The backend spend writer ignores unknown fields
   // until the swarm wiring lands (`feedback_bridge_preserves_unknown_fields`),
   // so this is forward-compatible and inert for the scenario path.
+  // `maxOutputTokens` is NOT merged here: it rides the MCPJam-hosted rail only,
+  // so `resolveTurnRuntime` adds it once the rail is known.
   const mergedExtraBodyFields =
     journeyRunId !== undefined
       ? { ...(extraBodyFields ?? {}), journeyRunId }
@@ -2015,6 +2087,7 @@ export async function drainAssistantTurn(
       : {}),
     ...(attribution ? { attribution } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     // What the engine is handed below, so the rail applies the effort and
     // the local execution record states the settings actually sent.
     ...(args.temperature !== undefined || reasoningEffort !== undefined
@@ -2028,6 +2101,41 @@ export async function drainAssistantTurn(
         }
       : {}),
   });
+
+  // Sponsored claim, attached AFTER rail resolution so it can only ever ride
+  // the MCPJam-hosted `/stream` rail. The stream handler turns
+  // `billingFeature` into the platform route plus the service-token proof; on
+  // BYOK or a harness the claim would be incoherent (the customer's own key or
+  // box is not MCPJam paying), and dropping it would quietly run a sponsored
+  // conversation on a paid path. Refuse instead.
+  if (sponsorship) {
+    if (
+      rt.runtime.kind !== "hosted" ||
+      rt.modelSource !== "mcpjam" ||
+      args.harness ||
+      rt.runtime.harness ||
+      !journeyRunId ||
+      !hostId
+    ) {
+      throw new Error(
+        "A sponsored conversation runs only on an MCPJam-hosted model without a harness, and this step resolved to a different rail, so it was not run " +
+          `(${SWARM_SPONSORSHIP_REJECTED_CODE}).`,
+      );
+    }
+    rt.runtime = {
+      ...rt.runtime,
+      extraBodyFields: {
+        ...(rt.runtime.extraBodyFields ?? {}),
+        billingFeature: SWARM_SPONSORED_FEATURE,
+        journeyRunId,
+        hostId,
+        targetId: sponsorship.targetId,
+        ...(sponsorship.sessionIdx !== undefined
+          ? { sessionIdx: sponsorship.sessionIdx }
+          : {}),
+      },
+    };
+  }
 
   // Engine-error signal. Structural type covers both the hosted
   // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
@@ -2171,6 +2279,11 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // No ceiling for a harness host: its model broker clamps `max_tokens` to it
+    // without touching the model's thinking budget, so one below the broker's
+    // own default (64,000) can make Anthropic refuse every thinking turn. The
+    // ceiling rides the hosted `/stream` body only, and `resolveTurnRuntime`
+    // withholds it from a harness host even when `maxOutputTokens` is set.
     ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The turn's Project Environment — the grant boundary the harness path
     // checks a BROKERED external-account credential against. Inert for the

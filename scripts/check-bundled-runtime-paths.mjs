@@ -33,6 +33,12 @@ const scannedExtensions = new Set([
   ".ts",
   ".tsx",
 ]);
+// Manual probes run from source with tsx (see each file's header) and are
+// never bundled, so a source-relative path there is the intended layout.
+const skippedFiles = new Set([
+  "mcpjam-inspector/server/utils/harness/codex-appserver/e2b-probe.mts",
+]);
+
 const skippedFileSuffixes = [
   ".bundled.ts",
   ".bundled.tsx",
@@ -81,6 +87,9 @@ function shouldScanFile(filePath) {
   const basename = path.basename(filePath);
   return (
     scannedExtensions.has(ext) &&
+    !skippedFiles.has(
+      path.relative(repoRoot, filePath).split(path.sep).join("/"),
+    ) &&
     !skippedFileSuffixes.some((suffix) => basename.endsWith(suffix))
   );
 }

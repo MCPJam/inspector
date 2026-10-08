@@ -6,6 +6,7 @@ import type {
   SuiteGatePolicyV1,
 } from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { TestStep } from "@/shared/steps";
 import type {
   EvalTraceBlobV1,
@@ -411,6 +412,11 @@ export type EvalSuite = {
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
   /**
+   * The skills a suite WITHOUT environments runs with. An environment suite's
+   * skills live on its environments; the read sends this raw field either way.
+   */
+  selectedSkillIds?: string[];
+  /**
    * Attach-ordered project environments (`projectEnvironments` docs). When
    * non-empty, Run all fans out ONE run per environment (replacing
    * hostAttachments as the fan-out axis — env pointers win over the legacy
@@ -640,16 +646,15 @@ export type EvalIteration = {
   /**
    * PR-4 R6: present on iterations whose transcript was written via the
    * unified chatSessions path (eval→chatSessions writer flag on).
-   * Trace-repair candidate selection considers iterations with either
-   * `blob` or `chatSessionId` as trace-bearing — both source paths feed
-   * the source-aware `getTestIterationBlob` action.
+   * An iteration with either `blob` or `chatSessionId` is trace-bearing —
+   * both source paths feed the source-aware `getTestIterationBlob` action.
    */
   chatSessionId?: string;
   /**
    * PR-4 R6: set when the inspector's fanout-failure fallback flipped
-   * the iteration to legacy-only reads. Doesn't change trace-repair
-   * eligibility — readers still get a usable transcript via
-   * `getTestIterationBlob` regardless of which source feeds it.
+   * the iteration to legacy-only reads. Readers still get a usable
+   * transcript via `getTestIterationBlob` regardless of which source
+   * feeds it.
    */
   preferLegacyBlob?: boolean;
   /**
@@ -695,6 +700,14 @@ export type EvalIteration = {
   execution?: unknown;
   error?: string;
   errorDetails?: string;
+  /**
+   * Set when OUR infrastructure failed this trial (a provider outage, a rate
+   * limit, a bad key, an account limit, a sandbox) — see
+   * `@/shared/eval-infra-error`. Always paired with `status: "failed"`. Pass
+   * rates leave the row out (`computeMeasuredIterationResult`); its label
+   * stays "Failed".
+   */
+  infraError?: EvalInfraError;
   resultSource?: "reported" | "derived";
   externalIterationId?: string;
   // Widened to `unknown` because the backend metadata column now round-trips
@@ -862,6 +875,8 @@ export type EvalRunMetrics = {
     skipped: number;
     /** Completed without a stored verdict; only the browser can grade these. */
     unscored: number;
+    /** OUR infrastructure failed the trial; counted in no verdict bucket. */
+    infraError?: number;
   };
   completedCount: number;
   latencyP50Ms?: number;
@@ -1126,8 +1141,14 @@ export type EvalSuiteRun = {
     apiKeyId?: string | null;
   };
   replayedFromRunId?: string;
-  /** Set when this run was created by the Auto fix suite replay step. */
-  traceRepairJobId?: string;
+  /**
+   * Set when this run re-ran a SUBSET of `rerunOfRunId`: only the cases that
+   * did not pass there. Its pass rate is biased by that selection, so it is
+   * never a suite's latest run, a trend point, a baseline, or part of a suite
+   * aggregate — see `isSubsetRerunRun`.
+   */
+  rerunOfRunId?: string;
+  rerunScope?: "failed_cases";
   hasServerReplayConfig?: boolean;
   externalRunId?: string;
   framework?: string;
@@ -1489,70 +1510,6 @@ export type EvalRunDiff = {
   }>;
 };
 
-export type EvalRefinementSession = {
-  _id: string;
-  status: "pending_candidate" | "ready" | "verifying" | "completed" | "failed";
-  outcome?: "improved_test" | "still_ambiguous" | "server_likely";
-  failureSignature?: string;
-  testWeaknessHypothesis?: string;
-  serverHypothesis?: string;
-  confidenceChecklist?: string[];
-  candidateParaphraseQuery?: string;
-  verificationRuns: Array<{
-    label: string;
-    iterationId?: string;
-    provider: string;
-    model: string;
-    query: string;
-    passed: boolean;
-    failureSignature?: string;
-  }>;
-  attributionSummary?: string;
-  promotedAt?: number;
-  updatedAt: number;
-  baseSnapshot?: {
-    caseKey?: string;
-    title: string;
-    query: string;
-    runs: number;
-    models: Array<{ model: string; provider: string }>;
-    expectedToolCalls: Array<{
-      toolName: string;
-      arguments: Record<string, any>;
-    }>;
-    isNegativeTest?: boolean;
-    scenario?: string;
-    expectedOutput?: string;
-    advancedConfig?: Record<string, unknown>;
-  };
-  candidateSnapshot?: {
-    caseKey?: string;
-    title: string;
-    query: string;
-    runs: number;
-    models: Array<{ model: string; provider: string }>;
-    expectedToolCalls: Array<{
-      toolName: string;
-      arguments: Record<string, any>;
-    }>;
-    isNegativeTest?: boolean;
-    scenario?: string;
-    expectedOutput?: string;
-    advancedConfig?: Record<string, unknown>;
-  };
-};
-
-export type EvalRunRefinementCase = {
-  sourceIterationId: string;
-  testCaseId?: string;
-  caseKey: string;
-  title: string;
-  query: string;
-  failureSignature?: string;
-  failureStreak: number;
-  session: EvalRefinementSession | null;
-};
-
 export type EvalSuiteOverviewEntry = {
   suite: EvalSuite;
   latestRun: EvalSuiteRun | null;
@@ -1613,7 +1570,7 @@ export type CommitGroup = {
    * and renders as "All runs passed".
    */
   status: "passed" | "failed" | "running" | "mixed" | "inconclusive";
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   suiteMap: Map<string, string>; // suiteId → suite name
   summary: {
     total: number;
@@ -1622,4 +1579,61 @@ export type CommitGroup = {
     running: number;
     inconclusive: number;
   };
+};
+
+/** A history row is deliberately not a full run: snapshots are fetched on selection. */
+export type EvalSuiteRunListItem = Pick<
+  EvalSuiteRun,
+  | "_id"
+  | "_creationTime"
+  | "suiteId"
+  | "createdBy"
+  | "projectId"
+  | "runNumber"
+  | "configRevision"
+  | "name"
+  | "tags"
+  | "runMetadata"
+  | "status"
+  | "result"
+  | "summary"
+  | "metrics"
+  | "passCriteria"
+  | "verdictPolicyVersion"
+  | "createdAt"
+  | "completedAt"
+  | "isActive"
+  | "stoppedAt"
+  | "stopReason"
+  | "expectedIterations"
+  | "runGroupId"
+  | "namedHostId"
+  | "client"
+  | "effectiveModelId"
+  | "targetKey"
+  | "modelSource"
+  | "source"
+  | "launcher"
+  | "attribution"
+  | "ciMetadata"
+  | "replayedFromRunId"
+  | "rerunOfRunId"
+  | "rerunScope"
+  | "hasServerReplayConfig"
+  | "framework"
+  | "externalRunId"
+  | "runInsightsStatus"
+  | "serverQualityStatus"
+  | "goalCompletionStatus"
+> & {
+  configSnapshot: Pick<
+    EvalSuiteRun["configSnapshot"],
+    "environmentRef" | "executionEngine" | "executionVenue"
+  >;
+  runInsightsJobId?: string | number;
+  runInsightsErrorCode?: string;
+  runInsights?: { summary: string; generatedAt: number };
+  judgeScore?: number | null;
+  judgeThreshold?: number;
+  judgeOffConfig?: boolean;
 };

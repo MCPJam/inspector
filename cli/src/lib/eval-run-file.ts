@@ -148,6 +148,7 @@ export function fileCaseToCreateBody(
     id: testCase.id,
     title: testCase.title,
     ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
+    ...(testCase.scenario !== undefined ? { scenario: testCase.scenario } : {}),
     ...(testCase.kind !== undefined ? { kind: testCase.kind } : {}),
     steps: testCase.steps,
     ...(testCase.suppressedSuiteStandardCheckIds !== undefined
@@ -208,6 +209,9 @@ export function fileCaseToUpdateBody(
     // block would otherwise leave a stale claim describing a conversion that
     // is no longer being asserted.
     import: testCase.import ?? null,
+    // A file sync clears a removed scenario; ordinary PATCH callers can omit
+    // the field to preserve the existing value.
+    scenario: testCase.scenario ?? null,
   };
 }
 

@@ -1,3 +1,5 @@
+import { useRunGroupSummaries } from "./use-run-group-summaries";
+import { useSelectedRun } from "./use-selected-run";
 import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
@@ -10,7 +12,7 @@ import {
   useReducer,
   useRef,
 } from "react";
-import { useMutation, useConvexAuth, useQuery } from "convex/react";
+import { useMutation, useConvexAuth, useQuery, useConvex } from "convex/react";
 import { Loader2 } from "lucide-react";
 import {
   EVAL_GRADING_VALIDITY_HINTS,
@@ -23,7 +25,7 @@ import {
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -55,6 +57,7 @@ import {
   generationEnvironmentId,
   getLatestRunMetricSource,
   getRunMetricSource,
+  isSubsetRerunRun,
   runEnvironmentRef,
 } from "./helpers";
 import { SuiteHeader } from "./suite-header";
@@ -130,6 +133,7 @@ import type {
   EvalIteration,
   EvalSuite,
   EvalSuiteRun,
+  EvalSuiteRunListItem,
   SuiteAggregate,
 } from "./types";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
@@ -260,7 +264,9 @@ function LedgerRowChips({
  * run number, so a bare sort puts run #1 first — which is how a suite with
  * fifty runs once backtested a draft rubric against its very first run.
  */
-export function sortRunsNewestFirst(runs: EvalSuiteRun[]): EvalSuiteRun[] {
+export function sortRunsNewestFirst(
+  runs: EvalSuiteRunListItem[],
+): EvalSuiteRunListItem[] {
   return [...runs].sort((a, b) => compareRunsBySequence(b, a));
 }
 
@@ -279,12 +285,15 @@ const TERMINAL_RUN_STATUSES = new Set([
  * draft against, and a run still going has nothing to re-grade at all.
  * `null` means the panel is not offered rather than offered and refused.
  */
-export function pickBacktestableRun(runs: EvalSuiteRun[]): EvalSuiteRun | null {
+export function pickBacktestableRun(
+  runs: EvalSuiteRunListItem[],
+): EvalSuiteRunListItem | null {
   return (
     sortRunsNewestFirst(runs).find(
       (run) =>
         TERMINAL_RUN_STATUSES.has(run.status ?? "") &&
-        run.goalCompletion != null,
+        (run.judgeScore != null ||
+          ("goalCompletion" in run && run.goalCompletion != null)),
     ) ?? null
   );
 }
@@ -348,8 +357,10 @@ export function SuiteIterationsView({
   allIterations: legacyAllIterations = NO_ITERATIONS,
   metricsByRun,
   metricsLoading = false,
-  runs,
+  runs: listedRuns,
   runsLoading,
+  runHistoryStatus,
+  onLoadMoreRuns,
   aggregate,
   onRerun,
   onReplayRun,
@@ -420,8 +431,14 @@ export function SuiteIterationsView({
   /** One metrics object per run — see `run-metrics.ts`. Evaluate only. */
   metricsByRun?: RunMetricsByRun;
   metricsLoading?: boolean;
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   runsLoading: boolean;
+  runHistoryStatus?:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreRuns?: () => void;
   aggregate: SuiteAggregate | null;
   onRerun: (
     suite: EvalSuite,
@@ -432,7 +449,7 @@ export function SuiteIterationsView({
       skipJudge?: boolean;
     },
   ) => void | Promise<unknown>;
-  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
+  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRunListItem) => void;
   /**
    * One id, or every in-progress id of a launch — the run page and the suite
    * page cancel a whole client-model fan-out in one click.
@@ -482,7 +499,7 @@ export function SuiteIterationsView({
    * Per ROW, because deleting a run takes the project manage tier OR
    * authorship of that run. Omitted means every listed run may be deleted.
    */
-  canDeleteRun?: (run: EvalSuiteRun) => boolean;
+  canDeleteRun?: (run: EvalSuiteRunListItem) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
   /**
@@ -578,6 +595,18 @@ export function SuiteIterationsView({
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
 }) {
+  const selectedRunId = route.type === "run-detail" ? route.runId : null;
+  const selectedRunState = useSelectedRun(suite._id, selectedRunId);
+  const selectedRunDetails = selectedRunState.run;
+  const { runs: groupRuns, loadGroup } = useRunGroupSummaries(
+    suite._id,
+    listedRuns,
+  );
+  const runs = useMemo(() => {
+    if (route.type !== "run-detail") return listedRuns;
+    if (!selectedRunDetails) return groupRuns;
+    return [selectedRunDetails, ...groupRuns.filter((run) => run._id !== selectedRunDetails._id)];
+  }, [route.type, listedRuns, groupRuns, selectedRunDetails]);
   const appState = useSharedAppState();
   // Derive view state from route
   //
@@ -714,7 +743,6 @@ export function SuiteIterationsView({
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-  const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const viewMode =
     route.type === "run-detail"
       ? "run-detail"
@@ -1006,12 +1034,17 @@ export function SuiteIterationsView({
   const unifiedShareEvals =
     useFeatureFlagEnabled("unified-share-evals") === true;
 
-  // Selected run details
-  const selectedRunDetails = useMemo(() => {
-    if (!selectedRunId) return null;
-    const run = runs.find((r) => r._id === selectedRunId);
-    return run ?? null;
-  }, [selectedRunId, runs]);
+  const convex = useConvex();
+  const replaySummaryRun = useCallback(
+    (run: EvalSuiteRunListItem) => onReplayRun?.(suite, run),
+    [onReplayRun, suite],
+  );
+  useEffect(() => {
+    if (selectedRunDetails?.runGroupId)
+      void loadGroup(selectedRunDetails.runGroupId).catch(() =>
+        toast.error("Could not load the complete run group"),
+      );
+  }, [loadGroup, selectedRunDetails?._id, selectedRunDetails?.runGroupId]);
 
   const previousCompletedRunForSelectedRun = useMemo(() => {
     if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
@@ -1022,6 +1055,8 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
+          // A subset rerun is never a baseline: it measured only what failed.
+          !isSubsetRerunRun(run) &&
           (!suiteDetailOverview ||
             (run.namedHostId === selectedRunDetails.namedHostId &&
               sameRunTarget(run, selectedRunDetails) &&
@@ -1106,13 +1141,13 @@ export function SuiteIterationsView({
   // ONE condition decides both whether the row renders and whether its images
   // are fetched. They used to be written separately — visibility here, the
   // fetch gated on the client flag alone — so a deployment whose capabilities
-  // say computers ARE available, seen by a client whose flag is off, rendered
+  // say images ARE available, seen by a client whose flag is off, rendered
   // an ENABLED select whose only option was "None (default image)". A control
   // that offers nothing is the failure this file is being repaired for.
-  const computersEnabled = useComputersEnabled();
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const computerEnvironmentRowVisible = capabilitiesReady
     ? Boolean(projectId)
-    : computersEnabled && Boolean(projectId);
+    : sandboxImagesEnabled && Boolean(projectId);
   const computerEnvironments = useSandboxImages(
     computerEnvironmentRowVisible ? projectId : null,
   );
@@ -1178,11 +1213,16 @@ export function SuiteIterationsView({
 
   const latestCompletedRun = useMemo(
     () =>
-      sortRunsNewestFirst(runs).find((run) => run.status === "completed") ??
-      null,
+      sortRunsNewestFirst(runs).find(
+        (run) => run.status === "completed" && !isSubsetRerunRun(run),
+      ) ?? null,
     [runs],
   );
-  const groundedness = useGroundedness(latestCompletedRun);
+  const latestGroundednessRun = useSelectedRun(
+    suite._id,
+    isEditMode ? (latestCompletedRun?._id ?? null) : null,
+  );
+  const groundedness = useGroundedness(latestGroundednessRun.run);
 
   /**
    * Every trial's chain for the run currently open, keyed by iteration.
@@ -1494,7 +1534,10 @@ export function SuiteIterationsView({
     ciOwnedReason ??
     (!capabilitiesReady
       ? undefined
-      : (featureDisabledReason(capabilities.features?.computers) ??
+      : (featureDisabledReason(
+          capabilities.features?.["sandbox-images"] ??
+            capabilities.features?.computers,
+        ) ??
         (capabilities.permissions?.["suite.configure"] === false
           ? PERMISSION_REASON_COPY
           : undefined))) ??
@@ -1547,12 +1590,24 @@ export function SuiteIterationsView({
     [subsectionOptions],
   );
 
-  const handleOpenSuiteExport = useCallback(() => {
-    setExportState({
-      scope: "suite",
-      cases: pickSuiteExportCases(cases, runs),
-    });
-  }, [cases, runs]);
+  const handleOpenSuiteExport = useCallback(async () => {
+    try {
+      const latest = sortRunsNewestFirst(runs)[0];
+      const full =
+        cases.length === 0 && latest
+          ? ((await convex.query(
+              "testSuites:getTestSuiteRun" as any,
+              { runId: latest._id } as any,
+            )) as EvalSuiteRun | null)
+          : null;
+      setExportState({
+        scope: "suite",
+        cases: pickSuiteExportCases(cases, full ? [full] : []),
+      });
+    } catch {
+      toast.error("Could not load suite export");
+    }
+  }, [cases, runs, convex]);
 
   const handleOpenTestCaseExport = useCallback((testCase: EvalCase) => {
     setExportState({
@@ -2119,6 +2174,12 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : selectedRunId && selectedRunState.isLoading ? (
+              <RowsLoading key={contentKey} label="Loading run..." />
+            ) : selectedRunId && selectedRunState.isUnavailable ? (
+              <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+                Run unavailable.
+              </div>
             ) : showEvaluateRunPage &&
               selectedRunDetails &&
               route.type === "run-detail" &&
@@ -2261,6 +2322,8 @@ export function SuiteIterationsView({
                   cases={cases}
                   runs={runs}
                   runsLoading={runsLoading || metricsLoading}
+                  runHistoryStatus={runHistoryStatus}
+                  onLoadMoreRuns={onLoadMoreRuns}
                   metricsByRun={metricsByRun ?? NO_METRICS}
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
@@ -2269,9 +2332,7 @@ export function SuiteIterationsView({
                       ? (route.importJob ?? null)
                       : null
                   }
-                  onClearImportJob={() =>
-                    navigation.toSuiteOverview(suite._id)
-                  }
+                  onClearImportJob={() => navigation.toSuiteOverview(suite._id)}
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
@@ -2354,6 +2415,8 @@ export function SuiteIterationsView({
                     suite={suite}
                     runs={runs}
                     runsLoading={runsLoading}
+                    runHistoryStatus={runHistoryStatus}
+                    onLoadMoreRuns={onLoadMoreRuns}
                     allIterations={allIterations}
                     runTrendData={runTrendData}
                     modelStats={modelStats}
@@ -2406,9 +2469,7 @@ export function SuiteIterationsView({
                           }
                           onRunClick={handleRunClick}
                           onReplayLatestRun={
-                            onReplayRun
-                              ? (run) => onReplayRun(suite, run)
-                              : undefined
+                            onReplayRun ? replaySummaryRun : undefined
                           }
                           isReplayingLatestRun={isReplayingLatestRun}
                         />
@@ -2494,6 +2555,12 @@ export function SuiteIterationsView({
                   )}
                 </motion.div>
               )
+            ) : viewMode === "run-detail" && selectedRunState.isLoading ? (
+              <RowsLoading key={contentKey} label="Loading run..." />
+            ) : viewMode === "run-detail" && selectedRunState.isUnavailable ? (
+              <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+                Run unavailable.
+              </div>
             ) : viewMode === "run-detail" &&
               selectedRunDetails &&
               runRowsPending &&

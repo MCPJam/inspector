@@ -12,6 +12,7 @@ import {
 import { getAttestedClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 /**
  * Connector Bench relay.
@@ -265,7 +266,7 @@ function cacheResult(secret: string, payload: unknown) {
 
 function backendConfig(): { convexUrl: string; serviceToken: string } {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) {
     throw new WebRouteError(
       503,

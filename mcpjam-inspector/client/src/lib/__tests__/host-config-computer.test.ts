@@ -4,6 +4,7 @@ import {
   catalogHasComputerBackedTool,
   computerBackedToolIds,
   detachComputerPatch,
+  hostConfigNeedsAccount,
   sanitizeHostConfigForEvalSuite,
   setComputerWorkdirPatch,
   shouldShowComputerToggle,
@@ -279,5 +280,24 @@ describe("sanitizeHostConfigForEvalSuite", () => {
   it("returns the same reference when already clean (no spurious dirty state)", () => {
     const value = emptyHostConfigInputV2({ builtInToolIds: ["web_search"] });
     expect(sanitizeHostConfigForEvalSuite(value, CATALOG)).toBe(value);
+  });
+});
+
+describe("hostConfigNeedsAccount", () => {
+  it("is true for a harness client and for one with a computer attached", () => {
+    expect(
+      hostConfigNeedsAccount({
+        harness: "claude-code",
+        computer: { kind: "personal" },
+      } as never),
+    ).toBe(true);
+    expect(
+      hostConfigNeedsAccount({ computer: { kind: "personal" } } as never),
+    ).toBe(true);
+  });
+
+  it("is false for a plain client, and for no template at all", () => {
+    expect(hostConfigNeedsAccount({} as never)).toBe(false);
+    expect(hostConfigNeedsAccount(undefined)).toBe(false);
   });
 });
