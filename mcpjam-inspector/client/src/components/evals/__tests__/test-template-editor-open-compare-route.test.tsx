@@ -1053,11 +1053,11 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
-  it("launches case setup through the suite's ephemeral launcher", async () => {
+  it.each([false, true])("launches case setup through the suite's ephemeral launcher with observeFirst=%s", async (observeFirst) => {
     const user = userEvent.setup();
     activeCaseDoc = goldenCaseDoc;
     const onRunCase = vi.fn();
-    renderGoldenCase({ onRunCase });
+    renderGoldenCase({ onRunCase, observeFirst });
     await user.click(await screen.findByRole("button", { name: "Setup Run" }));
     expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
     await user.click(screen.getByRole("button", { name: "Run test case" }));

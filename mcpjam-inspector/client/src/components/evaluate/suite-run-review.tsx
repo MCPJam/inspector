@@ -197,7 +197,7 @@ export function SuiteRunReviewContent({
   const [selected, setSelected] = useState(() =>
     targets.map((target) => target.id),
   );
-  // Last started count, else configured repetitions; never below the suite minimum.
+  // Case overrides keep their count; suite setup starts at its own minimum.
   const [iterations, setIterations] = useState(() =>
     String(
       Math.min(
@@ -207,7 +207,7 @@ export function SuiteRunReviewContent({
             readRememberedIterations(suite._id) ??
             suite.verdictPolicyDefaults?.repetitions ??
             DEFAULTS.RUNS_PER_TEST,
-          suite.minIterations ?? 1,
+          caseTitle ? 1 : (suite.minIterations ?? 1),
         ),
       ),
     ),

@@ -70,6 +70,36 @@ describe("suite run review", () => {
     expect(localStorage.getItem("mcpjam:suite-run-iterations:suite")).toBe("9");
   });
 
+  it.each([
+    [1, undefined, 1],
+    [2, 9, 2],
+    [undefined, 2, 2],
+    [0, undefined, 1],
+    [11, undefined, 10],
+  ])(
+    "bounds the case count %s with remembered %s at %s independently of the suite minimum",
+    (initial, remembered, expected) => {
+      if (remembered !== undefined)
+        localStorage.setItem(
+          "mcpjam:suite-run-iterations:suite",
+          String(remembered),
+        );
+      render(
+        <SuiteRunReview
+          suite={suite}
+          cases={[cases[0]]}
+          caseTitle="Find my account"
+          initialIterations={initial}
+          environments={environments}
+          hostNamesById={names}
+          onStart={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      );
+      expect(screen.getByRole("spinbutton")).toHaveValue(expected);
+    },
+  );
+
   it("requires a target and never mutates suite defaults", () => {
     expect(() => selectReviewTargets(suite, [])).toThrow("Select at least one");
     expect(() => selectReviewTargets(suite, ["stale"])).toThrow(
