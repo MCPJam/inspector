@@ -425,7 +425,8 @@ describe("the conversation's box is released on every exit", () => {
     releaseBoxMock.mockReturnValue(new Promise<void>(() => {}));
 
     const answered = await Promise.race([
-      turn(firstTurn({ environmentId: ENVIRONMENT })).then((r) => r.status),
+      (async () =>
+        (await turn(firstTurn({ environmentId: ENVIRONMENT }))).status)(),
       new Promise<"held">((resolve) =>
         setTimeout(() => resolve("held"), 1_000),
       ),
