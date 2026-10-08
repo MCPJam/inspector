@@ -196,10 +196,28 @@ describe("per-case verdict-policy fields", () => {
       });
     }
 
-    it("leaves an ordinary edit alone — and does not read the suite for it", async () => {
+    it("leaves an ordinary edit alone — one suite read, for the CI-owned pre-check only", async () => {
       const res = await request("PATCH", `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`, {
         title: "Renamed",
       });
+
+      expect(res.status).toBe(200);
+      expect(patchedCase().title).toBe("Renamed");
+      expect(
+        convexQueryMock.mock.calls.filter(
+          (c) => c[0] === "testSuites:getTestSuite",
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("does not read the suite for a file sync's ordinary edit", async () => {
+      // The sync writes every changed case; a suite read per case would make
+      // `eval run --file` pay for a check the backend does for it anyway.
+      const res = await request(
+        "PATCH",
+        `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx?declaredSuiteId=s_from_file`,
+        { title: "Renamed" },
+      );
 
       expect(res.status).toBe(200);
       expect(patchedCase().title).toBe("Renamed");

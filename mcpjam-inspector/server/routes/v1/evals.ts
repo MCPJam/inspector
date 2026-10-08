@@ -251,6 +251,7 @@ import {
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import {
+  ciOwnedSuiteReadOnlyError,
   translateConvexWriteError as translateConvexError,
   translateImportIneligibleError,
 } from "./convex-errors.js";
@@ -2545,9 +2546,10 @@ const PUBLIC_UNWRITABLE_JUDGE_SLOTS = ["groundedness", "rubricChecks"] as const;
  *
  * MIRRORS the backend's `isCiOwnedSuite`, deliberately and with the same two
  * clauses — a committed suite file's `declaredSuiteId`, or `source: 'sdk'` from
- * ingest. This copy is DESCRIPTIVE ONLY: Convex is the guard, and no route here
- * refuses anything on the strength of this predicate. Its whole job is to let
- * the DTO say so before the caller finds out from a 409.
+ * ingest. Convex stays the guard. This copy lets the DTO say so before the
+ * caller finds out from a 409, and lets the write routes refuse up front what
+ * Convex would refuse anyway (`assertSuiteWritableViaApi`, which also names
+ * the ceiling of a mirrored predicate).
  *
  * NOT `lastSdkRunAt`. CI reporting a result into a UI-authored suite does not
  * make that suite CI-owned, and saying otherwise here would advertise a lock
@@ -3217,9 +3219,9 @@ const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
  * the declared id, which only something holding the file can know. The platform
  * allows the write iff the id is the suite's own.
  *
- * NOT A CAPABILITY, and no route-level check. Naming an id you do not own gets
- * you nothing, and the guard is Convex's — a second copy of the ownership rule
- * here would be a copy that can disagree with the one that decides.
+ * NOT A CAPABILITY. Naming an id you do not own gets you nothing: the guard is
+ * Convex's, and the route-level pre-check (`assertSuiteWritableViaApi`) only
+ * ever stands aside for a marker, never vouches for one.
  *
  * ============================================================================
  * IT RIDES THE QUERY STRING, NOT THE BODY
@@ -3261,6 +3263,34 @@ function fileSyncArg(declaredSuiteId: string | undefined | null): {
   const trimmed =
     typeof declaredSuiteId === "string" ? declaredSuiteId.trim() : "";
   return trimmed.length > 0 ? { fileSync: { declaredSuiteId: trimmed } } : {};
+}
+
+/**
+ * Refuse a configuration write to a CI-owned suite BEFORE the mutation.
+ *
+ * The backend's `assertCiOwnedSuiteWritable` stays the guard and refuses the
+ * same write if this is ever skipped; what this changes is WHERE the refusal
+ * is produced. Thrown inside Convex it is an uncaught error, so one API caller
+ * editing a CI-owned suite in a loop reopened Sentry CONVEX-2AT with refusals
+ * that were working as designed, and buried the alert that issue exists for —
+ * a regression like mcpjam-backend#1776 (PLB-238). Refused here, the caller
+ * gets the identical 409 and Sentry sees nothing.
+ *
+ * STANDS ASIDE for a file-sync marker: that is `mcpjam cloud eval run --file`
+ * writing as the file, and whether the id it names is the suite's own is the
+ * backend's call — a mismatch is worth the event.
+ *
+ * The ceiling of a mirrored predicate: if the backend ever relaxes what counts
+ * as CI-owned, this refuses a write the platform would accept until
+ * `isCiOwnedSuiteDoc` is updated to match. It cannot err the other way — a
+ * suite this copy calls writable still meets the lock in Convex.
+ */
+function assertSuiteWritableViaApi(
+  suite: SuiteDoc,
+  declaredSuiteId?: string | null,
+): void {
+  if (fileSyncArg(declaredSuiteId).fileSync) return;
+  if (isCiOwnedSuiteDoc(suite)) throw ciOwnedSuiteReadOnlyError();
 }
 
 /**
@@ -8860,6 +8890,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  assertSuiteWritableViaApi(
+    suite!,
+    c.req.query("declaredSuiteId") ?? body.declaredSuiteId,
+  );
 
   // Precheck the one environment rejection a caller is likely to hit, before
   // any of the edits below commit — this handler applies several mutations in
@@ -9326,7 +9360,15 @@ evals.post(
     // Scope check first: Convex enforces membership, and this makes a valid id
     // from another of the caller's projects read as NOT_FOUND rather than
     // leaking across the scope the path declares.
-    await readSuiteInProject(token, projectId, suiteId, "preflight");
+    const suite = await readSuiteInProject(
+      token,
+      projectId,
+      suiteId,
+      "preflight",
+    );
+    // No marker to stand aside for: `attachEnvironment` takes no `fileSync`,
+    // so a file sync cannot write here either.
+    assertSuiteWritableViaApi(suite);
 
     const { convexClient } = createConvexClients(token);
     let result: { attached?: boolean; environmentIds?: unknown };
@@ -9426,6 +9468,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  assertSuiteWritableViaApi(
+    suite!,
+    c.req.query("declaredSuiteId") ?? body.declaredSuiteId,
+  );
   // Enabling reuses the suite's saved interval when none is supplied (one-click
   // re-enable after a disable). Only require an interval when there's no saved
   // one to fall back to.
@@ -9586,6 +9632,10 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  assertSuiteWritableViaApi(
+    suite!,
+    c.req.query("declaredSuiteId") ?? body.declaredSuiteId,
+  );
   assertCasePolicyFieldsSupported(
     suite,
     body,
@@ -9676,6 +9726,10 @@ evals.post(
       );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    assertSuiteWritableViaApi(
+      suite!,
+      c.req.query("declaredSuiteId") ?? body.declaredSuiteId,
+    );
     // Checked for EVERY case before any of them is authored, like
     // `assertCreatableCase` above: rejecting case 42 after 41 siblings landed
     // leaves the caller reconciling a partial write it cannot retry cleanly.
@@ -9806,19 +9860,32 @@ evals.patch(
       caseId,
       "preflight",
     );
-    // The CASE was loaded above; the SUITE was not. Both create paths already
-    // read it for their scope guard, so a PATCH was the one door through which
-    // an inert `repetitions` could still reach storage.
-    //
-    // Read only when the body actually carries a policy field, so an ordinary
-    // title edit does not pay for a second round trip.
-    if (body.repetitions !== undefined || body.passThreshold !== undefined) {
-      assertCasePolicyFieldsSupported(
-        await readSuiteInProject(token, projectId, suiteId, "authorized"),
-        body,
-        "",
-        countFieldNames(vocabularyOf(c)),
+    // The CASE was loaded above; the SUITE was not. It is read for the
+    // CI-owned pre-check and for the policy-field check (both create paths
+    // already read it for their scope guard, so a PATCH was the one door
+    // through which an inert `repetitions` could still reach storage) — and
+    // only when one of them applies, so a file sync's ordinary title edit does
+    // not pay for a second round trip.
+    const declaredSuiteId =
+      c.req.query("declaredSuiteId") ?? body.declaredSuiteId;
+    const hasPolicyFields =
+      body.repetitions !== undefined || body.passThreshold !== undefined;
+    if (hasPolicyFields || !fileSyncArg(declaredSuiteId).fileSync) {
+      const suite = await readSuiteInProject(
+        token,
+        projectId,
+        suiteId,
+        "authorized",
       );
+      assertSuiteWritableViaApi(suite, declaredSuiteId);
+      if (hasPolicyFields) {
+        assertCasePolicyFieldsSupported(
+          suite,
+          body,
+          "",
+          countFieldNames(vocabularyOf(c)),
+        );
+      }
     }
     const args = buildCaseMutationArgs(body, {
       forCreate: false,
@@ -9839,9 +9906,7 @@ evals.patch(
           testCaseId: caseId,
           changeSource: "manual",
           ...args,
-          ...fileSyncArg(
-            c.req.query("declaredSuiteId") ?? body.declaredSuiteId,
-          ),
+          ...fileSyncArg(declaredSuiteId),
         },
       );
     } catch (error) {
@@ -9877,14 +9942,21 @@ evals.delete(
       caseId,
       "preflight",
     );
+    // A QUERY PARAM, not a body: this DELETE reads no body at all, and giving
+    // one route a body-carrying delete while its siblings have none is a shape
+    // callers get wrong.
+    const declaredSuiteId = c.req.query("declaredSuiteId");
+    // The suite is read only for the pre-check, which a file sync skips.
+    if (!fileSyncArg(declaredSuiteId).fileSync) {
+      assertSuiteWritableViaApi(
+        await readSuiteInProject(token, projectId, suiteId, "authorized"),
+      );
+    }
     const { convexClient } = createConvexClients(token);
     try {
       await convexClient.mutation("testSuites:deleteTestCase" as any, {
         testCaseId: caseId,
-        // A QUERY PARAM, not a body: this DELETE reads no body at all, and
-        // giving one route a body-carrying delete while its siblings have none
-        // is a shape callers get wrong.
-        ...fileSyncArg(c.req.query("declaredSuiteId")),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);

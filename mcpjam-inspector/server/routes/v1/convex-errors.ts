@@ -96,6 +96,37 @@ type ConvexErrorData = {
  */
 const CI_OWNED_SUITE_READ_ONLY_CODE = "CI_OWNED_SUITE_READ_ONLY";
 
+/**
+ * The backend's refusal copy (`CI_OWNED_REFUSAL_MESSAGE` there), mirrored for
+ * the same reason as the code: the v1 pre-check in `evals.ts` answers before
+ * the backend is asked, so it has to say what the backend would have said.
+ */
+const CI_OWNED_SUITE_READ_ONLY_MESSAGE =
+  "This suite is managed by CI. Edit the test file in your repository and run it again, or duplicate the suite to get an editable copy.";
+
+/**
+ * The one 409 a configuration write to a CI-owned suite answers with, whether
+ * the route refused it up front (`assertSuiteWritableViaApi` in `evals.ts`)
+ * or the backend did (the translator below). One builder, so the two cannot
+ * drift into different shapes.
+ *
+ * 409 rather than 403, because this is NOT a permission problem: the caller's
+ * role is fine and no amount of privilege changes the answer. What changes it
+ * is editing the source of truth, or taking a copy. A 403 would send someone
+ * to ask their admin for access they already have.
+ *
+ * The message names the two remedies an app user has; the hint adds the third,
+ * which only an API caller has — send `declaredSuiteId` and write AS the file.
+ */
+export function ciOwnedSuiteReadOnlyError(
+  message: string = CI_OWNED_SUITE_READ_ONLY_MESSAGE,
+): WebRouteError {
+  return new WebRouteError(409, ErrorCode.CONFLICT, message, {
+    reason: CI_OWNED_SUITE_READ_ONLY_CODE,
+    hint: "Edit the suite file in your repository (and send its suite id as declaredSuiteId), or duplicate the suite to get an editable copy.",
+  });
+}
+
 const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "gate_waiver_unscoped_suite",
   "gate_waiver_reason_empty",
@@ -415,15 +446,11 @@ export function translateConvexWriteError(
   //
   // A suite whose configuration lives in a repository — a committed suite file,
   // or SDK ingest — refuses configuration writes from the app and from this
-  // API. 409 rather than 403, because this is NOT a permission problem: the
-  // caller's role is fine and no amount of privilege changes the answer. What
-  // changes it is editing the source of truth, or taking a copy. A 403 would
-  // send someone to ask their admin for access they already have.
-  //
-  // The backend's `message` names both remedies and is forwarded verbatim; the
-  // hint below is added for the API caller specifically, who has a third
-  // option the app's user does not — send `declaredSuiteId` and write AS the
-  // file.
+  // API. The v1 routes refuse the predictable case before asking (PLB-238);
+  // what reaches here is a refusal the route's copy of the rule did not
+  // predict — a marker naming the wrong id, a locked action it does not know
+  // — and it lands as the same 409, with the backend's `message` (which can
+  // name the mismatched ids) forwarded verbatim.
   //
   // Handled explicitly rather than left to fall through, for the same reason
   // the two branches around it are: an unrecognized code reaches the prose
@@ -431,16 +458,7 @@ export function translateConvexWriteError(
   // data — and either loses the message on a 500 or matches a pattern by
   // accident and answers with the wrong status.
   if (code === CI_OWNED_SUITE_READ_ONLY_CODE) {
-    return new WebRouteError(
-      409,
-      ErrorCode.CONFLICT,
-      structuredMessage ??
-        "This suite is managed by CI and cannot be edited here.",
-      {
-        reason: CI_OWNED_SUITE_READ_ONLY_CODE,
-        hint: "Edit the suite file in your repository (and send its suite id as declaredSuiteId), or duplicate the suite to get an editable copy.",
-      }
-    );
+    return ciOwnedSuiteReadOnlyError(structuredMessage);
   }
 
   // ── Import eligibility (mcpjam-backend lib/evalImportEligibility.ts) ─────
