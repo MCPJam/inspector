@@ -101,26 +101,6 @@ export function CaseRunTimeline({
       ),
     [iterations, suiteRuns, hostNamesById],
   );
-  const latestLaunchIterations = useMemo(() => {
-    const represented = suiteRuns.filter((run) =>
-      iterations.some((iteration) => iteration.suiteRunId === run._id),
-    );
-    const latest = [...represented].sort(
-      (a, b) =>
-        (b.runNumber ?? 0) - (a.runNumber ?? 0) ||
-        (b.createdAt ?? 0) - (a.createdAt ?? 0),
-    )[0];
-    if (!latest?.runGroupId) return iterations;
-    const launchRunIds = new Set(
-      suiteRuns
-        .filter((run) => run.runGroupId === latest.runGroupId)
-        .map((run) => run._id),
-    );
-    return iterations.filter(
-      (iteration) =>
-        !iteration.suiteRunId || launchRunIds.has(iteration.suiteRunId),
-    );
-  }, [iterations, suiteRuns]);
   const targets = useMemo(() => {
     const grouped = new Map<
       string,
@@ -131,7 +111,7 @@ export function CaseRunTimeline({
         iterations: EvalIteration[];
       }
     >();
-    for (const iteration of latestLaunchIterations) {
+    for (const iteration of iterations) {
       const metadata = runMetadata.get(iteration._id)!;
       const key = `${metadata.client}\u0000${metadata.model}`;
       const target = grouped.get(key) ?? {
@@ -155,7 +135,7 @@ export function CaseRunTimeline({
         });
     }
     return [...grouped.values()];
-  }, [latestLaunchIterations, pendingRun, runMetadata]);
+  }, [iterations, pendingRun, runMetadata]);
   // Labels show only what differs: a lone target reads as its model.
   const targetKeysInView = useMemo(
     () => [
@@ -175,29 +155,20 @@ export function CaseRunTimeline({
   const pendingKey = pendingRun
     ? `${pendingRun.client ?? "Suite default"}\u0000${pendingRun.model}`
     : null;
-  // Until the reader picks a target, default to the one the LIVE run is on.
-  // Falling straight through to `targets[0]` left a run launched against a
-  // client/model the case has no history for invisible — its target is
-  // appended last, so `showPendingRun` below was false and the row the user
-  // just triggered never appeared.
-  const selectedTarget =
-    targets.find((target) => target.key === targetKey) ??
-    (pendingKey
-      ? targets.find((target) => target.key === pendingKey)
-      : undefined) ??
-    targets[0];
+  // A client/model filter applies only after the user picks a chip.
+  const selectedTarget = targets.find((target) => target.key === targetKey);
   const selectedTargetKey = selectedTarget?.key ?? null;
   const filtered = useMemo(
     () =>
-      [...(selectedTarget?.iterations ?? [])].sort(
+      [...(selectedTarget?.iterations ?? iterations)].sort(
         (a, b) =>
           (a.iterationNumber ?? 0) - (b.iterationNumber ?? 0) ||
           a.createdAt - b.createdAt,
       ),
-    [selectedTarget],
+    [selectedTarget, iterations],
   );
   const showPendingRun = Boolean(
-    pendingRun && pendingKey === selectedTargetKey,
+    pendingRun && (!selectedTargetKey || pendingKey === selectedTargetKey),
   );
   // Measured results: an infra row is in neither the pass count nor the tone.
   const completed = filtered.filter((it) =>
@@ -286,6 +257,21 @@ export function CaseRunTimeline({
           Test case averages
         </h3>
         <div className="ml-auto flex min-w-0 flex-wrap justify-end gap-1.5">
+          {targets.length > 1 && (
+            <button
+              type="button"
+              aria-pressed={!selectedTargetKey}
+              onClick={() => setTargetKey(null)}
+              className={cn(
+                "h-7 rounded-full border px-2.5 text-xs transition-colors",
+                !selectedTargetKey
+                  ? "border-border bg-muted font-medium text-foreground"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground",
+              )}
+            >
+              All clients
+            </button>
+          )}
           {targets.map((target) => (
             <button
               key={target.key}

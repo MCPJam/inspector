@@ -66,14 +66,15 @@ describe("CaseRunTimeline", () => {
         Evidence
       </CaseRunTimeline>,
     );
-    expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
-    expect(screen.getByText("1/1")).toBeVisible();
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    expect(screen.getByText("1/2")).toBeVisible();
+    expect(screen.getByRole("button", { name: "All clients" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("case-run-averages")).toHaveClass(
       "bg-background",
       "text-foreground",
     );
     expect(
-      screen.getByTestId("case-run-row").closest(".overflow-x-auto"),
+      screen.getAllByTestId("case-run-row")[0].closest(".overflow-x-auto"),
     ).toHaveClass("bg-background", "text-foreground");
     expect(screen.getByText("Iteration").parentElement).toHaveClass("bg-muted");
     await user.click(
@@ -81,8 +82,11 @@ describe("CaseRunTimeline", () => {
     );
     expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
     expect(screen.getByText("0/1")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "All clients" }));
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    expect(screen.getByText("1/2")).toBeVisible();
   });
-  it("shows only the latest launch when older runs are loaded", () => {
+  it("shows every launch by default when older runs are loaded", () => {
     render(
       <CaseRunTimeline
         caseTitle="Case"
@@ -112,9 +116,31 @@ describe("CaseRunTimeline", () => {
         Evidence
       </CaseRunTimeline>,
     );
-    expect(screen.getAllByTestId("case-run-row")).toHaveLength(1);
-    expect(screen.getByText("0/1")).toBeVisible();
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(2);
+    expect(screen.getByText("1/2")).toBeVisible();
   });
+  it("keeps new multi-client results visible without selecting a chip", () => {
+    const old = { ...iteration("old", "opus", "passed", 1000), suiteRunId: "old" };
+    const props = { caseTitle: "Case", selectedIterationId: null, onSelect: vi.fn() };
+    const { rerender } = render(<CaseRunTimeline {...props} iterations={[old]}>
+      Evidence
+    </CaseRunTimeline>);
+    const clients = ["Cursor", "Claude", "ChatGPT"];
+    const added = clients.map((client) => ({
+      ...iteration(client, "model", "passed", 2000), suiteRunId: client,
+    }));
+    rerender(<CaseRunTimeline {...props} iterations={[old, ...added]}
+      hostNamesById={new Map(clients.map((client) => [client, client]))}
+      suiteRuns={clients.map((client) => ({ _id: client, namedHostId: client, runGroupId: "new-launch" })) as EvalSuiteRun[]}>
+      Evidence
+    </CaseRunTimeline>);
+    expect(screen.getAllByTestId("case-run-row")).toHaveLength(4);
+    expect(screen.getByText("4/4")).toBeVisible();
+    expect(screen.getByRole("button", { name: "All clients" })).toHaveAttribute("aria-pressed", "true");
+    for (const client of clients)
+      expect(screen.getAllByTestId("case-run-row").some((row) => row.textContent?.includes(client))).toBe(true);
+  });
+
   it("shows the recorded client and model pair", () => {
     const trial = {
       ...iteration("trial-id", "old-model", "passed", 1000),
@@ -161,6 +187,8 @@ describe("CaseRunTimeline", () => {
         <p>Run evidence</p>
       </CaseRunTimeline>,
     );
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Suite default · model-a", exact: true }));
     expect(screen.getByText("1/1")).toBeInTheDocument();
     expect(screen.getAllByText("1.0s")).toHaveLength(3);
     await user.click(screen.getByTestId("case-run-row"));
