@@ -76,6 +76,11 @@ export async function invokePluginRequest(
       params: PluginToolCallParams,
       signal: AbortSignal,
     ) => Promise<Record<string, unknown>>;
+    /** The owner's fenced reads for the first resolution (a retained App's
+     * `pluginInstances.fence`). With it, the first resolution makes exactly
+     * the reads of an invoker authorization, and the invoker's first
+     * authorization reuses it; `invoke` must hand the same fence on. */
+    firstRead?: PluginInstanceAdmissionRead;
   },
 ): Promise<Response> {
   const { actor, owner, admission, runtime, resolve, assertOrigin, origin } =
@@ -89,8 +94,18 @@ export async function invokePluginRequest(
   };
   try {
     input.assertLive();
-    const initial = await resolve(params.name, c.req.raw.signal);
+    const initial = await resolve(
+      params.name,
+      c.req.raw.signal,
+      input.firstRead,
+    );
     assertOrigin(initial);
+    // The invoker's first authorization comes next with nothing awaited in
+    // between, so it may stand on this fenced resolution instead of making
+    // the same reads again. Any await below drops it.
+    let primed = input.firstRead
+      ? { name: params.name, resolved: initial }
+      : undefined;
     const validateResult = input.validate?.(initial);
     const approvalCall = {
       toolCallId: input.invocationId,
@@ -98,10 +113,16 @@ export async function invokePluginRequest(
       input: { revision: initial.revision, params },
     };
     const receipts = createPluginInvocationReceiptPort(owner, actor.subject);
-    const saved =
-      receipts && initial.requiresApproval && !input.approval && !input.resume
-        ? await receipts.read(input.invocationId, c.req.raw.signal)
-        : undefined;
+    let saved = false;
+    if (
+      receipts &&
+      initial.requiresApproval &&
+      !input.approval &&
+      !input.resume
+    ) {
+      primed = undefined;
+      saved = !!(await receipts.read(input.invocationId, c.req.raw.signal));
+    }
     if (
       initial.requiresApproval &&
       !input.approval &&
@@ -138,7 +159,12 @@ export async function invokePluginRequest(
         requestedOwner.instanceId !== owner.instanceId
       )
         throw new PluginInvocationError("INSTANCE_DENIED");
-      const live = await resolve(next.name, signal, read);
+      const reuse =
+        primed && read && next.name === primed.name
+          ? primed.resolved
+          : undefined;
+      primed = undefined;
+      const live = reuse ?? (await resolve(next.name, signal, read));
       assertOrigin(live);
       return {
         owner: requestedOwner,
@@ -150,7 +176,22 @@ export async function invokePluginRequest(
       };
     };
     const ports: PluginInstanceInvocationPorts = {
-      receipts,
+      // A receipt read before the first authorization (recovering an evicted
+      // or suspended call) is an await: the first authorization reads again.
+      receipts: receipts && {
+        read: (...args) => {
+          primed = undefined;
+          return receipts.read(...args);
+        },
+        claim: (...args) => {
+          primed = undefined;
+          return receipts.claim(...args);
+        },
+        write: (...args) => {
+          primed = undefined;
+          return receipts.write(...args);
+        },
+      },
       ...(input.resume
         ? {
             continuation: {

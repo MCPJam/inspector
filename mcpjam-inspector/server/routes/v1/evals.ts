@@ -280,6 +280,7 @@ import {
   hostedCatalogModelDefinitions,
   isHostedCatalogModel,
 } from "../../services/hosted-model-catalog.js";
+import { serviceCredentialHeaders } from "../../services/service-credential.js";
 
 let modelLookupCache: {
   hosted: ModelDefinition[];
@@ -3144,7 +3145,7 @@ const publicCaseBodyShape = {
   /** Policy-v2 ONLY. See {@link assertCasePolicyFieldsSupported}. */
   passThreshold: z.number().min(0).max(1).optional(),
   isNegative: z.boolean().optional(),
-  scenario: z.string().optional(),
+  scenario: z.string().min(1).nullable().optional(),
   /**
    * Optional analytics label. Omitted preserves it on PATCH; `null` clears it.
    * `createCaseSchema` narrows this to the stored (string-only) form below.
@@ -10279,7 +10280,9 @@ async function startAuthoringJobAndAwait(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${args.token}`,
-        "x-inspector-service-token": process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+        // Omitted, never sent empty, without a credential: the backend then
+        // authors on the caller's own sign-in.
+        ...serviceCredentialHeaders(),
       },
       body: JSON.stringify({
         version: 1,

@@ -254,6 +254,12 @@ jobs:
           cat "$RUNNER_TEMP/unpublished.json"
           node .github/scripts/release-plan.mjs "$RUNNER_TEMP/unpublished.json"
 
+      # The published local Inspector uses production AuthKit. A code build
+      # can pass while its callback allowlist still rejects non-default ports.
+      - name: Verify production WorkOS loopback callbacks
+        if: steps.plan.outputs.inspector_version != '' && !fromJSON(inputs.skip_verify)
+        run: node .github/scripts/check-workos-loopback.mjs production
+
       # The local-execution release gate. It refuses a build whose derived
       # OFFER is inconsistent with what it can serve — a platform advertised
       # with no pack digest, or a digest table stamped at a version whose
@@ -398,12 +404,11 @@ jobs:
   # action does not depend on either.
   evals-action-smoke:
     needs: preflight
-    # The repo variables are what make the live smoke possible. While they are
-    # unset, the smoke SKIPS instead of failing the whole release. Set both
-    # variables to turn the gate back on.
-    if: >-
-      needs.preflight.outputs.evals_action_changed == 'true' &&
-      vars.EVALS_SMOKE_PROJECT != '' && vars.EVALS_SMOKE_SUITE != ''
+    # Runs whenever the action changed, including when the repo variables are
+    # unset — the called workflow fails loudly on empty inputs, which is the
+    # point. Skipping here instead meant the gate quietly became a no-op and
+    # `evals-v1` shipped untested while the README said the smoke gated it.
+    if: needs.preflight.outputs.evals_action_changed == 'true'
     uses: ./.github/workflows/evals-action-smoke.yml
     with:
       project: ${{ vars.EVALS_SMOKE_PROJECT }}
@@ -412,18 +417,19 @@ jobs:
 
   publish-evals-action:
     needs: [preflight, evals-action-smoke]
-    # The smoke is a GATE, not a dependency: a SKIPPED smoke (its repo
-    # variables are unset) still lets the tag ship, while a FAILED smoke still
-    # holds it back. Without `!cancelled()` a skipped `needs` would skip this
-    # job along with it — but that also stops a FAILED `needs` from skipping
-    # it, so `preflight` is re-asserted by hand. It must be: the change
-    # detection runs before preflight's green-CI gate, so a preflight that
-    # fails later still reports `evals_action_changed: true`.
+    # The tag moves only on a smoke that actually PASSED. It used to move on
+    # anything that was not a failure, which included `skipped` — so with the
+    # smoke's repo variables unset, every published tag was untested.
+    #
+    # `!cancelled()` is kept so a cancelled run does not read as success, and
+    # `preflight` is re-asserted by hand because the change detection runs
+    # before preflight's green-CI gate: a preflight that fails later still
+    # reports `evals_action_changed: true`.
     if: >-
       !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.evals_action_changed == 'true' &&
-      needs.evals-action-smoke.result != 'failure'
+      needs.evals-action-smoke.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     concurrency:
@@ -871,6 +877,46 @@ jobs:
       needs.deploy-webapp.result == 'success'
     uses: ./.github/workflows/deploy-slack-app.yml
     secrets: inherit
+
+  # Points PRODUCTION's hosted computers at the E2B template baked for the
+  # commit this release just deployed (mcpjam-backend computer-template.yml,
+  # which staging already built it with). After the webapp deploy, never
+  # before: production may only boot the bake its own inspector looks for.
+  # Fire and forget — the backend run does the roll-out and records its
+  # rollback line; if it fails, production stays on its previous template,
+  # where turns still work by installing at turn time.
+  roll-out-hosted-template:
+    needs:
+      - preflight
+      - deploy-webapp
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.deploy-webapp.result == 'success'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Ask the backend to point production at this commit's template
+        uses: actions/github-script@v7
+        env:
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_release_shipped",
+              client_payload: {
+                sha: context.sha,
+                release_tag: "${{ needs.preflight.outputs.release_tag }}",
+              },
+            });
+            core.summary.addRaw(
+              `Sent inspector_release_shipped for ${context.sha} to ${owner}/${repo}; ` +
+                "its Computer template workflow points production at this commit's template.",
+            );
+            await core.summary.write();
 
   # The deploy jobs are in `needs` although the `if` below never requires
   # them (with `always()` this runs even when they fail): the tag and the

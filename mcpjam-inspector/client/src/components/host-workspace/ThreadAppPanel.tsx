@@ -1383,6 +1383,7 @@ export function AppRegistration({
     serverName: row.server.name,
     ...(pluginIcons ? { icons: pluginIcons } : {}),
     ...(serverIcons ? { serverIcons } : {}),
+    toolName: row.declaration.toolName,
   });
   const messagesAllowed = !!handle.messageEnabled && !!sendMessage;
   useEffect(() => {

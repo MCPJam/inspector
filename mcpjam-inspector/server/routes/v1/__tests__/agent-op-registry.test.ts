@@ -1966,6 +1966,13 @@ describe("tier derives from operation.risk", () => {
         "never inferred — a person confirming the start is also confirming " +
         "which submission shape is being graded.",
     },
+    start_muse_readiness_run: {
+      tier: "gated",
+      reason:
+        "Free — Muse has no model pass — so risk is none and would derive " +
+        "direct. Gated for the reason start_claude_readiness_run is: a start " +
+        "dials a third party's server and persists a project row.",
+    },
     generate_eval_cases: {
       tier: "gated",
       reason:
@@ -2238,6 +2245,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
   '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
   "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+  "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
   "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",

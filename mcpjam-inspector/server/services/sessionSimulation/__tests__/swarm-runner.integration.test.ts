@@ -35,6 +35,7 @@ const createBrowserSessionContextMock = vi.fn();
 const reportAttemptMock = vi.fn();
 const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
+const finalizePendingAttemptsMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
 
@@ -126,6 +127,8 @@ vi.mock("../../swarm-agent.js", async () => {
       swarmPersonaNextTurnMock(...args),
     heartbeatJourneyRun: (...args: unknown[]) =>
       heartbeatJourneyRunMock(...args),
+    finalizePendingAttempts: (...args: unknown[]) =>
+      finalizePendingAttemptsMock(...args),
   };
 });
 
@@ -211,6 +214,7 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
+  finalizePendingAttemptsMock.mockReset().mockResolvedValue(undefined);
   let sandboxSeq = 0;
   provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
     sandboxSeq += 1;
@@ -258,6 +262,94 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
+});
+
+describe("swarm runner — sponsored conversation, real core", () => {
+  const sponsoredOpts = () => ({
+    ...baseOpts(),
+    hosts: [{ ...baseOpts().hosts[0]!, targetId: "target-1" }],
+    sessionFunding: [
+      { targetId: "target-1", sessionIdx: 0, funding: "starter" as const },
+    ],
+  });
+
+  it("puts the platform claim on the host step and the service-token flag on the persona call", async () => {
+    await startJourneyRun(sponsoredOpts());
+
+    const turnOpts = runAssistantTurnMock.mock.calls[0]![0] as any;
+    expect(turnOpts.extraBodyFields).toMatchObject({
+      billingFeature: "swarm_starter",
+      journeyRunId: "run-1",
+      hostId: "host-1",
+      targetId: "target-1",
+      sessionIdx: 0,
+    });
+    expect(swarmPersonaNextTurnMock.mock.calls[0]![2]).toMatchObject({
+      sponsored: true,
+    });
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal.status).toBe("succeeded");
+  });
+
+  it("sends no claim for a credit-funded conversation of the same run", async () => {
+    await startJourneyRun({
+      ...sponsoredOpts(),
+      sessionFunding: [
+        { targetId: "target-1", sessionIdx: 0, funding: "credits" as const },
+      ],
+    });
+
+    const turnOpts = runAssistantTurnMock.mock.calls[0]![0] as any;
+    expect(turnOpts.extraBodyFields).not.toHaveProperty("billingFeature");
+    expect(swarmPersonaNextTurnMock.mock.calls[0]![2].sponsored).toBeUndefined();
+  });
+
+  it("ends a platform-capacity refusal as failed with platform copy, once, never as an org cap or a paid retry", async () => {
+    runAssistantTurnMock
+      .mockReset()
+      .mockRejectedValue(
+        new Error("MCPJam capacity is exhausted (platform_capacity, HTTP 429)"),
+      );
+
+    await startJourneyRun(sponsoredOpts());
+
+    // One attempt at the step: capacity is never a transient admission wait.
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal).toMatchObject({
+      status: "failed",
+      errorCode: "platform_capacity",
+    });
+    expect(terminal.errorMessage).toMatch(/sponsored capacity/i);
+    expect(terminal.errorMessage).not.toMatch(/credit|upgrade|top.?up/i);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a sponsored step whose model resolves to BYOK instead of running it on the org's key", async () => {
+    resolveSyntheticModelSourceMock.mockReset().mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+
+    await startJourneyRun(sponsoredOpts());
+
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal).toMatchObject({
+      status: "failed",
+      errorCode: "swarm_sponsorship_rejected",
+    });
+  });
 });
 
 describe("swarm runner — real core integration", () => {

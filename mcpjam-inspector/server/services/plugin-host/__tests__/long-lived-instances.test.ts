@@ -195,10 +195,12 @@ describe("long-lived App limits", () => {
     ws.attach(instanceId, 1, identityFor);
     let firstRemoval: { operationId: string; updateId: string } | undefined;
     for (let round = 1; round <= PLUGIN_CONTEXT_REMOVAL_WINDOW + 44; round++) {
+      // After a removal only the person re-attaching brings context back.
       ws.update(instanceId, 1, {
         operationId: `u-${round}`,
         sequence: round,
         params: { content: [{ type: "text", text: `r${round}` }] },
+        attach: "user",
       });
       const updateId = ws.snapshot(instanceId, 1).state!.updateId;
       const request = { operationId: `rm-${round}`, updateId, index: 0 };
@@ -212,6 +214,7 @@ describe("long-lived App limits", () => {
       operationId: "after",
       sequence: PLUGIN_CONTEXT_REMOVAL_WINDOW + 45,
       params: { content: [{ type: "text", text: "kept" }] },
+      attach: "user",
     });
     expect(() =>
       ws.remove(instanceId, 1, { ...firstRemoval!, index: 0 }),
@@ -288,6 +291,9 @@ describe("long-lived App limits", () => {
             operationId: `update-${before.sequence + 1}`,
             sequence: before.sequence + 1,
             params: { content: [{ type: "text", text: "still here" }] },
+            // The earlier removal holds in the durable copy too; the person
+            // re-attaches.
+            attach: "user",
           },
         },
         signal(),

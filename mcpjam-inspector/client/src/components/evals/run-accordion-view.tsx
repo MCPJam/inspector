@@ -1,7 +1,12 @@
+import type { EvalSuiteRunListItem } from "@/components/evals/types";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import { getInitials } from "@/lib/utils";
 import {
   Tooltip,
@@ -12,14 +17,14 @@ import { ChevronDown, ChevronRight, RotateCw } from "lucide-react";
 import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalIteration } from "./types";
 
 interface RunAccordionViewProps {
   suite: { _id: string; name: string; source?: "ui" | "sdk" };
-  runs: EvalSuiteRun[];
+  runs: EvalSuiteRunListItem[];
   allIterations: EvalIteration[];
   onRunClick: (runId: string) => void;
-  onReplayRun?: (run: EvalSuiteRun) => void;
+  onReplayRun?: (run: EvalSuiteRunListItem) => void;
   replayingRunId?: string | null;
   onTestCaseClick?: (testCaseId: string) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
@@ -251,9 +256,7 @@ export function RunAccordionView({
                   {total > 0 && (
                     <span className="flex items-center gap-2 shrink-0">
                       <span className="text-xs font-mono">
-                        <span className="text-success">
-                          {passed}
-                        </span>
+                        <span className="text-success">{passed}</span>
                         {failed > 0 && (
                           <>
                             <span className="text-muted-foreground"> / </span>
