@@ -56,6 +56,7 @@ export function RunDetailPlaygroundActions({
   runsDisabledReason?: string | null;
   className?: string;
 }) {
+  // Spinner only — see the disabled prop below, which is the wider guard.
   const isCancelling = cancellingRunId === selectedRun._id;
   const isRunInProgress =
     selectedRun.status === "running" || selectedRun.status === "pending";
@@ -117,7 +118,7 @@ export function RunDetailPlaygroundActions({
                 variant="outline"
                 size="sm"
                 onClick={() => onCancelRun(selectedRun._id)}
-                disabled={isCancelling}
+                disabled={cancellingRunId !== null}
                 className="gap-2"
               >
                 {isCancelling ? (

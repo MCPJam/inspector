@@ -44,6 +44,9 @@ function Harness({ pending = false }: { pending?: boolean }) {
           projectId: projectA,
           authenticated: true,
           remoteProject: true,
+          // A flagged-in reader: the Integrations tab has its own beta gate,
+          // and this suite is about the rail, not about that gate.
+          features: { integrations: true },
         }}
         organizations={[
           { _id: "org-a", name: "Team A" },

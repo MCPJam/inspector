@@ -1,3 +1,4 @@
+import { guestIpForwardHeaders } from "./guest-spend-ip.js";
 /**
  * Scenario token redemption.
  *
@@ -13,6 +14,7 @@
  */
 
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -42,6 +44,7 @@ export type ScenarioRedeemBootstrap = {
   hostStyle: "claude" | "chatgpt" | string;
   mode: "project_members" | "invited_only" | "anyone_with_link";
   allowGuestAccess: boolean;
+  requiresSignIn?: boolean;
   viewerIsProjectMember: boolean;
   systemPrompt: string;
   modelId: string;
@@ -97,6 +100,7 @@ function buildRedeemUrl(): string {
 }
 
 export async function redeemScenarioToken(args: {
+  guestIpHash?: string | null;
   scenarioToken: string;
   bearer: string;
   signal?: AbortSignal;
@@ -110,9 +114,11 @@ export async function redeemScenarioToken(args: {
   try {
     response = await fetch(url, {
       method: "POST",
+      redirect: "manual",
       headers: {
         "content-type": "application/json",
         authorization,
+        ...guestIpForwardHeaders(args.guestIpHash),
       },
       body: JSON.stringify({ scenarioToken: args.scenarioToken }),
       signal: args.signal,
@@ -144,10 +150,12 @@ export async function redeemScenarioToken(args: {
     return {
       ok: false,
       status: response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Scenario redeem failed (${response.status})`,
+      error: backendFailureText({
+        source: "scenario-redeem",
+        status: response.status,
+        detail: payload?.error,
+        fallback: `Scenario redeem failed (${response.status})`,
+      }),
       ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
     };
   }
@@ -158,10 +166,12 @@ export async function redeemScenarioToken(args: {
     return {
       ok: false,
       status: 502,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : "Scenario redeem response was missing ok=true",
+      error: backendFailureText({
+        source: "scenario-redeem",
+        status: 502,
+        detail: payload?.error,
+        fallback: "Scenario redeem response was missing ok=true",
+      }),
     };
   }
 

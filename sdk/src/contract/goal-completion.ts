@@ -28,7 +28,6 @@ export type JudgeEvidenceErrorCode =
   | "judge_context_limit"
   | "judge_model_limits_unknown"
   | "judge_output_invalid"
-  | "judge_execution_paused"
   | "judge_budget_exhausted"
   | "judge_deadline_exceeded";
 
@@ -40,7 +39,6 @@ export const JUDGE_ERROR_LABELS: Record<JudgeEvidenceErrorCode, string> = {
   judge_model_limits_unknown:
     "The selected judge's input limits are unavailable",
   judge_output_invalid: "The judge did not return a valid measurement",
-  judge_execution_paused: "Grading is paused",
   judge_deadline_exceeded: "The grading deadline expired",
   judge_budget_exhausted:
     "The judge could not reserve enough budget for the complete evidence",

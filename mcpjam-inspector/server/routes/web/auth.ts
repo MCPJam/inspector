@@ -1,3 +1,17 @@
+import {
+  serverCheckScope,
+  withServerCheckSignal,
+} from "../../utils/server-check-scope.js";
+import {
+  connectionKey,
+  type McpToolConnection,
+  type ConnectionsByServerId,
+} from "@mcpjam/sdk";
+import {
+  connectionLabels,
+  type AuthorizedOAuthConnection,
+} from "../../../shared/oauth-connections.js";
+import { setManagerConnections } from "../../utils/mcp-connections.js";
 import { z } from "zod";
 import type { Context } from "hono";
 import {
@@ -12,6 +26,7 @@ import type {
   ElicitationCallback,
   HttpExchangeLogger,
   HttpServerConfig,
+  MCPServerConfig,
   MrtrInputCollector,
   RpcLogger,
   UnauthorizedRefreshHandler,
@@ -19,16 +34,21 @@ import type {
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { BlockedEgressTargetError } from "../../utils/hosted-egress-guard.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
+import { projectHostedSuccessLogs } from "../../utils/hosted-connect-failure.js";
+import { projectHostedRouteFailure } from "../../utils/hosted-route-failure.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   applyHostConformanceKnobs,
   applyHostParamMirroring,
@@ -69,10 +89,17 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
+import { mapWebBoundaryError } from "./boundary-error.js";
 import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
+  isCredentialRefusalError,
 } from "../../utils/hosted-oauth-refresh.js";
+import {
+  bindCredentialHeaders,
+  bindingForAuthorizedHeaders,
+  type CredentialHeaderBinding,
+} from "../../utils/credential-header-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -87,6 +114,10 @@ import {
 import { toXaaConnectFailure } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  requireServiceCredential,
+  WORKOS_API_KEY_FEATURE,
+} from "../../services/service-credential.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -295,7 +326,8 @@ export const promptsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const promptsListMultiSchema = z.object({
+/** The batch counterpart of `projectServerSchema`: one request, several servers. */
+export const projectServerBatchSchema = z.object({
   projectId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).optional(),
@@ -315,6 +347,12 @@ export const promptsListMultiSchema = z.object({
   // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
   scenarioId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
+});
+
+export const promptsListMultiSchema = projectServerBatchSchema;
+
+export const toolsListMultiSchema = projectServerBatchSchema.extend({
+  modelId: z.string().optional(),
 });
 
 export const promptsGetSchema = projectServerSchema.extend({
@@ -361,6 +399,14 @@ export const hostedChatSchema = z
      * instead of an arg-validation failure deep inside the ingest action.
      */
     expectedVersion: z.number().int().nonnegative().optional(),
+    /**
+     * Sent by a Playground COMPARE column. Every column runs the same host at
+     * the same time, so a harness column cannot share the member's one personal
+     * computer without overwriting its siblings' files; the server gives each
+     * column its own conversation's disposable box instead. Only ever read as a
+     * request for MORE isolation, so it needs no authority of its own.
+     */
+    comparePane: z.boolean().optional(),
   })
   .passthrough();
 
@@ -402,10 +448,14 @@ export type ConvexAuthorizeResponse = {
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  oauthCredentialId?: string;
+  oauthCredentialAuthorizedAt?: number;
+  oauthConnections?: AuthorizedOAuthConnection[];
   permissions: {
     chatOnly: boolean;
   };
   serverConfig: {
+    credentialConfigurationId?: string;
     transportType: "stdio" | "http";
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
@@ -482,13 +532,22 @@ export type ConvexOAuthUnavailableReason =
    * The server's URL was repointed, so the backend refuses to hand a
    * credential bound to the old destination to the new one.
    */
-  | "credential_origin_mismatch";
+  | "credential_origin_mismatch"
+  /**
+   * The organization keeps saved credentials inside MCPJam-hosted
+   * connections, and this connect would deliver the token elsewhere. The
+   * token is intact; authorizing again does not change the policy.
+   */
+  | "credential_export_denied";
 
 export type ConvexBatchAuthorizeSuccess = {
   ok: true;
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  oauthCredentialId?: string;
+  oauthCredentialAuthorizedAt?: number;
+  oauthConnections?: AuthorizedOAuthConnection[];
   oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   /**
    * How long to wait before retrying, when the reason is transient. Sent with
@@ -507,7 +566,8 @@ export type ConvexBatchAuthorizeSuccess = {
 };
 
 export type ConvexBatchAuthorizeResult =
-  ConvexBatchAuthorizeFailure | ConvexBatchAuthorizeSuccess;
+  | ConvexBatchAuthorizeFailure
+  | ConvexBatchAuthorizeSuccess;
 
 export type ConvexBatchAuthorizeResponse = {
   organizationId?: string | null;
@@ -602,14 +662,7 @@ export function buildConvexAuthHeaders(
     "Content-Type": "application/json",
   };
   if (caller.authMethod === "workos_api_key") {
-    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-    if (!serviceToken) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth",
-      );
-    }
+    const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
     // NOT the Convex user `_id`: the backend resolves the delegated user by
     // externalId. Sending the Convex id here would 404 as UNKNOWN_DELEGATED_USER.
@@ -644,6 +697,9 @@ export async function authorizeServer(
   projectId: string,
   serverId: string,
   options?: {
+    connectionId?: string;
+    connectionIds?: Record<string, string>;
+    includeConnections?: boolean;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
     accessVersion?: number;
@@ -665,6 +721,13 @@ export async function authorizeServer(
       headers: buildConvexAuthHeaders(callerContextFromHono(c), bearerToken),
       body: JSON.stringify({
         projectId,
+        ...(options?.connectionId
+          ? { connectionId: options.connectionId }
+          : {}),
+        ...(options?.connectionIds
+          ? { connectionIds: options.connectionIds }
+          : {}),
+        ...(options?.includeConnections ? { includeConnections: true } : {}),
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -721,6 +784,9 @@ export async function authorizeBatch(
   projectId: string,
   serverIds: string[],
   options?: {
+    connectionId?: string;
+    connectionIds?: Record<string, string>;
+    includeConnections?: boolean;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
     accessVersion?: number;
@@ -742,6 +808,13 @@ export async function authorizeBatch(
       headers: buildConvexAuthHeaders(caller, bearerToken),
       body: JSON.stringify({
         projectId,
+        ...(options?.connectionId
+          ? { connectionId: options.connectionId }
+          : {}),
+        ...(options?.connectionIds
+          ? { connectionIds: options.connectionIds }
+          : {}),
+        ...(options?.includeConnections ? { includeConnections: true } : {}),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -843,6 +916,62 @@ export async function authorizeBatch(
       typeof raw.isAnonymous === "boolean" ? raw.isAnonymous : undefined,
     results: strippedResults,
   };
+}
+
+/**
+ * Project membership with no servers to authorize: the same backend
+ * `resolveProjectAccess` verdict {@link authorizeBatch} applies, for a turn
+ * that selected none (MJ-013). A refusal is rethrown with the backend's own
+ * status and body, so it reads exactly like the batch path's
+ * `403 Not a member of this project`.
+ */
+export async function authorizeProject(
+  caller: ManagerCallerContext,
+  bearerToken: string,
+  projectId: string,
+): Promise<void> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}/web/authorize-project`, {
+      method: "POST",
+      headers: buildConvexAuthHeaders(caller, bearerToken),
+      body: JSON.stringify({ projectId }),
+      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      `Failed to reach authorization service: ${parseErrorMessage(error)}`,
+    );
+  }
+  if (response.ok) return;
+
+  // A refusal with no JSON body still fails closed, with a generic message. A
+  // backend that predates the route is one: its router answers 404 in plain
+  // text, so guest chat stops until the backend half is deployed.
+  const body = (await response.json().catch(() => null)) as {
+    code?: unknown;
+    message?: unknown;
+  } | null;
+  throw new WebRouteError(
+    response.status,
+    (typeof body?.code === "string"
+      ? body.code
+      : ErrorCode.INTERNAL_ERROR) as ErrorCode,
+    typeof body?.message === "string"
+      ? body.message
+      : `Authorization failed (${response.status})`,
+  );
 }
 
 export function toHttpConfig(
@@ -968,7 +1097,7 @@ export function toHttpConfig(
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "This server runs over stdio and requires the local runtime (desktop app); hosted mode cannot spawn local processes.",
+      "To connect to a STDIO server, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app. STDIO connections aren’t available in MCPJam’s hosted web app.",
       { readiness: "local_runtime_required", transport: "stdio" },
     );
   }
@@ -1050,11 +1179,21 @@ export function toHttpConfig(
 }
 
 export interface AuthorizedManagerResult {
+  connectionsByServerId?: ConnectionsByServerId;
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
   oauthServerUrls: Record<string, string>;
   /** Server-authenticated Convex user/guest id for this request, when known. */
   authenticatedUserId?: string | null;
+  /**
+   * Servers the batch left out, each with the error its own request would
+   * have thrown. Only present when `tolerateServerRefusals` was set; every
+   * other caller gets the first refusal as a throw, as before.
+   */
+  refusedServers?: Record<string, unknown>;
+  /** Private, freshly authorized configs for explicit connection ownership. */
+  authorizedServerConfigs?: Record<string, MCPServerConfig>;
+  authorizedServerIdentities?: Record<string, unknown>;
 }
 
 function resolveEffectiveInitializePinsForServer(
@@ -1132,6 +1271,34 @@ function resolveEffectiveInitializePinsForServer(
   return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
+/**
+ * Whether `tolerateServerRefusals` may keep `error` for its server: a
+ * `WebRouteError` that answers for that server. An `INTERNAL_ERROR` (a
+ * missing authorize result, a missing XAA issuer) or anything that is not a
+ * `WebRouteError` (a TypeError while building the config) is a fault in this
+ * builder, so it still fails the request and reaches Sentry and
+ * `http.request.failed` through the route's failure path. The test is the
+ * code, not `status < 500`: an unreachable authorization server is a 502/503
+ * that belongs to one server. A failed XAA mint is the one `INTERNAL_ERROR`
+ * kept: `toXaaConnectFailure` frames an unclassified handshake failure that
+ * way, it belongs to that server's IdP, and the mint site has already
+ * logged it. The secret reveal is the one hop where a 5xx is never the
+ * server's: the only party on it is Convex, so a 5xx there (unreachable,
+ * timed out, or answering 5xx itself) is MCPJam's own dependency failing,
+ * while its 4xx (export denied, origin mismatch) is still the backend's
+ * answer for that server.
+ */
+function isServerRefusal(error: unknown): boolean {
+  if (!(error instanceof WebRouteError)) return false;
+  if (error.setupFailureSource === "secret_reveal" && error.status >= 500) {
+    return false;
+  }
+  return (
+    error.code !== ErrorCode.INTERNAL_ERROR ||
+    error.setupFailureSource === "xaa_mint"
+  );
+}
+
 export async function createAuthorizedManager(
   caller: ManagerCallerContext,
   bearerToken: string,
@@ -1141,6 +1308,10 @@ export async function createAuthorizedManager(
   oauthTokens?: Record<string, string>,
   clientCapabilities?: Record<string, unknown>,
   options?: {
+    /** Authorize fully, but let a request owner decide when to connect. */
+    lazyConnect?: boolean;
+    multiConnection?: boolean;
+    connectionIds?: Record<string, string>;
     accessScope?: "project_member" | "chat_v2";
     /**
      * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
@@ -1284,6 +1455,9 @@ export async function createAuthorizedManager(
      * whole point of the durable continuation transport (see
      * `server/utils/mrtr-hosted-collector.ts`).
      */
+    extensionRequestHandlers?: NonNullable<
+      ConstructorParameters<typeof MCPClientManager>[1]
+    >["extensionRequestHandlers"];
     mrtrInputCollectorForServer?: (
       serverId: string,
     ) => MrtrInputCollector | undefined;
@@ -1295,6 +1469,21 @@ export async function createAuthorizedManager(
      * turn would resolve a DIFFERENT machine than the one the turn is using.
      */
     executionScope?: ExecutionScope;
+    /**
+     * Keep a server's refusal per server instead of failing the batch on it.
+     *
+     * The default fails the whole batch on the first refusal, which is right
+     * for a connection whose servers are used together (a chat turn, an eval
+     * run). The tools batch route lists servers independently, and one
+     * server's stale grant or missing XAA registration used to answer for all
+     * of them (PLB-187). With this set, passes 1, 1b and 2 record such a
+     * server in `refusedServers` and leave it out of the manager (and, from
+     * passes 1 and 1b, out of pass 2). An internal fault still fails the
+     * batch: see `isServerRefusal`. The batch-level ordering stands: every
+     * remaining server still clears validation before any of them mints or
+     * connects.
+     */
+    tolerateServerRefusals?: boolean;
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -1304,10 +1493,12 @@ export async function createAuthorizedManager(
       manager: new MCPClientManager(
         {},
         {
+          ...(options?.lazyConnect ? { lazyConnect: true } : {}),
           defaultTimeout: timeoutMs,
           rpcLogger: options?.rpcLogger,
           httpLogger: options?.httpLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+          extensionRequestHandlers: options?.extensionRequestHandlers,
           // Set even on the empty batch, and not for the sake of the zero
           // servers it has: `baseFetch` is resolved when a transport is built,
           // so a caller that later attaches one through `connectToServer` gets
@@ -1320,21 +1511,61 @@ export async function createAuthorizedManager(
       ),
       oauthServerUrls: {},
       authenticatedUserId: null,
+      ...(options?.lazyConnect ? { authorizedServerConfigs: {} } : {}),
     };
   }
 
   const oauthServerUrls: Record<string, string> = {};
+  let authorizedUserId: string | null = null;
   const batch = await authorizeBatch(
-    caller,
+    {
+      ...caller,
+      setLogContext(partial) {
+        if (partial.userId) authorizedUserId = partial.userId;
+        caller.setLogContext?.(partial);
+      },
+    },
     bearerToken,
     projectId,
     uniqueServerIds,
     {
+      includeConnections: options?.multiConnection,
+      connectionIds: options?.connectionIds,
       accessScope: options?.accessScope,
       scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
     },
   );
+  const connectionsByServerId: Record<string, McpToolConnection[]> = {};
+  if (options?.multiConnection) {
+    for (const [id, auth] of Object.entries(batch.results)) {
+      if (auth.ok && auth.oauthConnections?.length) {
+        const live = auth.oauthConnections.filter(
+          (c) => c.accessToken && !c.needsReauth,
+        );
+        // A disconnected default must not hide another usable account.
+        auth.oauthAccessToken ||= live[0]?.accessToken;
+        // Every row dead (no token, or all needing reauthorization) is NOT a
+        // multi-connection server. Recording an empty group here would drop
+        // the server from the manager entirely, which contradicts the
+        // discover/auto path that deliberately allows a tokenless anonymous
+        // connection so public tools stay usable and a live 401 can start
+        // OAuth.
+        if (!live.length) continue;
+        // Labelled as a GROUP: two accounts on one email must not read the
+        // same, or the model is choosing between identical strings.
+        const groupLabels = connectionLabels(live);
+        connectionsByServerId[id] = live.map((c, index) => ({
+          serverId: id,
+          connectionId: c.connectionId,
+          key: connectionKey(id, c.connectionId, c.isDefault),
+          label: groupLabels[index],
+          profile: c.profile,
+          isDefault: c.isDefault,
+        }));
+      }
+    }
+  }
 
   // PASS 1 — validate the WHOLE batch before any server does side-effecting
   // work. The mint pass below runs concurrently (Promise.all), so a check
@@ -1359,212 +1590,249 @@ export async function createAuthorizedManager(
     typeof getConfidentialCimdProviderForOrg
   > = undefined;
   let confidentialCimdProviderForOrgResolved = false;
+  const refusedServers: Record<string, unknown> = {};
   for (const serverId of uniqueServerIds) {
-    const auth = batch.results[serverId];
-    if (!auth) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        `Authorization response is missing result for server "${serverId}"`,
+    try {
+      const auth = batch.results[serverId];
+      // Both refusals name the server, like the credential refusals below.
+      if (!auth) {
+        throw new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          `Authorization response is missing result for server "${serverId}"`,
+          { serverId },
+        );
+      }
+      if (!auth.ok) {
+        throw new WebRouteError(
+          auth.status,
+          auth.code as ErrorCode,
+          auth.message,
+          { serverId, serverName: serverNamesById?.[serverId] ?? null },
+        );
+      }
+      const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      const effectiveAuth = resolveEffectiveAuthMethod(
+        auth.serverConfig,
+        options?.xaaPolicy,
       );
-    }
-    if (!auth.ok) {
-      throw new WebRouteError(
-        auth.status,
-        auth.code as ErrorCode,
-        auth.message,
-      );
-    }
-    const displayServerName = serverNamesById?.[serverId] ?? serverId;
-    const effectiveAuth = resolveEffectiveAuthMethod(
-      auth.serverConfig,
-      options?.xaaPolicy,
-    );
-    effectiveAuthByServerId.set(serverId, effectiveAuth);
-    const isHttp = auth.serverConfig.transportType === "http";
+      effectiveAuthByServerId.set(serverId, effectiveAuth);
+      const isHttp = auth.serverConfig.transportType === "http";
 
-    // Enterprise policy, unconfigured `auto` server: never silently downgrade
-    // to the discover ladder. "Not configured" (no stored client registration
-    // at the resource authorization server), NOT "not enrolled" — enrollment
-    // verdicts belong to the future issuer-policy evaluator.
-    if (
-      isHttp &&
-      xaaPolicyRequiresConfiguration(auth.serverConfig, options?.xaaPolicy)
-    ) {
-      throw new WebRouteError(
-        409,
-        ErrorCode.XAA_CONNECTION_NOT_CONFIGURED,
-        `Server "${displayServerName}" has no XAA client registration configured. This host requires enterprise-managed authorization — add the server's client registration in its auth settings, or set an explicit auth method to override the host policy.`,
-        {
+      // Enterprise policy, unconfigured `auto` server: never silently downgrade
+      // to the discover ladder. "Not configured" (no stored client registration
+      // at the resource authorization server), NOT "not enrolled" — enrollment
+      // verdicts belong to the future issuer-policy evaluator.
+      if (
+        isHttp &&
+        xaaPolicyRequiresConfiguration(auth.serverConfig, options?.xaaPolicy)
+      ) {
+        throw new WebRouteError(
+          409,
+          ErrorCode.XAA_CONNECTION_NOT_CONFIGURED,
+          `Server "${displayServerName}" has no XAA client registration configured. This host requires enterprise-managed authorization — add the server's client registration in its auth settings, or set an explicit auth method to override the host policy.`,
+          {
+            serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
+            reason: "xaa_connection_not_configured",
+          },
+        );
+      }
+
+      // Backend-resolved identity failure (legacy partial per-server override):
+      // a distinct configuration error, surfaced before any mint AND before the
+      // issuer guard — eval routes omit `xaaIssuer`, so checking that first
+      // would mask this actionable 400 behind the caller-contract 500. Gated on
+      // the same XAA selection the mint pass uses. No silent fallback to the
+      // demo identity, no silent XAA→OAuth fallback.
+      //
+      // Framed like every other connect-time XAA failure: the backend's sentence
+      // is written for the server's auth form, and on its own ("Complete or
+      // clear the server identity override") it names neither the server nor the
+      // surface. It is kept verbatim as the reason clause.
+      if (
+        isHttp &&
+        effectiveAuth === "xaa" &&
+        auth.serverConfig.xaaIdentityError
+      ) {
+        throw toXaaConnectFailure(
+          new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            auth.serverConfig.xaaIdentityError,
+          ),
+          {
+            serverId,
+            serverName: displayServerName,
+            ...(auth.serverConfig.url
+              ? { serverUrl: auth.serverConfig.url }
+              : {}),
+          },
+        );
+      }
+
+      if (isHttp && effectiveAuth === "xaa") {
+        const registrationMode = resolveXaaConnectRegistrationMode(
+          auth.serverConfig.registrationMode,
+        );
+        if (
+          registrationMode === "cimd" &&
+          auth.serverConfig.xaaClientAuth === "private_key_jwt"
+        ) {
+          if (batch.isAnonymous !== false) {
+            throw new WebRouteError(
+              403,
+              ErrorCode.FORBIDDEN,
+              "Confidential CIMD requires a signed-in organization member",
+            );
+          }
+          if (!batch.organizationId) {
+            throw new WebRouteError(
+              409,
+              ErrorCode.FEATURE_NOT_SUPPORTED,
+              "Confidential CIMD requires an organization-owned project",
+            );
+          }
+          if (!confidentialCimdProviderForOrgResolved) {
+            confidentialCimdProviderForOrg =
+              getConfidentialCimdProviderForOrg();
+            confidentialCimdProviderForOrgResolved = true;
+          }
+          if (!confidentialCimdProviderForOrg) {
+            throw new WebRouteError(
+              409,
+              ErrorCode.FEATURE_NOT_SUPPORTED,
+              "Confidential CIMD is not enabled on this inspector deployment",
+            );
+          }
+        }
+      }
+
+      // A credential EXISTS but the backend cannot refresh it: its authorization
+      // server is on an address only this machine can reach. Not a verdict at
+      // all — in local mode it is recoverable, so it is deferred to the recovery
+      // pass below rather than decided here. Hosted, it is a real refusal, but
+      // "complete the OAuth flow first" is the wrong thing to say to someone who
+      // already did; the recovery pass raises the actionable message instead.
+      const privateAuthorizationServer =
+        auth.oauthUnavailableReason === "private_authorization_server" &&
+        !(auth.oauthAccessToken ?? oauthTokens?.[serverId]);
+      if (
+        privateAuthorizationServer &&
+        (effectiveAuth === "oauth" || effectiveAuth === "discover")
+      ) {
+        privateAuthorizationServerRecoveries.push({
+          serverId,
+          displayServerName,
+          required: effectiveAuth === "oauth",
+        });
+        continue;
+      }
+
+      // The organization's policy withholds a credential that EXISTS. That holds
+      // for an auto-discovery server as much as an explicit-OAuth one: dialing
+      // it without the token would fall into a discovery flow that mints a
+      // token the same policy withholds, so both answer with the policy.
+      if (
+        auth.oauthUnavailableReason === "credential_export_denied" &&
+        !(auth.oauthAccessToken ?? oauthTokens?.[serverId]) &&
+        (effectiveAuth === "oauth" || effectiveAuth === "discover")
+      ) {
+        throw new WebRouteError(
+          403,
+          ErrorCode.FORBIDDEN,
+          `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+          {
+            exportDenied: true,
+            policy: "credentialExportPolicy",
+            serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
+            serverUrl: auth.serverConfig.url,
+          },
+        );
+      }
+
+      // Explicit-OAuth server with no stored token: also a synchronous verdict,
+      // so it belongs here — leaving it in the concurrent pass let a configured
+      // XAA sibling start minting a real token while this one rejected.
+      //
+      // When the backend named a reason for withholding the token, that reason
+      // decides the answer. Only `credential_origin_mismatch` is about the
+      // user's authorization; the default would send the other two off to
+      // complete an OAuth flow that was never the problem.
+      if (
+        effectiveAuth === "oauth" &&
+        !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
+      ) {
+        const errorDetails = {
           serverId,
           serverName: serverNamesById?.[serverId] ?? null,
-          reason: "xaa_connection_not_configured",
-        },
-      );
-    }
-
-    // Backend-resolved identity failure (legacy partial per-server override):
-    // a distinct configuration error, surfaced before any mint AND before the
-    // issuer guard — eval routes omit `xaaIssuer`, so checking that first
-    // would mask this actionable 400 behind the caller-contract 500. Gated on
-    // the same XAA selection the mint pass uses. No silent fallback to the
-    // demo identity, no silent XAA→OAuth fallback.
-    //
-    // Framed like every other connect-time XAA failure: the backend's sentence
-    // is written for the server's auth form, and on its own ("Complete or
-    // clear the server identity override") it names neither the server nor the
-    // surface. It is kept verbatim as the reason clause.
-    if (
-      isHttp &&
-      effectiveAuth === "xaa" &&
-      auth.serverConfig.xaaIdentityError
-    ) {
-      throw toXaaConnectFailure(
-        new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          auth.serverConfig.xaaIdentityError,
-        ),
-        {
-          serverId,
-          serverName: displayServerName,
-          ...(auth.serverConfig.url
-            ? { serverUrl: auth.serverConfig.url }
-            : {}),
-        },
-      );
-    }
-
-    if (isHttp && effectiveAuth === "xaa") {
-      const registrationMode = resolveXaaConnectRegistrationMode(
-        auth.serverConfig.registrationMode,
-      );
-      if (
-        registrationMode === "cimd" &&
-        auth.serverConfig.xaaClientAuth === "private_key_jwt"
-      ) {
-        if (batch.isAnonymous !== false) {
-          throw new WebRouteError(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Confidential CIMD requires a signed-in organization member",
-          );
-        }
-        if (!batch.organizationId) {
-          throw new WebRouteError(
-            409,
-            ErrorCode.FEATURE_NOT_SUPPORTED,
-            "Confidential CIMD requires an organization-owned project",
-          );
-        }
-        if (!confidentialCimdProviderForOrgResolved) {
-          confidentialCimdProviderForOrg = getConfidentialCimdProviderForOrg();
-          confidentialCimdProviderForOrgResolved = true;
-        }
-        if (!confidentialCimdProviderForOrg) {
-          throw new WebRouteError(
-            409,
-            ErrorCode.FEATURE_NOT_SUPPORTED,
-            "Confidential CIMD is not enabled on this inspector deployment",
-          );
+          serverUrl: auth.serverConfig.url,
+        };
+        switch (auth.oauthUnavailableReason) {
+          // The server's URL was repointed. The stored credential belongs to the
+          // old destination, so the backend refuses to send it to the new one —
+          // a real reauthorize, but the user has to be told which destination
+          // they are authorizing and why the old grant stopped counting.
+          case "credential_origin_mismatch":
+            throw new WebRouteError(
+              401,
+              ErrorCode.UNAUTHORIZED,
+              `Server "${displayServerName}" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.`,
+              { oauthRequired: true, ...errorDetails },
+            );
+          // The credential is intact; the authorization server never answered.
+          // Authorizing again means talking to the same unreachable host, so
+          // saying "reconnect" would send the user in a circle.
+          case "authorization_server_unreachable":
+            throw new WebRouteError(
+              503,
+              ErrorCode.SERVER_UNREACHABLE,
+              `The authorization server for "${displayServerName}" did not respond, so its access token could not be refreshed. Authorizing again will not change that. Try again shortly.`,
+              errorDetails,
+            );
+          // Another refresh holds the lease. Refusing here would be a regression
+          // from a retry: the token this connect wants is being minted right
+          // now, and the backend says how long that takes.
+          case "refresh_in_progress": {
+            const retryAfterMs =
+              typeof auth.oauthRetryAfterMs === "number" &&
+              Number.isFinite(auth.oauthRetryAfterMs) &&
+              auth.oauthRetryAfterMs > 0
+                ? auth.oauthRetryAfterMs
+                : null;
+            const retryAfterSeconds =
+              retryAfterMs === null ? null : Math.ceil(retryAfterMs / 1000);
+            const error = new WebRouteError(
+              429,
+              ErrorCode.RATE_LIMITED,
+              `Credentials for "${displayServerName}" are being refreshed by another request.${
+                retryAfterSeconds === null
+                  ? " Try again shortly."
+                  : ` Try again in ${retryAfterSeconds} second${
+                      retryAfterSeconds === 1 ? "" : "s"
+                    }.`
+              }`,
+              errorDetails,
+            );
+            throw retryAfterSeconds === null
+              ? error
+              : error.withHeaders({ "Retry-After": String(retryAfterSeconds) });
+          }
+          default:
+            throw new WebRouteError(
+              401,
+              ErrorCode.UNAUTHORIZED,
+              `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+              { oauthRequired: true, ...errorDetails },
+            );
         }
       }
-    }
-
-    // A credential EXISTS but the backend cannot refresh it: its authorization
-    // server is on an address only this machine can reach. Not a verdict at
-    // all — in local mode it is recoverable, so it is deferred to the recovery
-    // pass below rather than decided here. Hosted, it is a real refusal, but
-    // "complete the OAuth flow first" is the wrong thing to say to someone who
-    // already did; the recovery pass raises the actionable message instead.
-    const privateAuthorizationServer =
-      auth.oauthUnavailableReason === "private_authorization_server" &&
-      !(auth.oauthAccessToken ?? oauthTokens?.[serverId]);
-    if (
-      privateAuthorizationServer &&
-      (effectiveAuth === "oauth" || effectiveAuth === "discover")
-    ) {
-      privateAuthorizationServerRecoveries.push({
-        serverId,
-        displayServerName,
-        required: effectiveAuth === "oauth",
-      });
-      continue;
-    }
-
-    // Explicit-OAuth server with no stored token: also a synchronous verdict,
-    // so it belongs here — leaving it in the concurrent pass let a configured
-    // XAA sibling start minting a real token while this one rejected.
-    //
-    // When the backend named a reason for withholding the token, that reason
-    // decides the answer. Only `credential_origin_mismatch` is about the
-    // user's authorization; the default would send the other two off to
-    // complete an OAuth flow that was never the problem.
-    if (
-      effectiveAuth === "oauth" &&
-      !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
-    ) {
-      const errorDetails = {
-        serverId,
-        serverName: serverNamesById?.[serverId] ?? null,
-        serverUrl: auth.serverConfig.url,
-      };
-      switch (auth.oauthUnavailableReason) {
-        // The server's URL was repointed. The stored credential belongs to the
-        // old destination, so the backend refuses to send it to the new one —
-        // a real reauthorize, but the user has to be told which destination
-        // they are authorizing and why the old grant stopped counting.
-        case "credential_origin_mismatch":
-          throw new WebRouteError(
-            401,
-            ErrorCode.UNAUTHORIZED,
-            `Server "${displayServerName}" now points at a different destination, so its saved credentials no longer apply. Authorize it again for the new destination.`,
-            { oauthRequired: true, ...errorDetails },
-          );
-        // The credential is intact; the authorization server never answered.
-        // Authorizing again means talking to the same unreachable host, so
-        // saying "reconnect" would send the user in a circle.
-        case "authorization_server_unreachable":
-          throw new WebRouteError(
-            503,
-            ErrorCode.SERVER_UNREACHABLE,
-            `The authorization server for "${displayServerName}" did not respond, so its access token could not be refreshed. Authorizing again will not change that. Try again shortly.`,
-            errorDetails,
-          );
-        // Another refresh holds the lease. Refusing here would be a regression
-        // from a retry: the token this connect wants is being minted right
-        // now, and the backend says how long that takes.
-        case "refresh_in_progress": {
-          const retryAfterMs =
-            typeof auth.oauthRetryAfterMs === "number" &&
-            Number.isFinite(auth.oauthRetryAfterMs) &&
-            auth.oauthRetryAfterMs > 0
-              ? auth.oauthRetryAfterMs
-              : null;
-          const retryAfterSeconds =
-            retryAfterMs === null ? null : Math.ceil(retryAfterMs / 1000);
-          const error = new WebRouteError(
-            429,
-            ErrorCode.RATE_LIMITED,
-            `Credentials for "${displayServerName}" are being refreshed by another request.${
-              retryAfterSeconds === null
-                ? " Try again shortly."
-                : ` Try again in ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}.`
-            }`,
-            errorDetails,
-          );
-          throw retryAfterSeconds === null
-            ? error
-            : error.withHeaders({ "Retry-After": String(retryAfterSeconds) });
-        }
-        default:
-          throw new WebRouteError(
-            401,
-            ErrorCode.UNAUTHORIZED,
-            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-            { oauthRequired: true, ...errorDetails },
-          );
+    } catch (error) {
+      if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
+        throw error;
       }
+      refusedServers[serverId] = error;
     }
   }
 
@@ -1597,8 +1865,9 @@ export async function createAuthorizedManager(
     } catch (error) {
       // A "discover" server was only ever going to try its luck: connecting
       // unauthenticated is the documented fallback, and a live 401 escalates
-      // client-side from there. Only an explicit-OAuth server has to fail.
-      if (!recovery.required) {
+      // client-side from there. Only an explicit-OAuth server has to fail —
+      // or any server whose credential was refused rather than unavailable.
+      if (!recovery.required && !isCredentialRefusalError(error)) {
         logger.debug(
           "[connect] private authorization server refresh unavailable; connecting unauthenticated",
           {
@@ -1606,6 +1875,10 @@ export async function createAuthorizedManager(
             error: parseErrorMessage(error),
           },
         );
+        continue;
+      }
+      if (options?.tolerateServerRefusals && isServerRefusal(error)) {
+        refusedServers[recovery.serverId] = error;
         continue;
       }
       throw error;
@@ -1626,380 +1899,431 @@ export async function createAuthorizedManager(
     }
   };
 
+  // Revealed stored headers, per server: which header names carry them and
+  // the origins the backend bound them to (filled in PASS 2, applied to the
+  // per-server transport below).
+  const credentialBindings = new Map<string, CredentialHeaderBinding>();
+
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
+  const admittedServerIds = uniqueServerIds.filter(
+    (serverId) => !Object.hasOwn(refusedServers, serverId),
+  );
   const configEntries = await Promise.all(
-    uniqueServerIds.map(async (serverId) => {
-      // Non-null: PASS 1 threw for a missing or failed authorize result.
-      const auth = batch.results[serverId] as Extract<
-        (typeof batch.results)[string],
-        { ok: true }
-      >;
+    admittedServerIds.map(async (serverId) => {
+      try {
+        // Non-null: PASS 1 threw for a missing or failed authorize result.
+        const auth = batch.results[serverId] as Extract<
+          (typeof batch.results)[string],
+          { ok: true }
+        >;
 
-      // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
-      // by PASS 1b for a credential the backend could not refresh itself.
-      const oauthToken =
-        recoveredOAuthTokens[serverId] ??
-        auth.oauthAccessToken ??
-        oauthTokens?.[serverId];
-      const displayServerName = serverNamesById?.[serverId] ?? serverId;
-      // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
-      // when configured or when the host policy forces it, "discover"
-      // otherwise; legacy rows fall back to the boolean pair). Reused rather
-      // than re-resolved so both passes agree by construction. Must match the
-      // local resolver's dispatch (hosted/local/swarm parity).
-      const effectiveAuth = effectiveAuthByServerId.get(
-        serverId,
-      ) as EffectiveAuthMethod;
-
-      const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
-        serverId,
-        options?.initializePins,
-        options?.mcpProtocolVersionsByServerId,
-      );
-      // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
-      // swarm runner) wins over the batch-uniform host default. Guard against a
-      // malformed snapshot value falling through to a non-positive timeout.
-      const perServerTimeout = options?.requestTimeoutByServerId?.[serverId];
-      const effectiveTimeoutMs =
-        typeof perServerTimeout === "number" &&
-        Number.isFinite(perServerTimeout) &&
-        perServerTimeout > 0
-          ? perServerTimeout
-          : timeoutMs;
-
-      // LOCAL RUNTIME stdio divert. When this /api/web deployment IS the
-      // local binary (npx/desktop), a stdio server — an ordinary one or a
-      // plugin's local component — CAN spawn here: this is the same process
-      // the /api/mcp engine spawns stdio children from. The hosted authorize
-      // batch strips command/args/env by contract, so the local resolver
-      // re-reads the full config through /web/authorize-batch-local (same
-      // bearer — authorization is re-checked, not assumed), applies runtime
-      // secrets, and materializes plugin bundles before building the SDK
-      // config. HOSTED deployments keep the `toHttpConfig` 400 below: there
-      // is genuinely no local process to spawn into (until stdio-in-computer
-      // execution lands).
-      if (auth.serverConfig.transportType !== "http" && !HOSTED_MODE) {
-        const config = await resolveLocalStdioServerConfig(
-          bearerToken,
-          projectId,
+        // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
+        // by PASS 1b for a credential the backend could not refresh itself.
+        const oauthToken =
+          recoveredOAuthTokens[serverId] ??
+          auth.oauthAccessToken ??
+          oauthTokens?.[serverId];
+        const displayServerName = serverNamesById?.[serverId] ?? serverId;
+        // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
+        // when configured or when the host policy forces it, "discover"
+        // otherwise; legacy rows fall back to the boolean pair). Reused rather
+        // than re-resolved so both passes agree by construction. Must match the
+        // local resolver's dispatch (hosted/local/swarm parity).
+        const effectiveAuth = effectiveAuthByServerId.get(
           serverId,
-          {
-            timeoutMs: effectiveTimeoutMs,
-            clientCapabilities,
-            serverDisplayName: displayServerName,
-            clientInfo: effectiveInitializePins?.clientInfo,
-            supportedProtocolVersions:
-              effectiveInitializePins?.supportedProtocolVersions,
-            firstPageOnly: effectiveInitializePins?.firstPageOnly,
-            supportsMrtr: effectiveInitializePins?.supportsMrtr,
-            // Only the drop half reaches a stdio child: there is no GET
-            // listen stream on stdio for `suppressListenChannel` to refuse.
-            dropToolListChanged: effectiveInitializePins?.dropToolListChanged,
-            // Era-scoped, not transport-scoped: a 2026 stdio connection
-            // cancels with `notifications/cancelled` exactly as a 2025 one
-            // does, so a host that cancels on neither must be honored here as
-            // well. `resolveLocalStdioServerConfig` has accepted this since
-            // the knob shipped; only the hand-off was missing.
-            toolCallCancellation: effectiveInitializePins?.toolCallCancellation,
-            xaaPolicy: options?.xaaPolicy,
-            // The local reread + secret reveal must carry the same scope and
-            // delegated identity as the hosted mint path below — a harness
-            // caller's bearer is deliberately empty (workos_api_key supplies
-            // the service-token exchange), and a scenario-scoped caller's
-            // reveal is gated on scenarioId/accessVersion.
-            accessScope: options?.accessScope,
-            scenarioId: options?.scenarioId,
-            accessVersion: options?.accessVersion,
-            workosApiKeyActingAs:
-              caller.authMethod === "workos_api_key" &&
-              caller.workosUserId &&
-              caller.mcpjamOrganizationId
-                ? {
-                    workosUserId: caller.workosUserId,
-                    mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                  }
-                : undefined,
-            onPluginLease: (release) => pluginLeaseReleases.push(release),
-          },
-        );
-        return [serverId, config] as const;
-      }
+        ) as EffectiveAuthMethod;
 
-      // HOSTED stdio divert. There is still no process here to spawn into, so
-      // a plugin's local component runs inside the caller's OWN computer behind
-      // the in-VM shim and this connection reaches it as an ordinary remote
-      // Streamable-HTTP server. `null` covers every reason that cannot happen
-      // (not a data plane, no box, an ordinary non-plugin stdio row, a bundle
-      // that will not verify, a session record that did not land) and leaves
-      // the `toHttpConfig` refusal below exactly as it was.
-      let pluginRuntime: PluginStdioHttpTarget | undefined;
-      if (auth.serverConfig.transportType !== "http") {
-        pluginRuntime =
-          (await resolvePluginStdioHttpTarget({
+        const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
+          serverId,
+          options?.initializePins,
+          options?.mcpProtocolVersionsByServerId,
+        );
+        // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
+        // swarm runner) wins over the batch-uniform host default. Guard against a
+        // malformed snapshot value falling through to a non-positive timeout.
+        const perServerTimeout = options?.requestTimeoutByServerId?.[serverId];
+        const effectiveTimeoutMs =
+          typeof perServerTimeout === "number" &&
+          Number.isFinite(perServerTimeout) &&
+          perServerTimeout > 0
+            ? perServerTimeout
+            : timeoutMs;
+
+        // LOCAL RUNTIME stdio divert. When this /api/web deployment IS the
+        // local binary (npx/desktop), a stdio server — an ordinary one or a
+        // plugin's local component — CAN spawn here: this is the same process
+        // the /api/mcp engine spawns stdio children from. The hosted authorize
+        // batch strips command/args/env by contract, so the local resolver
+        // re-reads the full config through /web/authorize-batch-local (same
+        // bearer — authorization is re-checked, not assumed), applies runtime
+        // secrets, and materializes plugin bundles before building the SDK
+        // config. HOSTED deployments keep the `toHttpConfig` 400 below: there
+        // is genuinely no local process to spawn into (until stdio-in-computer
+        // execution lands).
+        if (auth.serverConfig.transportType !== "http" && !HOSTED_MODE) {
+          const config = await resolveLocalStdioServerConfig(
             bearerToken,
             projectId,
             serverId,
-            serverDisplayName: displayServerName,
-            accessScope: options?.accessScope,
-            scenarioId: options?.scenarioId,
-            accessVersion: options?.accessVersion,
-            // From THIS batch's own authorize response, not from the request:
-            // it is what decides whether the caller has a membership the spec
-            // reread can run under.
-            isAnonymous: batch.isAnonymous,
-            // The turn's scope, so the computer reservation resolves the SAME
-            // box the rest of the turn runs on. Without it a host-funded swarm
-            // or guest turn would fall back to a project-only reserve and could
-            // wake a second, unrelated machine purely because a plugin was
-            // pinned.
-            executionScope: options?.executionScope,
-            workosApiKeyActingAs:
-              caller.authMethod === "workos_api_key" &&
-              caller.workosUserId &&
-              caller.mcpjamOrganizationId
-                ? {
-                    workosUserId: caller.workosUserId,
-                    mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                  }
-                : undefined,
-          })) ?? undefined;
-      }
+            {
+              timeoutMs: effectiveTimeoutMs,
+              clientCapabilities,
+              serverDisplayName: displayServerName,
+              clientInfo: effectiveInitializePins?.clientInfo,
+              supportedProtocolVersions:
+                effectiveInitializePins?.supportedProtocolVersions,
+              firstPageOnly: effectiveInitializePins?.firstPageOnly,
+              supportsMrtr: effectiveInitializePins?.supportsMrtr,
+              // Only the drop half reaches a stdio child: there is no GET
+              // listen stream on stdio for `suppressListenChannel` to refuse.
+              dropToolListChanged: effectiveInitializePins?.dropToolListChanged,
+              // Era-scoped, not transport-scoped: a 2026 stdio connection
+              // cancels with `notifications/cancelled` exactly as a 2025 one
+              // does, so a host that cancels on neither must be honored here as
+              // well. `resolveLocalStdioServerConfig` has accepted this since
+              // the knob shipped; only the hand-off was missing.
+              toolCallCancellation:
+                effectiveInitializePins?.toolCallCancellation,
+              xaaPolicy: options?.xaaPolicy,
+              // The local reread + secret reveal must carry the same scope and
+              // delegated identity as the hosted mint path below — a harness
+              // caller's bearer is deliberately empty (workos_api_key supplies
+              // the service-token exchange), and a scenario-scoped caller's
+              // reveal is gated on scenarioId/accessVersion.
+              accessScope: options?.accessScope,
+              scenarioId: options?.scenarioId,
+              accessVersion: options?.accessVersion,
+              workosApiKeyActingAs:
+                caller.authMethod === "workos_api_key" &&
+                caller.workosUserId &&
+                caller.mcpjamOrganizationId
+                  ? {
+                      workosUserId: caller.workosUserId,
+                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                    }
+                  : undefined,
+              onPluginLease: (release) => pluginLeaseReleases.push(release),
+            },
+          );
+          return [serverId, config] as const;
+        }
 
-      const usesOAuthFlow = effectiveAuth === "oauth";
-      // "discover" (non-XAA auto) rides the OAuth rails only when a stored
-      // token exists; tokenless discover connects unauthenticated instead of
-      // failing pre-connect — a live 401 then surfaces from the connect
-      // itself (mapRuntimeError gives it a 401 status; only the interactive
-      // validate route tags it oauthRequired for client escalation).
-      const usesStoredTokenFlow =
-        usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
-      const onUnauthorized =
-        usesStoredTokenFlow &&
-        (auth.oauthAccessToken || recoveredOAuthTokens[serverId])
-          ? buildHostedOAuthUnauthorizedHandler({
+        // HOSTED stdio divert. There is still no process here to spawn into, so
+        // a plugin's local component runs inside the caller's OWN computer behind
+        // the in-VM shim and this connection reaches it as an ordinary remote
+        // Streamable-HTTP server. `null` covers every reason that cannot happen
+        // (not a data plane, no box, an ordinary non-plugin stdio row, a bundle
+        // that will not verify, a session record that did not land) and leaves
+        // the `toHttpConfig` refusal below exactly as it was.
+        let pluginRuntime: PluginStdioHttpTarget | undefined;
+        if (auth.serverConfig.transportType !== "http") {
+          pluginRuntime =
+            (await resolvePluginStdioHttpTarget({
               bearerToken,
               projectId,
               serverId,
-              serverName: displayServerName,
+              serverDisplayName: displayServerName,
               accessScope: options?.accessScope,
-              shareToken: (options as { shareToken?: string })?.shareToken,
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
-              // Same reasoning as the local resolver's own handler: in local
-              // mode THIS process is the one that can reach a private
-              // authorization server. Without it every surface routed through
-              // here — chat-v2, evals, environments, swarm runs, harness-mcp —
-              // still dies at the first mid-session token expiry against a
-              // localhost OAuth server, while the Servers tab (which goes
-              // through /api/mcp) succeeds against the same server.
-              allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
-            })
-          : undefined;
-
-      if (usesStoredTokenFlow && auth.serverConfig.url) {
-        oauthServerUrls[serverId] = auth.serverConfig.url;
-      }
-      // (An explicit-OAuth server with no stored token is rejected batch-wide
-      // in PASS 1 — before any sibling can mint.)
-
-      // Cross-App Access: mint the resource access token server-side (MCPJam as
-      // the test IdP) and inject it through the same `oauthAccessToken` channel
-      // that sets the Bearer header. The effective method is a hard selection
-      // (auto picked XAA because the server is XAA-configured, or the row says
-      // xaa) — it can never collide with the OAuth branch above. The XAA token
-      // always overrides whatever the authorize batch returned: a server
-      // converted from OAuth still has a stored OAuth token, and reusing it
-      // would inject the wrong credential.
-      let connectToken = oauthToken;
-      let connectOnUnauthorized = onUnauthorized;
-      const useXaa =
-        auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
-      if (useXaa) {
-        // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
-        // sibling server can mint.)
-        if (!options?.xaaIssuer) {
-          // Caller-contract violation: a `useXaa` server reached a manager
-          // builder that didn't thread the issuer (only callers holding the
-          // request `Context` can resolve it). Fail loud here rather than
-          // connecting tokenless and surfacing a confusing downstream 401.
-          throw new WebRouteError(
-            500,
-            ErrorCode.INTERNAL_ERROR,
-            `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`,
-          );
+              // From THIS batch's own authorize response, not from the request:
+              // it is what decides whether the caller has a membership the spec
+              // reread can run under.
+              isAnonymous: batch.isAnonymous,
+              // The turn's scope, so the computer reservation resolves the SAME
+              // box the rest of the turn runs on. Without it a host-funded swarm
+              // or guest turn would fall back to a project-only reserve and could
+              // wake a second, unrelated machine purely because a plugin was
+              // pinned.
+              executionScope: options?.executionScope,
+              workosApiKeyActingAs:
+                caller.authMethod === "workos_api_key" &&
+                caller.workosUserId &&
+                caller.mcpjamOrganizationId
+                  ? {
+                      workosUserId: caller.workosUserId,
+                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                    }
+                  : undefined,
+            })) ?? undefined;
         }
-        let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
-        if (
-          resolveXaaConnectRegistrationMode(
-            auth.serverConfig.registrationMode,
-          ) === "cimd" &&
-          auth.serverConfig.xaaClientAuth === "private_key_jwt"
-        ) {
-          try {
-            confidentialCimdProvider = confidentialCimdProviderForOrg!(
-              batch.organizationId!,
-            );
-          } catch (error) {
-            logger.error(
-              "[XAA connect] confidential CIMD provider preparation failed",
-              error,
-              {
-                serverId,
-                serverName: displayServerName,
-                resource: auth.serverConfig.url,
+
+        const usesOAuthFlow = effectiveAuth === "oauth";
+        // "discover" (non-XAA auto) rides the OAuth rails only when a stored
+        // token exists; tokenless discover connects unauthenticated instead of
+        // failing pre-connect — a live 401 then surfaces from the connect
+        // itself (mapRuntimeError gives it a 401 status; only the interactive
+        // validate route tags it oauthRequired for client escalation).
+        const usesStoredTokenFlow =
+          usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
+        const onUnauthorized =
+          usesStoredTokenFlow &&
+          (auth.oauthAccessToken || recoveredOAuthTokens[serverId])
+            ? buildHostedOAuthUnauthorizedHandler({
+                bearerToken,
                 projectId,
-                organizationId: batch.organizationId,
-              },
-            );
-            throw new WebRouteError(
+                serverId,
+                connectionId: options?.connectionIds?.[serverId],
+                serverName: displayServerName,
+                accessScope: options?.accessScope,
+                shareToken: (options as { shareToken?: string })?.shareToken,
+                scenarioId: options?.scenarioId,
+                accessVersion: options?.accessVersion,
+                // Same reasoning as the local resolver's own handler: in local
+                // mode THIS process is the one that can reach a private
+                // authorization server. Without it every surface routed through
+                // here — chat-v2, evals, environments, swarm runs, harness-mcp —
+                // still dies at the first mid-session token expiry against a
+                // localhost OAuth server, while the Servers tab (which goes
+                // through /api/mcp) succeeds against the same server.
+                allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
+              })
+            : undefined;
+
+        if (usesStoredTokenFlow && auth.serverConfig.url) {
+          oauthServerUrls[serverId] = auth.serverConfig.url;
+        }
+        // (An explicit-OAuth server with no stored token is rejected batch-wide
+        // in PASS 1 — before any sibling can mint.)
+
+        // Cross-App Access: mint the resource access token server-side (MCPJam as
+        // the test IdP) and inject it through the same `oauthAccessToken` channel
+        // that sets the Bearer header. The effective method is a hard selection
+        // (auto picked XAA because the server is XAA-configured, or the row says
+        // xaa) — it can never collide with the OAuth branch above. The XAA token
+        // always overrides whatever the authorize batch returned: a server
+        // converted from OAuth still has a stored OAuth token, and reusing it
+        // would inject the wrong credential.
+        let connectToken = oauthToken;
+        let connectOnUnauthorized = onUnauthorized;
+        const useXaa =
+          auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
+        // (No client-side origin check for a preregistered/DCR secret: the mint
+        // resolves it with this server's URL as the declared target, and the
+        // backend refuses a secret saved for another origin.)
+        if (useXaa) {
+          // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
+          // sibling server can mint.)
+          if (!options?.xaaIssuer) {
+            // Caller-contract violation: a `useXaa` server reached a manager
+            // builder that didn't thread the issuer (only callers holding the
+            // request `Context` can resolve it). Fail loud here rather than
+            // connecting tokenless and surfacing a confusing downstream 401.
+            //
+            // Always MCPJam's own bug, so it is declared ours: the origin it
+            // carries reaches `http.request.failed`, where the MCPJam-fault
+            // monitor alerts on it.
+            const missingIssuer = new WebRouteError(
               500,
               ErrorCode.INTERNAL_ERROR,
-              "Could not prepare the confidential CIMD client identity",
+              `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`,
             );
+            missingIssuer.origin = reportRouteFailure(
+              "[xaa] connect surface did not pass the issuer",
+              missingIssuer,
+              { source: "web.auth.xaa-issuer-missing", hop: "mcpjam_internal" },
+            ).origin;
+            throw missingIssuer;
           }
-        }
-        const mintArgs = buildXaaMintArgs({
-          issuer: options.xaaIssuer,
-          hostedMode: HOSTED_MODE,
-          serverConfig: auth.serverConfig,
-          serverId,
-          projectId,
-          bearerToken,
-          resolveServerSecret: fetchServerClientSecret,
-          organizationId: batch.organizationId,
-          isAnonymous: batch.isAnonymous,
-          confidentialCimdProvider,
-        });
-        const xaaFailureTarget = {
-          serverId,
-          serverName: displayServerName,
-          ...(auth.serverConfig.url
-            ? { serverUrl: auth.serverConfig.url }
-            : {}),
-        };
-        try {
-          connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
-        } catch (error) {
-          if (!isXaaMintErrorReported(error)) {
-            logger.error("[XAA connect] mint failed", error, {
-              serverId,
-              serverName: displayServerName,
-              resource: auth.serverConfig.url,
-            });
+          let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
+          if (
+            resolveXaaConnectRegistrationMode(
+              auth.serverConfig.registrationMode,
+            ) === "cimd" &&
+            auth.serverConfig.xaaClientAuth === "private_key_jwt"
+          ) {
+            try {
+              confidentialCimdProvider = confidentialCimdProviderForOrg!(
+                batch.organizationId!,
+              );
+            } catch (error) {
+              logger.error(
+                "[XAA connect] confidential CIMD provider preparation failed",
+                error,
+                {
+                  serverId,
+                  connectionId: options?.connectionIds?.[serverId],
+                  serverName: displayServerName,
+                  resource: auth.serverConfig.url,
+                  projectId,
+                  organizationId: batch.organizationId,
+                },
+              );
+              throw new WebRouteError(
+                500,
+                ErrorCode.INTERNAL_ERROR,
+                "Could not prepare the confidential CIMD client identity",
+              );
+            }
           }
-          // Re-framed AFTER the log above, so the debugger-worded original is
-          // what reaches Sentry/Axiom (as `cause`) while the caller gets the
-          // connect-context sentence.
-          throw toXaaConnectFailure(error, xaaFailureTarget);
+          const mintArgs = buildXaaMintArgs({
+            issuer: options.xaaIssuer,
+            hostedMode: HOSTED_MODE,
+            serverConfig: auth.serverConfig,
+            serverId,
+            projectId,
+            bearerToken,
+            resolveServerSecret: fetchServerClientSecret,
+            organizationId: batch.organizationId,
+            isAnonymous: batch.isAnonymous,
+            confidentialCimdProvider,
+          });
+          const xaaFailureTarget = {
+            serverId,
+            serverName: displayServerName,
+            ...(auth.serverConfig.url
+              ? { serverUrl: auth.serverConfig.url }
+              : {}),
+          };
+          try {
+            connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
+          } catch (error) {
+            if (!isXaaMintErrorReported(error)) {
+              logger.error("[XAA connect] mint failed", error, {
+                serverId,
+                connectionId: options?.connectionIds?.[serverId],
+                serverName: displayServerName,
+                resource: auth.serverConfig.url,
+              });
+            }
+            // Re-framed AFTER the log above, so the debugger-worded original is
+            // what reaches Sentry/Axiom (as `cause`) while the caller gets the
+            // connect-context sentence.
+            throw toXaaConnectFailure(error, xaaFailureTarget);
+          }
+          // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
+          // second 401 surfaces rather than looping mint→401→mint.
+          let reMinted = false;
+          connectOnUnauthorized = async () => {
+            if (reMinted) {
+              throw new WebRouteError(
+                401,
+                ErrorCode.UNAUTHORIZED,
+                `Server "${displayServerName}" rejected the cross-app access token. Reconnect to retry.`,
+              );
+            }
+            reMinted = true;
+            try {
+              return {
+                accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
+              };
+            } catch (error) {
+              throw toXaaConnectFailure(error, xaaFailureTarget);
+            }
+          };
         }
-        // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
-        // second 401 surfaces rather than looping mint→401→mint.
-        let reMinted = false;
-        connectOnUnauthorized = async () => {
-          if (reMinted) {
+
+        // Tokenless "discover" (non-XAA auto): connect unauthenticated, and if
+        // the target answers 401, convert it into the same tagged oauthRequired
+        // shape the pre-connect throw produces. The SDK invokes onUnauthorized
+        // exactly when a request 401s, which is the one moment we have both the
+        // per-server identity and proof the server actually demands auth —
+        // interactive clients escalate into the OAuth flow on this shape, and
+        // the non-interactive chat surfaces already render it as their
+        // "complete OAuth first" affordance.
+        if (effectiveAuth === "discover" && !connectToken) {
+          connectOnUnauthorized = async () => {
             throw new WebRouteError(
               401,
               ErrorCode.UNAUTHORIZED,
-              `Server "${displayServerName}" rejected the cross-app access token. Reconnect to retry.`,
-            );
-          }
-          reMinted = true;
-          try {
-            return {
-              accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
-            };
-          } catch (error) {
-            throw toXaaConnectFailure(error, xaaFailureTarget);
-          }
-        };
-      }
+              `Server "${displayServerName}" requires authorization.`,
+              {
+                oauthRequired: true,
+                serverId,
+                serverName: serverNamesById?.[serverId] ?? null,
+                serverUrl: auth.serverConfig.url,
+              },
+            ).withSetupFailureSource("authorization_required");
+          };
+        }
 
-      // Tokenless "discover" (non-XAA auto): connect unauthenticated, and if
-      // the target answers 401, convert it into the same tagged oauthRequired
-      // shape the pre-connect throw produces. The SDK invokes onUnauthorized
-      // exactly when a request 401s, which is the one moment we have both the
-      // per-server identity and proof the server actually demands auth —
-      // interactive clients escalate into the OAuth flow on this shape, and
-      // the non-interactive chat surfaces already render it as their
-      // "complete OAuth first" affordance.
-      if (effectiveAuth === "discover" && !connectToken) {
-        connectOnUnauthorized = async () => {
-          throw new WebRouteError(
-            401,
-            ErrorCode.UNAUTHORIZED,
-            `Server "${displayServerName}" requires authorization.`,
-            {
-              oauthRequired: true,
-              serverId,
-              serverName: serverNamesById?.[serverId] ?? null,
-              serverUrl: auth.serverConfig.url,
-            },
-          ).withSetupFailureSource("authorization_required");
-        };
-      }
-
-      const authForConfig =
-        auth.serverConfig.hasHeaders === true &&
-        !hasNonEmptyStringRecord(auth.serverConfig.headers)
+        // The reveal sends the URL this connection will dial; the backend
+        // refuses it when the stored headers were saved for another origin, and
+        // answers with the origins they are bound to — which the transport then
+        // holds them to, hop by hop (see `credentialBindings` below).
+        const revealed =
+          auth.serverConfig.hasHeaders === true &&
+          !hasNonEmptyStringRecord(auth.serverConfig.headers)
+            ? await fetchRuntimeServerSecrets({
+                expectedTargetUrl: auth.serverConfig.url,
+                bearerToken,
+                projectId,
+                serverId,
+                accessScope: options?.accessScope,
+                scenarioId: options?.scenarioId,
+                accessVersion: options?.accessVersion,
+                // When the caller authed via WorkOS API key, secret
+                // reveal must use the same delegated-identity exchange
+                // as `authorizeBatch` — otherwise Convex would see the
+                // service token without an acting-as user.
+                workosApiKeyActingAs:
+                  caller.authMethod === "workos_api_key" &&
+                  caller.workosUserId &&
+                  caller.mcpjamOrganizationId
+                    ? {
+                        workosUserId: caller.workosUserId,
+                        mcpjamOrganizationId: caller.mcpjamOrganizationId,
+                      }
+                    : undefined,
+              })
+            : null;
+        if (revealed?.headers && auth.serverConfig.transportType === "http") {
+          credentialBindings.set(serverId, {
+            headerNames:
+              revealed.credentialHeaderNames ?? Object.keys(revealed.headers),
+            boundOrigins: revealed.boundOrigins ?? [],
+          });
+        } else if (!revealed && auth.serverConfig.transportType === "http") {
+          // Stored headers the authorize response carried inline: no reveal
+          // ran, but they are held to an origin on the wire all the same.
+          const binding = bindingForAuthorizedHeaders(auth.serverConfig);
+          if (binding) credentialBindings.set(serverId, binding);
+        }
+        const authForConfig = revealed
           ? {
               ...auth,
               serverConfig: {
                 ...auth.serverConfig,
                 headers: {
                   ...(auth.serverConfig.headers ?? {}),
-                  ...((
-                    await fetchRuntimeServerSecrets({
-                      bearerToken,
-                      projectId,
-                      serverId,
-                      accessScope: options?.accessScope,
-                      scenarioId: options?.scenarioId,
-                      accessVersion: options?.accessVersion,
-                      // When the caller authed via WorkOS API key, secret
-                      // reveal must use the same delegated-identity exchange
-                      // as `authorizeBatch` — otherwise Convex would see the
-                      // service token without an acting-as user.
-                      workosApiKeyActingAs:
-                        caller.authMethod === "workos_api_key" &&
-                        caller.workosUserId &&
-                        caller.mcpjamOrganizationId
-                          ? {
-                              workosUserId: caller.workosUserId,
-                              mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                            }
-                          : undefined,
-                    })
-                  ).headers ?? {}),
+                  ...(revealed.headers ?? {}),
                 },
               },
             }
           : auth;
 
-      // Spec (MCP enterprise-managed authorization): a client whose access is
-      // enterprise-managed MUST advertise the extension in initialize. Merged
-      // — never overwriting — into the caller-configured capabilities.
-      // Advertised when the connection actually uses XAA (the backstop) or
-      // whenever the host's enterprise policy is on — declare-support is
-      // host-wide, including on servers whose explicit auth method overrides
-      // the policy.
-      const perServerCapabilities =
-        useXaa || options?.xaaPolicy != null
-          ? withXaaExtensionCapability(clientCapabilities)
-          : clientCapabilities;
+        // Spec (MCP enterprise-managed authorization): a client whose access is
+        // enterprise-managed MUST advertise the extension in initialize. Merged
+        // — never overwriting — into the caller-configured capabilities.
+        // Advertised when the connection actually uses XAA (the backstop) or
+        // whenever the host's enterprise policy is on — declare-support is
+        // host-wide, including on servers whose explicit auth method overrides
+        // the policy.
+        const perServerCapabilities =
+          useXaa || options?.xaaPolicy != null
+            ? withXaaExtensionCapability(clientCapabilities)
+            : clientCapabilities;
 
-      return [
-        serverId,
-        toHttpConfig(
-          authForConfig,
-          effectiveTimeoutMs,
-          connectToken,
-          perServerCapabilities,
-          connectOnUnauthorized,
-          effectiveInitializePins,
-          pluginRuntime,
-        ),
-      ] as const;
+        return [
+          serverId,
+          toHttpConfig(
+            authForConfig,
+            effectiveTimeoutMs,
+            connectToken,
+            perServerCapabilities,
+            connectOnUnauthorized,
+            effectiveInitializePins,
+            pluginRuntime,
+          ),
+        ] as const;
+      } catch (error) {
+        if (!options?.tolerateServerRefusals || !isServerRefusal(error)) {
+          throw error;
+        }
+        refusedServers[serverId] = error;
+        return undefined;
+      }
     }),
   ).catch((error) => {
     // A sibling server's throw (OAuth-required, XAA mint failure, …) aborts
@@ -2008,25 +2332,122 @@ export async function createAuthorizedManager(
     releasePluginLeases();
     throw error;
   });
+  // A refused server has no transport, so it has no account group either.
+  for (const serverId of Object.keys(refusedServers)) {
+    delete connectionsByServerId[serverId];
+  }
+
+  const connectionEntries = configEntries
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+    .flatMap<readonly [string, MCPServerConfig]>(([serverId, config]) => {
+      const group = connectionsByServerId[serverId];
+      if (!group?.length) return [[serverId, config] as const];
+      const auth = batch.results[serverId] as ConvexBatchAuthorizeSuccess;
+      return group.map((connection) => {
+        const credential = auth.oauthConnections!.find(
+          (c) => c.connectionId === connection.connectionId,
+        )!;
+        const requestHeaders = new Headers(
+          (config as HttpServerConfig).requestInit?.headers,
+        );
+        requestHeaders.set("Authorization", `Bearer ${credential.accessToken}`);
+        return [
+          connection.key,
+          {
+            ...(config as HttpServerConfig),
+            requestInit: {
+              ...(config as HttpServerConfig).requestInit,
+              headers: requestHeaders,
+            },
+            onUnauthorized: buildHostedOAuthUnauthorizedHandler({
+              bearerToken,
+              projectId,
+              serverId,
+              connectionId: connection.connectionId,
+              serverName: connection.label,
+              accessScope: options?.accessScope,
+              scenarioId: options?.scenarioId,
+              accessVersion: options?.accessVersion,
+              allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
+            }),
+          },
+        ] as const;
+      });
+    });
 
   // Each server owns its capture even when two configs use the same URL.
   // Install before construction: the manager starts connecting eagerly.
+  const connectionsByKey = new Map(
+    Object.values(connectionsByServerId)
+      .flat()
+      .map((connection) => [connection.key, connection]),
+  );
   const observedConfigs = Object.fromEntries(
-    configEntries.map(([id, config]) => [
-      id,
-      {
-        ...config,
-        baseFetch: observeConnectionFetch(
-          config.baseFetch ?? hostedMcpBaseFetch(),
-        ),
-      },
-    ]),
+    connectionEntries.map(([id, config]) => {
+      const connection = connectionsByKey.get(id);
+      const serverId = connection?.serverId ?? id;
+      const authorization = batch.results[serverId];
+      let baseFetch = config.baseFetch ?? hostedMcpBaseFetch();
+      try {
+        if (
+          authorization?.ok &&
+          authorization.accessLevel === "project_member" &&
+          authorization.serverConfig.transportType === "http"
+        ) {
+          baseFetch = hostedMcpBackpressureFetch({
+            fetch: baseFetch,
+            projectId,
+            serverId,
+            userId: authorizedUserId,
+            connectionId:
+              connection?.connectionId ?? options?.connectionIds?.[serverId],
+          });
+        }
+      } catch (error) {
+        releasePluginLeases();
+        throw error;
+      }
+      // The transport rule wraps the egress-guarded fetch, so every redirect
+      // hop is guarded before the stored headers are (or are not) attached.
+      // The observer goes OUTSIDE it: the challenge capture is keyed to the
+      // fetch the transport is actually given, and records the final response.
+      const binding = credentialBindings.get(serverId);
+      return [
+        id,
+        {
+          ...config,
+          baseFetch: observeConnectionFetch(
+            withServerCheckSignal(
+              binding ? bindCredentialHeaders(baseFetch, binding) : baseFetch,
+            ),
+          ),
+        },
+      ];
+    }),
+  );
+  const authorizedServerIdentities = Object.fromEntries(
+    Object.entries(batch.results).flatMap(([serverId, auth]) => {
+      if (!auth.ok || Object.hasOwn(refusedServers, serverId)) return [];
+      return [
+        [
+          serverId,
+          {
+            serverId,
+            config: auth.serverConfig,
+            credentialId: auth.oauthCredentialId ?? null,
+            credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt ?? null,
+          },
+        ],
+      ];
+    }),
   );
   const manager = new MCPClientManager(observedConfigs, {
+    ...(options?.lazyConnect ? { lazyConnect: true } : {}),
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    extensionRequestHandlers: options?.extensionRequestHandlers,
     // THE FIX FOR MJ-001. Every server in this batch carries a URL a caller
     // stored, and without this the transport dialled `globalThis.fetch`:
     // loopback and RFC1918 reachable, redirects followed unchecked. A MANAGER
@@ -2069,17 +2490,30 @@ export async function createAuthorizedManager(
   // MRTR collector before the constructor's connects run, so `buildCapabilities`
   // advertises `elicitation` on the initialize wire for MRTR-capable servers.
   if (options?.mrtrInputCollectorForServer) {
-    for (const serverId of uniqueServerIds) {
-      const collector = options.mrtrInputCollectorForServer(serverId);
+    for (const [serverId] of connectionEntries) {
+      const baseServerId =
+        Object.entries(connectionsByServerId).find(([, group]) =>
+          group.some((connection) => connection.key === serverId),
+        )?.[0] ?? serverId;
+      const collector = options.mrtrInputCollectorForServer(baseServerId);
       if (collector) {
         manager.setMrtrInputCollector(serverId, collector);
       }
     }
   }
+  if (Object.keys(connectionsByServerId).length)
+    setManagerConnections(manager, connectionsByServerId);
   return {
     manager,
+    ...(options?.lazyConnect
+      ? { authorizedServerConfigs: observedConfigs, authorizedServerIdentities }
+      : {}),
+    ...(Object.keys(connectionsByServerId).length
+      ? { connectionsByServerId }
+      : {}),
     oauthServerUrls,
     authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
+    ...(options?.tolerateServerRefusals ? { refusedServers } : {}),
   };
 }
 
@@ -2106,7 +2540,10 @@ export async function handleRoute<T>(
     const result = await handler();
     return c.json(result, successStatus);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    // The same mapper as the router-wide `onError`, so a structured backend
+    // refusal gets its own status whether a handler returns through here or
+    // throws past it.
+    const routeError = mapWebBoundaryError(error);
     return webErrorFromRoute(c, routeError);
   }
 }
@@ -2234,7 +2671,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
 
   const rawProtocolVersionsByServerId = raw.mcpProtocolVersionsByServerId;
   const mcpProtocolVersionsByServerId:
-    Record<string, McpProtocolVersion> | undefined =
+    | Record<string, McpProtocolVersion>
+    | undefined =
     rawProtocolVersionsByServerId &&
     typeof rawProtocolVersionsByServerId === "object" &&
     !Array.isArray(rawProtocolVersionsByServerId)
@@ -2301,10 +2739,13 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   fn: (
     manager: InstanceType<typeof MCPClientManager>,
     body: z.infer<S>,
+    /** See `createAuthorizedManager`'s `tolerateServerRefusals`. */
+    refusedServers: Record<string, unknown>,
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
+    tolerateServerRefusals?: boolean;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
     httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
     /** See `createManualHostedConnection`'s option of the same name. */
@@ -2313,17 +2754,26 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     ) => Promise<Record<string, unknown> | undefined>;
   },
 ): Promise<T> {
-  const { manager, body } = await createManualHostedConnection(
+  const { manager, body, refusedServers } = await createManualHostedConnection(
     c,
     rawBody,
     schema,
     options,
   );
 
+  const signal = serverCheckScope.getStore();
+  let disconnecting: Promise<void> | undefined;
+  const disconnect = () => (disconnecting ??= manager.disconnectAllServers());
+  const onAbort = () => {
+    void disconnect().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    return await fn(manager, body);
+    signal?.throwIfAborted();
+    return await fn(manager, body, refusedServers ?? {});
   } finally {
-    await manager.disconnectAllServers();
+    signal?.removeEventListener("abort", onAbort);
+    await disconnect();
   }
 }
 
@@ -2338,6 +2788,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   rawBody: Record<string, unknown>,
   schema: S,
   options?: {
+    /** See `createAuthorizedManager`; no MCP initialization before authorization. */
+    lazyConnect?: boolean;
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
@@ -2352,6 +2804,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
      * advertises `elicitation` on the initialize wire. Omit to leave the
      * connection on today's non-MRTR path.
      */
+    extensionRequestHandlers?: NonNullable<
+      ConstructorParameters<typeof MCPClientManager>[1]
+    >["extensionRequestHandlers"];
     mrtrInputCollectorForServer?: (
       serverId: string,
     ) => MrtrInputCollector | undefined;
@@ -2379,11 +2834,17 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    tolerateServerRefusals?: boolean;
   },
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
   body: z.infer<S>;
   convexAuthToken: string;
+  /** See `createAuthorizedManager`'s `tolerateServerRefusals`. */
+  refusedServers?: Record<string, unknown>;
+  authorizedServerConfigs?: Record<string, MCPServerConfig>;
+  authorizedServerIdentities?: Record<string, unknown>;
 }> {
   // Both guest and signed-in actors flow through the same Convex
   // authorization path: the bearer token (guest JWT or WorkOS bearer) is
@@ -2509,7 +2970,12 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       )
     : merged.initializePins;
 
-  const { manager } = await createAuthorizedManager(
+  const {
+    manager,
+    refusedServers,
+    authorizedServerConfigs,
+    authorizedServerIdentities,
+  } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
     raw.projectId as string,
@@ -2523,6 +2989,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
       (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
+      ...(options?.lazyConnect ? { lazyConnect: true } : {}),
       accessScope,
       scenarioId,
       accessVersion,
@@ -2544,13 +3011,24 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       // MRTR direct-op suspend collector (PR4). Registered synchronously with
       // the same microtask discipline as `elicitationCallback` so `elicitation`
       // is advertised before the constructor's connects run.
+      extensionRequestHandlers: options?.extensionRequestHandlers,
       ...(options?.mrtrInputCollectorForServer
         ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
+        : {}),
+      ...(options?.tolerateServerRefusals
+        ? { tolerateServerRefusals: true }
         : {}),
     },
   );
 
-  return { manager, body: body as z.infer<S>, convexAuthToken: bearerToken };
+  return {
+    manager,
+    body: body as z.infer<S>,
+    convexAuthToken: bearerToken,
+    ...(refusedServers ? { refusedServers } : {}),
+    ...(authorizedServerConfigs ? { authorizedServerConfigs } : {}),
+    ...(authorizedServerIdentities ? { authorizedServerIdentities } : {}),
+  };
 }
 
 /**
@@ -2596,6 +3074,55 @@ function forwardLogMessagesInto(
   };
 }
 
+/**
+ * The egress guard's refusal as a 400, when one is anywhere in `error`'s chain.
+ *
+ * The MCP client wraps a refused dial in its own connect error — the refusal
+ * sits on `cause`, or on `streamableCause` when the SSE fallback failed after
+ * it — so a check of the top-level error alone would miss the common case.
+ * The guard's message is written to be shown to the caller; its `cause` is
+ * not, and stays out. A `WebRouteError` is a decision some other layer already
+ * made, and keeps it.
+ */
+function blockedEgressRouteError(error: unknown): WebRouteError | undefined {
+  if (error instanceof WebRouteError) return undefined;
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0 && seen.size < 8) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (current instanceof BlockedEgressTargetError) {
+      return new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        current.message,
+      );
+    }
+    try {
+      pending.push(
+        (current as { cause?: unknown }).cause,
+        (current as { streamableCause?: unknown }).streamableCause,
+      );
+    } catch {
+      // A value whose getters throw has no chain worth reading.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The route error for a failure of one dialed MCP server: the egress guard's
+ * refusal first (400, the caller's to change: MJ-020, MJ-021), then
+ * `mapTargetServerError`. `withEphemeralConnection`'s catch and the batch
+ * routes that report one server's failure inside a 200 answer through this
+ * same function, so a server fails the same way inside a batch as on its own
+ * request.
+ */
+export function mapEphemeralServerFailure(error: unknown): WebRouteError {
+  return mapTargetServerError(blockedEgressRouteError(error) ?? error);
+}
+
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
@@ -2609,15 +3136,39 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
      * get, ...). No-op when RPC log collection is disabled for this route.
      */
     forwardLogMessages: (serverId: string) => void,
+    /**
+     * Servers the connection left out, each with the error its own request
+     * would have thrown. Empty unless `tolerateServerRefusals` is set; a
+     * route that sets it answers for these servers itself.
+     */
+    refusedServers: Record<string, unknown>,
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    tolerateServerRefusals?: boolean;
     /** See `createManualHostedConnection`'s option of the same name. */
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /**
+     * Runs on the raw body after it is read and BEFORE it is parsed or any
+     * server is connected. The hook an environment launch uses to resolve its
+     * closed server set and prime the connection batch from it (it may mutate
+     * `rawBody`). A throw is answered like any other failure of the route.
+     */
+    beforeConnect?: (rawBody: Record<string, unknown>) => Promise<void>;
+    /**
+     * A further reduction of the log envelope attached to a SUCCESSFUL
+     * response, applied after the hosted default (see
+     * {@link attachHostedRouteLogs}). The hosted validate route uses it to
+     * report received frames by their envelope as well (MJ-001).
+     */
+    redactSuccessLogs?: (
+      logs: Record<string, unknown> | undefined,
+    ) => Record<string, unknown> | undefined;
   },
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2628,23 +3179,35 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     if (options?.rpcLogs !== false) {
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
+    if (options?.beforeConnect) {
+      await options.beforeConnect(rawBody);
+    }
 
     const result = await runEphemeralConnection(
       c,
       rawBody,
       schema,
-      (manager, body) =>
-        fn(manager, body, forwardLogMessagesInto(manager, rpcCollector)),
+      (manager, body, refusedServers) =>
+        fn(
+          manager,
+          body,
+          forwardLogMessagesInto(manager, rpcCollector),
+          refusedServers,
+        ),
       {
         timeoutMs: options?.timeoutMs,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
+        tolerateServerRefusals: options?.tolerateServerRefusals,
         rpcLogger: rpcCollector?.rpcLogger,
         httpLogger: rpcCollector?.httpLogger,
         hostConfigForBody: options?.hostConfigForBody,
       },
     );
 
-    return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
+    return c.json(
+      attachHostedRouteLogs(result, rpcCollector, options?.redactSuccessLogs),
+      200,
+    );
   } catch (error) {
     // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
     // helper dials the caller's OWN MCP server, and a connection-class failure
@@ -2655,13 +3218,72 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     // 424 still requires the message to positively name an MCP server, so this
     // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
     // Convex deployment — keeps its 5xx and keeps paging us.
-    const routeError = mapTargetServerError(error);
-    return webErrorFromRoute(
-      c,
-      routeError,
+    //
+    // A target the egress guard refused is the caller's to change, not a
+    // connection that failed: 400, with the guard's own message
+    // (MJ-020, MJ-021). See `mapEphemeralServerFailure`.
+    //
+    // Hosted, what the response says about the failure is then reduced for
+    // every route on this helper (MJ-001) — see `projectRouteFailure`.
+    const projected = projectRouteFailure(
+      mapEphemeralServerFailure(error),
+      error,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
+    return webErrorFromRoute(c, projected.routeError, projected.logs);
   }
+}
+
+/**
+ * A successful MCP route's payload with its hosted log envelope attached.
+ *
+ * Hosted, the HTTP exchanges in that envelope are always reduced (MJ-001):
+ * response headers to an allowlist, request header values to the protocol
+ * headers — so neither another server's headers nor a value from the stored
+ * server config reaches the response. `redact`, when given, reduces the
+ * envelope further; it runs after the default and cannot undo it. Outside
+ * hosted mode only `redact` applies.
+ */
+export function attachHostedRouteLogs<T>(
+  payload: T,
+  collector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+  redact?: (
+    logs: Record<string, unknown> | undefined,
+  ) => Record<string, unknown> | undefined,
+): T {
+  const response = attachHostedRpcLogs(payload, collector);
+  if (
+    response === payload ||
+    !response ||
+    typeof response !== "object" ||
+    (!HOSTED_MODE && !redact)
+  ) {
+    return response as T;
+  }
+  const { _rpcLogs, _httpLogs, ...rest } = response as Record<string, unknown>;
+  let logs: Record<string, unknown> | undefined = {
+    ...(_rpcLogs !== undefined ? { _rpcLogs } : {}),
+    ...(_httpLogs !== undefined ? { _httpLogs } : {}),
+  };
+  if (HOSTED_MODE) logs = projectHostedSuccessLogs(logs);
+  if (redact) logs = redact(logs);
+  return { ...rest, ...logs } as T;
+}
+
+/**
+ * A failed MCP route's mapped error and log envelope, as the response may
+ * report them. Hosted, through `projectHostedRouteFailure` (MJ-001); outside
+ * hosted mode, unchanged. Every route built on `withEphemeralConnection` and
+ * the direct-operation helper answers its failures through this.
+ */
+export function projectRouteFailure(
+  routeError: WebRouteError,
+  error: unknown,
+  logs: Record<string, unknown> | undefined,
+): { routeError: WebRouteError; logs: Record<string, unknown> | undefined } {
+  return HOSTED_MODE
+    ? projectHostedRouteFailure(routeError, error, logs)
+    : { routeError, logs };
 }
 
 // Re-export commonly used error utilities for convenience

@@ -8,7 +8,6 @@ import {
 } from "@mcpjam/design-system/popover";
 import { cn } from "@/lib/utils";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
-import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
   formatOverviewRelativeTime,
   getSuitePassFailCounts,
@@ -169,23 +168,14 @@ export function SuiteSwitcher({
                   {isActive ? (
                     <Check className="h-4 w-4 shrink-0 text-primary" />
                   ) : null}
-                  {/* CI-active suites (created by CI, or reported into by
-                      CI) can't be deleted from the switcher: their history
-                      is CI's record, and the next report would recreate the
-                      suite anyway.
-
-                      `isCiOwnedSuite` rather than `source !== "sdk"`, because
-                      a suite committed as a FILE carries `declaredSuiteId`
-                      with `source: "ui"` and no `lastSdkRunAt` — it passed
-                      this gate, and `suite.delete` is one of the actions the
-                      platform now refuses on a CI-owned suite. `lastSdkRunAt`
-                      stays as a second clause: this switcher deliberately
-                      hides delete for a suite CI merely reports INTO, which
-                      is broader than ownership. */}
-                  {onDeleteSuite &&
-                  (canDeleteSuite?.(entry.suite) ?? true) &&
-                  !isCiOwnedSuite(entry.suite) &&
-                  entry.suite.lastSdkRunAt == null ? (
+                  {/* Delete used to be hidden here for any CI-touched suite
+                      — CI-owned, or merely reported INTO via `lastSdkRunAt`.
+                      Both clauses are gone. Their history being CI's record is
+                      a reason to CONFIRM, which the dialog now does, not a
+                      reason to withhold the only way to remove a row the SDK
+                      mints fresh on every `suiteName` change (issue #5381).
+                      Role is the gate, and `canDeleteSuite` carries it. */}
+                  {onDeleteSuite && (canDeleteSuite?.(entry.suite) ?? true) ? (
                     <button
                       type="button"
                       onClick={(e) => {

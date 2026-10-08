@@ -42,17 +42,17 @@ vi.mock("convex/browser", () => ({
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-jwt",
-  getConvexBearerThunkForRequest: () => async () => "convex-jwt",
+  getBackgroundRunBearerForRequest: async () => async () => "convex-jwt",
 }));
 
-import journeys from "../journeys.js";
+import goals from "../goals.js";
 import personas from "../personas.js";
 import swarms from "../swarms.js";
 import swarmInsights from "../swarm-insights.js";
 import { v1OnError } from "../envelope.js";
 
-const PROJECT = "proj_a";
-const OTHER_PROJECT = "proj_b";
+const PROJECT = "projaxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const OTHER_PROJECT = "projbxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 function makeApp(...routers: Array<Parameters<Hono["route"]>[1]>) {
   const app = new Hono();
@@ -65,7 +65,7 @@ function call(
   router: Parameters<Hono["route"]>[1],
   method: string,
   path: string,
-  init: { body?: unknown; headers?: Record<string, string> } = {}
+  init: { body?: unknown; headers?: Record<string, string> } = {},
 ) {
   return makeApp(router).request(`/api/v1${path}`, {
     method,
@@ -132,7 +132,7 @@ describe("persona routes", () => {
       personas,
       "PATCH",
       `/projects/${PROJECT}/personas/persona_in_b`,
-      { body: { name: "Renamed" } }
+      { body: { name: "Renamed" } },
     );
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -147,7 +147,7 @@ describe("persona routes", () => {
     });
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      Record<string, unknown>
+      Record<string, unknown>,
     ];
     expect(args.idempotencyKey).toBe("key-123");
   });
@@ -184,7 +184,7 @@ describe("persona routes", () => {
     });
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      Record<string, unknown>
+      Record<string, unknown>,
     ];
     expect(args).not.toHaveProperty("idempotencyKey");
   });
@@ -194,8 +194,8 @@ describe("persona routes", () => {
     mutationMock.mockRejectedValue(
       convexError(
         "FEATURE_UNAVAILABLE",
-        "Swarms is not currently available for your organization"
-      )
+        "Swarms is not currently available for your organization",
+      ),
     );
     const res = await call(personas, "POST", `/projects/${PROJECT}/personas`, {
       body: { name: "Ada", role: "buyer" },
@@ -203,8 +203,38 @@ describe("persona routes", () => {
     // A 404 here would tell a flagged-off customer their project is gone, and
     // they would go looking for a project that is fine.
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { message: string };
+    const body = (await res.json()) as {
+      code: string;
+      message: string;
+      details?: Record<string, unknown>;
+    };
     expect(body.message).toMatch(/not currently available/i);
+    // The public code is the generic FORBIDDEN; the reason a program branches
+    // on rides in `details`. No `feature` was sent, so none is invented.
+    expect(body.code).toBe("FORBIDDEN");
+    expect(body.details).toEqual({ code: "FEATURE_UNAVAILABLE" });
+  });
+
+  it("names the gated feature in details when the backend sends one", async () => {
+    queryMock.mockResolvedValue([]);
+    mutationMock.mockRejectedValue(
+      Object.assign(new Error("Swarms is not currently available."), {
+        data: {
+          code: "FEATURE_UNAVAILABLE",
+          feature: "sandboxes",
+          message: "Swarms is not currently available.",
+        },
+      }),
+    );
+    const res = await call(personas, "POST", `/projects/${PROJECT}/personas`, {
+      body: { name: "Ada", role: "buyer" },
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Swarms is not currently available.",
+      details: { code: "FEATURE_UNAVAILABLE", feature: "sandboxes" },
+    });
   });
 
   it("rejects an empty update rather than issuing a no-op mutation", async () => {
@@ -213,7 +243,7 @@ describe("persona routes", () => {
       personas,
       "PATCH",
       `/projects/${PROJECT}/personas/persona_1`,
-      { body: {} }
+      { body: {} },
     );
     expect(res.status).toBe(400);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -226,7 +256,7 @@ describe("journey authoring", () => {
     // membership of whatever project it lives in — so without the preflight a
     // member of both could author a journey in A that runs B's persona.
     queryMock.mockResolvedValue([personaRow({ _id: "persona_in_a" })]);
-    const res = await call(journeys, "POST", `/projects/${PROJECT}/journeys`, {
+    const res = await call(goals, "POST", `/projects/${PROJECT}/journeys`, {
       body: {
         goal: "buy a thing",
         personaId: "persona_in_b",
@@ -243,10 +273,10 @@ describe("journey authoring", () => {
       Promise.resolve(
         String(name).includes("listPersonas")
           ? [personaRow()]
-          : { _id: "swarm_1", projectId: OTHER_PROJECT }
-      )
+          : { _id: "swarm_1", projectId: OTHER_PROJECT },
+      ),
     );
-    const res = await call(journeys, "POST", `/projects/${PROJECT}/journeys`, {
+    const res = await call(goals, "POST", `/projects/${PROJECT}/journeys`, {
       body: {
         goal: "buy a thing",
         personaId: "persona_1",
@@ -277,7 +307,7 @@ describe("swarm container routes", () => {
     const res = await call(
       swarms,
       "GET",
-      `/projects/${PROJECT}/swarms/swarm_1`
+      `/projects/${PROJECT}/swarms/swarm_1`,
     );
     expect(res.status).toBe(404);
   });
@@ -289,7 +319,7 @@ describe("swarm container routes", () => {
     });
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      Record<string, unknown>
+      Record<string, unknown>,
     ];
     expect(args.config).toEqual({ sessionsPerTarget: 2, maxTurns: 8 });
   });
@@ -302,7 +332,7 @@ describe("swarm container routes", () => {
       swarms,
       "PATCH",
       `/projects/${PROJECT}/swarms/swarm_1`,
-      { body: { sessionsPerTarget: 5 } }
+      { body: { sessionsPerTarget: 5 } },
     );
     expect(res.status).toBe(400);
     expect(mutationMock).not.toHaveBeenCalled();
@@ -316,7 +346,7 @@ describe("swarm container routes", () => {
     });
     const [, args] = mutationMock.mock.calls[0] as [
       string,
-      Record<string, unknown>
+      Record<string, unknown>,
     ];
     // Collapsing null to undefined would turn "stop using environments" into
     // "change nothing", which is the failure the tri-state exists to prevent.
@@ -330,7 +360,7 @@ describe("swarm insights routes", () => {
     const res = await call(
       swarmInsights,
       "GET",
-      `/projects/${PROJECT}/journey-runs/run_1/scorecard`
+      `/projects/${PROJECT}/journey-runs/run_1/scorecard`,
     );
     expect(res.status).toBe(404);
   });
@@ -344,7 +374,7 @@ describe("swarm insights routes", () => {
     const res = await call(
       swarmInsights,
       "GET",
-      `/projects/${PROJECT}/journey-runs/run_1/scorecard`
+      `/projects/${PROJECT}/journey-runs/run_1/scorecard`,
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { message: string };
@@ -371,7 +401,7 @@ describe("swarm insights routes", () => {
     const res = await call(
       swarmInsights,
       "GET",
-      `/projects/${PROJECT}/journey-runs/run_1/scorecard`
+      `/projects/${PROJECT}/journey-runs/run_1/scorecard`,
     );
     const body = (await res.json()) as {
       criteria: Array<Record<string, number>>;
@@ -414,7 +444,7 @@ describe("swarm insights routes", () => {
     const res = await call(
       swarmInsights,
       "GET",
-      `/projects/${PROJECT}/journeys-overview`
+      `/projects/${PROJECT}/journeys-overview`,
     );
     const body = (await res.json()) as {
       runs: Array<Record<string, unknown>>;
@@ -426,16 +456,16 @@ describe("swarm insights routes", () => {
     expect(body.goalCompletion.passRate).toBeNull();
   });
 
-  it("answers 202 for a wave-insights request, because it is scheduled", async () => {
+  it("answers 202 for a swarm-run-insights request, because it is scheduled", async () => {
     mutationMock.mockResolvedValue(null);
     const res = await call(
       swarmInsights,
       "POST",
-      `/projects/${PROJECT}/waves/wave_1/insights`
+      `/projects/${PROJECT}/swarm-runs/wave_1/insights`,
     );
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({
-      waveId: "wave_1",
+      swarmRunId: "wave_1",
       status: "pending",
     });
   });
@@ -446,13 +476,13 @@ describe("swarm insights routes", () => {
     mutationMock.mockRejectedValue(
       convexError(
         "billing_limit_reached",
-        'Limit "insightsPerDay" reached on the free plan.'
-      )
+        'Limit "insightsPerDay" reached on the free plan.',
+      ),
     );
     const res = await call(
       swarmInsights,
       "POST",
-      `/projects/${PROJECT}/waves/wave_1/insights`
+      `/projects/${PROJECT}/swarm-runs/wave_1/insights`,
     );
     expect(res.status).toBe(429);
   });
@@ -470,12 +500,12 @@ describe("swarm insights routes", () => {
           plan: "free",
           upgradePlan: "pro",
         },
-      })
+      }),
     );
     const res = await call(
       swarmInsights,
       "POST",
-      `/projects/${PROJECT}/waves/wave_1/insights`
+      `/projects/${PROJECT}/swarm-runs/wave_1/insights`,
     );
     expect(res.status).toBe(403);
     const body = (await res.json()) as {
@@ -498,26 +528,26 @@ describe("swarm insights routes", () => {
     mutationMock.mockRejectedValue(
       Object.assign(new Error("boom"), {
         data: { code: "billing_feature_not_included" },
-      })
+      }),
     );
     const res = await call(
       swarmInsights,
       "POST",
-      `/projects/${PROJECT}/waves/wave_1/insights`
+      `/projects/${PROJECT}/swarm-runs/wave_1/insights`,
     );
     expect(res.status).toBe(403);
     const body = (await res.json()) as { message: string };
     expect(body.message).toBe("This feature is not included in your plan.");
   });
 
-  it("404s wave insights nobody has requested", async () => {
+  it("404s swarm run insights nobody has requested", async () => {
     // Distinct from `pending`: a caller polling in a loop must be able to tell
     // "nobody asked for this" from "asked and still working".
     queryMock.mockResolvedValue(null);
     const res = await call(
       swarmInsights,
       "GET",
-      `/projects/${PROJECT}/waves/wave_1/insights`
+      `/projects/${PROJECT}/swarm-runs/wave_1/insights`,
     );
     expect(res.status).toBe(404);
   });
@@ -529,9 +559,72 @@ describe("swarm insights routes", () => {
     const res = await call(
       swarmInsights,
       "POST",
-      `/projects/${PROJECT}/journey-findings/finding_in_b/dismiss`
+      `/projects/${PROJECT}/goal-findings/finding_in_b/dismiss`,
     );
     expect(res.status).toBe(404);
     expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The deprecated `/waves` spelling. It exists so code written before the
+   * rename keeps working unchanged, so what these pin is that it did not
+   * quietly acquire the new vocabulary.
+   */
+  describe("the deprecated /waves alias", () => {
+    it("keeps answering with waveId, and marks itself deprecated", async () => {
+      mutationMock.mockResolvedValue(null);
+      const res = await call(
+        swarmInsights,
+        "POST",
+        `/projects/${PROJECT}/waves/wave_1/insights`,
+      );
+      expect(res.status).toBe(202);
+      expect(res.headers.get("Deprecation")).toBe("true");
+      expect(res.headers.get("Link")).toBe(
+        '</api/v1/projects/{projectId}/swarm-runs/{swarmRunId}/insights>; rel="successor-version"',
+      );
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ waveId: "wave_1", status: "pending" });
+      expect(body).not.toHaveProperty("swarmRunId");
+    });
+
+    it("reads the same row as the canonical path, under the old key", async () => {
+      queryMock.mockResolvedValue({
+        status: "completed",
+        insights: { a: 1 },
+        discovery: null,
+        errorCode: null,
+        errorMessage: null,
+        updatedAt: 5,
+      });
+      const res = await call(
+        swarmInsights,
+        "GET",
+        `/projects/${PROJECT}/waves/wave_1/insights`,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ waveId: "wave_1", status: "completed" });
+      expect(body).not.toHaveProperty("swarmRunId");
+      // Same stored column on both spellings — only the public name moved.
+      expect(queryMock.mock.calls[0]?.[1]).toMatchObject({
+        swarmRunGroupId: "wave_1",
+      });
+    });
+
+    it("leaves the canonical path undeprecated", async () => {
+      mutationMock.mockResolvedValue(null);
+      const res = await call(
+        swarmInsights,
+        "DELETE",
+        `/projects/${PROJECT}/swarm-runs/wave_1/insights`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Deprecation")).toBeNull();
+      expect(await res.json()).toMatchObject({
+        swarmRunId: "wave_1",
+        canceled: true,
+      });
+    });
   });
 });

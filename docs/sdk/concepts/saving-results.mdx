@@ -198,6 +198,30 @@ When replay configs are inferred from `agent` or `mcpClientManager`, the SDK lim
 
 **Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) — not only on `HostRunner` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
 
+### Report the whole run, not just pass or fail
+
+`{ caseTitle, passed }` is a valid result, and it produces a run page with nothing to look at. `promptsToEvalResult()` turns the `PromptResult`s you already have into a full result — the conversation trace, the tool calls the model actually made, token counts and end-to-end latency — so the dashboard has something to show:
+
+```typescript
+import { promptsToEvalResult, reportEvalResults } from "@mcpjam/sdk";
+
+const prompt = await agent.run("Find a coffee product and tell me its price.");
+
+await reportEvalResults({
+  suiteName: "Nightly",
+  mcpClientManager: manager,
+  results: [
+    promptsToEvalResult([prompt], {
+      caseTitle: "Finds coffee and reports its price",
+      passed: true,
+      expectedToolCalls: [{ toolName: "search-products", arguments: { query: "coffee" } }],
+    }),
+  ],
+});
+```
+
+Pass every turn of a multi-turn case in one call — `promptsToEvalResult([first, second, third], …)` — and the timeline merges them into one iteration. Anything you set in the overrides wins over what it derives, so `error`, `model` and `provider` stay yours to declare. The trace, `actualToolCalls` and `tokens` are always derived from the prompts and cannot be overridden.
+
 Each iteration records the expected and actual tool calls side by side, along with the model's reasoning trace, so you can pinpoint exactly why a test passed or failed:
 
 <Frame caption="Test case iteration detail showing expected vs actual tool calls and the model's reasoning trace">

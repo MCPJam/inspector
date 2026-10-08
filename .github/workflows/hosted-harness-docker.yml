@@ -1,0 +1,147 @@
+# The HOSTED harness stream mapping, run for real in CI.
+#
+# `runHarnessTurn` drives the real adapters, bridges and vendor CLIs inside a
+# Docker container built from the computer template's harness bake context
+# (`server/utils/harness/docker/test-image.Dockerfile`), through the Docker
+# sandbox provider (`HARNESS_SANDBOX_PROVIDER=docker`, which the inspector
+# refuses in production). The model is the conformance suite's deterministic
+# mock upstream (Anthropic Messages for Claude Code, OpenAI Responses for
+# Codex). No secrets: nothing here talks to E2B or to a model provider.
+#
+# What it pins: the mapped UI stream parts and tool evidence against golden
+# files, and lifecycle behaviour (baked start, a stream failure after partial
+# output reported once, cancellation, stream termination, evidence
+# attribution, at most one terminal part, nothing left running in the box).
+# See the e2e test's header.
+#
+# What it does NOT cover: E2B itself — `Sandbox.connect`, the egress baseline,
+# the model-broker lease and its egress transform, brokered secrets, the box
+# reservation and the control plane's box lifecycle are all mocked here. No
+# automated check exercises the E2B path.
+#
+# Regenerating goldens: dispatch this workflow with `update_goldens` on the
+# branch; the job uploads the regenerated `goldens/` as an artifact to review
+# and commit.
+name: Hosted harness (Docker)
+
+on:
+  pull_request:
+    paths:
+      - "mcpjam-inspector/server/utils/harness/**"
+      - "mcpjam-inspector/scripts/harness-bake-context.mjs"
+      - "mcpjam-inspector/scripts/harness-bake/**"
+      - "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs"
+      - "mcpjam-inspector/scripts/local-harness-toolchain.json"
+      - "mcpjam-inspector/harness-bake.lock.json"
+      - "mcpjam-inspector/shared/harness-model-support*"
+      - "mcpjam-inspector/server/utils/chat-stream-chunks.ts"
+      - "mcpjam-inspector/server/utils/stream-turn-driver.ts"
+      # The harness packages (@ai-sdk/harness*, the vendor SDKs) are the
+      # inspector's own dependencies, so a bump moves this file. A bare
+      # package-lock.json change elsewhere in the monorepo does not run this;
+      # a transitive change that moves a recipe still fails the lock test in
+      # the regular suite.
+      - "mcpjam-inspector/package.json"
+      - ".github/workflows/hosted-harness-docker.yml"
+  push:
+    branches: [main]
+    # The same paths as pull_request.
+    paths:
+      - "mcpjam-inspector/server/utils/harness/**"
+      - "mcpjam-inspector/scripts/harness-bake-context.mjs"
+      - "mcpjam-inspector/scripts/harness-bake/**"
+      - "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs"
+      - "mcpjam-inspector/scripts/local-harness-toolchain.json"
+      - "mcpjam-inspector/harness-bake.lock.json"
+      - "mcpjam-inspector/shared/harness-model-support*"
+      - "mcpjam-inspector/server/utils/chat-stream-chunks.ts"
+      - "mcpjam-inspector/server/utils/stream-turn-driver.ts"
+      - "mcpjam-inspector/package.json"
+      - ".github/workflows/hosted-harness-docker.yml"
+  workflow_dispatch:
+    inputs:
+      update_goldens:
+        description: Regenerate the golden files and upload them as an artifact.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-harness-docker-${{ github.ref }}
+  # Only PR runs supersede each other; every main push keeps its result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  # Same reason as local-harness-conformance.yml: an instantly-answering mock
+  # upstream hides races a real one exposes.
+  MOCK_LATENCY_MS: "50"
+
+jobs:
+  hosted-docker:
+    name: ${{ matrix.harness }} on a baked Docker box
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [claude-code, codex]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Read harness toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there.
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      # Builds the shared contracts and generates the Codex bridge bundle the
+      # bake reads (and refuses if stale). The SDK first: the browser harness
+      # bundle in `pretest` pulls in widget-react, which resolves `@mcpjam/sdk`
+      # subpaths from dist (as in local-harness-conformance.yml).
+      - name: Build shared contracts and adapter bundles
+        run: |
+          npm run build:sdk -w @mcpjam/inspector
+          npm run pretest -w @mcpjam/inspector
+
+      - name: Generate the harness bake context
+        working-directory: mcpjam-inspector
+        run: node scripts/harness-bake-context.mjs --out "$RUNNER_TEMP/harness-image/harness-bake"
+
+      # The image's own build runs `bake.mjs` as the runtime user: it installs
+      # every recipe, verifies the vendor binaries and the patched bridges, and
+      # only then writes the markers. A broken bake fails here.
+      - name: Build the baked test image
+        working-directory: mcpjam-inspector
+        run: |
+          docker build \
+            -f server/utils/harness/docker/test-image.Dockerfile \
+            -t mcpjam-harness-test:ci \
+            "$RUNNER_TEMP/harness-image"
+
+      - name: Run the hosted harness end to end
+        working-directory: mcpjam-inspector
+        env:
+          HARNESS_DOCKER_IMAGE: mcpjam-harness-test:ci
+          UPDATE_HARNESS_GOLDENS: ${{ inputs.update_goldens && '1' || '' }}
+        run: npx vitest run --maxWorkers=1 server/utils/harness/docker/__tests__/hosted-harness-docker.e2e.test.ts -t "${{ matrix.harness }}"
+
+      - name: Upload regenerated goldens
+        if: always() && inputs.update_goldens
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hosted-harness-goldens-${{ matrix.harness }}
+          path: mcpjam-inspector/server/utils/harness/docker/__tests__/goldens/${{ matrix.harness }}.*.json
+          if-no-files-found: warn

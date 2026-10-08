@@ -30,9 +30,14 @@ export {
   OAUTH_PROFILE_EVIDENCE_STATUSES,
   OAUTH_SCOPE_REQUEST_MODES,
   OAUTH_TOKEN_ENDPOINT_AUTH_METHODS,
+  PLUGIN_EXTENSION_CAPABILITY_KEYS,
   SEP_1865_PERMISSION_FEATURES,
 } from "./types.js";
-export type { Harness } from "./types.js";
+export type {
+  Harness,
+  HostConfigPluginExtensionsV1,
+  PluginExtensionCapabilityKey,
+} from "./types.js";
 export {
   DEFAULT_TEMPERATURE_V2,
   resolveEffectiveMcpProtocolVersion,
@@ -69,6 +74,20 @@ export type {
   ModelVisibleMcpToolResults,
 } from "./types.js";
 
+// Per-client OpenAI plugin extensions setting (mcpProfile.apps.pluginExtensions).
+export {
+  applyPluginExtensionsToClientCapabilities,
+  OPENAI_FORM_CLIENT_EXTENSION_KEYS,
+  pluginExtensionsDefaultEnabled,
+  readPluginExtensionsSetting,
+  resolvePluginExtensions,
+} from "./plugin-extensions.js";
+export type {
+  PluginExtensionCapabilities,
+  PluginExtensionsHostInput,
+  ResolvedPluginExtensions,
+} from "./plugin-extensions.js";
+
 // Stage 3: host-execution policy + visibility filter + OpenAI compat.
 // Stays browser-safe — `tool-visibility.ts` is structurally typed
 // (no `MCPClientManager` runtime import) and `app-only-tool.ts` is a pure
@@ -92,7 +111,10 @@ export type {
   ResolvedMcpToolResultImageRenderingPolicy,
   ToolExposureSignals,
 } from "./host-policy.js";
-export { hostConnectionProfile } from "./host-connection.js";
+export {
+  applyHostConnectionProfile,
+  hostConnectionProfile,
+} from "./host-connection.js";
 export type { HostConnectionProfile } from "./host-connection.js";
 export {
   readOpenAiCompatOverride,
@@ -108,3 +130,53 @@ export {
 // backend ingestion handler (Step 2) hash byte-identical wire shapes. Helper
 // only — no reporter changes ship with Step 1.
 export { normalizeSdkEvalHostConfigForWire } from "./sdk-evals-normalizer.js";
+
+// Saved model selection: model + credential source + connection reference +
+// settings + fallback, beside the bare `modelId`. Pure and browser-safe.
+export {
+  MODEL_SELECTION_SOURCES,
+  MODEL_REASONING_EFFORTS,
+  MODEL_SELECTION_FALLBACK_PROVIDERS,
+  MODEL_SELECTION_PURPOSES,
+  MODEL_SELECTION_TEMPERATURE_MIN,
+  MODEL_SELECTION_TEMPERATURE_MAX,
+  ModelSelectionValidationError,
+  validateModelSelection,
+  isModelSelection,
+  assertModelSelection,
+  selectionFromLegacyModelId,
+  isLegacySelection,
+  selectionKey,
+  defaultFallbackForPurpose,
+} from "./model-selection.js";
+export {
+  ANTHROPIC_REASONING_EFFORTS,
+  GOOGLE_REASONING_EFFORTS,
+  HARNESS_REASONING_EFFORTS,
+  OPENAI_REASONING_EFFORTS,
+  reasoningEffortProviderOptions,
+  selectionConfigKey,
+  selectionIfMatches,
+  supportedReasoningEfforts,
+  harnessReasoningEfforts,
+} from "./reasoning-effort.js";
+export type {
+  ReasoningEffortProviderOptions,
+  ReasoningEffortRoute,
+  SupportedReasoningEffortsInput,
+} from "./reasoning-effort.js";
+export type {
+  ModelSelection,
+  ModelSelectionSource,
+  ModelConnectionRef,
+  ModelReasoningEffort,
+  ModelSelectionSettings,
+  ModelSelectionFallback,
+  ModelSelectionFallbackProvider,
+  LegacyModelSelection,
+  RequestedModelSelection,
+  ModelSelectionPurpose,
+  ModelSelectionIssue,
+  ModelSelectionIssueCode,
+  ModelSelectionValidation,
+} from "./model-selection.js";

@@ -45,7 +45,9 @@ export function getShareableAppOrigin(): string {
  * Scenario access modes. Mirrors the backend `scenarioModeValidator`.
  */
 export type ScenarioShareMode =
-  "project_members" | "invited_only" | "anyone_with_link";
+  | "project_members"
+  | "invited_only"
+  | "anyone_with_link";
 
 export interface ScenarioBootstrapServer {
   serverId: string;
@@ -128,6 +130,7 @@ export interface ScenarioBootstrapPayload {
   hostStyle: ScenarioHostStyle;
   mode: ScenarioShareMode;
   allowGuestAccess: boolean;
+  requiresSignIn?: boolean;
   viewerIsProjectMember: boolean;
   systemPrompt: string;
   modelId: string;
@@ -164,6 +167,7 @@ export interface ScenarioBootstrapPayload {
 }
 
 export interface ScenarioSession {
+  authenticatedUserId?: string;
   /**
    * Resolved scenario identity. Returned by /api/web/scenarios/redeem and
    * stored at the top level so callers don't have to dig through
@@ -461,7 +465,12 @@ export function normalizeScenarioSession(
           : undefined,
       hostStyle,
       mode: normalizeScenarioShareMode(payload.mode),
-      allowGuestAccess: payload.allowGuestAccess,
+      ...(payload.requiresSignIn !== undefined
+        ? { requiresSignIn: payload.requiresSignIn === true }
+        : {}),
+      allowGuestAccess: payload.requiresSignIn
+        ? false
+        : payload.allowGuestAccess,
       viewerIsProjectMember: payload.viewerIsProjectMember,
       systemPrompt: payload.systemPrompt,
       modelId: payload.modelId,
@@ -535,6 +544,9 @@ export function normalizeScenarioSession(
         (payload as { mcpProfile?: unknown }).mcpProfile,
       ),
     },
+    ...(typeof parsed.authenticatedUserId === "string"
+      ? { authenticatedUserId: parsed.authenticatedUserId }
+      : {}),
     surface: parsed.surface === "preview" ? "preview" : "share_link",
     shareToken:
       typeof parsed.shareToken === "string" && parsed.shareToken.trim()
@@ -610,9 +622,29 @@ export function clearScenarioSession(): void {
   sessionStorage.removeItem(SCENARIO_SESSION_STORAGE_KEY);
 }
 
+function validScenarioReturnPath(path: string): string | null {
+  const value = path.trim();
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\"))
+    return null;
+  try {
+    const url = new URL(value, window.location.origin);
+    if (
+      url.origin !== window.location.origin ||
+      !extractScenarioTokenFromPath(url.pathname)
+    )
+      return null;
+    return (
+      url.pathname +
+      (url.searchParams.get("surface") === "preview" ? "?surface=preview" : "")
+    );
+  } catch {
+    return null;
+  }
+}
+
 export function writeScenarioSignInReturnPath(path: string): void {
-  const normalizedPath = path.trim();
-  if (!extractScenarioTokenFromPath(normalizedPath)) {
+  const normalizedPath = validScenarioReturnPath(path);
+  if (!normalizedPath) {
     return;
   }
 
@@ -630,8 +662,8 @@ export function readScenarioSignInReturnPath(): string | null {
   try {
     const raw = localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY);
     if (!raw) return null;
-    const normalizedPath = raw.trim();
-    if (!normalizedPath || !extractScenarioTokenFromPath(normalizedPath)) {
+    const normalizedPath = validScenarioReturnPath(raw);
+    if (!normalizedPath) {
       return null;
     }
     return normalizedPath;

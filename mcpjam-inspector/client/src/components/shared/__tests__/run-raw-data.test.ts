@@ -28,7 +28,7 @@ describe("collectRunRawData", () => {
           };
         case "chatSessions:getSessionTurnTraces":
           return [];
-        case "chatSessions:getTopicMapSnapshot":
+        case "chatSessions:getSessionMapNodes":
           return { snapshot: null };
         default:
           return null;
@@ -41,7 +41,7 @@ describe("collectRunRawData", () => {
         kind: "scenario",
         scenarioId: "scenario-1",
         snapshot: { name: "Checkout test" },
-      }
+      },
     );
 
     expect(bundle.scope).toBe("scenario");
@@ -71,7 +71,7 @@ describe("collectRunRawData", () => {
           query: "chatSessions:getSessionHistoricalHostConfig",
           args: { sessionId: "session-1" },
         }),
-      ])
+      ]),
     );
   });
 
@@ -98,11 +98,11 @@ describe("collectRunRawData", () => {
           throw new Error("browser artifacts unavailable");
         }
         if (name === "chatSessions:getSessionTurnTraces") return [];
-        if (name === "chatSessions:getSwarmTopicMapSnapshot") {
+        if (name === "chatSessions:getSessionMapNodes") {
           return { snapshot: null };
         }
         return null;
-      }
+      },
     );
 
     const bundle = await collectRunRawData(queryClient(query), {
@@ -114,7 +114,7 @@ describe("collectRunRawData", () => {
     });
 
     const sessionList = bundle.queries.find(
-      (capture) => capture.query === "journeyRuns:listSessionsByJourneyRun"
+      (capture) => capture.query === "journeyRuns:listSessionsByJourneyRun",
     );
     expect(sessionList).toMatchObject({
       status: "ok",
@@ -134,13 +134,13 @@ describe("collectRunRawData", () => {
           status: "error",
           error: "browser artifacts unavailable",
         }),
-      ])
+      ]),
     );
   });
 });
 
 function queryClient(
-  query: (name: unknown, args: unknown) => Promise<unknown>
+  query: (name: unknown, args: unknown) => Promise<unknown>,
 ) {
   return { query };
 }

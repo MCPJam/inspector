@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearBillingSignInReturnPath,
   clearPersistedCheckoutIntent,
@@ -71,6 +71,35 @@ describe("sessionStorage persistence", () => {
       plan: "team",
       interval: "annual",
     });
+  });
+
+  it("drops an intent older than the TTL, and clears it", () => {
+    vi.useFakeTimers();
+    try {
+      persistCheckoutIntent({ plan: "team", interval: "annual" });
+      vi.advanceTimersByTime(29 * 60 * 1000);
+      expect(readPersistedCheckoutIntent()).toEqual({
+        plan: "team",
+        interval: "annual",
+      });
+
+      vi.advanceTimersByTime(2 * 60 * 1000);
+      expect(readPersistedCheckoutIntent()).toBeNull();
+      // Reading an expired intent removes it, so it cannot resurrect later.
+      expect(sessionStorage.getItem("mcpjam:checkout-intent")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops an intent stored without a timestamp", () => {
+    // Written by a build before the TTL existed. There is no age to judge, so
+    // it is not replayed.
+    sessionStorage.setItem(
+      "mcpjam:checkout-intent",
+      JSON.stringify({ plan: "team", interval: "annual" }),
+    );
+    expect(readPersistedCheckoutIntent()).toBeNull();
   });
 
   it("round-trips the billing sign-in return path", () => {

@@ -104,11 +104,14 @@ export function useSuiteSettingsCommit() {
       source?: "ui";
       expectedRevisionNumber?: number;
       liveEnvironment?: { servers?: unknown[]; serverBindings?: unknown };
+      /** See `toUpdateArgs`. */
+      environmentSuite?: boolean;
     }): Promise<CommitOutcome> => {
       const updateArgs = toUpdateArgs(
         args.draft,
         args.suiteId,
         args.liveEnvironment,
+        { environmentSuite: args.environmentSuite },
       );
       setIsCommitting(true);
       try {

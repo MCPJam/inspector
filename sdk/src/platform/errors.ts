@@ -54,6 +54,8 @@ export type PlatformApiErrorOptions = SdkErrorOptions & {
   endpoint?: string;
   /** See `PlatformApiError.codeSource`. Omit when the code was not wire-derived. */
   codeSource?: "envelope" | "status";
+  /** See `PlatformApiError.requestId`. Omit when no response carried one. */
+  requestId?: string;
 };
 
 export class PlatformApiError extends SdkError {
@@ -80,6 +82,15 @@ export class PlatformApiError extends SdkError {
    * Optional so an error constructed anywhere else keeps its current shape.
    */
   public readonly codeSource?: "envelope" | "status";
+  /**
+   * The failing response's `x-request-id`: the id the API stamps on every
+   * request and on every log line it writes for it. Quoting it in a bug report
+   * is what lets that report be joined to the server's logs.
+   *
+   * Absent on client-side errors (`status: 0`), which never reached a server
+   * that could mint one.
+   */
+  public readonly requestId?: string;
 
   constructor(message: string, code: string, options: PlatformApiErrorOptions) {
     super(message, code, options);
@@ -89,9 +100,156 @@ export class PlatformApiError extends SdkError {
     this.retryAfter = options.retryAfter;
     this.endpoint = options.endpoint;
     this.codeSource = options.codeSource;
+    this.requestId = options.requestId;
   }
 }
 
 export function isPlatformApiError(error: unknown): error is PlatformApiError {
   return error instanceof PlatformApiError;
+}
+
+/**
+ * True when the platform refused because a feature is not enabled for the
+ * caller's organization (a beta that has not reached it yet).
+ *
+ * The wire code for that refusal is the generic `FORBIDDEN`, so `code` alone
+ * cannot tell it from a permission denial. The reason rides in
+ * `details.code` (`"FEATURE_UNAVAILABLE"`), and `details.feature` names the
+ * feature when the server sent one. Branch on this rather than on the
+ * message, which is customer-facing copy.
+ */
+export function isFeatureUnavailable(
+  error: unknown
+): error is PlatformApiError {
+  return (
+    isPlatformApiError(error) && error.details?.code === "FEATURE_UNAVAILABLE"
+  );
+}
+
+/**
+ * What a caller may safely say about a RATE_LIMITED refusal, read from the
+ * error rather than its prose.
+ *
+ * Included operations (generation, insights) refuse on usage limits that
+ * credits cannot lift, and the backend says so in the envelope it forwards as
+ * `details`: its own refusal `code`, which bucket refused (`gatedBy`), whether
+ * a top-up would help (`canTopUp`), and when to come back. Surfaces that show
+ * an error to a person or a model (MCP, CLI, agents) read it here so they give
+ * the same answer.
+ *
+ * Allowlisted on purpose: `details` is a server envelope, and only these
+ * fields, shape-checked, are passed on.
+ */
+export interface PlatformRefusal {
+  /** HTTP status of the refusal. */
+  status: number;
+  /** The stable v1 wire code, e.g. `RATE_LIMITED`. */
+  code: string;
+  /** The backend's own refusal code, e.g. `platform_capacity`. */
+  reason?: string;
+  /** Which limit refused, e.g. `burst`, `organization`. */
+  gatedBy?: string;
+  /** False when buying credits would not lift the refusal. */
+  canTopUp?: boolean;
+  /** Whether the same request can succeed later. */
+  retryable?: boolean;
+  /** Seconds until retrying can succeed, from `Retry-After` or the envelope. */
+  retryAfterSeconds?: number;
+}
+
+const REFUSAL_REASON_PATTERN = /^[a-z0-9_]{1,64}$/;
+
+export function describePlatformRefusal(
+  error: unknown
+): PlatformRefusal | undefined {
+  if (!isPlatformApiError(error)) return undefined;
+  if (error.status !== 429 && error.code !== "RATE_LIMITED") return undefined;
+  const details = error.details ?? {};
+  const text = (key: string): string | undefined => {
+    const value = details[key];
+    return typeof value === "string" && REFUSAL_REASON_PATTERN.test(value)
+      ? value
+      : undefined;
+  };
+  const flag = (key: string): boolean | undefined =>
+    typeof details[key] === "boolean" ? (details[key] as boolean) : undefined;
+  const retryAfterMs = details.retryAfterMs;
+  const retryAfterSeconds =
+    error.retryAfter !== undefined
+      ? error.retryAfter
+      : typeof retryAfterMs === "number" &&
+          Number.isFinite(retryAfterMs) &&
+          retryAfterMs >= 0
+        ? Math.ceil(retryAfterMs / 1000)
+        : undefined;
+  const refusal: PlatformRefusal = { status: error.status, code: error.code };
+  const reason = text("code");
+  if (reason) refusal.reason = reason;
+  const gatedBy = text("gatedBy");
+  if (gatedBy) refusal.gatedBy = gatedBy;
+  const canTopUp = flag("canTopUp");
+  if (canTopUp !== undefined) refusal.canTopUp = canTopUp;
+  const retryable = flag("isRetryable");
+  if (retryable !== undefined) refusal.retryable = retryable;
+  if (retryAfterSeconds !== undefined)
+    refusal.retryAfterSeconds = retryAfterSeconds;
+  return refusal;
+}
+
+/**
+ * One sentence telling a reader what to do about a refusal: when to come
+ * back, and — when the server said so — that credits will not help. Never
+ * suggests a top-up, another identity, or a retry loop.
+ */
+export function platformRefusalHint(refusal: PlatformRefusal): string {
+  const when =
+    refusal.retryAfterSeconds !== undefined
+      ? `Retry after ${refusal.retryAfterSeconds}s, not sooner.`
+      : "Wait before retrying; do not retry in a loop.";
+  return refusal.canTopUp === false
+    ? `${when} This is a usage limit: topping up credits does not lift it.`
+    : when;
+}
+
+/** Wire code for a launch whose `expectedSponsored` no longer matched. */
+export const SWARM_FUNDING_CHANGED_CODE = "swarm_funding_changed";
+
+export interface SwarmFundingChange {
+  /** What the caller expected to be sponsored. */
+  expectedSponsored: number;
+  /** What would be sponsored now. */
+  actualSponsored: number;
+  /** Conversations in the launch. */
+  totalConversations: number;
+}
+
+/**
+ * The typed reading of a 409 `swarm_funding_changed`: the sponsored split moved
+ * between the caller's preview and the launch, so nothing was created. Returns
+ * `undefined` for any other error. Re-read the split, then launch again with
+ * the new `expectedSponsored`; do not retry blindly, because the retry would
+ * run more conversations on the organization's credits than the caller agreed to.
+ */
+export function describeSwarmFundingChange(
+  error: unknown
+): SwarmFundingChange | undefined {
+  if (!isPlatformApiError(error) || error.status !== 409) return undefined;
+  const details = error.details ?? {};
+  if (details.code !== SWARM_FUNDING_CHANGED_CODE) return undefined;
+  const count = (key: string): number | undefined => {
+    const value = details[key];
+    return typeof value === "number" && Number.isInteger(value) && value >= 0
+      ? value
+      : undefined;
+  };
+  const expectedSponsored = count("expectedSponsored");
+  const actualSponsored = count("actualSponsored");
+  const totalConversations = count("totalConversations");
+  if (
+    expectedSponsored === undefined ||
+    actualSponsored === undefined ||
+    totalConversations === undefined
+  )
+    return undefined;
+  return { expectedSponsored, actualSponsored, totalConversations };
 }

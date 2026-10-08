@@ -9,6 +9,8 @@ import {
   runtimeChosenModelSentinelName,
 } from "../model-provider";
 import { MODEL_PROVIDER_FIXTURES } from "./model-provider-fixtures";
+import { HOSTED_MODEL_IDS } from "../hosted-model-ids.generated";
+import { hostedProviderFromCanonicalId } from "../types";
 
 describe("classifyModelIdProvider", () => {
   for (const fixture of MODEL_PROVIDER_FIXTURES) {
@@ -55,6 +57,25 @@ describe("prefix map", () => {
     )) {
       if (aliases.has(prefix)) continue;
       expect(provider).toBe(prefix);
+    }
+  });
+
+  it("is the table hosted ids take their provider from", () => {
+    // `hostedProviderFromCanonicalId` used to keep its own copy of these
+    // aliases. Both now read one table, so they agree on every alias and on
+    // every id in the hosted snapshot.
+    for (const [prefix, provider] of Object.entries(MODEL_ID_PREFIX_ALIASES)) {
+      expect(hostedProviderFromCanonicalId(`${prefix}/some-model`)).toBe(
+        provider
+      );
+    }
+    for (const id of HOSTED_MODEL_IDS) {
+      // Vendors the classifier has no prefix for (`cohere/...`) are outside
+      // the shared table; the hosted path uses their prefix verbatim.
+      if (!(id.slice(0, id.indexOf("/")) in MODEL_ID_PREFIX_TO_PROVIDER)) {
+        continue;
+      }
+      expect(hostedProviderFromCanonicalId(id)).toBe(providerForModelId(id));
     }
   });
 

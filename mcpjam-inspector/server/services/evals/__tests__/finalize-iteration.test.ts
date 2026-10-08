@@ -574,6 +574,7 @@ describe("finalizeEvalIteration", () => {
 
       await finalizeEvalIteration({
         convexClient: client,
+        convexAuthToken: "user-bearer",
         iterationId: "iter1",
         passed: true,
         toolsCalled: [],
@@ -601,6 +602,11 @@ describe("finalizeEvalIteration", () => {
       // Serialize-once: one upload per artifact total, even though the same
       // serialized records feed BOTH the (failed) W2 fanout and the W1 fallback.
       expect(uploadScreenshotBlob).toHaveBeenCalledTimes(2);
+      // Uploaded as the run's own identity, scoped to the iteration's chat.
+      expect(uploadScreenshotBlob).toHaveBeenCalledWith(
+        { convexAuthToken: "user-bearer", chatSessionId: "eval_iter1" },
+        "c2hvdA==",
+      );
     });
 
     test("W1 fallback omits browser arrays when none were collected", async () => {
@@ -631,6 +637,7 @@ describe("finalizeEvalIteration", () => {
 
       await finalizeEvalIteration({
         convexClient: client,
+        convexAuthToken: "user-bearer",
         iterationId: "iter1",
         passed: true,
         toolsCalled: [],
@@ -650,6 +657,32 @@ describe("finalizeEvalIteration", () => {
       // Still serialized exactly once.
       expect(uploadScreenshotBlob).toHaveBeenCalledTimes(2);
     });
+
+    test("keeps the rows but uploads no screenshot without a bearer", async () => {
+      const { client, calls } = makeClient({
+        appendThrows: new Error("fanout pre-turn failure"),
+      });
+
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+        widgetRenderObservations: [obs],
+        browserInteractionSteps: [step],
+      });
+
+      expect(uploadScreenshotBlob).not.toHaveBeenCalled();
+      const update = calls.find(
+        (c) => c.ref === "testSuites:updateTestIteration",
+      );
+      const obsOut = update!.args.widgetRenderObservations as any[];
+      expect(obsOut).toHaveLength(1);
+      expect(obsOut[0]).not.toHaveProperty("screenshotBlobId");
+      expect(obsOut[0]).not.toHaveProperty("screenshotBase64");
+    });
   });
 
   describe("replay video", () => {
@@ -658,6 +691,7 @@ describe("finalizeEvalIteration", () => {
       const { client, calls } = makeClient({});
       await finalizeEvalIteration({
         convexClient: client,
+        convexAuthToken: "user-bearer",
         iterationId: "iter1",
         passed: true,
         toolsCalled: [],
@@ -669,6 +703,11 @@ describe("finalizeEvalIteration", () => {
         .filter((c) => c.ref === "testSuites:appendEvalTurnTrace")
         .at(-1);
       expect(lastAppend?.args.videoBlobId).toBe("vid-store-1");
+      expect(uploadVideoBlob).toHaveBeenCalledWith(
+        { convexAuthToken: "user-bearer", chatSessionId: "eval_iter1" },
+        expect.any(Buffer),
+        {},
+      );
     });
 
     test("upload failure does NOT fail the iteration (best-effort)", async () => {
@@ -679,6 +718,7 @@ describe("finalizeEvalIteration", () => {
       await expect(
         finalizeEvalIteration({
           convexClient: client,
+          convexAuthToken: "user-bearer",
           iterationId: "iter1",
           passed: true,
           toolsCalled: [],
@@ -687,6 +727,7 @@ describe("finalizeEvalIteration", () => {
           videoBytes: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
         }),
       ).resolves.toBeUndefined();
+      expect(uploadVideoBlob).toHaveBeenCalledTimes(1);
 
       // The iteration still finalized with the right status...
       const update = calls.find(
@@ -713,5 +754,125 @@ describe("finalizeEvalIteration", () => {
       });
       expect(uploadVideoBlob).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("finalizeEvalIteration — infra errors", () => {
+  const infraError = {
+    class: "provider_unavailable" as const,
+    layer: "model" as const,
+    retryable: true,
+    code: "provider_error",
+    httpStatus: 503,
+  };
+
+  test("sends infraError with a failed write, and the row reads failed", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      error: "The AI provider is temporarily unavailable.",
+      infraError,
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args).toMatchObject({
+      status: "failed",
+      result: "failed",
+      infraError,
+    });
+  });
+
+  test("never sends infraError beside any other status", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "completed",
+      infraError,
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args.status).toBe("completed");
+    expect(update?.args).not.toHaveProperty("infraError");
+  });
+
+  test("retries once without infraError when the backend predates the field", async () => {
+    // Deploy skew: an older backend rejects the unknown argument by name.
+    const calls: Array<Record<string, unknown>> = [];
+    const client = {
+      query: vi.fn(async () => ({ status: "running" })),
+      action: vi.fn(async (ref: string, args: Record<string, unknown>) => {
+        if (ref !== "testSuites:updateTestIteration") return undefined;
+        calls.push(args);
+        if ("infraError" in args) {
+          throw new Error(
+            "ArgumentValidationError: Object contains extra field `infraError` that is not in the validator.",
+          );
+        }
+        return undefined;
+      }),
+    } as unknown as ConvexHttpClient;
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      infraError,
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ status: "failed", result: "failed" });
+    expect(calls[1]).not.toHaveProperty("infraError");
+  });
+
+  test("any other write failure is not retried", async () => {
+    const { client, calls } = makeClient({
+      updateThrows: new Error("Server Error"),
+    });
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      infraError,
+    });
+    expect(
+      calls.filter((call) => call.ref === "testSuites:updateTestIteration"),
+    ).toHaveLength(1);
+  });
+
+  test("an ordinary failed write is byte-identical to before (no infraError key)", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: false,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      status: "failed",
+      error: "tool blew up",
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args).not.toHaveProperty("infraError");
   });
 });

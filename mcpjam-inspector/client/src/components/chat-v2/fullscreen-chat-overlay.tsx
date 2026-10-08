@@ -35,6 +35,8 @@ import {
   isToolPart,
 } from "@/components/chat-v2/thread/thread-helpers";
 import { ToolPart } from "@/components/chat-v2/thread/parts/tool-part";
+import { describeUserContext } from "@/components/chat-v2/thread/user-context-card";
+import { getUserContextBlocks } from "@/shared/user-context-message";
 import { TextPart } from "@/components/chat-v2/thread/parts/text-part";
 
 function extractTextFromUnknown(value: unknown): string {
@@ -125,6 +127,22 @@ function getToolEntrySignature(part: FullscreenToolPart): string {
 }
 
 function getMessageEntries(message: UIMessage): FullscreenMessageEntry[] {
+  // Context the user added shows as one line naming it, not its full text.
+  const contextBlocks = getUserContextBlocks(message);
+  if (contextBlocks) {
+    const summary = describeUserContext(contextBlocks);
+    return summary
+      ? [
+          {
+            kind: "bubble",
+            key: `${message.id ?? message.role}:context`,
+            message,
+            text: summary,
+          },
+        ]
+      : [];
+  }
+
   const parts = Array.isArray(message?.parts) ? message.parts : [];
   const entries: FullscreenMessageEntry[] = [];
   const hasTextPart = parts.some((part) => getTextPartPreview(part).length > 0);
@@ -613,6 +631,11 @@ type FullscreenChatOverlayProps = {
   /** Provider id from the active chat model — feeds the indicator's
    * fallback path for surfaces without a scenario host context. */
   modelProvider?: string | null;
+  /**
+   * Position within the nearest positioned ancestor instead of the window
+   * (a global App's takeover of the client area, beside the side rails).
+   */
+  contained?: boolean;
 };
 export function FullscreenChatOverlay({
   chatSessionId,
@@ -629,6 +652,7 @@ export function FullscreenChatOverlay({
   onSend,
   notice,
   modelProvider,
+  contained = false,
 }: FullscreenChatOverlayProps) {
   const scenarioHostStyle = useScenarioHostStyle();
   const scenarioHostTheme = useScenarioHostTheme();
@@ -644,7 +668,13 @@ export function FullscreenChatOverlay({
   );
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50">
+    <div
+      data-testid={contained ? "contained-chat-overlay" : undefined}
+      className={cn(
+        "pointer-events-none inset-x-0 bottom-6 z-50",
+        contained ? "absolute" : "fixed",
+      )}
+    >
       <div
         className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-4"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}

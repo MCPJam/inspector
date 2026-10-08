@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -84,7 +85,7 @@ function OverviewBody({
   // auth to query with. Treating that as "still loading" would spin forever.
   if (!scenarios || scenarios.length === 0) {
     return (
-      <EmptyState
+      <UserTestingEmptyState
         onCreateScenario={onCreateScenario}
         createLabel={createLabel}
       />
@@ -100,7 +101,7 @@ function OverviewBody({
           "border-b border-border/40 pb-2 text-xs font-medium text-muted-foreground",
         )}
       >
-        <span>Scenario</span>
+        <span>Study</span>
         <span>Client</span>
         <span>Server</span>
         <span className="text-right">Testers</span>
@@ -198,11 +199,11 @@ function LoadFailureState({
     >
       <AlertTriangle className="size-8 text-amber-500" />
       <h2 className="mt-4 text-base font-semibold">
-        Couldn&apos;t show your scenarios
+        Couldn&apos;t show your studies
       </h2>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        The list failed to render. Reload the page — this doesn&apos;t mean
-        anything happened to your scenarios.
+        The list failed to render. Reload the page. A render failure isn&apos;t
+        a sign that your studies changed.
       </p>
       <Button variant="outline" className="mt-5" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />
@@ -238,12 +239,21 @@ function LoadFailureState({
  * art is scaled UP; scaling 4.5× DOWN it would drop rows unevenly and
  * alias. The browser's own filtering is the better of the two here.
  */
-function EmptyState({
+export function UserTestingEmptyState({
   onCreateScenario,
   createLabel,
+  action,
 }: {
-  onCreateScenario: () => void;
-  createLabel: string;
+  onCreateScenario?: () => void;
+  createLabel?: string;
+  /**
+   * Replaces the create button, and nothing else (REEV-6). The signed-out
+   * preview renders this same component so the illustration, the heading and
+   * the sentence under it are identical to what a member sees on an empty
+   * tab. See the matching slot on `SwarmsEmptyHero` for why this is a slot
+   * and not a second copy of the strings.
+   */
+  action?: ReactNode;
 }) {
   return (
     <div
@@ -265,10 +275,14 @@ function EmptyState({
         inside the client they&rsquo;re used to seeing, and their sessions are
         recorded here.
       </p>
-      <Button size="sm" className="mt-4" onClick={onCreateScenario}>
-        <Plus className="mr-1.5 size-4" />
-        {createLabel}
-      </Button>
+      <div className="mt-4">
+        {action ?? (
+          <Button size="sm" onClick={onCreateScenario}>
+            <Plus className="mr-1.5 size-4" />
+            {createLabel}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

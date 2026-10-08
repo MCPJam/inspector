@@ -1,3 +1,6 @@
+import { describeEvalIterationError } from "@/lib/eval-iteration-error";
+import { ErrorCard } from "@/components/ui/error-card";
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -9,6 +12,10 @@ import {
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+import {
+  registerArtifactUrls,
+  useArtifactUrlEpoch,
+} from "@/lib/artifact-urls";
 // One copy, deliberately. This module used to carry a byte-identical
 // `resolveTraceModel` (plus its own hand-copied `KNOWN_MODEL_PROVIDERS`), so a
 // provider added to the union had to be remembered in two places or the trace
@@ -26,6 +33,7 @@ import {
   parseScoreIntegrity,
 } from "./scores-list";
 import { TraceViewer } from "./trace-viewer";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   gateMcpToolResultImageRenderingByModelVisibility,
   type HostConfigDtoV2,
@@ -43,7 +51,6 @@ import {
   ChevronRight,
   WifiOff,
   AlertCircle,
-  Loader2,
 } from "lucide-react";
 import {
   ToolServerMap,
@@ -222,6 +229,12 @@ function TraceBlobLoadErrorPanel({
 export type ScorecardTabContext = {
   /** The resolved trace envelope, for per-step evidence. Null until loaded. */
   envelope: StepReplayEnvelope | null;
+  /**
+   * The whole downloaded trace, for the scorecard's recorded stage floor. The
+   * same object `envelope` narrows — handed over unnarrowed because the floor
+   * reads messages and spans, which the step assembler has no use for.
+   */
+  trace: { messages?: unknown; spans?: unknown } | null;
   envelopeLoading: boolean;
   reviewActive: boolean;
   judgeHidden: boolean;
@@ -231,6 +244,7 @@ export type ScorecardTabContext = {
 };
 
 export function IterationDetails({
+  hostSnapshot,
   iteration,
   testCase,
   serverNames = EMPTY_SERVER_NAMES,
@@ -241,11 +255,12 @@ export function IterationDetails({
   trialChainSlot,
   scorecard,
   trialVerdictWord,
-  requestedTab,
   syncedStepId,
   onSyncStep,
 }: {
   iteration: EvalIteration;
+  /** undefined preserves ambient styling for existing chat callers. */
+  hostSnapshot?: HostSnapshot | null;
   testCase: EvalCase | null;
   serverNames?: string[];
   layoutMode?: "compact" | "full";
@@ -292,7 +307,6 @@ export function IterationDetails({
    * the same screen.
    */
   trialVerdictWord?: string;
-  requestedTab?: { iterationId: string; mode: "steps" | "scorecard" } | null;
   /**
    * Step cursor shared with a host that lists the authored steps beside this
    * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
@@ -391,16 +405,6 @@ export function IterationDetails({
   }, [iteration.testCaseSnapshot]);
   const hasSteps = snapshotSteps.length > 0;
 
-  useEffect(() => {
-    if (requestedTab?.iterationId === iteration._id) {
-      setPreviewTraceMode(
-        requestedTab.mode === "steps" && !hasSteps
-          ? "scorecard"
-          : requestedTab.mode,
-      );
-    }
-  }, [requestedTab, iteration._id, hasSteps]);
-
   // Source-aware trace identity. New iterations carry `chatSessionId`
   // (unified path); legacy iterations carry `blob`. The hook gates on
   // either being present and re-runs when either changes.
@@ -429,6 +433,7 @@ export function IterationDetails({
         // otherwise reads from `iteration.blob`. Both paths return the
         // same envelope shape to `TraceViewer`.
         const data = await getBlob({ iterationId: iteration._id });
+        registerArtifactUrls(data);
         if (!cancelled) setLoadedBlob({ identity: traceIdentity, data });
       } catch (e: any) {
         if (!cancelled) {
@@ -444,6 +449,40 @@ export function IterationDetails({
       cancelled = true;
     };
   }, [traceSourceKey, traceIdentity, getBlob, blobRetryTick]);
+
+  // The trace's widget HTML and screenshots arrive as short-lived artifact
+  // links. When one expires anywhere on the page, re-read the trace in the
+  // background and swap the fresh links in without blanking the view.
+  const artifactUrlEpoch = useArtifactUrlEpoch();
+  const handledArtifactUrlEpochRef = useRef(artifactUrlEpoch);
+  useEffect(() => {
+    if (artifactUrlEpoch === handledArtifactUrlEpochRef.current) return;
+    handledArtifactUrlEpochRef.current = artifactUrlEpoch;
+    if (!traceSourceKey) return;
+    let cancelled = false;
+    getBlob({ iterationId: iteration._id })
+      .then((data) => {
+        registerArtifactUrls(data);
+        if (cancelled) return;
+        setLoadedBlob((current) =>
+          current?.identity === traceIdentity
+            ? { identity: traceIdentity, data }
+            : current,
+        );
+      })
+      .catch(() => {
+        // Keep what is shown; the next expired link retries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    artifactUrlEpoch,
+    traceSourceKey,
+    traceIdentity,
+    iteration._id,
+    getBlob,
+  ]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;
@@ -682,18 +721,7 @@ export function IterationDetails({
     );
   };
 
-  const parseErrorDetails = (details: string | undefined) => {
-    if (!details) return null;
-    try {
-      const parsed = JSON.parse(details);
-      return parsed;
-    } catch {
-      return null;
-    }
-  };
-
-  const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
-  const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
+  const iterationError = describeEvalIterationError(iteration);
 
   const hasToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
@@ -1055,7 +1083,7 @@ export function IterationDetails({
       </div>
       {loading ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <TranscriptEmptyState kind="loading" />
         </div>
       ) : error ? (
         <TraceBlobLoadErrorPanel
@@ -1102,7 +1130,7 @@ export function IterationDetails({
       >
         {loading ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <TranscriptEmptyState kind="loading" />
           </div>
         ) : error ? (
           <TraceBlobLoadErrorPanel
@@ -1112,8 +1140,13 @@ export function IterationDetails({
             isDetailsOpen={isBlobErrorDetailsOpen}
             onDetailsOpenChange={setIsBlobErrorDetailsOpen}
           />
+        ) : hostSnapshot === null && previewTraceMode === "chat" ? (
+          <p role="alert" className="p-4 text-sm text-muted-foreground">
+            Could not load this run's host configuration.
+          </p>
         ) : (
           <TraceViewer
+              hostSnapshot={hostSnapshot}
               trace={blob ?? {}}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
               model={traceModel}
@@ -1126,6 +1159,7 @@ export function IterationDetails({
               traceInsight={caseInsightSlot}
               chromeDensity={layoutMode === "full" ? "compact" : "default"}
               fillContent={layoutMode === "full"}
+              frame={layoutMode === "full" ? "none" : "inset"}
               hideToolbar={layoutMode === "full"}
               forcedViewMode={
                 layoutMode === "full" && previewTraceMode !== "scorecard"
@@ -1196,49 +1230,13 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {/* Error Display */}
-      {iteration.error && (
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
-          <div className="text-xs font-semibold text-destructive uppercase tracking-wide">
-            Error
-          </div>
-          <div className="text-xs text-destructive whitespace-pre-wrap font-mono">
-            {iteration.error}
-          </div>
-          {iteration.errorDetails && (
-            <Collapsible
-              open={isErrorDetailsOpen}
-              onOpenChange={setIsErrorDetailsOpen}
-            >
-              <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-destructive hover:text-destructive/80 transition-colors">
-                <span>More details</span>
-                {isErrorDetailsOpen ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2">
-                <div className="rounded border border-destructive/30 bg-background/50 p-2">
-                  {errorDetailsJson ? (
-                    <JsonEditor
-                      height="100%"
-                      value={errorDetailsJson}
-                      readOnly
-                      showToolbar={false}
-                    />
-                  ) : (
-                    <pre className="text-xs font-mono text-destructive whitespace-pre-wrap overflow-x-auto">
-                      {iteration.errorDetails}
-                    </pre>
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-        </div>
-      )}
+      {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
 
+      {!hasTrace && !scorecard && !isProbe && (
+        <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"
+          ? { kind: "streaming" as const }
+          : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? "observed" as const : "unknown" as const })} />
+      )}
       {caseInsightFallback}
 
       {isProbe && !scorecard ? (
@@ -1251,6 +1249,7 @@ export function IterationDetails({
         previewTraceMode === "scorecard" ? (
           scorecard.render({
             envelope: blobEnvelope,
+            trace: blob ?? null,
             envelopeLoading: loading,
             reviewActive: Boolean(enableJudgeReview && iteration.suiteRunId),
             judgeHidden,
@@ -1261,11 +1260,9 @@ export function IterationDetails({
           !hasTrace && previewTraceMode === "tools" ? (
             <div className="space-y-3" data-testid="iteration-tools-without-trace">{toolCallsGrids}</div>
           ) : !hasTrace && previewTraceMode !== "steps" ? (
-            <p className="p-4 text-sm text-muted-foreground" role="status">
-              {iteration.status === "running" || iteration.status === "pending"
-                ? "This run has not recorded a trace yet."
-                : "No trace was recorded for this run."}
-            </p>
+            <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"
+              ? { kind: "streaming" as const }
+              : { kind: "unrecorded" as const, execution: iteration.tokensUsed > 0 || iteration.actualToolCalls.length > 0 ? "observed" as const : "unknown" as const })} />
           ) : traceSection
         )
       ) : traceFirst ? (

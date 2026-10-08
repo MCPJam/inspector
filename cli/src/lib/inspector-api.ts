@@ -1,4 +1,13 @@
-import { closeSync, existsSync, openSync, renameSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  readFileSync,
+  lstatSync,
+  closeSync,
+  existsSync,
+  openSync,
+  renameSync,
+  statSync,
+} from "node:fs";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -403,7 +412,9 @@ export async function ensureInspector(
       }));
     const url = buildInspectorUrl(browserBaseUrl, options.tab);
     if (options.openBrowser && !health.hasActiveClient) {
-      openUrl(url);
+      openUrl(
+        buildInspectorAccessUrl(url, await fetchInspectorSessionToken(baseUrl))
+      );
     }
     return {
       baseUrl,
@@ -438,7 +449,9 @@ export async function ensureInspector(
   const url = buildInspectorUrl(browserBaseUrl, options.tab);
 
   if (options.openBrowser) {
-    openUrl(url);
+    openUrl(
+      buildInspectorAccessUrl(url, await fetchInspectorSessionToken(baseUrl))
+    );
   }
 
   return {
@@ -757,9 +770,46 @@ export function clearInspectorSessionTokenCache(baseUrl?: string): void {
 async function fetchFreshInspectorSessionToken(
   normalizedBaseUrl: string,
 ): Promise<string> {
+  const endpoint = new URL(normalizedBaseUrl);
+  if (!isLoopbackHostname(endpoint.hostname))
+    throw operationalError("Inspector attachment requires a local address.");
+  let token: string;
+  try {
+    const file = path.join(
+      os.homedir(),
+      ".mcpjam",
+      "inspector",
+      `${endpoint.port || "6274"}.json`
+    );
+    const stat = lstatSync(file);
+    if (
+      !stat.isFile() ||
+      (process.platform !== "win32" &&
+        ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()))
+    )
+      throw new Error("Unsafe discovery file permissions");
+    const record = JSON.parse(readFileSync(file, "utf8"));
+    if (
+      record.port !== Number(endpoint.port || "6274") ||
+      !Number.isSafeInteger(record.pid) ||
+      record.pid <= 0 ||
+      typeof record.token !== "string" ||
+      !/^[A-Za-z0-9_-]{24,}$/.test(record.token)
+    )
+      throw new Error("Invalid discovery file");
+    process.kill(record.pid, 0);
+    token = record.token;
+  } catch {
+    throw operationalError(
+      "Cannot read this Inspector's access file. Start or restart an updated Inspector as the same user, then try again."
+    );
+  }
   let response: Response;
   try {
     response = await fetch(`${normalizedBaseUrl}/api/session-token`, {
+      headers: {
+        "X-MCP-Session-Auth": `Bearer ${token}`,
+      },
       signal: AbortSignal.timeout(SESSION_TOKEN_TIMEOUT_MS),
     });
   } catch (error) {
@@ -775,16 +825,16 @@ async function fetchFreshInspectorSessionToken(
     );
   }
 
-  const body = (await response.json()) as { token?: unknown };
-  if (typeof body.token !== "string" || !body.token) {
+  const body = (await response.json()) as { ok?: unknown };
+  if (body.ok !== true) {
     throw operationalError("Inspector session-token response was invalid.");
   }
 
   tokenCache.set(normalizedBaseUrl, {
-    token: body.token,
+    token,
     fetchedAt: Date.now(),
   });
-  return body.token;
+  return token;
 }
 
 function getInspectorStartScriptPath(): string | undefined {
@@ -855,8 +905,7 @@ async function isInspectorFrontendUrl(baseUrl: string): Promise<boolean> {
     return (
       hasInspectorFrontendMarker(body) ||
       /<title>\s*MCPJam Inspector\s*<\/title>/i.test(body) ||
-      body.includes("/mcp_jam.svg") ||
-      body.includes("__MCP_SESSION_TOKEN__")
+      body.includes("/mcp_jam.svg")
     );
   } catch {
     return false;
@@ -1104,6 +1153,9 @@ async function startInspector(
       stdio: ["ignore", logFd, logFd],
       env: {
         ...process.env,
+        MCPJAM_SESSION_TOKEN:
+          process.env.MCPJAM_SESSION_TOKEN ??
+          randomBytes(24).toString("base64url"),
         HOST: parsedUrl.hostname,
         MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1",
       },
@@ -1143,6 +1195,7 @@ function openStartupLogFile(logPath: string): number {
     // Startup logging is best-effort; rotation failures should not block launch.
   }
 
+  // CLI-owned launches suppress the access link; this log contains diagnostics only.
   return openSync(logPath, "a");
 }
 
@@ -1226,4 +1279,15 @@ function isInspectorCommandResponse(
       typeof (error as Record<string, unknown>).code === "string" &&
       typeof (error as Record<string, unknown>).message === "string",
   );
+}
+
+/** Browser-only credential; keep command results and diagnostics on clean URLs. */
+export function buildInspectorAccessUrl(url: string, token: string): string {
+  const target = new URL(url);
+  const tab = target.hash.slice(1);
+  target.hash = new URLSearchParams({
+    token,
+    ...(tab ? { tab } : {}),
+  }).toString();
+  return target.href;
 }

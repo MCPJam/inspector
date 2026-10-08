@@ -53,6 +53,7 @@ import type {
  * the legacy adapter a pure pass-through.
  */
 export interface ManagedMcpClientConnectOptions {
+  signal?: AbortSignal;
   timeout?: number;
   resumptionToken?: string;
   onresumptiontoken?: (token: string) => void;
@@ -88,6 +89,12 @@ export interface ManagedMcpClientIncomingRequest {
 export type ManagedMcpClientRequestHandler = (
   request: ManagedMcpClientIncomingRequest
 ) => unknown | Promise<unknown>;
+
+/** Injected extension schemas keep adapter-specific dependencies out of the SDK. */
+export interface ManagedMcpClientRequestSchemas {
+  params: StandardSchemaV1;
+  result: StandardSchemaV1;
+}
 
 /**
  * The single surface the manager talks to. Every method here corresponds
@@ -285,7 +292,8 @@ export interface ManagedMcpClient {
   ): void;
   setRequestHandler(
     method: ManagedMcpClientRequestMethod,
-    handler: ManagedMcpClientRequestHandler
+    handler: ManagedMcpClientRequestHandler,
+    schemas?: ManagedMcpClientRequestSchemas
   ): void;
   removeRequestHandler(method: ManagedMcpClientRequestMethod): void;
 }

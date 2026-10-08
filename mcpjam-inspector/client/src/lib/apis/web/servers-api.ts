@@ -1,7 +1,13 @@
+import { HOSTED_MODE } from "@/lib/config";
+import { composeAbortSignals } from "@/lib/compose-abort-signals";
+import { serverCheckQueue } from "@/lib/server-check-queue";
+import { tryGetHostedServerDisplayName } from "./context";
 import { webPost } from "./base";
 import { buildServerRequest } from "./context";
 
 export type HostedServerValidateContext = {
+  /** Internal browser slot already held by a non-interactive connection operation. Never sent on the wire. */
+  queueSignal?: AbortSignal;
   projectId: string;
   serverId: string;
   serverName?: string;
@@ -84,12 +90,12 @@ export interface HostedServerOAuthRequirementResponse {
 }
 
 export async function checkHostedServerOAuthRequirement(
-  serverNameOrId: string
+  serverNameOrId: string,
 ): Promise<HostedServerOAuthRequirementResponse> {
   const request = buildServerRequest(serverNameOrId);
   return webPost<typeof request, HostedServerOAuthRequirementResponse>(
     "/api/web/servers/check-oauth",
-    request
+    request,
   );
 }
 
@@ -97,7 +103,13 @@ export async function validateHostedServer(
   serverNameOrId: string,
   oauthAccessToken?: string,
   clientCapabilities?: Record<string, unknown>,
-  hostedContext?: HostedServerValidateContext
+  hostedContext?: HostedServerValidateContext,
+  /**
+   * Cancels the connect for a caller running its own deadline. The route keeps
+   * an MCP connection open for as long as its connect timeout allows, so a
+   * caller that gave up and retried would otherwise hold two open at once.
+   */
+  signal?: AbortSignal,
 ): Promise<HostedServerValidateResponse> {
   const request: Record<string, unknown> = hostedContext
     ? {
@@ -163,8 +175,90 @@ export async function validateHostedServer(
   if (clientCapabilities) {
     request.clientCapabilities = clientCapabilities;
   }
-  return webPost<typeof request, HostedServerValidateResponse>(
-    "/api/web/servers/validate",
-    request
+  if (!HOSTED_MODE)
+    return webPost<typeof request, HostedServerValidateResponse>(
+      "/api/web/servers/validate",
+      request,
+      { signal },
+    );
+  const execute = async (checkSignal: AbortSignal) => {
+    // Browser waiting has no timeout. Once dispatched, allow the backend's
+    // 30-second queue window plus a 20-second connection budget. The server
+    // answers within `WEB_SERVER_CHECK_DEADLINE_MS` (45 s) of the request's
+    // arrival, so its reason arrives before this gives up.
+    const deadline = new AbortController();
+    const timeout = setTimeout(
+      () =>
+        deadline.abort(
+          new DOMException(
+            "Connection attempt timed out. Click Connect to retry.",
+            "TimeoutError",
+          ),
+        ),
+      50_000,
+    );
+    const metadata = serverCheckQueue.attemptMetadata(checkSignal) ?? {
+      requestId: crypto.randomUUID(),
+      intent: "manual" as const,
+    };
+    const promotionDone = new AbortController();
+    const { signal: promotionSignal, dispose: disposePromotion } =
+      composeAbortSignals([checkSignal, deadline.signal, promotionDone.signal]);
+    const { signal: requestSignal, dispose: disposeRequest } =
+      composeAbortSignals([checkSignal, deadline.signal]);
+    const detachPromotion = serverCheckQueue.bindPromotion(
+      checkSignal,
+      async () => {
+        try {
+          // Promotion can race the validate POST arriving at another replica.
+          // Retry only a not-yet-admitted ID, never admit a second request here.
+          while (!promotionSignal.aborted) {
+            const result = await webPost<
+              { requestId: string },
+              { state: string }
+            >(
+              "/api/web/servers/checks/promote",
+              { requestId: metadata.requestId },
+              { signal: promotionSignal },
+            );
+            if (result.state !== "expired") return;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        } catch (error) {
+          if (!promotionDone.signal.aborted) throw error;
+        }
+      },
+    );
+    try {
+      return await webPost<typeof request, HostedServerValidateResponse>(
+        "/api/web/servers/validate",
+        { ...request, _serverCheck: metadata },
+        { signal: requestSignal },
+      );
+    } finally {
+      promotionDone.abort();
+      detachPromotion();
+      disposePromotion();
+      disposeRequest();
+      clearTimeout(timeout);
+    }
+  };
+  if (hostedContext?.queueSignal) return execute(hostedContext.queueSignal);
+  return serverCheckQueue.run(
+    {
+      projectId: String(request.projectId),
+      serverName: String(
+        request.serverName ??
+          tryGetHostedServerDisplayName(String(request.serverId)) ??
+          serverNameOrId,
+      ),
+      identity: JSON.stringify([
+        request.clientInfo,
+        request.supportedProtocolVersions,
+        request.mcpProtocolVersion,
+      ]),
+      signal,
+    },
+    execute,
   );
 }

@@ -1,3 +1,4 @@
+import type { PluginWorkspaceRecording } from "./plugin-workspace-recording";
 import type { ModelMessage } from "ai";
 import { z } from "zod";
 import type { PromptTurnToolCall } from "./steps";
@@ -24,6 +25,7 @@ export type EvalTraceSpan = {
   toolCallId?: string;
   toolName?: string;
   serverId?: string;
+  connectionId?: string;
   modelId?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -262,7 +264,7 @@ export type EvalTraceWidgetSnapshot = {
 
 // PR 6b: browser-rendered MCP App eval — render observations + interaction
 // steps. Runner records carry base64 screenshots until `finalizeEvalIteration`
-// uploads them via `chatSessions:generateSnapshotUploadUrl`; serialized records
+// uploads them through the backend's upload route; serialized records
 // replace that field with `screenshotBlobId`. These never enter
 // `EvalTraceBlobV1` — they fan out to the sibling `widgetRenderObservations` /
 // `browserInteractionSteps` Convex tables via `appendEvalTurnTrace`, which has
@@ -456,6 +458,7 @@ export type BrowserInteractionStepPayload = Omit<
 // Convex doc id; the UI keys on `toolName` / `toolCallId` for display.
 
 export type EvalTraceWidgetRenderObservationView = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   toolName: string;
   serverId?: string;
@@ -475,6 +478,7 @@ export type EvalTraceWidgetRenderObservationView = {
 };
 
 export type EvalTraceBrowserInteractionStepView = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   stepIndex: number;
   promptIndex: number;
@@ -560,14 +564,7 @@ export const evalTraceSpanZ = z.object({
   id: z.string(),
   parentId: z.string().optional(),
   name: z.string(),
-  category: z.enum([
-    "step",
-    "llm",
-    "tool",
-    "error",
-    "connection",
-    "discovery",
-  ]),
+  category: z.enum(["step", "llm", "tool", "error", "connection", "discovery"]),
   startMs: z.number(),
   endMs: z.number(),
   promptIndex: z.number().optional(),
@@ -577,6 +574,7 @@ export const evalTraceSpanZ = z.object({
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),
   serverId: z.string().optional(),
+  connectionId: z.string().optional(),
   modelId: z.string().optional(),
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),

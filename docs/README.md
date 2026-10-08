@@ -38,8 +38,8 @@ surfaces are currently in that state: the baseline is version-controlled next
 to the routes, whereas naming them in this file would publish the answer.
 
 For a feature that IS live but only enabled for some accounts, use an
-availability `<Note>` at the top of the page — `inspector/plugins.mdx`,
-`inspector/computer.mdx` and `inspector/skills.mdx` all carry one. Say what is
+availability `<Note>` at the top of the page — `inspector/plugins.mdx` and
+`inspector/skills.mdx` both carry one. Say what is
 gated and what the reader would see if it is not on for them.
 
 ### `contributing/` is deliberately not in the nav
@@ -75,3 +75,17 @@ all effectively invisible.
 fails when the Inspector serves a route the spec does not describe (or
 describes one it does not serve). Edit the spec in the same change as the
 route; the test is what stops the two drifting.
+
+Each endpoint page's URL is `/api-reference/{tag}/{summary}`, slugged from the
+operation's first tag and its summary — so renaming either moves the page.
+`reference/published-api-pages.json` lists every URL the spec has ever
+produced, and `mcpjam-inspector/server/routes/v1/__tests__/api-reference-urls.test.ts`
+fails until a new page is added to it, or until a URL the spec no longer
+produces has a redirect in `docs.json` to the page that replaced it.
+
+Treat a red run as blocking even though CI will not: the test runs in the
+`Inspector Tests` shards, and the checks `main` requires are `Build and Test`
+and `Run Tests`. A rename that breaks URLs goes red but can still be merged.
+
+The ledger is append-only. Never drop a row, including when resolving a merge
+conflict in it — a URL that was ever published must keep resolving.

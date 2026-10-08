@@ -185,7 +185,7 @@ describe("SwarmsTab — journey grading editor", () => {
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     expect(screen.getByTestId("journey-grading-trigger")).toHaveTextContent(
-      "1 check",
+      "1 evaluator",
     );
   });
 

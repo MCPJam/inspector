@@ -41,6 +41,32 @@ function extractRejectionDetail(message: string): string | undefined {
   return parts.length > 0 ? parts.join(" — ") : undefined;
 }
 
+const CREDENTIAL_REFUSAL_KEYS = [
+  "secretOriginMismatch",
+  "boundOrigin",
+  "targetOrigin",
+  "exportDenied",
+  "policy",
+  "credentialRefusal",
+] as const;
+
+/** The backend's credential-refusal details, when this failure is one. */
+function credentialRefusalDetails(
+  details: Record<string, unknown> | undefined
+): Record<string, unknown> | null {
+  if (
+    !details ||
+    (details.secretOriginMismatch !== true && details.exportDenied !== true)
+  ) {
+    return null;
+  }
+  const kept: Record<string, unknown> = {};
+  for (const key of CREDENTIAL_REFUSAL_KEYS) {
+    if (details[key] !== undefined) kept[key] = details[key];
+  }
+  return kept;
+}
+
 /**
  * Re-frame a mint failure for a connect surface (swarm, playground, evals).
  *
@@ -65,7 +91,20 @@ export function toXaaConnectFailure(
     `Server "${name}" couldn't complete its enterprise authorization handshake` +
     ` — try again, and check the server's auth settings if it keeps failing.`;
 
-  if (routeError?.status === 401 || routeError?.status === 403) {
+  // A saved client secret the backend refused to release: the server moved to
+  // an origin it was not entered for, or the organization's export policy
+  // keeps it inside hosted connections. Signing in again changes neither, so
+  // it must not read as a re-auth; the backend's sentence already says what
+  // to do, and its details let the client open the right form.
+  const refusal = credentialRefusalDetails(routeError?.details);
+  if (refusal) {
+    status = 403;
+    code = ErrorCode.FORBIDDEN;
+    reason = XaaConnectFailureReason.CONFIGURATION_INVALID;
+    message = raw
+      ? `Server "${name}" couldn't use its saved client secret: ${asClause(raw)}.`
+      : `Server "${name}" couldn't use its saved client secret.`;
+  } else if (routeError?.status === 401 || routeError?.status === 403) {
     // The identity legs of the mint (the secret reveal and the scoped-issuer
     // gate) both authenticate with the CALLER's bearer, so a session that has
     // gone stale fails here — with the backend's own "Missing or invalid
@@ -113,6 +152,7 @@ export function toXaaConnectFailure(
   }
 
   const framed = new WebRouteError(status, code, message, {
+    ...(refusal ?? {}),
     reason,
     serverId: target.serverId,
     serverName: target.serverName,

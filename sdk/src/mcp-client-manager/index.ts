@@ -16,6 +16,7 @@ export type {
   HttpServerConfig,
   BaseServerConfig,
   UnauthorizedRefreshHandler,
+  RefreshTokensRotatedHandler,
   UnauthorizedRefreshResult,
 } from "./types.js";
 
@@ -115,9 +116,11 @@ export {
   MCP_LINKED_RESOURCE_MAX_READS,
   MCP_PRESERVE_RAW_RESULT_FOR_UI,
   mcpCallToolResultToModelOutput,
+  readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,

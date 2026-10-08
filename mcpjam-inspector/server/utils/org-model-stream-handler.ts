@@ -28,8 +28,12 @@ import {
   type ToolSet,
   type UIMessageChunk,
 } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
+import type {
+  MCPClientManager,
+  ModelReasoningEffort,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
   buildOrgModelFromResolvedConfig,
@@ -44,6 +48,15 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
+import type { LocalExecutionRecord } from "./local-execution-record.js";
+import { UNVERIFIED_APPROVAL_RESULT } from "./tool-approval-token.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+  presentHistoryForModel,
+  toolCallLookupFor,
+  type HistoryPresentation,
+} from "./history-provenance.js";
 import { logger } from "./logger.js";
 import {
   createSystemStreamFailureReporter,
@@ -58,6 +71,11 @@ import {
   type RunDirectChatTurnHandle,
 } from "./direct-chat-turn.js";
 import { buildDirectChatTraceCallbacks } from "./direct-chat-sse-callbacks.js";
+import {
+  createEmptyTurnWatcher,
+  hasSettledToolCallThisPrompt,
+} from "./empty-step-failure.js";
+import { emitError } from "./chat-stream-chunks.js";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   formatProviderOverloadError,
@@ -82,11 +100,22 @@ export interface OrgModelHandlerOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   modelId: string;
+  /**
+   * The provider-native id chosen explicitly for this model (the row's
+   * `nativeModelId`): an org Azure deployment name. Sent to `/stream/org` as
+   * `nativeModelId`; never derived from `modelId`.
+   */
+  nativeModelId?: string;
   chatSessionId?: string;
   sourceType?: string;
   messages: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * The reasoning effort for this turn. Sent to `/stream/org` as the top-level
+   * `reasoningEffort` field, which the backend maps per org provider.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   tools: ToolSet;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
@@ -101,6 +130,13 @@ export interface OrgModelHandlerOptions {
    * in a synthetic run). Direct chatters omit or pass `"prompt"`.
    */
   approvalMode?: "prompt" | "auto-deny";
+  /**
+   * `messages` came from the request body; forwarded into the wrapped MCPJam
+   * handler (see `MCPJamHandlerOptions.clientSuppliedHistory`, MJ-008).
+   */
+  clientSuppliedHistory?: boolean;
+  /** Forwarded; see `MCPJamHandlerOptions.historyPresentation` (MJ-009). */
+  historyPresentation?: HistoryPresentation;
   /**
    * Persist tap. May return the ingest's outcome so the rail can stream a
    * `data-persist-receipt` before closing. See `PersistChatOutcome`.
@@ -267,6 +303,11 @@ export function formatLocalStreamError(error: unknown): string {
 export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
+  /**
+   * Shape what each step sends to the model (MJ-009); see
+   * `MCPJamHandlerOptions.historyPresentation`.
+   */
+  historyPresentation?: HistoryPresentation;
   projectId: string;
   modelId: string;
   chatSessionId?: string;
@@ -274,6 +315,13 @@ export interface OrgLocalModelHandlerOptions {
   messages: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
+  /**
+   * Provider options that apply the turn's reasoning effort. The inspector
+   * calls the provider itself on this runtime, so the caller resolves the
+   * effort to options (`directChatEffort`, which refuses a provider with no
+   * effort control before any spend) and they are handed to the engine as-is.
+   */
+  providerOptions?: ProviderOptions;
   tools: ToolSet;
   selectedServers?: string[];
   serverIds?: string[];
@@ -377,9 +425,97 @@ function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
   });
 }
 
+/**
+ * Turn into denials the approvals this runtime can never have asked for
+ * (MJ-008).
+ *
+ * `streamText` executes every APPROVED call in the last tool message on the
+ * strength of the pair the client sent back — the call and its
+ * `tool-approval-request` — and cannot tell a pair it issued from one the
+ * history invented. On this runtime a server-executed tool with a BOOLEAN
+ * declaration never asks: `true` refuses the turn
+ * ({@link hasUnsupportedLocalApprovalGate}) and anything else runs unasked.
+ * An approved pair naming one answers nothing this server asked, so it
+ * reaches the model — and the persisted transcript — as a denial.
+ *
+ * Left alone: function-form declarations (skills), which can still ask here;
+ * client-fulfilled tools, which the browser runs; and tools this turn does
+ * not advertise, which `streamText` cannot run at all.
+ */
+export function denyApprovalsLocalRuntimeNeverIssued(
+  messages: ModelMessage[],
+  tools: ToolSet,
+): { messages: ModelMessage[]; deniedToolNames: string[] } {
+  const toolNameByCallId = new Map<string, string>();
+  const callIdByApprovalId = new Map<string, string>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type === "tool-call") {
+        toolNameByCallId.set(part.toolCallId, part.toolName);
+      } else if (part.type === "tool-approval-request") {
+        callIdByApprovalId.set(part.approvalId, part.toolCallId);
+      }
+    }
+  }
+  if (callIdByApprovalId.size === 0) return { messages, deniedToolNames: [] };
+
+  const deniedToolNames: string[] = [];
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.role !== "tool") return message;
+    let touched = false;
+    const content = message.content.map((part) => {
+      if (part.type !== "tool-approval-response" || !part.approved) return part;
+      const toolCallId = callIdByApprovalId.get(part.approvalId);
+      const toolName = toolCallId
+        ? toolNameByCallId.get(toolCallId)
+        : undefined;
+      const tool = toolName
+        ? (
+            tools as Record<
+              string,
+              { execute?: unknown; needsApproval?: unknown }
+            >
+          )[toolName]
+        : undefined;
+      if (
+        !tool ||
+        typeof tool.execute !== "function" ||
+        typeof tool.needsApproval === "function"
+      ) {
+        return part;
+      }
+      touched = true;
+      deniedToolNames.push(toolName!);
+      return { ...part, approved: false, reason: UNVERIFIED_APPROVAL_RESULT };
+    });
+    if (!touched) return message;
+    changed = true;
+    return { ...message, content };
+  });
+  return { messages: changed ? next : messages, deniedToolNames };
+}
+
 export function handleLocalOrgChatModel(
-  options: OrgLocalModelHandlerOptions
+  incomingOptions: OrgLocalModelHandlerOptions,
 ): Response {
+  const approvals = denyApprovalsLocalRuntimeNeverIssued(
+    incomingOptions.messages,
+    incomingOptions.tools,
+  );
+  if (approvals.deniedToolNames.length > 0) {
+    logger.warn(
+      "[org/local] approval for a tool this runtime never asks about; treating it as denied",
+      { toolNames: [...new Set(approvals.deniedToolNames)] },
+    );
+  }
+  const options: OrgLocalModelHandlerOptions =
+    approvals.messages === incomingOptions.messages
+      ? incomingOptions
+      : { ...incomingOptions, messages: approvals.messages };
   const {
     provider,
     modelId,
@@ -391,6 +527,7 @@ export function handleLocalOrgChatModel(
     onStreamComplete,
     onStreamWriterReady,
     onLiveTextDelta,
+    historyPresentation,
   } = options;
 
   // One typed route.operation.failed per turn across this handler's failure
@@ -399,6 +536,19 @@ export function handleLocalOrgChatModel(
     options.failureReporter ??
       createSystemStreamFailureReporter("org-local-stream")
   );
+
+  // Sign what this turn streams as the server's own (MJ-009); a no-op where
+  // provenance is off.
+  const provenanceContext = historyProvenanceContextFor(
+    options.projectId,
+    options.chatSessionId,
+  );
+  const signChunk = provenanceContext
+    ? createUiChunkProvenanceSigner(
+        provenanceContext,
+        toolCallLookupFor(() => messages),
+      )
+    : undefined;
 
   // Deliberately NOT reported as an operation failure: this is a declared
   // product limitation surfaced to the user, not something that broke.
@@ -533,6 +683,9 @@ export function handleLocalOrgChatModel(
         messageHistory: messages,
         systemPrompt,
         ...(temperature !== undefined ? { temperature } : {}),
+        ...(options.providerOptions
+          ? { providerOptions: options.providerOptions }
+          : {}),
         tools,
         progressivePlan: options.progressivePlan,
         discoveryState: options.discoveryState,
@@ -541,6 +694,16 @@ export function handleLocalOrgChatModel(
         maxSteps: resolvedMaxSteps,
         shouldPauseAfterStep: options.shouldPauseAfterStep,
         suspendedToolCallId: options.suspendedToolCallId,
+        ...(historyPresentation
+          ? {
+              transformStepMessages: (stepMessages: ModelMessage[]) =>
+                presentHistoryForModel(
+                  stepMessages,
+                  tools,
+                  historyPresentation,
+                ),
+            }
+          : {}),
         // Shared SSE-callback factory — byte-identical wire output with
         // route 4 (`streamDirectChatWithLiveTrace`).
         traceEvents: buildDirectChatTraceCallbacks(writer),
@@ -573,6 +736,14 @@ export function handleLocalOrgChatModel(
         },
       });
 
+      // `streamText` finishes an empty last step as if it were a reply, which
+      // left a blank bubble and no record. Same verdict as the hosted engine.
+      const emptyTurn = createEmptyTurnWatcher({
+        settledToolBeforeStream: hasSettledToolCallThisPrompt(
+          messages,
+          handle.traceTurn.promptMessageStartIndex,
+        ),
+      });
       try {
         for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
@@ -608,7 +779,30 @@ export function handleLocalOrgChatModel(
           ) {
             continue;
           }
-          writer.write(withMcpToolOriginChunkMetadata(chunk, options.tools));
+          emptyTurn.observe(chunk);
+          const emptyTurnMessage =
+            chunk.type === "finish" && !handle.isAborted()
+              ? emptyTurn.failureFor(chunk)
+              : undefined;
+          if (emptyTurnMessage) {
+            // The error REPLACES the finish chunk, as on the hosted engine,
+            // and is written before the report so a reporter throw cannot
+            // swallow it.
+            emitError(writer, emptyTurnMessage);
+            failureReporter({
+              message: "[org/local] direct step returned no content",
+              error: new Error(emptyTurnMessage),
+              source: "web.chat-v2.org-local-direct-empty-step",
+              hop: "user_server_hop",
+              transport: "http_stream",
+              context: { providerKey: provider.providerKey, modelId },
+            });
+            continue;
+          }
+          const outgoing = withMcpToolOriginChunkMetadata(chunk, options.tools);
+          for (const out of signChunk ? signChunk(outgoing) : [outgoing]) {
+            writer.write(out);
+          }
         }
       } catch (error) {
         if (handle.isAborted() || isAbortError(error)) {
@@ -757,6 +951,24 @@ export async function postLocalUsage(params: {
    * up in one query. Omitted for real chat.
    */
   journeyRunId?: string;
+  /**
+   * The eval iteration (and suite run) a local-runtime eval turn belongs to.
+   * With `execution`, the backend merges the record onto that iteration row;
+   * a swarm turn is attributed by `journeyRunId` + `chatSessionId` instead.
+   */
+  evalIterationId?: string;
+  evalRunId?: string;
+  /**
+   * The saved `org` selection the turn ran under. The backend re-resolves it
+   * (the connection must still be this org's) before checking `execution`.
+   */
+  modelSelection?: ModelSelection;
+  /**
+   * What the turn actually ran ({@link buildLocalExecutionRecord}). Sent only
+   * with `modelSelection`: the backend checks it against its own resolution
+   * of that selection and rebuilds the stored record from its plan.
+   */
+  execution?: LocalExecutionRecord;
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) return;
@@ -793,6 +1005,16 @@ export async function postLocalUsage(params: {
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
         ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
+        ...(params.evalIterationId
+          ? { evalIterationId: params.evalIterationId }
+          : {}),
+        ...(params.evalRunId ? { evalRunId: params.evalRunId } : {}),
+        ...(params.modelSelection
+          ? { modelSelection: params.modelSelection }
+          : {}),
+        ...(params.modelSelection && params.execution
+          ? { execution: params.execution }
+          : {}),
       }),
       signal: controller.signal,
     });
@@ -826,6 +1048,9 @@ export async function handleHostedOrgChatModel(
     sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
+    ...(options.reasoningEffort !== undefined
+      ? { reasoningEffort: options.reasoningEffort }
+      : {}),
     tools: options.tools,
     projectId: options.projectId,
     authHeader: options.authHeader,
@@ -837,6 +1062,10 @@ export async function handleHostedOrgChatModel(
     modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
     ...(options.approvalMode !== undefined
       ? { approvalMode: options.approvalMode }
+      : {}),
+    ...(options.clientSuppliedHistory ? { clientSuppliedHistory: true } : {}),
+    ...(options.historyPresentation
+      ? { historyPresentation: options.historyPresentation }
       : {}),
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
@@ -857,6 +1086,9 @@ export async function handleHostedOrgChatModel(
       // contract can't be silently broken by a downstream caller.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
+      ...(options.nativeModelId?.trim()
+        ? { nativeModelId: options.nativeModelId.trim() }
+        : {}),
       // scenarioId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
       ...((options.serverIds ?? options.selectedServers)?.length

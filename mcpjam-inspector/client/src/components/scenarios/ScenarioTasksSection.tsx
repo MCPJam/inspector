@@ -104,8 +104,8 @@ export function ScenarioTasksSection({
       }
       toast.success(
         items.length > 0
-          ? "Tasks saved — testers see them in their session"
-          : "Tasks cleared — testers just get the chat",
+          ? "Tasks saved. Testers see them in their session"
+          : "Tasks cleared. Testers just get the chat",
       );
     } catch (error) {
       toast.error(convexErrMessage(error, "Failed to save tasks"));
@@ -122,8 +122,8 @@ export function ScenarioTasksSection({
         </h2>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           Testers see this list in the top right of their session and check
-          items off as they go. Leave it empty and they just get the chat —
-          nothing here forces an order or reports back who finished what.
+          items off as they go. Leave it empty and they just get the chat.
+          Nothing here forces an order or reports back who finished what.
         </p>
       </div>
 

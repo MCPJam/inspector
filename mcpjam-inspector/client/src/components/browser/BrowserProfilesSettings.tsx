@@ -8,6 +8,7 @@ import {
   setBrowserProfileDefault,
   type BrowserProfile,
 } from "@/lib/browser-profiles/client";
+import { useBrowserProfileArchivesAvailable } from "@/lib/browser-profiles/availability";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -19,6 +20,7 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [profiles, setProfiles] = useState<BrowserProfile[] | null>(null);
+  const archivesAvailable = useBrowserProfileArchivesAvailable();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -100,6 +102,14 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
       </button>
       {open ? (
         <div className="border-t px-3 py-3">
+          {!archivesAvailable ? (
+            <p
+              className="mb-2 text-xs text-muted-foreground"
+              data-testid="browser-profiles-unavailable"
+            >
+              Profiles can't be saved or loaded on this server.
+            </p>
+          ) : null}
           {loading ? (
             <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -145,12 +155,12 @@ export function BrowserProfilesSettings({ projectId }: { projectId: string }) {
                 </div>
               ))}
             </div>
-          ) : (
+          ) : archivesAvailable ? (
             <p className="text-xs text-muted-foreground">
               No saved profiles yet. Save one from the browser panel while a
               persistent browser is running.
             </p>
-          )}
+          ) : null}
         </div>
       ) : null}
     </section>

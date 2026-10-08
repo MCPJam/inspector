@@ -56,6 +56,7 @@ import {
   excludedFlagGatedHostIds,
   FLAG_GATED_HOST_IDS,
 } from "@/lib/host-compat/feature-visibility";
+import { MAIN_PRODUCT_URL } from "@/lib/vanity-landing-hosts";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { clientDisplayName } from "@/lib/client-display-name";
@@ -99,13 +100,13 @@ import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { cn } from "@/lib/utils";
+import { useServerSupportsFeature } from "@/lib/server-capabilities";
 
 type CompareViewMode = "table" | "list";
 
 const HOSTS_QUERY_PARAM = "hosts";
 const CAPABILITY_QUERY_PARAM = "capability";
 const SEARCH_QUERY_PARAM = "q";
-const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
 const MOBILE_COMPARE_MEDIA_QUERY = "(max-width: 640px)";
 const CANIUSE_ACTION_BUTTON_CLASS =
   "h-8 rounded-full border-border bg-background px-3 text-[12px] font-medium text-foreground hover:border-border hover:bg-muted hover:text-foreground";
@@ -246,6 +247,10 @@ export function HostConfigCompareView({
   // Catalog host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
   // read-only comparison columns even when the user cannot create them.
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  // The report/notify actions store through the server's caniuse relay, which
+  // a self-hosted server (no MCPJam service credential) refuses. `null` while
+  // unknown keeps them shown.
+  const publicSiteRelays = useServerSupportsFeature("public-site-relays");
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
@@ -701,8 +706,12 @@ export function HostConfigCompareView({
               actions={
                 presetOnly ? (
                   <div className="flex items-center gap-1.5">
-                    <ReportInconsistencyDialog />
-                    <NotifyButton />
+                    {publicSiteRelays !== false && (
+                      <>
+                        <ReportInconsistencyDialog />
+                        <NotifyButton />
+                      </>
+                    )}
                     <ShareComparisonDialog
                       selectedHostIds={selectedHostIds}
                       searchQuery={fieldSearchQuery}

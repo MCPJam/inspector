@@ -77,6 +77,13 @@ describe("internal-code -> public-code mapping", () => {
     "TASKS_UNSUPPORTED",
     "SCENARIO_ACCESS_DENIED",
     "SCENARIO_ACCESS_STALE",
+    // Inspector-only, and mapped at the v1 boundary (`mapErrorToV1`) rather
+    // than in the shared table: UNAUTHORIZED + `details.reason`. Pinned in
+    // envelope.test.ts.
+    "SESSION_REVOKED",
+    // Produced only by `mapTargetServerError` on the hosted `/api/web/*`
+    // routes. The v1 surface maps through `mapRuntimeError` and never sees it.
+    "UPSTREAM_HTTP_ERROR",
   ];
 
   it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {

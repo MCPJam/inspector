@@ -7,16 +7,8 @@ import {
   PlaygroundStateProvider,
   usePlaygroundState,
 } from "@/components/ui-playground/hooks/use-playground-state";
-import {
-  ScenarioChatUiOverrideProvider,
-  ScenarioHostStyleProvider,
-  ScenarioHostThemeProvider,
-} from "@/contexts/scenario-client-style-context";
-import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
-import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import LoadingScreen from "@/components/LoadingScreen";
-import { getScenarioShellStyle } from "@/lib/scenario-client-style";
+import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHost } from "@/hooks/useClients";
@@ -31,6 +23,13 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
+import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import {
+  ExtensionRailBridge,
+  readRightRailSize,
+  revealRightRailPanel,
+  writeRightRailSize,
+} from "./extension-rail-bridge";
 import {
   browserPanelAvailable,
   PlaygroundBrowserPanel,
@@ -85,6 +84,7 @@ interface PlaygroundTabProps {
   isClientConfigSyncPending?: boolean;
   areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
+  autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
@@ -106,6 +106,13 @@ interface PlaygroundTabProps {
   activeHost?: HostConfigDtoV2 | null;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
+  /** One-shot prompt handed off by first-run server connection. */
+  firstRunPrompt?: string | null;
+  onFirstRunPromptConsumed?: () => void;
+  /** Pauses route-local reconnect work while first-run onboarding owns it. */
+  suspendAutoConnect?: boolean;
+  /** Signals that Playground has cleared its initial skeleton render gate. */
+  onReady?: () => void;
 }
 
 /**
@@ -181,7 +188,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     prefHostCapabilitiesOverride;
   const chatUiOverride =
     effectiveHostConfig?.chatUiOverride ?? prefChatUiOverride;
-  const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
   // Auto-connect every project server once per session (personal
   // preference; see `useAutoConnectProjectServers`). The effective host only
@@ -199,6 +205,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
     hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
     serverNames: projectServerNames,
+    catalogLoaded: projectServersList !== undefined,
+    suspendAutoConnect: props.suspendAutoConnect,
   });
 
   const playgroundState = usePlaygroundState({
@@ -217,6 +225,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     isClientConfigSyncPending: props.isClientConfigSyncPending,
     areServersHydrated: props.areServersHydrated,
     hasSeenFirstRunOnboarding: props.hasSeenFirstRunOnboarding,
+    autoConnectFirstRun: props.autoConnectFirstRun,
     isServerSyncing: props.isServerSyncing,
     onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
@@ -234,6 +243,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     selectedServerNames:
       props.playgroundServerSelectorProps?.selectedMultipleServers,
   });
+
+  useEffect(() => {
+    if (playgroundState.loadingState.kind !== "skeleton") props.onReady?.();
+  }, [playgroundState.loadingState.kind, props.onReady]);
 
   // Rail collapse state — local to the workspace; not persisted per view.
   // Defaults match the previous flag-on behavior (left rail showing tools,
@@ -350,6 +363,39 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
   const pendingRailReveal = useRef(false);
+  // The right rail stays MOUNTED and collapses to zero width: plugin Apps live
+  // in it, and unmounting would reload every App. Its width is remembered.
+  const [rightRailSize, setRightRailSize] = useState(readRightRailSize);
+  const openRightRail = useCallback(() => {
+    setIsRightRailVisible(true);
+    revealRightRailPanel(rightPanelRef.current, rightRailSize);
+  }, [rightRailSize]);
+  // In a narrow window a selected App expands the rail over the chat, the
+  // same way the browser panel expands, without moving the App.
+  const [panelGroupElement, setPanelGroupElement] =
+    useState<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [railAppActive, setRailAppActive] = useState(false);
+  useEffect(() => {
+    if (!panelGroupElement || typeof ResizeObserver === "undefined") return;
+    const measure = () =>
+      setNarrow(panelGroupElement.getBoundingClientRect().width < 768);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(panelGroupElement);
+    return () => observer.disconnect();
+  }, [panelGroupElement]);
+  const railOverlay = narrow && isRightRailVisible && railAppActive;
+  const collapseRightRail = useCallback(() => {
+    setIsRightRailVisible(false);
+    rightPanelRef.current?.collapse?.();
+  }, []);
+  // Hidden means collapsed to zero width, never unmounted.
+  useEffect(() => {
+    if (isRightRailVisible) return;
+    const panel = rightPanelRef.current;
+    if (panel && panel.isCollapsed?.() === false) panel.collapse?.();
+  }, [isRightRailVisible]);
 
   // The rail starts collapsed. A tab switch inside an unmounted rail is how
   // "open the browser when they navigate" silently did nothing.
@@ -370,8 +416,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   useEffect(() => {
     if (!isRightRailVisible || !pendingRailReveal.current) return;
     pendingRailReveal.current = false;
-    rightPanelRef.current?.expand();
-  }, [isRightRailVisible]);
+    const panel = rightPanelRef.current;
+    if (panel?.isCollapsed?.()) panel.resize(rightRailSize);
+    else panel?.expand();
+  }, [isRightRailVisible, rightRailSize]);
 
   if (playgroundState.loadingState.kind === "skeleton") {
     return (
@@ -383,227 +431,218 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   return (
     <PlaygroundStateProvider value={playgroundState}>
-      <ActiveMcpProfileProvider value={activeMcpProfile}>
-        <ActiveHostCapsResolverScope
-          // Preview-mode (explicit picker selection) wins; otherwise fall
-          // back to the resolved project-default `activeHost` from
-          // `useAppState` so the render gate agrees with what
-          // `initialize` was called with. Without this fallback, a
-          // project whose default is Codex would render widgets in
-          // Playground while connect knows the server was init'd as
-          // Codex.
-          activeHost={effectiveHostConfig}
-          hostStyle={hostStyle}
-        >
-          <ScenarioHostStyleProvider value={hostStyle}>
-            <ScenarioHostCapabilitiesOverrideProvider
-              value={hostCapabilitiesOverride}
+      <HostStyledShell
+        hostSnapshot={{
+          hostStyle,
+          hostCapabilitiesOverride,
+          chatUiOverride,
+          mcpProfile: activeMcpProfile,
+        }}
+        // Keep the render gate aligned with the host used for initialize.
+        activeHost={effectiveHostConfig}
+        themeMode={themeMode}
+        className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        {/* Watches the project's previewed-host id (the named-host
+        dropdown in the global header) and re-snapshots its
+        persisted config into the chip stores when it changes.
+        Renders nothing. */}
+        <LocalBrowserOnboarding
+          projectId={projectScope}
+          authReady={
+            !props.isWorkOsAuthLoading &&
+            (!props.isSignedInWithWorkOs || isConvexAuthenticated)
+          }
+        />
+        <PlaygroundPreviewedClientSync
+          projectId={props.sharedProjectId ?? props.activeProjectId ?? null}
+        />
+        {/* Extension state (global and per-chat App owners) is shared by the
+            left rail, the center and the right rail, so it lives here. */}
+        <ExtensionWorkspaceProvider>
+        <ExtensionRailBridge
+          onReveal={openRightRail}
+          onAppActiveChange={setRailAppActive}
+          visible={isRightRailVisible}
+          narrow={narrow}
+          overlay={railOverlay}
+          onCollapse={collapseRightRail}
+          composerRoot={panelGroupElement}
+        />
+        <div ref={setPanelGroupElement} className="relative flex min-h-0 flex-1">
+        <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
+          {isLeftRailVisible ? (
+            <>
+              <ResizablePanel
+                ref={leftPanelRef}
+                id="playground-left"
+                order={1}
+                defaultSize={22}
+                minSize={15}
+                maxSize={35}
+                collapsible
+                collapsedSize={0}
+                onCollapse={() => setIsLeftRailVisible(false)}
+                className="min-h-0 min-w-0 overflow-hidden"
+              >
+                <PlaygroundLeftRail
+                  previewedHostId={previewedHostId}
+                  // Same project scope PlaygroundMain feeds
+                  // `usePlaygroundEnvironment`, so the rail and
+                  // the composer agree on which environment (if
+                  // any) is active.
+                  projectId={
+                    props.sharedProjectId ?? props.activeProjectId ?? null
+                  }
+                />
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+            </>
+          ) : (
+            <CollapsedPanelStrip
+              side="left"
+              onOpen={() => {
+                setIsLeftRailVisible(true);
+                // The panel only remounts on the next paint; expand
+                // imperatively once it has a ref to honor the click.
+                requestAnimationFrame(() => leftPanelRef.current?.expand());
+              }}
+              tooltipText="Show sessions"
+            />
+          )}
+          <ResizablePanel
+            id="playground-center"
+            order={2}
+            // The floor drops once a browser is beside it. 40% of
+            // the workspace for chat and 60% for the browser do not
+            // both fit, and the panel group answers an impossible
+            // set of constraints by ignoring the sizes it was
+            // given — so the browser opened at whatever was left
+            // rather than at the size it asked for.
+            // ZERO WHILE EXPANDED, and the reason is arithmetic:
+            // the browser panel asks for 100 and the group enforces
+            // every panel's minimum, so a floor of 15 here left the
+            // browser clamped to 85 — with chat hidden by CSS
+            // rather than unmounted, that 15% was an unusable gap
+            // beside a browser that was supposed to fill the space.
+            minSize={browserExpanded ? 0 : showBrowser ? 15 : 40}
+            className={cn(
+              "min-h-0 min-w-0 overflow-hidden",
+              // An expanded browser hides chat rather than
+              // unmounting it: the panel group would otherwise
+              // renumber its children, and a remounted chat pane
+              // loses its scroll position and its composer draft.
+              browserExpanded && showBrowser && "hidden",
+            )}
+          >
+            <PlaygroundCenter
+              activeProjectId={props.activeProjectId}
+              serverName={props.serverName}
+              enableMultiModelChat={true}
+              onSaveHostContext={props.onSaveHostContext}
+              ensureServersReady={props.ensureServersReady}
+              playgroundServerSelectorProps={
+                props.playgroundServerSelectorProps
+              }
+              evalChatHandoff={props.evalChatHandoff}
+              onEvalChatHandoffConsumed={props.onEvalChatHandoffConsumed}
+              firstRunPrompt={props.firstRunPrompt}
+              onFirstRunPromptConsumed={props.onFirstRunPromptConsumed}
+            />
+          </ResizablePanel>
+          {showBrowser ? (
+            <>
+              {/* No handle while expanded: there is nothing on the
+                  other side of it to resize against, and a divider
+                  that moves a hidden panel is a control that does
+                  nothing visible. */}
+              {browserExpanded ? null : <ResizableHandle withHandle />}
+              <ResizablePanel
+                id="playground-browser"
+                order={3}
+                defaultSize={browserExpanded ? 100 : browserSize}
+                minSize={browserExpanded ? 100 : MIN_BROWSER_PANEL_SIZE}
+                maxSize={browserExpanded ? 100 : MAX_BROWSER_PANEL_SIZE}
+                // The store, not the panel group, is the record of
+                // what somebody chose — the group forgets on
+                // unmount, and the browser panel unmounts every
+                // time it is closed.
+                onResize={(size) => {
+                  if (!browserExpanded) setBrowserSize(size);
+                }}
+                className="min-h-0 min-w-0 overflow-hidden"
+              >
+                <PlaygroundBrowserPanel
+                  projectId={projectScope}
+                  hostId={previewedHostId ?? null}
+                  // MOUNTED but not claiming while the panel is off
+                  // screen. Dropping the socket would stop the
+                  // screencast and lose whatever the agent was
+                  // mid-way through; claiming while hidden keeps a
+                  // metered box awake.
+                  visible={showBrowser}
+                  onClose={closeBrowser}
+                />
+              </ResizablePanel>
+            </>
+          ) : null}
+          {isRightRailVisible ? <ResizableHandle withHandle /> : null}
+          <ResizablePanel
+            ref={rightPanelRef}
+            id="playground-right"
+            order={4}
+            defaultSize={isRightRailVisible ? rightRailSize : 0}
+            minSize={4}
+            maxSize={50}
+            collapsible
+            collapsedSize={0}
+            onCollapse={() => setIsRightRailVisible(false)}
+            onExpand={() => setIsRightRailVisible(true)}
+            onResize={(size) => {
+              if (size <= 0) return;
+              setRightRailSize(size);
+              writeRightRailSize(size);
+            }}
+            className="min-h-0 overflow-hidden"
+          >
+            <div
+              data-right-rail-overlay={railOverlay || undefined}
+              className={cn(
+                "h-full min-h-0 overflow-hidden",
+                // Positioned against the panel group, not the panel: the
+                // App keeps its DOM parent while it covers the chat.
+                railOverlay && "absolute inset-0 z-40 bg-background",
+              )}
             >
-              <ScenarioChatUiOverrideProvider value={chatUiOverride}>
-                <ScenarioHostThemeProvider value={themeMode}>
-                  <div
-                    className={cn(
-                      "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                      themeMode === "dark" && "dark",
-                    )}
-                    data-host-style={hostStyle}
-                    style={shellStyle}
-                  >
-                    {/* Watches the project's previewed-host id (the named-host
-                    dropdown in the global header) and re-snapshots its
-                    persisted config into the chip stores when it changes.
-                    Renders nothing. */}
-                    <LocalBrowserOnboarding
-                      projectId={projectScope}
-                      authReady={
-                        !props.isWorkOsAuthLoading &&
-                        (!props.isSignedInWithWorkOs || isConvexAuthenticated)
-                      }
-                    />
-                    <PlaygroundPreviewedClientSync
-                      projectId={
-                        props.sharedProjectId ?? props.activeProjectId ?? null
-                      }
-                    />
-                    <ResizablePanelGroup
-                      direction="horizontal"
-                      className="min-h-0 flex-1"
-                    >
-                      {isLeftRailVisible ? (
-                        <>
-                          <ResizablePanel
-                            ref={leftPanelRef}
-                            id="playground-left"
-                            order={1}
-                            defaultSize={22}
-                            minSize={15}
-                            maxSize={35}
-                            collapsible
-                            collapsedSize={0}
-                            onCollapse={() => setIsLeftRailVisible(false)}
-                            className="min-h-0 min-w-0 overflow-hidden"
-                          >
-                            <PlaygroundLeftRail
-                              previewedHostId={previewedHostId}
-                              // Same project scope PlaygroundMain feeds
-                              // `usePlaygroundEnvironment`, so the rail and
-                              // the composer agree on which environment (if
-                              // any) is active.
-                              projectId={
-                                props.sharedProjectId ??
-                                props.activeProjectId ??
-                                null
-                              }
-                            />
-                          </ResizablePanel>
-                          <ResizableHandle withHandle />
-                        </>
-                      ) : (
-                        <CollapsedPanelStrip
-                          side="left"
-                          onOpen={() => {
-                            setIsLeftRailVisible(true);
-                            // The panel only remounts on the next paint; expand
-                            // imperatively once it has a ref to honor the click.
-                            requestAnimationFrame(() =>
-                              leftPanelRef.current?.expand(),
-                            );
-                          }}
-                          tooltipText="Show sessions"
-                        />
-                      )}
-                      <ResizablePanel
-                        id="playground-center"
-                        order={2}
-                        // The floor drops once a browser is beside it. 40% of
-                        // the workspace for chat and 60% for the browser do not
-                        // both fit, and the panel group answers an impossible
-                        // set of constraints by ignoring the sizes it was
-                        // given — so the browser opened at whatever was left
-                        // rather than at the size it asked for.
-                        // ZERO WHILE EXPANDED, and the reason is arithmetic:
-                        // the browser panel asks for 100 and the group enforces
-                        // every panel's minimum, so a floor of 15 here left the
-                        // browser clamped to 85 — with chat hidden by CSS
-                        // rather than unmounted, that 15% was an unusable gap
-                        // beside a browser that was supposed to fill the space.
-                        minSize={browserExpanded ? 0 : showBrowser ? 15 : 40}
-                        className={cn(
-                          "min-h-0 min-w-0 overflow-hidden",
-                          // An expanded browser hides chat rather than
-                          // unmounting it: the panel group would otherwise
-                          // renumber its children, and a remounted chat pane
-                          // loses its scroll position and its composer draft.
-                          browserExpanded && showBrowser && "hidden",
-                        )}
-                      >
-                        <PlaygroundCenter
-                          activeProjectId={props.activeProjectId}
-                          serverName={props.serverName}
-                          enableMultiModelChat={true}
-                          onSaveHostContext={props.onSaveHostContext}
-                          ensureServersReady={props.ensureServersReady}
-                          playgroundServerSelectorProps={
-                            props.playgroundServerSelectorProps
-                          }
-                          evalChatHandoff={props.evalChatHandoff}
-                          onEvalChatHandoffConsumed={
-                            props.onEvalChatHandoffConsumed
-                          }
-                        />
-                      </ResizablePanel>
-                      {showBrowser ? (
-                        <>
-                          {/* No handle while expanded: there is nothing on the
-                              other side of it to resize against, and a divider
-                              that moves a hidden panel is a control that does
-                              nothing visible. */}
-                          {browserExpanded ? null : (
-                            <ResizableHandle withHandle />
-                          )}
-                          <ResizablePanel
-                            id="playground-browser"
-                            order={3}
-                            defaultSize={browserExpanded ? 100 : browserSize}
-                            minSize={
-                              browserExpanded ? 100 : MIN_BROWSER_PANEL_SIZE
-                            }
-                            maxSize={
-                              browserExpanded ? 100 : MAX_BROWSER_PANEL_SIZE
-                            }
-                            // The store, not the panel group, is the record of
-                            // what somebody chose — the group forgets on
-                            // unmount, and the browser panel unmounts every
-                            // time it is closed.
-                            onResize={(size) => {
-                              if (!browserExpanded) setBrowserSize(size);
-                            }}
-                            className="min-h-0 min-w-0 overflow-hidden"
-                          >
-                            <PlaygroundBrowserPanel
-                              projectId={projectScope}
-                              hostId={previewedHostId ?? null}
-                              // MOUNTED but not claiming while the panel is off
-                              // screen. Dropping the socket would stop the
-                              // screencast and lose whatever the agent was
-                              // mid-way through; claiming while hidden keeps a
-                              // metered box awake.
-                              visible={showBrowser}
-                              onClose={closeBrowser}
-                            />
-                          </ResizablePanel>
-                        </>
-                      ) : null}
-                      {isRightRailVisible ? (
-                        <>
-                          <ResizableHandle withHandle />
-                          <ResizablePanel
-                            ref={rightPanelRef}
-                            id="playground-right"
-                            order={4}
-                            defaultSize={30}
-                            minSize={4}
-                            maxSize={50}
-                            collapsible
-                            collapsedSize={0}
-                            onCollapse={() => setIsRightRailVisible(false)}
-                            className="min-h-0 overflow-hidden"
-                          >
-                            <div className="h-full min-h-0 overflow-hidden">
-                              <PlaygroundRightRail
-                                onClose={() => setIsRightRailVisible(false)}
-                                hostConfig={effectiveHostConfig}
-                                hostId={previewedHostId ?? null}
-                                projectId={
-                                  props.sharedProjectId ??
-                                  props.activeProjectId ??
-                                  null
-                                }
-                                isAuthenticated={isConvexAuthenticated}
-                              />
-                            </div>
-                          </ResizablePanel>
-                        </>
-                      ) : (
-                        <CollapsedPanelStrip
-                          side="right"
-                          onOpen={() => {
-                            setIsRightRailVisible(true);
-                            requestAnimationFrame(() =>
-                              rightPanelRef.current?.expand(),
-                            );
-                          }}
-                          tooltipText="Show logs"
-                        />
-                      )}
-                    </ResizablePanelGroup>
-                  </div>
-                </ScenarioHostThemeProvider>
-              </ScenarioChatUiOverrideProvider>
-            </ScenarioHostCapabilitiesOverrideProvider>
-          </ScenarioHostStyleProvider>
-        </ActiveHostCapsResolverScope>
-      </ActiveMcpProfileProvider>
+              <PlaygroundRightRail
+                onClose={collapseRightRail}
+                hostConfig={effectiveHostConfig}
+                hostId={previewedHostId ?? null}
+                projectId={
+                  props.sharedProjectId ?? props.activeProjectId ?? null
+                }
+                isAuthenticated={isConvexAuthenticated}
+              />
+            </div>
+          </ResizablePanel>
+          {isRightRailVisible ? null : (
+            <CollapsedPanelStrip
+              side="right"
+              onOpen={() => {
+                setIsRightRailVisible(true);
+                requestAnimationFrame(() => {
+                  const panel = rightPanelRef.current;
+                  if (panel?.isCollapsed?.()) panel.resize(rightRailSize);
+                  else panel?.expand();
+                });
+              }}
+              tooltipText="Show side panel"
+            />
+          )}
+        </ResizablePanelGroup>
+        </div>
+        </ExtensionWorkspaceProvider>
+      </HostStyledShell>
     </PlaygroundStateProvider>
   );
 }

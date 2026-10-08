@@ -140,6 +140,7 @@ export function FindingsAllSheet({
   view,
   onOpenEvidence,
   iterationRows,
+  findingsById,
   trigger,
 }: {
   open: boolean;
@@ -149,6 +150,7 @@ export function FindingsAllSheet({
   view: FindingView;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
   iterationRows?: Record<string, AffectedIterationRow>;
+  findingsById?: ReadonlyMap<string, ActionableFinding>;
   trigger: RefObject<HTMLElement | null>;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -203,6 +205,7 @@ export function FindingsAllSheet({
             provenance={provenanceById.get(selected.id) ?? null}
             view={view}
             iterationRows={iterationRows}
+            findingsById={findingsById}
             onOpenEvidence={
               onOpenEvidence
                 ? (locator) => {
@@ -281,6 +284,7 @@ export function FindingsCarousel({
   context,
   onOpenEvidence,
   iterationRows,
+  findingsById,
   setApi,
 }: {
   findings: readonly ActionableFinding[];
@@ -289,6 +293,7 @@ export function FindingsCarousel({
   context?: FindingPromptContext;
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
   iterationRows?: Record<string, AffectedIterationRow>;
+  findingsById?: ReadonlyMap<string, ActionableFinding>;
   setApi?: (api: CarouselApi) => void;
 }) {
   const count = findings.length;
@@ -323,6 +328,7 @@ export function FindingsCarousel({
                 context={context}
                 onOpenEvidence={onOpenEvidence}
                 iterationRows={iterationRows}
+                findingsById={findingsById}
               />
             </CarouselItem>
           ))}

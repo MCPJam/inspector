@@ -26,10 +26,12 @@
 import { Hono } from "hono";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { resolveAgentSurface } from "../../utils/agent-attribution.js";
+import { API_VOCABULARY_CAPABILITY } from "./api-vocabulary.js";
 import { EVAL_VOCABULARY_CAPABILITY } from "./eval-vocabulary.js";
 
 const capabilities = new Hono();
@@ -157,15 +159,25 @@ function deriveCapabilities(row: CapabilitiesRow) {
     /** Reads across swarms and user testing. Never flag-gated. */
     readSwarms: isMember,
     readUserTesting: isMember,
-    /** Authoring personas / journeys / swarms. */
+    /** Authoring personas / goals / swarms. */
     writeSwarms: isMember && !gated,
     /** Launching a run. Spends hosted model credits. */
-    launchJourneyRun: isMember && !gated,
+    launchGoalRun: isMember && !gated,
     /** Stopping a run. Ungated by design — see above. */
+    cancelGoalRun: isMember,
+    /** The pre-rename spellings of the two above. Deleted at GA. */
+    launchJourneyRun: isMember && !gated,
     cancelJourneyRun: isMember,
     /** Publishing an environment for outsiders to talk to. Admin-only. */
+    publishStudy: isAdmin && !gated,
+    /** Taking a live study down. Ungated by design. */
+    unpublishStudy: isAdmin,
+    /**
+     * The pre-rename spellings, emitted ALONGSIDE the two above rather than
+     * instead of them, so a client branching on either keeps working. Deleted
+     * at GA with the rest of the deprecated surface.
+     */
     publishUserTestingScenario: isAdmin && !gated,
-    /** Taking a live scenario down. Ungated by design. */
     unpublishUserTestingScenario: isAdmin,
     /**
      * Mode changes, member invites/removals, link rotation, renames. These
@@ -234,17 +246,27 @@ function deriveCapabilities(row: CapabilitiesRow) {
 
 // GET /v1/projects/:projectId/capabilities
 capabilities.get("/projects/:projectId/capabilities", async (c) => {
-  const projectId = c.req.param("projectId");
+  const projectId = requireProjectIdArg(
+    c.req.param("projectId"),
+    "v1.capabilities",
+  );
   const client = createConvexClient(await getConvexBearerForRequest(c));
 
   let row: CapabilitiesRow | null;
   try {
     row = (await client.query(
       "projects:getProjectCapabilities" as never,
-      { projectId } as never
+      { projectId } as never,
     )) as CapabilitiesRow | null;
   } catch (error) {
-    throw translateConvexReadError(error, { scope: "v1.capabilities" });
+    // This read authorizes the caller-supplied project id, and its refusal is
+    // a plain error production Convex masks to "Server Error" — read that as
+    // the same 404 an unknown project answers, not a 502 (MJ-021).
+    throw translateConvexReadError(error, {
+      scope: "v1.capabilities",
+      notFoundMessage: "Project not found",
+      redactedIsRefusal: true,
+    });
   }
   if (!row) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found");
@@ -286,6 +308,14 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
      * they are. A client reads this; it never infers support from a field.
      */
     vocabulary: EVAL_VOCABULARY_CAPABILITY,
+    /**
+     * The resource-noun VALUE vocabulary, on the same terms and for the same
+     * reason: a client reads what this deployment speaks rather than
+     * inferring it from the presence of a field on an unrelated object. A
+     * separate block because the two negotiations are separate — one may move
+     * without the other.
+     */
+    apiVocabulary: API_VOCABULARY_CAPABILITY,
     can: deriveCapabilities(row),
   });
 });

@@ -155,7 +155,6 @@
   ],
   "paths": [
     "mcpjam-inspector/server/routes/v1/eval-checks.ts",
-    "mcpjam-inspector/server/routes/web/checks.ts",
     "mcpjam-inspector/client/src/components/settings/GithubChecksRoute.tsx",
     "mcpjam-inspector/client/src/components/xaa/",
     "mcpjam-inspector/client/src/components/swarms/",

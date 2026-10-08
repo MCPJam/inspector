@@ -1,3 +1,16 @@
+import { ContextAttachmentChip } from "../chat-input/attachments/context-attachment-chip";
+import {
+  PLUGIN_MESSAGE_TEXT_PART,
+  pluginMessageTextSchema,
+} from "@/shared/plugin-message";
+import {
+  PLUGIN_MENTION_PART,
+  pluginMentionLink,
+  pluginMentionSelectionSchema,
+} from "@/shared/plugin-mentions";
+import { useWidgetPresentation } from "./widget-presentation";
+import { WidgetPlaceholder } from "@mcpjam/chat-ui";
+import { ArtifactImage } from "@/components/ui/artifact-image";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
@@ -5,6 +18,8 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { ToolPart } from "./parts/tool-part";
 import { AskUserPart } from "./parts/ask-user-part";
+import { HarnessPlanPart } from "./parts/harness-plan-part";
+import { isHarnessPlanDataPart } from "@/shared/harness-session";
 import {
   ASK_USER_TOOL_NAME,
   useAskUserCallIsOurs,
@@ -50,6 +65,7 @@ import {
   widgetSlotShouldRender,
 } from "@/components/chat-v2/thread/tool-render-overrides";
 import { WidgetReplay } from "./widget-replay";
+import { isFailedWidgetResult } from "./widget-result-policy";
 import {
   computeWidgetRecordMode,
   type RecorderReadyEvent,
@@ -62,7 +78,10 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
+import {
+  readMcpToolOriginServerId,
+  readMcpToolConnectionId,
+} from "@/shared/mcp-tool-origin-metadata";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
@@ -97,7 +116,7 @@ function FrozenWidgetScreenshot({
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-testid="frozen-widget-replay">
-      <img
+      <ArtifactImage
         src={url}
         alt={`${toolName} recorded render`}
         className="w-full rounded-md border border-border/60 bg-background"
@@ -109,7 +128,52 @@ function FrozenWidgetScreenshot({
   );
 }
 
-export function PartSwitch({
+export function PartSwitch(props: Parameters<typeof LivePartSwitch>[0]) {
+  const presentation = useWidgetPresentation();
+  if (
+    (presentation === "placeholder" || props.widgetPolicy === "placeholder") &&
+    (isToolPart(props.part) || isDynamicTool(props.part))
+  ) {
+    const tool = getToolInfo(
+      props.part as ToolUIPart<UITools> | DynamicToolUIPart,
+    );
+    const override = tool.toolCallId
+      ? props.toolRenderOverrides?.[tool.toolCallId]
+      : undefined;
+    const rawOutput =
+      (props.part as { result?: unknown }).result ?? tool.rawOutput;
+    const metadata =
+      override?.toolMetadata ??
+      props.toolsMetadata[tool.toolName] ??
+      readToolResultMeta(rawOutput);
+    const uiType = detectUIType(metadata, rawOutput);
+    if (
+      uiType === UIType.OPENAI_SDK ||
+      uiType === UIType.MCP_APPS ||
+      uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+      override?.resourceUri ||
+      override?.cachedWidgetHtmlUrl ||
+      override?.frozenScreenshotUrl
+    ) {
+      return <WidgetPlaceholder toolName={tool.toolName} />;
+    }
+    // Missing metadata cannot justify entering a live fetching/renderer path.
+    // A later transcript update may identify this as an App; it stays inert.
+    if (presentation === "placeholder") {
+      return (
+        <div
+          data-tool-placeholder="true"
+          className="text-xs text-muted-foreground"
+        >
+          Tool result: {tool.toolName}
+        </div>
+      );
+    }
+  }
+  return <LivePartSwitch {...props} />;
+}
+
+function LivePartSwitch({
   part,
   role,
   chatSessionId,
@@ -135,6 +199,7 @@ export function PartSwitch({
   showInlineEdit = true,
   minimalMode = false,
   interactive = true,
+  widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
   recordCapable,
@@ -175,6 +240,7 @@ export function PartSwitch({
   showInlineEdit?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   // Tier 3 recorder (default off — see recorder-types.ts).
@@ -340,6 +406,13 @@ export function PartSwitch({
       readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerOptions);
+    // Which credential produced this result, when the server had more than one
+    // live. Rerun resolves a server, not a connection, so a call made on a
+    // specific account cannot be replayed faithfully yet.
+    const attributedConnectionId =
+      readMcpToolConnectionId((toolPart as any).callProviderMetadata) ??
+      readMcpToolConnectionId((toolPart as any).providerMetadata) ??
+      readMcpToolConnectionId((toolPart as any).providerOptions);
     const serverId =
       renderOverride?.serverId ??
       providerMetadataServerId ??
@@ -350,7 +423,7 @@ export function PartSwitch({
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
     const resolvedToolOutput = hasRenderOverrideToolOutput
       ? renderOverride.toolOutput
-      : toolInfo.output ?? toolInfo.rawOutput;
+      : (toolInfo.output ?? toolInfo.rawOutput);
 
     // --- Inline edit: effective values fed to BOTH the editors and the iframe ---
     const baseInput = (toolInfo.input ?? null) as Record<
@@ -400,8 +473,7 @@ export function PartSwitch({
     // swapping rawOutput would drop serverId on raw-result-resolved cards.)
     const toolResponseMetadataOverride = lastRunOutput
       ? (readToolResultMeta(lastRunOutput.value) as
-          | Record<string, unknown>
-          | undefined)
+          Record<string, unknown> | undefined)
       : undefined;
     const hasEdits =
       editedInput !== null || editedOutput !== null || lastRunOutput !== null;
@@ -427,14 +499,17 @@ export function PartSwitch({
       isServerConnected &&
       !isRunning &&
       !inputInvalid &&
-      !inputEditedToNonObject;
+      !inputEditedToNonObject &&
+      !attributedConnectionId;
     const runDisabledReason = !isServerConnected
       ? "Connect the server to run"
-      : inputInvalid
-      ? "Fix the invalid input JSON to run"
-      : inputEditedToNonObject
-      ? "Input must be a JSON object to run"
-      : undefined;
+      : attributedConnectionId
+        ? "This call ran on a specific account; rerun would use the server's default account"
+        : inputInvalid
+          ? "Fix the invalid input JSON to run"
+          : inputEditedToNonObject
+            ? "Input must be a JSON object to run"
+            : undefined;
 
     const handleRun = async () => {
       if (!serverId) return;
@@ -496,7 +571,14 @@ export function PartSwitch({
     const isWidgetTornDown =
       typeof toolInfo.toolCallId === "string" &&
       tornDownWidgetIds?.has(toolInfo.toolCallId);
+    // A model tool may pause for approval or elicitation. Mounting its App
+    // while input is pending can run guest effects before the call succeeds.
+    // Frozen screenshots remain eligible below; they mount no guest runtime.
     const shouldRenderWidget =
+      toolInfo.toolState === "output-available" &&
+      !toolInfo.errorText &&
+      !isFailedWidgetResult(rawToolOutput) &&
+      !isFailedWidgetResult(resolvedToolOutput) &&
       !isWidgetTornDown &&
       hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined), {
         hostStyle,
@@ -504,6 +586,34 @@ export function PartSwitch({
       (uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
+
+    // Session review records the presence of a widget, without mounting its
+    // runtime or fetching HTML from today's server. This policy also overrides
+    // frozen screenshots: the Browser tab owns recorded renders for Sessions.
+    if (
+      widgetPolicy === "placeholder" &&
+      (uiType === UIType.OPENAI_SDK ||
+        uiType === UIType.MCP_APPS ||
+        uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+        renderOverride?.resourceUri ||
+        renderOverride?.cachedWidgetHtmlUrl ||
+        renderOverride?.frozenScreenshotUrl)
+    ) {
+      return (
+        <>
+          <ToolPart
+            part={toolPart}
+            chatSessionId={chatSessionId}
+            uiType={uiType}
+            minimalMode={minimalMode}
+            serverId={serverId}
+            mcpToolResultImageRendering={mcpToolResultImageRendering}
+            rawOutput={rawToolOutput}
+          />
+          <WidgetPlaceholder toolName={toolInfo.toolName} />
+        </>
+      );
+    }
 
     // A frozen recorded screenshot (eval replay) renders INDEPENDENTLY of live
     // widget eligibility: a completed run's widget can fail host-caps / server /
@@ -587,6 +697,7 @@ export function PartSwitch({
             />
           ) : (
             <WidgetReplay
+              serverId={serverId}
               chatSessionId={chatSessionId}
               toolName={toolInfo.toolName}
               toolCallId={toolInfo.toolCallId}
@@ -739,6 +850,34 @@ export function PartSwitch({
     return null;
   }
 
+  if (part.type === PLUGIN_MESSAGE_TEXT_PART) {
+    const parsed = pluginMessageTextSchema.safeParse(
+      (part as { data?: unknown }).data,
+    );
+    if (!parsed.success) return null;
+    return (
+      <details>
+        <summary className="cursor-pointer list-none">
+          <ContextAttachmentChip id="app-message" title={parsed.data.title} />
+        </summary>
+        <TextPart text={parsed.data.text} role={role} />
+      </details>
+    );
+  }
+  if (part.type === PLUGIN_MENTION_PART) {
+    const parsed = pluginMentionSelectionSchema.safeParse(
+      (part as { data?: unknown }).data,
+    );
+    if (!parsed.success) return null;
+    const link = pluginMentionLink(parsed.data);
+    return (
+      <ContextAttachmentChip id="mention" title={link.title ?? link.name} />
+    );
+  }
+  // The agent's own plan (Codex `update_plan`), as a checklist.
+  if (isHarnessPlanDataPart(part)) {
+    return <HarnessPlanPart plan={part.data} />;
+  }
   if (isDataPart(part)) {
     return (
       <JsonPart

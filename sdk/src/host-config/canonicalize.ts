@@ -30,6 +30,7 @@ import {
   OAUTH_TOKEN_ENDPOINT_AUTH_METHODS,
   MRTR_SUPPORT_MODES,
   PAGINATION_TRAVERSAL_MODES,
+  PLUGIN_EXTENSION_CAPABILITY_KEYS,
   SEP_1865_PERMISSION_FEATURES,
   TOOL_PARAM_HEADER_MIRRORING_MODES,
   type CanonicalHostConfigBrowserToolPolicy,
@@ -42,6 +43,7 @@ import {
   type HostConfigOAuthProfile,
   type HostConfigOAuthProfileV1,
   type HostConfigOAuthProfileV2,
+  type HostConfigPluginExtensionsV1,
   type OAuthAuthModel,
   type OAuthDcrIdentity,
   type OAuthProfileEvidence,
@@ -56,6 +58,10 @@ import {
   type OpenAiAppsCapabilities,
   type ServerId,
 } from "./types.js";
+import {
+  assertModelSelection,
+  type ModelSelection,
+} from "./model-selection.js";
 
 // Allowed keys on `openaiAppsOverrides`. Centralized so the canonicalizer's
 // typo-rejection stays in sync with the type — if you add a method to
@@ -1498,6 +1504,14 @@ function canonicalizeMcpProfile(
         appsOut.mcpAppsOverrides = sortedMcpApps;
       }
     }
+    if (
+      (input.apps as { pluginExtensions?: unknown }).pluginExtensions !==
+      undefined
+    ) {
+      appsOut.pluginExtensions = canonicalizePluginExtensions(
+        (input.apps as { pluginExtensions?: unknown }).pluginExtensions
+      );
+    }
     if (Object.keys(appsOut).length > 0) {
       const sortedApps = {} as typeof appsOut;
       for (const k of Object.keys(appsOut).sort()) {
@@ -1527,6 +1541,72 @@ function canonicalizeMcpProfile(
     ];
   }
   return sorted;
+}
+
+const PLUGIN_EXTENSION_CAPABILITY_KEY_SET: ReadonlySet<string> = new Set(
+  PLUGIN_EXTENSION_CAPABILITY_KEYS
+);
+
+/**
+ * `mcpProfile.apps.pluginExtensions` — the per-client OpenAI plugin
+ * extensions switch. `enabled` is required whenever the object is present
+ * (absence of the whole object is what means "use the style default").
+ * `capabilities` keeps both `true` and `false` entries verbatim, sorted, and
+ * collapses to absent when empty. Unknown keys are rejected at both levels so
+ * a typo can't silently read back as "on".
+ */
+function canonicalizePluginExtensions(
+  value: unknown
+): HostConfigPluginExtensionsV1 {
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: mcpProfile.apps.pluginExtensions must be a plain object"
+    );
+  }
+  for (const key of Object.keys(value)) {
+    if (key !== "enabled" && key !== "capabilities") {
+      throw new Error(
+        `hostConfigV2: mcpProfile.apps.pluginExtensions has unknown key "${key}"`
+      );
+    }
+  }
+  if (typeof value.enabled !== "boolean") {
+    throw new Error(
+      "hostConfigV2: mcpProfile.apps.pluginExtensions.enabled must be a boolean"
+    );
+  }
+  const out: HostConfigPluginExtensionsV1 = { enabled: value.enabled };
+  if (value.capabilities !== undefined) {
+    if (!isPlainObject(value.capabilities)) {
+      throw new Error(
+        "hostConfigV2: mcpProfile.apps.pluginExtensions.capabilities must be a plain object"
+      );
+    }
+    const capabilities: Record<string, boolean> = {};
+    for (const [key, enabled] of Object.entries(value.capabilities)) {
+      if (!PLUGIN_EXTENSION_CAPABILITY_KEY_SET.has(key)) {
+        throw new Error(
+          `hostConfigV2: mcpProfile.apps.pluginExtensions.capabilities has unknown key "${key}"`
+        );
+      }
+      if (typeof enabled !== "boolean") {
+        throw new Error(
+          `hostConfigV2: mcpProfile.apps.pluginExtensions.capabilities.${key} must be a boolean`
+        );
+      }
+    }
+    for (const key of Object.keys(value.capabilities).sort()) {
+      capabilities[key] = value.capabilities[key] as boolean;
+    }
+    if (Object.keys(capabilities).length > 0) {
+      // Sorted keys: `capabilities` before `enabled`.
+      return {
+        capabilities: capabilities as HostConfigPluginExtensionsV1["capabilities"],
+        enabled: value.enabled,
+      };
+    }
+  }
+  return out;
 }
 
 // Normalize per-server connection overrides for stable hashing.
@@ -2452,6 +2532,32 @@ function canonicalizeComputer(
   };
 }
 
+/**
+ * Canonicalize the optional `modelSelection`. Absent ⇒ undefined (key omitted,
+ * so pre-feature rows hash byte-identically). Present ⇒ validated (unknown
+ * keys, source/connectionRef mismatch, non-canonical id, out-of-range
+ * temperature all throw) and rebuilt with a fixed key order. `modelId` stays
+ * the required canonical id; the selection must agree with it — a mismatch is
+ * an error, never resolved by picking one side.
+ *
+ * Exported (module-level only, not from a barrel) so the saved-client runner
+ * applies the identical validation + agreement check to a stored config
+ * before it rewrites `modelId`.
+ */
+export function canonicalizeModelSelection(
+  modelId: string,
+  value: HostConfigInputV2["modelSelection"]
+): ModelSelection | undefined {
+  if (value === undefined) return undefined;
+  const selection = assertModelSelection(value, "hostConfigV2: modelSelection");
+  if (selection.modelId !== modelId) {
+    throw new Error(
+      `hostConfigV2: modelSelection.modelId ("${selection.modelId}") must equal modelId ("${modelId}")`
+    );
+  }
+  return selection;
+}
+
 export function canonicalizeHostConfigV2(
   input: HostConfigInputV2
 ): CanonicalHostConfigV2 {
@@ -2504,10 +2610,17 @@ export function canonicalizeHostConfigV2(
     canonicalizeMcpToolResultImageRenderingPolicy(
       input.mcpToolResultImageRendering
     );
+  const modelSelection = canonicalizeModelSelection(
+    input.modelId,
+    input.modelSelection
+  );
   return {
     schemaVersion: HOST_CONFIG_SCHEMA_VERSION_V2,
     hostStyle: input.hostStyle,
     modelId: input.modelId,
+    // Absent ⇒ key not written at all, so pre-feature rows keep their bytes
+    // (and hash) exactly.
+    ...(modelSelection !== undefined ? { modelSelection } : {}),
     systemPrompt: input.systemPrompt,
     temperature: input.temperature,
     requireToolApproval: input.requireToolApproval,

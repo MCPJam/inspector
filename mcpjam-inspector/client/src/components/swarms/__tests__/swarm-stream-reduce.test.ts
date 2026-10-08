@@ -163,6 +163,42 @@ describe("reduceSwarmStreamEvent", () => {
     );
   });
 
+  it.each(["attempt_status", "session_complete"] as const)(
+    "keeps the code a terminal %s carries beside its message",
+    (type) => {
+      // The humanized message has dropped the code, so the surfaces that read
+      // a busy reservation or an account limit by it need it from the event.
+      const state = reduceSwarmStreamEvent(
+        empty(),
+        evt({
+          type,
+          status: "rate_limited",
+          errorMessage: "MCPJam is temporarily busy. Please retry.",
+          errorCode: "spending_reservation_busy",
+        })
+      );
+      expect(state.sessions["synth_run_1_host_a_0"]).toMatchObject({
+        attemptStatus: "rate_limited",
+        errorMessage: "MCPJam is temporarily busy. Please retry.",
+        errorCode: "spending_reservation_busy",
+      });
+    }
+  );
+
+  it("leaves errorCode off a terminal event that carries none", () => {
+    const state = reduceSwarmStreamEvent(
+      empty(),
+      evt({
+        type: "attempt_status",
+        status: "failed",
+        errorMessage: "The session failed.",
+      })
+    );
+    expect(state.sessions["synth_run_1_host_a_0"]).not.toHaveProperty(
+      "errorCode"
+    );
+  });
+
   it("folds text_delta into the session stream drafts", () => {
     let state = empty();
     state = reduceSwarmStreamEvent(
@@ -293,6 +329,14 @@ describe("resolveSwarmCellOutcome", () => {
 });
 
 describe("resolveSwarmCellOutcome — attempt row is canonical", () => {
+  it("shows a claimed attempt as running without an SSE connection or transcript", () => {
+    expect(resolveSwarmCellOutcome({
+      attempt: { status: "running" },
+      runStatus: "running",
+      liveStatus: "pending",
+    })).toBe("running");
+  });
+
   const stickyActiveSession = {
     id: "x",
     chatSessionId: "c",

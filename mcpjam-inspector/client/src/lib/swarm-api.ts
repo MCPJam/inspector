@@ -10,14 +10,29 @@
  * `convex/journeyExecution/*` + `convex/{personas,journeys,journeyRuns}` by
  * hand (two-repo layout).
  */
-
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  SwarmSessionVerdict,
+  JourneyRunVerdictSummary,
+  SwarmReport,
+} from "@mcpjam/sdk/contract";
+import { swarmSessionNeverRan } from "@mcpjam/sdk/contract";
+import { invalidateSwarmSponsorshipAllowance } from "@/lib/swarm-sponsorship-allowance-store";
 import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
+import { SIGN_IN_REQUIRED_CODE } from "@/lib/sign-in-required";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
+import {
+  parseFundingChangedDetails,
+  parseFundingSummary,
+  SWARM_FUNDING_CHANGED_CODE,
+  type SwarmFundingChangedDetails,
+  type SwarmFundingSummary,
+} from "@/shared/swarm-sponsorship";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
 export const SWARM_QUERIES = {
@@ -29,6 +44,12 @@ export const SWARM_QUERIES = {
   listJourneyRuns: "journeyRuns:listJourneyRuns",
   /** Single run by id — prefer this over paging `listJourneyRuns` when the id is known. */
   getJourneyRun: "journeyRuns:getJourneyRun",
+  /**
+   * Why a wave's sessions never ran, from the attempts that refused them
+   * (#5188). The findings wire counts those sessions; only the attempt rows
+   * know the reason. See {@link RunLaunchFailures}.
+   */
+  listRunLaunchFailures: "journeyRuns:listRunLaunchFailures",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
   /** Flat Sessions-tab default: all swarm sessions in the project. */
   listSessionsByProject: "journeyRuns:listSessionsByProject",
@@ -125,7 +146,10 @@ export type JourneyRunStatus =
   | "rate_limited"
   // Display-only, derived from the `error` marker. See above.
   | "canceled"
-  | "stale";
+  | "stale"
+  // Display-only: `running` with the report's `undecidedReason` at
+  // `gradingPending` — execution is over, the grades are not in yet.
+  | "grading";
 
 export interface JourneyRunSummary {
   total: number;
@@ -162,6 +186,10 @@ export interface JourneySnapshotTarget {
    * key on this — never on `targetId`. */
   environmentRef?: { environmentId: string; name: string; revision: number };
   serverAttachmentId?: string;
+  /** The model this target ran, frozen at launch. */
+  modelId?: string;
+  /** The selection behind `modelId` (carries its effort); absent ⇒ legacy. */
+  resolvedSelection?: RequestedModelSelection | null;
 }
 
 /**
@@ -215,9 +243,39 @@ export interface JourneyRunAttempt {
   /** Human string; historical rows may still hold a raw provider payload, so
    * render through `humanizeSwarmAttemptError`. */
   errorMessage: string | null;
+  /**
+   * The session's execution record — what the target model actually ran on
+   * (backend `lib/executionRecord.ts`). Absent on sessions recorded before
+   * it existed. Read through `readExecutionRecord`, never trusted raw.
+   */
+  execution?: unknown;
+}
+
+/**
+ * Why one run's sessions never ran — `journeyRuns:listRunLaunchFailures`,
+ * mirrored by hand from the backend `RunLaunchFailures`. Only runs with at
+ * least one session that never ran are returned.
+ */
+export interface RunLaunchFailures {
+  runId: string;
+  /** Sessions whose attempt ended without recording a single message. */
+  sessionsNotRun: number;
+  /** Every attempt the run planned. */
+  sessionsTotal: number;
+  /** Distinct (code, message) reasons, most common first, at most three. */
+  reasons: Array<{
+    errorCode: string | null;
+    /** Render through `humanizeSwarmAttemptError`, like the attempt row. */
+    errorMessage: string | null;
+    count: number;
+  }>;
 }
 
 export interface JourneyRun {
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   _id: string;
   status: JourneyRunStatus | string;
   /**
@@ -245,6 +303,11 @@ export interface JourneyRun {
   };
   /** Judge rollup for this run's sessions (absent until first grading). */
   goalScoreSummary?: GoalScoreRollup;
+  /**
+   * Durable wave id shared by every run of one co-launched swarm (see
+   * {@link LaunchJourneyRunArgs.swarmRunGroupId}). Absent on legacy runs.
+   */
+  swarmRunGroupId?: string;
   createdAt: number;
 }
 
@@ -256,6 +319,13 @@ export interface JourneyRun {
  * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
+  verdict?: SwarmSessionVerdict;
+  observations?: Array<{
+    evaluatorId: string;
+    predicateType: string;
+    role: "advisory" | "required";
+    status: "passed" | "failed" | "pending" | "unavailable";
+  }>;
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
   id: string;
   chatSessionId: string;
@@ -355,11 +425,21 @@ export interface SwarmOverviewFinding {
 export interface SwarmOverviewTarget {
   hostName: string;
   modelId: string;
+  /**
+   * `comparisonKey` of the target's selection (the bare `modelId` when
+   * default). Absent on older backends — read `targetKey ?? modelId`.
+   */
+  targetKey?: string | null;
   /** Present when the target resolved from a project environment. */
   environmentName?: string;
 }
 
 export interface SwarmOverviewRun {
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
+  executionVenue?: "hosted" | "local" | "mixed";
+  verdictSummary?: JourneyRunVerdictSummary;
+  report?: SwarmReport;
   runId: string;
   journeyRefId: string;
   journeyName: string;
@@ -664,7 +744,7 @@ export interface SwarmSessionMetrics {
  */
 export function journeySessionRowToThread(
   row: JourneySessionRow,
-  fallbackPersonaName?: string
+  fallbackPersonaName?: string,
 ): SharedChatThread {
   const displayName =
     row.visitorDisplayName ??
@@ -689,6 +769,18 @@ export function journeySessionRowToThread(
     // having no stamp at all and classifies it `ungraded`.
     criteria: row.criteria,
     goalScore: row.goalScore,
+    // A session refused before it said anything has no preview, so without
+    // this its row reads like any other. Unknown stays unknown: without a
+    // verdict, or without a message count to read, there is no claim to make,
+    // and an absent count must not be read as zero messages.
+    ...(row.verdict && typeof row.messageCount === "number"
+      ? {
+          neverRan: swarmSessionNeverRan(
+            row.verdict.lifecycle,
+            row.messageCount,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -701,7 +793,7 @@ export type SwarmSessionRunGroup = {
 
 function groupSwarmSessionsByKey(
   rows: JourneySessionRow[],
-  keyFor: (row: JourneySessionRow) => string | null | undefined
+  keyFor: (row: JourneySessionRow) => string | null | undefined,
 ): SwarmSessionRunGroup[] {
   const byKey = new Map<string | null, JourneySessionRow[]>();
   for (const row of rows) {
@@ -715,13 +807,13 @@ function groupSwarmSessionsByKey(
     .map(([runId, groupRows]) => {
       const sorted = [...groupRows].sort(
         (a, b) =>
-          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt)
+          (b.lastActivityAt ?? b.startedAt) - (a.lastActivityAt ?? a.startedAt),
       );
       return {
         runId,
         rows: sorted,
         latestActivityAt: Math.max(
-          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt)
+          ...sorted.map((row) => row.lastActivityAt ?? row.startedAt),
         ),
       };
     })
@@ -730,14 +822,14 @@ function groupSwarmSessionsByKey(
 
 /** Cluster flat session pages by parent journey run (newest run first). */
 export function groupSwarmSessionsByRun(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRunId);
 }
 
 /** Cluster flat session pages by goal (`journeyRefId`, newest group first). */
 export function groupSwarmSessionsByGoal(
-  rows: JourneySessionRow[]
+  rows: JourneySessionRow[],
 ): SwarmSessionRunGroup[] {
   return groupSwarmSessionsByKey(rows, (row) => row.journeyRefId);
 }
@@ -860,6 +952,12 @@ export interface LaunchJourneyRunArgs {
    */
   launchKey: string;
   /**
+   * Iterations for THIS run, overriding the journey's stored
+   * `sessionsPerTarget` without rewriting it. Sent for a reused persona whose
+   * saved fan-out differs from what Confirm chose.
+   */
+  sessionsPerTarget?: number;
+  /**
    * Opaque id shared by every run of ONE co-launched wave, so the Overview can
    * group them without inferring a batch from `createdAt` proximity. A solo
    * "Run again" mints its own and is simply a wave of one. Omitted against a
@@ -874,10 +972,20 @@ export interface LaunchJourneyRunArgs {
    * configuration stays exactly as its author left it.
    */
   environmentIds?: string[];
+  /**
+   * How many of THIS run's conversations the user was shown as sponsored (paid
+   * from MCPJam's allowance rather than the organization's credits). The
+   * backend refuses the launch with a typed 409 when the real split differs, so
+   * a launch can never quietly use more org credits than the user saw. Omit to
+   * accept whatever split applies (agent and Run-again launches).
+   */
+  expectedSponsored?: number;
 }
 
 export interface LaunchJourneyRunResult {
   runId: string;
+  /** How the backend funded the run's conversations, when it reports it. */
+  funding?: SwarmFundingSummary;
 }
 
 /**
@@ -890,7 +998,13 @@ export class LaunchJourneyRunError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
-  constructor(status: number, message: string, limitDialogRaised = false) {
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "LaunchJourneyRunError";
     this.status = status;
@@ -904,7 +1018,7 @@ export class LaunchJourneyRunError extends Error {
  * caller can branch on `.status`.
  */
 export async function launchJourneyRun(
-  args: LaunchJourneyRunArgs
+  args: LaunchJourneyRunArgs,
 ): Promise<LaunchJourneyRunResult> {
   const response = await authFetch(
     `/api/web/swarm/journeys/${encodeURIComponent(args.journeyId)}/runs`,
@@ -920,8 +1034,14 @@ export async function launchJourneyRun(
         ...(args.environmentIds?.length
           ? { environmentIds: args.environmentIds }
           : {}),
+        ...(args.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: args.sessionsPerTarget }
+          : {}),
+        ...(args.expectedSponsored !== undefined
+          ? { expectedSponsored: args.expectedSponsored }
+          : {}),
       }),
-    }
+    },
   );
 
   let body: unknown = undefined;
@@ -948,11 +1068,17 @@ export async function launchJourneyRun(
       typeof parsed?.code === "string"
         ? parsed.code
         : typeof parsed?.error === "string"
-          ? parsed.error
-          : null;
+        ? parsed.error
+        : null;
     // Raise the wall HERE, while the body still carries the route's `code` —
     // same reasoning as `postGenerate`. Launching a goal run spends model
     // budget like every other action that already shows this dialog.
+    // No run id and no wave id: a refused launch is the user's own action, and
+    // the callers that see `limitDialogRaised` stay silent because the dialog
+    // IS their answer. Keyed by the wave (which a retry reuses), a second press
+    // of Launch would be deduped and answer nothing. There is no stack of
+    // dialogs to prevent: the create flow stops at the first refusal, and Run
+    // again carries on, where a notice while the dialog is open only re-asserts it.
     const limitDialogRaised = notifyMCPJamLimitError({
       ...(code ? { code } : {}),
       details: body,
@@ -962,7 +1088,12 @@ export async function launchJourneyRun(
     throw new LaunchJourneyRunError(
       response.status,
       message,
-      limitDialogRaised
+      limitDialogRaised,
+      typeof (parsed?.details as Record<string, unknown> | undefined)?.code ===
+      "string"
+        ? (parsed!.details as { code: string }).code
+        : (code ?? undefined),
+      parsed?.details,
     );
   }
 
@@ -973,10 +1104,109 @@ export async function launchJourneyRun(
   if (typeof runId !== "string" || runId.length === 0) {
     throw new LaunchJourneyRunError(
       response.status,
-      "Launch accepted but the backend returned no run id"
+      "Launch accepted but the backend returned no run id",
     );
   }
-  return { runId };
+  const funding = parseFundingSummary(
+    (body as { funding?: unknown } | undefined)?.funding,
+  );
+  invalidateSwarmSponsorshipAllowance();
+  return { runId, ...(funding ? { funding } : {}) };
+}
+
+/**
+ * The typed reading of a launch refused because the sponsored split moved
+ * between the preview the user saw and the launch (`swarm_funding_changed`,
+ * HTTP 409). Nothing was created. `undefined` for every other error.
+ */
+export function fundingChangeOf(
+  error: unknown,
+): SwarmFundingChangedDetails | undefined {
+  if (!(error instanceof LaunchJourneyRunError) || error.status !== 409) {
+    return undefined;
+  }
+  if (error.code !== SWARM_FUNDING_CHANGED_CODE) return undefined;
+  return parseFundingChangedDetails(error.details);
+}
+
+// ── REST funding preview ────────────────────────────────────────────────────
+
+export interface SwarmFundingPreviewRunInput {
+  journeyRefId: string;
+  /**
+   * What the launch will create the run as. The wizard launches swarms; asked
+   * without it the backend resolves the kind from the session count.
+   */
+  kind?: "swarm" | "user_testing";
+  environmentIds?: string[];
+  sessionsPerTarget?: number;
+}
+
+export interface SwarmFundingPreviewRun extends SwarmFundingSummary {
+  targets: Array<{ targetId: string; eligible: boolean; reason?: string }>;
+}
+
+export interface SwarmFundingPreview {
+  /** False when sponsorship cannot apply here; every conversation uses credits. */
+  supported: boolean;
+  /** Sponsored conversations left in the caller's allowance. */
+  remaining: number;
+  granted: number;
+  /** One entry per requested run, in order; counts are cumulative in that order. */
+  runs: SwarmFundingPreviewRun[];
+}
+
+/**
+ * How a wave's conversations would be funded, before anything is launched.
+ * Read-only. Throws on transport or server failure; callers treat that as "no
+ * preview" and launch exactly as they did before sponsorship existed.
+ */
+export async function fetchSwarmFundingPreview(
+  projectId: string,
+  runs: SwarmFundingPreviewRunInput[],
+  signal?: AbortSignal,
+): Promise<SwarmFundingPreview> {
+  const response = await authFetch("/api/web/swarm/funding-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, runs }),
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) {
+    throw new Error(`Funding preview failed (${response.status})`);
+  }
+  const body = (await response.json()) as Partial<SwarmFundingPreview> | null;
+  const count = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : 0;
+  return {
+    supported: body?.supported === true,
+    remaining: count(body?.remaining),
+    granted: count(body?.granted),
+    runs: Array.isArray(body?.runs)
+      ? body.runs.map((run) => ({
+          sponsored: count(run?.sponsored),
+          credits: count(run?.credits),
+          total: count(run?.total),
+          targets: Array.isArray(run?.targets)
+            ? run.targets.flatMap((target) =>
+                target && typeof target.targetId === "string"
+                  ? [
+                      {
+                        targetId: target.targetId,
+                        eligible: target.eligible === true,
+                        ...(typeof target.reason === "string"
+                          ? { reason: target.reason }
+                          : {}),
+                      },
+                    ]
+                  : [],
+              )
+            : [],
+        }))
+      : [],
+  };
 }
 
 // ── REST generation ─────────────────────────────────────────────────────────
@@ -1002,7 +1232,22 @@ export class SwarmGenerateError extends Error {
   /** A model limit the dialog took over. The caller must not also render this
    * message inline — the modal already carries it, with the actions. */
   readonly limitDialogRaised: boolean;
-  constructor(status: number, message: string, limitDialogRaised = false) {
+  /**
+   * The refusal envelope the route sent, when it had one. A sign-in refusal is
+   * read off `details.code` by `signInRemedyMessage` — deliberately NOT a
+   * `signInRequired` boolean on this class, which would be a second place the
+   * same refusal is recognised, one of which a consumer could read alone and
+   * be wrong. `code` is the route's HTTP-shaped one and says nothing about who
+   * is asking: a 403 here can also mean "not a member of this project", which
+   * signing in does not fix.
+   */
+  constructor(
+    status: number,
+    message: string,
+    limitDialogRaised = false,
+    readonly code?: string,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "SwarmGenerateError";
     this.status = status;
@@ -1013,7 +1258,7 @@ export class SwarmGenerateError extends Error {
 async function postGenerate<T>(
   path: string,
   body: unknown,
-  fallbackMessage: string
+  fallbackMessage: string,
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "POST",
@@ -1040,8 +1285,8 @@ async function postGenerate<T>(
       typeof body?.code === "string"
         ? body.code
         : typeof body?.error === "string"
-          ? body.error
-          : null;
+        ? body.error
+        : null;
     const normalized = isNormalizedError(body?.normalized)
       ? (body.normalized as NormalizedError)
       : undefined;
@@ -1049,6 +1294,14 @@ async function postGenerate<T>(
       body?.details && typeof body.details === "object"
         ? (body.details as Record<string, unknown>)
         : undefined;
+    // The backend's own code. The proxy forwards its whole refusal envelope as
+    // `details` (`upstreamRefusalRouteError`), so the backend's `code` lives
+    // there; the response's TOP-LEVEL `code` is the proxy's HTTP-shaped one —
+    // `FORBIDDEN` for every 403, whatever caused it — and "not a member of
+    // this project" is a 403 that signing in does not fix.
+    const signInRequired =
+      typeof details?.code === "string" &&
+      details.code.toLowerCase() === SIGN_IN_REQUIRED_CODE.toLowerCase();
     // Raise the top-up dialog HERE, where the body still carries the route's
     // `code`. `SwarmGenerateError` keeps only status + message, so by the time
     // the create flow catches this the limit is no longer identifiable — and
@@ -1063,6 +1316,25 @@ async function postGenerate<T>(
     // that suppresses the card — `normalized` exists to feed that same card.
     if (limitDialogRaised) {
       throw new SwarmGenerateError(response.status, message, true);
+    }
+    // BEFORE the `normalized` branch. `handleRoute` runs every route error
+    // through `mapRuntimeError`, which backfills `normalized`, so on the real
+    // proxy response `normalized` is ALWAYS present — a sign-in check placed
+    // below it never ran at all, which is how a guest ended up with the generic
+    // error card instead of the Sign in control.
+    //
+    // A consumer is no longer at that branch's mercy: `signInRemedyMessage`
+    // reads the envelope off either class. The order still decides which
+    // affordance this refusal arrives dressed as, and `normalized` exists to
+    // feed the card this one does not want.
+    if (signInRequired) {
+      throw new SwarmGenerateError(
+        response.status,
+        message,
+        false,
+        code ?? undefined,
+        details,
+      );
     }
     if (normalized) {
       throw new WebApiError(
@@ -1096,7 +1368,7 @@ export async function generateSwarmPersona(
   args: {
     projectId: string;
     journeyCount: number;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   persona: SwarmGeneratedPersona;
   journeys: SwarmGeneratedJourney[];
@@ -1104,7 +1376,7 @@ export async function generateSwarmPersona(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate persona"
+    "Failed to generate persona",
   );
 }
 
@@ -1129,7 +1401,7 @@ export async function generateSwarmPersonaBatch(
     journeyCount: number;
     description?: string;
     existingPersonas?: { name: string; role: string }[];
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{
   personas: {
     persona: SwarmGeneratedPersona;
@@ -1139,7 +1411,7 @@ export async function generateSwarmPersonaBatch(
   return postGenerate(
     "/api/web/swarm/generate/persona",
     args,
-    "Failed to generate personas"
+    "Failed to generate personas",
   );
 }
 
@@ -1147,14 +1419,15 @@ export async function generateSwarmPersonaBatch(
 export async function generateSwarmJourneys(
   args: {
     projectId: string;
+    swarmRefId?: string;
     journeyCount: number;
     persona: SwarmGeneratedPersona;
-  } & SwarmGenerationGrounding
+  } & SwarmGenerationGrounding,
 ): Promise<{ journeys: SwarmGeneratedJourney[] }> {
   return postGenerate(
     "/api/web/swarm/generate/journeys",
     args,
-    "Failed to generate goals"
+    "Failed to generate goals",
   );
 }
 
@@ -1166,7 +1439,7 @@ export async function generateSwarmJourneys(
 export async function streamJourneyRun(
   runId: string,
   onEvent: (event: SwarmStreamEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await authFetch(
     `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
@@ -1174,7 +1447,7 @@ export async function streamJourneyRun(
       method: "GET",
       headers: { Accept: "text/event-stream" },
       signal,
-    }
+    },
   );
 
   if (!response.ok) {

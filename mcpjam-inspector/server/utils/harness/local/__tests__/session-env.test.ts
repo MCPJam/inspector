@@ -93,6 +93,8 @@ describe("the child environment is an allowlist", () => {
         "NO_COLOR",
         "PATH",
         "PWD",
+      "MCPJAM_LOCAL_CONTROL_ROOT",
+      "MCPJAM_LOCAL_DENIED_ROOTS",
         "TERM",
         "TMPDIR",
         "XDG_CACHE_HOME",
@@ -121,6 +123,37 @@ describe("the child environment is an allowlist", () => {
       "NUMBER_OF_PROCESSORS",
       "PROCESSOR_ARCHITECTURE",
     ]);
+  });
+});
+
+describe("the runtime the session is launched from", () => {
+  const LAYER = "/home/dev/.mcpjam/harness-local/runtime/inspector-layer/abc";
+  const PACK = "/home/dev/.mcpjam/harness-local/runtime/linux-x64/1.0.0/codex";
+
+  it("is named in the agent's own deny rules, alongside sibling sessions", () => {
+    const env = buildLocalHarnessEnv({
+      syntheticHome: HOME,
+      sessionRoot: ROOT,
+      base: PARENT,
+      platform: "linux",
+      extraDeniedRoots: [LAYER, PACK, LAYER],
+    });
+    const denied = JSON.parse(env.MCPJAM_LOCAL_DENIED_ROOTS!) as string[];
+    expect(denied).toContain(LAYER);
+    expect(denied).toContain(PACK);
+    expect(denied.filter((root) => root === LAYER)).toHaveLength(1);
+  });
+
+  it("refuses a relative runtime root rather than denying a path relative to who knows what", () => {
+    expect(() =>
+      buildLocalHarnessEnv({
+        syntheticHome: HOME,
+        sessionRoot: ROOT,
+        base: PARENT,
+        platform: "linux",
+        extraDeniedRoots: ["inspector-layer/abc"],
+      }),
+    ).toThrow(/absolute path/);
   });
 });
 

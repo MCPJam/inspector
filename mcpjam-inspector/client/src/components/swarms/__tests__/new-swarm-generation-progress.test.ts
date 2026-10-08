@@ -66,8 +66,8 @@ describe("generationProgressLine", () => {
     });
 
     expect(line).toContain("31s elapsed");
-    expect(line).toContain("Still waiting on the generator");
-    expect(line).toContain("nothing is saved until you launch");
+    expect(line).toContain("Still generating.");
+    expect(line).toContain("Nothing is saved until you launch");
   });
 
   it("quotes no ETA — there is no honest one to quote", () => {

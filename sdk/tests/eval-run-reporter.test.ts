@@ -1434,7 +1434,7 @@ describe("run URL printing", () => {
 
     const lines = logSpy.mock.calls.map((call) => String(call[0]));
     expect(lines).toEqual([
-      "[mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/suite_stream/runs/run_stream?project=proj_stream",
+      "[mcpjam/sdk] View run: https://app.mcpjam.com/evaluate/suite/suite_stream/runs/run_stream?project=proj_stream",
     ]);
   });
 

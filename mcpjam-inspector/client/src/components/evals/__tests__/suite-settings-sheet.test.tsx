@@ -32,12 +32,16 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: async () => null }),
+
   useMutation: (name: string) =>
     name === "testSuites:applySuiteSettings"
       ? mocks.applySuiteSettings
       : mocks.updateTestSuite,
   useQuery: () => undefined,
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Per-run row loads (Evaluate only); legacy suite views request none.
+  useQueries: () => ({}),
 }));
 
 // S3 — the settings sheet reads per-suite capabilities. `unavailable` is the
@@ -95,11 +99,17 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
+  useSuiteDataFromMetrics: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
+}));
+// "Where it runs" renders the server-group picker, whose data hooks this
+// suite does not stand up; its own behavior is covered by its tests.
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => null,
 }));
 vi.mock("@mcpjam/design-system/popover", () => ({
   Popover: ({ children }: { children: React.ReactNode }) => <>{children}</>,

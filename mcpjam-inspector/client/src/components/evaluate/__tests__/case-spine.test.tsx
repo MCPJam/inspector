@@ -379,11 +379,36 @@ describe("the spine", () => {
     expect(onStepsChange).not.toHaveBeenCalled();
   });
 
-  it("keeps every prompt editable but never removable", async () => {
-    await openSpine({ steps: twoTurn });
+  it("lets an extra prompt be removed and keeps the last one", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({
+      steps: [
+        { id: "turn-1", kind: "prompt", prompt: "First" },
+        { id: "turn-2", kind: "prompt", prompt: "Second" },
+      ],
+      onStepsChange,
+    });
+    expect(screen.getByRole("button", { name: "Remove step 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove step 2" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove step 2" }));
+    const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
+    expect(written.map((step) => step.id)).toEqual(["turn-1"]);
     expect(screen.queryByRole("button", { name: "Remove step 1" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Remove step 2" })).toBeNull();
     expect(screen.getByLabelText("What does the user ask?")).toBeEnabled();
+  });
+
+  it("keeps the only prompt while other actions stay removable", async () => {
+    await openSpine({ steps: withClick });
+    expect(screen.queryByRole("button", { name: "Remove step 1" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove step 2" })).toBeTruthy();
+  });
+
+  it("asks before deleting a prompt that has checks under it", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({ steps: twoTurn, onStepsChange });
+    await user.click(screen.getByRole("button", { name: "Remove step 2" }));
+    expect(screen.getByTestId("spine-delete-action")).toBeTruthy();
+    expect(onStepsChange).not.toHaveBeenCalled();
   });
 
   it("deletes without asking when the action stands alone", async () => {
@@ -761,4 +786,110 @@ it("opens the existing expected outcome from the drawer", async () => {
   await user.click(screen.getByTestId("add-step-item-outcome"));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByLabelText("Expected Outcome")).toHaveFocus();
+});
+
+describe("a multi-prompt case", () => {
+  const expectTool = (id: string, toolName: string): TestStep => ({
+    id,
+    kind: "assert",
+    assertion: { type: "toolCalledWith", toolName, args: { args: {} } },
+  });
+  const threeTurns: TestStep[] = [
+    { id: "p1", kind: "prompt", prompt: "Diagnose my server" },
+    expectTool("t1", "diagnose"),
+    { id: "p2", kind: "prompt", prompt: "Generate cases" },
+    expectTool("t2", "generate"),
+    { id: "p3", kind: "prompt", prompt: "Run the eval" },
+    expectTool("t3", "run"),
+  ];
+  const tools = [{ name: "diagnose" }, { name: "generate" }, { name: "run" }];
+  const toolNamesIn = (row: HTMLElement) =>
+    within(row)
+      .queryAllByTestId("simple-case-tool-row")
+      .map((el) => el.textContent ?? "");
+
+  it("shows each prompt's expected tools under that prompt", async () => {
+    await openSpine({ steps: threeTurns, availableTools: tools });
+    const [first, second, third] = screen.getAllByTestId("spine-action-row");
+    expect(toolNamesIn(first!).join()).toMatch(/diagnose/);
+    expect(toolNamesIn(first!).join()).not.toMatch(/generate|run/);
+    expect(toolNamesIn(second!).join()).toMatch(/generate/);
+    expect(toolNamesIn(third!).join()).toMatch(/run/);
+  });
+
+  it("keeps the case-wide controls on the first prompt only", async () => {
+    await openSpine({ steps: threeTurns, availableTools: tools });
+    const [first, second] = screen.getAllByTestId("spine-action-row");
+    expect(
+      within(first!).getByText("No tool should be called"),
+    ).toBeInTheDocument();
+    expect(within(first!).getByText("Matching options")).toBeInTheDocument();
+    expect(
+      within(second!).queryByText("No tool should be called"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(second!).queryByText("Matching options"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("removes a later prompt's tool from that prompt's steps", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({
+      steps: threeTurns,
+      availableTools: tools,
+      onStepsChange,
+    });
+    const second = screen.getAllByTestId("spine-action-row")[1]!;
+    await user.click(
+      within(second).getByRole("button", { name: "Remove generate" }),
+    );
+    const next = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
+    expect(next.map((step) => step.id)).toEqual(["p1", "t1", "p2", "p3", "t3"]);
+  });
+
+  it("keeps later prompts' tools when the first prompt's are edited", async () => {
+    const onStepsChange = vi.fn();
+    const user = await openSpine({
+      steps: threeTurns,
+      availableTools: tools,
+      onStepsChange,
+    });
+    const first = screen.getAllByTestId("spine-action-row")[0]!;
+    await user.click(
+      within(first).getByRole("button", { name: "Remove diagnose" }),
+    );
+    const next = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
+    expect(next.map((step) => step.id)).toEqual(["p1", "p2", "t2", "p3", "t3"]);
+  });
+});
+
+describe("the suite's evaluators on the spine", () => {
+  it("fold into one line that opens to the rows", async () => {
+    const user = await openSpine({
+      steps: golden,
+      suiteDefaultPredicates: [
+        { type: "tokenBudgetUnder", tokens: 4000 },
+        { type: "turnCountUnder", turns: 5, role: "advisory" },
+      ] as never,
+    });
+    const fold = screen.getByTestId("suite-rows-disclosure");
+    const toggle = within(fold).getByRole("button");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent(
+      "2 suite evaluators · 1 required · 1 advisory",
+    );
+    expect(within(fold).queryAllByTestId("case-scorecard-row")).toHaveLength(0);
+    await user.click(toggle);
+    expect(within(fold).getAllByTestId("case-scorecard-row")).toHaveLength(2);
+  });
+});
+
+describe("the Expected Outcome box", () => {
+  it("carries no example taken from another case", async () => {
+    await openSpine({ steps: golden });
+    const outcome = screen.getByLabelText("Expected Outcome");
+    expect(outcome.getAttribute("placeholder")).toBe(
+      "One sentence the judge scores against",
+    );
+  });
 });

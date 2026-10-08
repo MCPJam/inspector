@@ -274,10 +274,55 @@ describe("engine failure telemetry", () => {
     const chunks = errorChunks();
     expect(chunks).toHaveLength(1);
     expect(Object.keys(chunks[0]).sort()).toEqual(["errorText", "type"]);
-    // The parsed sentence, not the raw JSON envelope.
-    expect(chunks[0].errorText).toBe(
-      "MCPJam is experiencing a configuration issue.",
-    );
+    // Preserve the structured failure so the client can classify and render it.
+    expect(JSON.parse(chunks[0].errorText)).toEqual({
+      message: "MCPJam is experiencing a configuration issue.",
+      code: "mcpjam_api_error",
+      statusCode: 401,
+      isRetryable: false,
+    });
+  });
+
+  it("keeps the code on a mid-stream provider_not_allowlisted chunk so the client can pick its banner", async () => {
+    // The allowlist banner is chosen from the structured code. Preserve its
+    // details so the client can explain the restriction without API-key advice.
+    const message =
+      'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.';
+    const details =
+      "Your team has restricted access to this provider. Update your Provider Allowlist settings to enable it.";
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      { type: "start" },
+      {
+        type: "error",
+        errorText: JSON.stringify({
+          code: "provider_not_allowlisted",
+          message,
+          statusCode: 403,
+          isRetryable: false,
+          details,
+        }),
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+    const onEngineError = vi.fn();
+
+    await runTurn({ failureReporter: reporter, onEngineError });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].errorCode).toBe("provider_not_allowlisted");
+    expect(calls[0].normalized?.slug).toBe("provider/not_allowlisted");
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+
+    const chunks = errorChunks();
+    expect(chunks).toHaveLength(1);
+    expect(Object.keys(chunks[0]).sort()).toEqual(["errorText", "type"]);
+    expect(JSON.parse(chunks[0].errorText)).toEqual({
+      code: "provider_not_allowlisted",
+      message,
+      statusCode: 403,
+      isRetryable: false,
+      details,
+    });
   });
 
   it("does not claim a mid-stream provider 5xx as MCPJam's", async () => {

@@ -586,7 +586,7 @@ describe("UserTestingTab — agent bridge handlers", () => {
         <UserTestingTab projectId="proj-1" isAuthenticated scenarioId="cb-1" />
       );
     });
-    expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Study not found/i)).toBeInTheDocument();
   });
 
   it("refuses every command as unsupported_in_mode when signed out", async () => {

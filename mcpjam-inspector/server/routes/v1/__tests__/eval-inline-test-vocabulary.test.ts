@@ -57,12 +57,14 @@ vi.mock("../../web/auth.js", async () => {
 });
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    action: convexActionMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      action: convexActionMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 
 import v1Routes from "../index.js";
@@ -397,6 +399,42 @@ describe("v1 inline-test vocabulary", () => {
       expect(authorEvalSuiteMock).not.toHaveBeenCalled();
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
       expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+  describe("advancedConfig.reasoningEffort is refused", () => {
+    // The claim nothing ever applied. Accepting it stored a promise the runner
+    // never kept; the effort lives on `models[].selection.settings`.
+    it("POST /eval-suites answers 400 and points at the selection", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        suiteBody({ advancedConfig: { reasoningEffort: "high" } }),
+      );
+      expect(res.status).toBe(400);
+      const body = await errorBody(res);
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("models[].selection.settings.reasoningEffort");
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+    });
+
+    it("POST /eval-runs answers 400 too", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        runBody({ advancedConfig: { reasoningEffort: "high" } }),
+      );
+      expect(res.status).toBe(400);
+      expect((await errorBody(res)).message).toContain("reasoningEffort");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("still accepts the overrides it does apply", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        suiteBody({ advancedConfig: { temperature: 0.2 } }),
+      );
+      expect(res.status).toBe(201);
     });
   });
 });

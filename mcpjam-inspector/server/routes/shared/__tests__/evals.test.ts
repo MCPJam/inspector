@@ -17,6 +17,9 @@ import {
   fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
   remapSnapshotServerIdsForAttachment,
+  storedSelectionForCaseModel,
+  storedLegacySelectionForCaseModel,
+  applyCommittedRoutingSelection,
 } from "../evals";
 import { WebRouteError } from "../../web/errors";
 import { SERVER_TOOL_SNAPSHOT_VERSION } from "../../../utils/export-helpers";
@@ -1007,6 +1010,16 @@ describe("shouldSkipExecution", () => {
     );
   });
 
+  it("skips a replay in flight when its server failed the preflight", () => {
+    // Resuming would run every iteration against a server that cannot list
+    // its tools, fail the run, and race whichever worker is still driving it.
+    for (const status of ["running", "pending"]) {
+      expect(
+        shouldSkipExecution({ deduped: true, status, serverUnreachable: true })
+      ).toBe(true);
+    }
+  });
+
   it("executes a fresh start, whatever its status says", () => {
     expect(shouldSkipExecution({ deduped: false, status: "running" })).toBe(
       false
@@ -1101,6 +1114,59 @@ describe("authorEvalSuite — the suite write a rerun does not need", () => {
     ).toMatchObject({ hostAttachments });
   });
 
+  it("creates an environment suite when the backend can and one environment is pinned", async () => {
+    const { client, mutations } = fakeConvex({
+      query: async (fn: string) =>
+        fn === "projectEnvironments:getCapabilities"
+          ? { createSuiteWithEnvironments: true }
+          : null,
+    });
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments: [{ namedHostId: "host-1", selectedServerIds: ["s1"] }],
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    const created = mutations.find(
+      (mutation) => mutation.fn === "testSuites:createTestSuite",
+    )?.args;
+    expect(created.environmentTargets).toEqual([
+      { hostId: "host-1", serverIds: ["s1"] },
+    ]);
+    expect(created).not.toHaveProperty("hostAttachments");
+    expect(created).not.toHaveProperty("environment");
+  });
+
+  it("keeps the legacy create when two clients would need an environment choice", async () => {
+    const { client, mutations } = fakeConvex({
+      query: async (fn: string) =>
+        fn === "projectEnvironments:getCapabilities"
+          ? { createSuiteWithEnvironments: true }
+          : null,
+    });
+    const hostAttachments = [
+      { namedHostId: "host-1", selectedServerIds: ["s1"] },
+      { namedHostId: "host-2", selectedServerIds: ["s1"] },
+    ];
+    await authorEvalSuite({
+      ...BASE,
+      suiteId: null,
+      suiteName: "Inline",
+      convexClient: client as never,
+      hostAttachments,
+      suiteRerun: false,
+      refreshSnapshot: false,
+    });
+    const created = mutations.find(
+      (mutation) => mutation.fn === "testSuites:createTestSuite",
+    )?.args;
+    expect(created).toMatchObject({ hostAttachments });
+    expect(created).not.toHaveProperty("environmentTargets");
+  });
+
   it("still writes the suite when the caller asked to refresh the snapshot", async () => {
     const { client, mutations } = fakeConvex();
     await authorEvalSuite({
@@ -1173,5 +1239,115 @@ describe("authorEvalSuite — the suite write a rerun does not need", () => {
       name: "Billing smoke",
       description: "Nightly",
     });
+  });
+});
+
+describe("stored legacy selections on case entries", () => {
+  const legacy = { source: "legacy", modelId: "llama3", provider: "ollama" };
+
+  it("reads a stored legacy entry as legacy, never as a full selection", () => {
+    const testCase = { models: [{ model: "llama3", provider: "ollama", selection: legacy }] };
+    expect(storedSelectionForCaseModel(testCase, "llama3", "ollama")).toBeUndefined();
+    expect(
+      storedLegacySelectionForCaseModel(testCase, "llama3", "ollama"),
+    ).toEqual(legacy);
+  });
+
+  it("an unlabelled entry has neither", () => {
+    const testCase = { models: [{ model: "llama3", provider: "ollama" }] };
+    expect(
+      storedLegacySelectionForCaseModel(testCase, "llama3", "ollama"),
+    ).toBeUndefined();
+  });
+});
+
+describe("applyCommittedRoutingSelection (environment quick run)", () => {
+  const hosted = {
+    modelId: "openai/gpt-5",
+    source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+  };
+
+  it("the committed host config's selection wins when it is for the committed model", () => {
+    const test: Record<string, any> = { model: "openai/gpt-5", provider: "openai" };
+    applyCommittedRoutingSelection(test as never, { modelSelection: hosted });
+    expect(test.selection).toEqual(hosted);
+    expect(test.legacySelection).toBeUndefined();
+  });
+
+  it("a committed STORED legacy selection becomes the case's legacySelection", () => {
+    const test: Record<string, any> = {
+      model: "openai/gpt-5",
+      provider: "openai",
+      selection: hosted,
+    };
+    applyCommittedRoutingSelection(test as never, {
+      modelSelection: { source: "legacy", modelId: "openai/gpt-5" },
+    });
+    expect(test.selection).toBeUndefined();
+    expect(test.legacySelection).toEqual({ source: "legacy", modelId: "openai/gpt-5" });
+  });
+
+  it("keeps the case entry's own selection only while it is for the committed model", () => {
+    const kept: Record<string, any> = { model: "openai/gpt-5", provider: "openai", selection: hosted };
+    applyCommittedRoutingSelection(kept as never, {});
+    expect(kept.selection).toEqual(hosted);
+
+    const moved: Record<string, any> = {
+      model: "anthropic/claude-haiku-4.5",
+      provider: "anthropic",
+      selection: hosted,
+    };
+    applyCommittedRoutingSelection(moved as never, {});
+    // The environment runs a different model: no selection, today's path.
+    expect(moved.selection).toBeUndefined();
+    expect(moved.legacySelection).toBeUndefined();
+  });
+});
+
+describe("storedSelectionForCaseModel", () => {
+  const openai = {
+    modelId: "openai/gpt-5.1",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn_openai" },
+    fallback: { provider: "none", model: "none" },
+  };
+  const azure = {
+    modelId: "openai/gpt-5.1",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn_azure" },
+    nativeModelId: "prod-gpt51",
+    fallback: { provider: "none", model: "none" },
+  };
+  const testCase = {
+    models: [
+      { model: "gpt-5.1", provider: "openai", selection: openai },
+      { model: "gpt-5.1", provider: "azure", selection: azure },
+    ],
+  };
+
+  it("takes the entry of the requested provider when a model id repeats", () => {
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "azure"),
+    ).toMatchObject({ connectionRef: { id: "conn_azure" } });
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "openai"),
+    ).toMatchObject({ connectionRef: { id: "conn_openai" } });
+  });
+
+  it("returns nothing for a provider the case does not list", () => {
+    expect(
+      storedSelectionForCaseModel(testCase, "gpt-5.1", "anthropic"),
+    ).toBeUndefined();
+  });
+
+  it("matches an entry saved without a provider on the model alone", () => {
+    expect(
+      storedSelectionForCaseModel(
+        { models: [{ model: "gpt-5.1", selection: openai }] },
+        "gpt-5.1",
+        "openai",
+      ),
+    ).toMatchObject({ connectionRef: { id: "conn_openai" } });
   });
 });

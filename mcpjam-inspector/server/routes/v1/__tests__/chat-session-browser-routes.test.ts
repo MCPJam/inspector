@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   mutation: vi.fn(),
@@ -60,6 +60,9 @@ const request = (op: string, body: unknown = {}) =>
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.scoped.mockResolvedValue({
@@ -196,13 +199,15 @@ describe("conversation browser commands", () => {
     );
   });
   it("joins artifacts using command identity and does not wake the desktop", async () => {
+    // The link is on this deployment's configured HTTP-actions origin.
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
     mocks.query.mockResolvedValue({
       browserInteractionSteps: [
         { turnId: "other", toolCallId: "c1", screenshotUrl: "wrong" },
         {
           turnId: "command:c1",
           toolCallId: "c1",
-          screenshotUrl: "https://storage.test/image",
+          screenshotUrl: "https://example.convex.site/web/artifact?t=image.sig",
         },
       ],
     });
@@ -210,9 +215,32 @@ describe("conversation browser commands", () => {
       await (await request("artifact", { commandId: "c1" })).json(),
     ).toMatchObject({
       sessionId: "session",
-      url: "https://storage.test/image",
+      url: "https://example.convex.site/web/artifact?t=image.sig",
     });
     expect(mocks.provision).not.toHaveBeenCalled();
+  });
+  it("serves screenshots only as signed artifact links (MJ-005)", async () => {
+    mocks.query.mockResolvedValue({
+      browserInteractionSteps: [
+        {
+          turnId: "command:c1",
+          toolCallId: "c1",
+          screenshotUrl:
+            "https://deployment.convex.cloud/api/storage/0000-1111",
+        },
+      ],
+    });
+    const artifact = await request("artifact", { commandId: "c1" });
+    expect(artifact.status).toBe(404);
+    expect(await artifact.text()).not.toContain("/api/storage/");
+
+    const trace = await request("trace");
+    expect(trace.status).toBe(200);
+    const body = await trace.json();
+    expect(JSON.stringify(body)).not.toContain("/api/storage/");
+    expect(body.screenshots).toEqual([
+      expect.objectContaining({ toolCallId: "c1", status: "not_captured" }),
+    ]);
   });
   it("guards close against a different boot and never provisions", async () => {
     expect((await request("close")).status).toBe(200);

@@ -2,6 +2,11 @@ import { PostHog } from "posthog-node";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
+import {
+  CLIENT_FEATURE_FLAG_KEYS,
+  pickClientFeatureFlags,
+  type ClientFeatureFlagValues,
+} from "../../shared/client-feature-flags.js";
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
@@ -29,8 +34,10 @@ import { HOSTED_MODE } from "../config.js";
  */
 
 // Public project token — same one shipped in the client bundle
-// (client/src/lib/PosthogUtils.ts); it can only ingest, not read.
-const POSTHOG_PROJECT_KEY = "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
+// (client/src/lib/PosthogUtils.ts); it can only ingest, not read. The /relay
+// proxy forwards requests for this project only.
+export const POSTHOG_PROJECT_KEY =
+  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Same opt-outs the client honors, plus the conventional DO_NOT_TRACK for
@@ -180,6 +187,56 @@ export async function evaluateBrowserRollout(
     );
   } catch {
     return false;
+  }
+}
+
+/**
+ * The server-side rollout flag for each local harness. Codex rolls out on its
+ * own flag (D3), whose cohort must be a subset of `codex-host-enabled` — the
+ * backend refuses a Codex host config outside that cohort, so a user enabled
+ * here but not there could pick Codex and then fail to create the host.
+ */
+export const LOCAL_HARNESS_ROLLOUT_FLAG = {
+  "claude-code": "local-harness-enabled",
+  codex: "local-codex-enabled",
+} as const;
+export type LocalHarnessRolloutFlag =
+  (typeof LOCAL_HARNESS_ROLLOUT_FLAG)[keyof typeof LOCAL_HARNESS_ROLLOUT_FLAG];
+
+/** Same server-owned rollout decision for setup, launches and client visibility. */
+export async function evaluateLocalHarnessRollout(
+  distinctId: string,
+  email?: string,
+  flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
+): Promise<boolean> {
+  if (!distinctId || !email) return false;
+  try {
+    return (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
+      sendFeatureFlagEvents: false,
+      personProperties: { email, deployment: "self_hosted" },
+    })) === true;
+  } catch { return false; }
+}
+
+/**
+ * Values for the flags the web client reads, for `GET /api/web/flags`
+ * (MJ-015). Only allowlisted keys are evaluated or returned, no exposure
+ * events are sent, and any failure yields `{}` so the client keeps its own
+ * fallback instead of failing the page.
+ */
+export async function evaluateClientFeatureFlags(
+  distinctId: string,
+  personProperties: Record<string, string>,
+): Promise<ClientFeatureFlagValues> {
+  if (!distinctId) return {};
+  try {
+    const values = await getClient(true)?.getAllFlags(distinctId, {
+      flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],
+      personProperties,
+    });
+    return pickClientFeatureFlags(values);
+  } catch {
+    return {};
   }
 }
 

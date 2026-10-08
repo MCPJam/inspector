@@ -1,14 +1,26 @@
 import { PlatformApiClient } from "./platform/client.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import { HostRunner } from "./HostRunner.js";
-import { canonicalizeHostConfigV2 } from "./host-config/canonicalize.js";
+import {
+  canonicalizeHostConfigV2,
+  canonicalizeModelSelection,
+} from "./host-config/canonicalize.js";
 import { canonicalToPublic } from "./host-config/host.js";
 import type { HostConfigInputV2 } from "./host-config/types.js";
+import type {
+  ModelSelection,
+  ModelSelectionSource,
+} from "./host-config/model-selection.js";
 import type { SelectedEvalClient } from "./eval-reporting-types.js";
 
 export interface EvalSuiteClientOptions {
-  /** Saved client name or ID. The latest version is read once per run. */
-  client: string;
+  /**
+   * Saved client name or ID. The latest version is read once per run.
+   *
+   * Pass several to run the suite against each of them in parallel. Each
+   * client uploads its own run, and the runs share one run group in MCPJam.
+   */
+  client: string | readonly string[];
   projectId: string;
   apiKey: string;
   /** Servers and their connections are owned by the test code. */
@@ -35,8 +47,55 @@ export async function abortableSetup<T>(
   }
 }
 
+/**
+ * Thrown when a saved client's `modelSelection` names credentials
+ * `runWithClient` cannot use. The runner only has the hosted MCPJam rail (the
+ * caller's MCPJam API key), so an `org` or `local` selection — or a STORED
+ * legacy one (`source: "legacy"`, which means "own key only") — is refused
+ * rather than silently run on MCPJam's key as a bare model id.
+ */
+export class UnsupportedModelSelectionError extends Error {
+  readonly source: Exclude<ModelSelectionSource, "hosted"> | "legacy";
+  readonly modelId: string;
+
+  constructor(
+    source: Exclude<ModelSelectionSource, "hosted"> | "legacy",
+    modelId: string
+  ) {
+    super(
+      `runWithClient only runs hosted MCPJam models; this client's model selection "${modelId}" uses source "${source}" (${
+        source === "org"
+          ? "an organization provider connection"
+          : source === "local"
+            ? "a local provider"
+            : "your own provider key only"
+      }), which it cannot honour. Run this client from MCPJam, or save it with a hosted model.`
+    );
+    this.name = "UnsupportedModelSelectionError";
+    this.source = source;
+    this.modelId = modelId;
+  }
+}
+
+function isLegacySelectionLike(
+  value: unknown
+): value is { source: "legacy"; modelId: string } {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    (value as { source?: unknown }).source === "legacy" &&
+    typeof (value as { modelId?: unknown }).modelId === "string"
+  );
+}
+
+/** One saved client — what a single run resolves. */
+export type EvalSuiteSingleClientOptions = Omit<
+  EvalSuiteClientOptions,
+  "client"
+> & { client: string };
+
 export async function createSavedClientRunner(
-  input: EvalSuiteClientOptions,
+  input: EvalSuiteSingleClientOptions,
   signal: AbortSignal
 ): Promise<{ executor: HostRunner; selectedClient: SelectedEvalClient }> {
   const api = new PlatformApiClient({
@@ -78,6 +137,57 @@ export async function createSavedClientRunner(
       "This client requires a runtime feature unsupported by runWithClient (computer/browser, built-in tools, saved skills, progressive discovery, or interactive approval). Use a client configured for code-connected MCP servers."
     );
   }
+  // The saved selection says whose credentials serve the model. It gets the
+  // canonicalizer's own check first — valid shape, and `modelSelection.modelId`
+  // equal to the stored `modelId` — so a selection naming a different model
+  // than the one about to run is an error, not silently ignored. This runner
+  // only has the hosted MCPJam rail, so any other source is refused — never
+  // downgraded to the bare id (which would run on MCPJam's key). A hosted
+  // selection runs exactly as a bare id did, PLUS its settings: they are
+  // applied (below) rather than deleted with the selection, because running a
+  // saved `reasoningEffort: "high"` client at the model's default and reporting
+  // it as that client is the silent drop this runner must not do. Only after
+  // those checks is the selection itself dropped: the id below is rewritten to
+  // its `mcpjam/` form, which the canonicalizer would (correctly) refuse to
+  // agree with.
+  const savedSelection = (config as { modelSelection?: unknown })
+    .modelSelection;
+  // A store-once backend computes `modelId` on the response; read the
+  // selection's own id when an older shape omits it.
+  const selectionModelId =
+    savedSelection !== null &&
+    typeof savedSelection === "object" &&
+    typeof (savedSelection as { modelId?: unknown }).modelId === "string"
+      ? (savedSelection as { modelId: string }).modelId
+      : undefined;
+  if (
+    (typeof config.modelId !== "string" || config.modelId.trim() === "") &&
+    selectionModelId
+  ) {
+    (config as { modelId?: unknown }).modelId = selectionModelId;
+  }
+  let savedSettings: ModelSelection["settings"];
+  if (isLegacySelectionLike(savedSelection)) {
+    // "Own key only": never run on the caller's MCPJam key.
+    throw new UnsupportedModelSelectionError("legacy", savedSelection.modelId);
+  }
+  if (savedSelection !== undefined) {
+    const selection = canonicalizeModelSelection(
+      config.modelId as string,
+      savedSelection as HostConfigInputV2["modelSelection"]
+    )!;
+    if (selection.source !== "hosted") {
+      throw new UnsupportedModelSelectionError(
+        selection.source,
+        selection.modelId
+      );
+    }
+    savedSettings = selection.settings;
+  }
+  delete (config as { modelSelection?: unknown }).modelSelection;
+  // The conversion marker beside the selection describes the stored row, not
+  // the host this run builds.
+  delete (config as { modelSelectionOrigin?: unknown }).modelSelectionOrigin;
   let model = String(config.modelId ?? "").replace(/^mcpjam\//, "");
   if (!model.includes("/")) {
     if (model.startsWith("claude-")) model = `anthropic/${model}`;
@@ -129,7 +239,13 @@ export async function createSavedClientRunner(
     executor: new HostRunner({
       host,
       systemPrompt: host.systemPrompt,
-      temperature: host.temperature,
+      // The selection's settings beat the host default (the same order every
+      // other route resolves them in). An effort replaces the temperature —
+      // a selection carrying both must not hand both on — and a model with no
+      // effort control refuses here, before any spend.
+      ...(savedSettings?.reasoningEffort !== undefined
+        ? { reasoningEffort: savedSettings.reasoningEffort }
+        : { temperature: savedSettings?.temperature ?? host.temperature }),
       tools,
       apiKey: input.apiKey,
       mcpClientManager: input.manager,

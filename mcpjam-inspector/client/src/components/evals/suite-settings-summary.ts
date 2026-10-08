@@ -51,9 +51,21 @@ export function describePredicates(list: Predicate[]): string {
 /**
  * Review-dialog sentence for a judge config. Absent is "Not configured",
  * not "Off" — an unset `enabled` resolves to on.
+ *
+ * The rubric-checks slot rides the same draft key, so a change to it has to
+ * show up in this sentence too: otherwise the review dialog lists a Judge
+ * change whose before and after read the same. It is appended only when the
+ * slot is stored, which keeps every goal-only sentence exactly as it was.
  */
 export function describeJudge(value: EvalJudgeConfig | undefined): string {
-  const goal = value?.goalCompletion;
+  const goal = describeGoalCompletion(value?.goalCompletion);
+  const rubricChecks = describeRubricChecks(value?.rubricChecks);
+  return rubricChecks ? `${goal}; ${rubricChecks}` : goal;
+}
+
+function describeGoalCompletion(
+  goal: EvalJudgeConfig["goalCompletion"],
+): string {
   if (!goal) return "Not configured";
   if (goal.enabled === false) return "Off";
   const bits = [isRequiredRole(goal.role) ? "Required" : "Advisory"];
@@ -63,6 +75,20 @@ export function describeJudge(value: EvalJudgeConfig | undefined): string {
     bits.push(`threshold ${Math.round(goal.threshold * 100)}%`);
   }
   return bits.join(", ");
+}
+
+function describeRubricChecks(
+  slot: EvalJudgeConfig["rubricChecks"],
+): string | undefined {
+  if (!slot) return undefined;
+  if (slot.enabled === false) return "rubric checks off";
+  const count = slot.questions?.length ?? 0;
+  if (count === 0) return "rubric checks on";
+  // Names the questions, so adding or relabelling one reads as a change.
+  const labels = slot.questions!.map((question) => question.label.trim());
+  return `rubric checks with ${count} question${
+    count === 1 ? "" : "s"
+  } (${labels.join(", ")})`;
 }
 
 /** The three validity ceilings, as percents where they are fractions. */

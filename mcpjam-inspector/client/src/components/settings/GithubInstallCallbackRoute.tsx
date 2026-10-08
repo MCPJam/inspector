@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { Github, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
+import { GitHubIcon } from "@/components/ui/github-icon";
 import { Button } from "@mcpjam/design-system/button";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useAppNavigate } from "@/lib/app-navigation";
@@ -365,7 +366,7 @@ export function GithubInstallCallbackRoute() {
                   >
                     <div className="flex items-center justify-between gap-4 px-4 py-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <Github
+                        <GitHubIcon
                           className="size-4 text-muted-foreground shrink-0"
                           aria-hidden
                         />

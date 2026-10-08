@@ -13,6 +13,29 @@ import {
   NO_READ_ONLY_CASES_MESSAGE,
   NO_READ_ONLY_TOOLS_MESSAGE,
 } from "@/shared/eval-generation-errors";
+import { authoringRequest } from "@/lib/apis/eval-authoring-api";
+
+// Generation starts the shared authoring job, so "did it start?" is a request
+// on the wire rather than a call into the suite bridge. The poller that
+// follows the job is the module's own, so its read has to answer too.
+vi.mock("@/lib/apis/eval-authoring-api", async (original) => ({
+  ...(await original<object>()),
+  authoringRequest: vi.fn(async () => ({ jobId: "job-1" })),
+  readAuthoringJob: vi.fn(async () => ({
+    jobId: "job-1",
+    status: "pending",
+    phase: "draft",
+    error: null,
+    warnings: [],
+    drafts: [],
+  })),
+}));
+const started = vi.mocked(authoringRequest);
+/** The options a start carried, which is all these tests assert about it. */
+function startedOptions(call: number) {
+  return (started.mock.calls[call][0] as { input: { options?: unknown } }).input
+    .options;
+}
 
 const target = { projectId: "p", suiteId: "s", suiteName: "Suite" };
 const key = evalSuiteKey(target);
@@ -33,14 +56,13 @@ function seed(
 beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
+  started.mockClear();
   useEvalGeneration.setState({ suites: {} });
 });
 afterEach(() => vi.useRealTimers());
 it("starts generation directly once and closes the chat even in Strict Mode", () => {
-  const generate = vi.fn(() => new Promise<void>(() => {}));
   const unregister = registerEvalSuite(target, {
     read: () => ({}),
-    generate,
     save: vi.fn(),
   });
   useAgentPanelStore.setState({ isOpen: true });
@@ -49,7 +71,7 @@ it("starts generation directly once and closes the chat even in Strict Mode", ()
       <EvalGenerationWorkspace {...target} />
     </StrictMode>,
   );
-  expect(generate).toHaveBeenCalledTimes(1);
+  expect(started).toHaveBeenCalledTimes(1);
   expect(useAgentPanelStore.getState().isOpen).toBe(false);
   expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
   expect(screen.getAllByTestId("generating-case-skeleton")).toHaveLength(8);
@@ -76,7 +98,10 @@ it("replaces skeletons one by one when all cases arrive together", () => {
   act(() => vi.advanceTimersByTime(180));
   expect(screen.getByText("Third case")).toBeVisible();
   expect(screen.queryByTestId("generating-case-skeleton")).toBeNull();
-  expect(screen.getByText("Generation complete")).toBeVisible();
+  // The corner status line is gone: the drafts panel below carries the state,
+  // and saying "Generating cases…" in both places said it twice.
+  expect(screen.queryByText("Generation complete")).toBeNull();
+  expect(screen.getByText(/3 cases written/)).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Add all to suite" }),
   ).toBeEnabled();
@@ -113,10 +138,8 @@ it("retains drafts and exposes errors without endless skeletons", () => {
  * the message names.
  */
 it("offers the settings, not a retry, when retrying cannot succeed", () => {
-  const generate = vi.fn(() => new Promise<void>(() => {}));
   const unregister = registerEvalSuite(target, {
     read: () => ({}),
-    generate,
     save: vi.fn(),
   });
   const onChangeSettings = vi.fn();
@@ -133,7 +156,7 @@ it("offers the settings, not a retry, when retrying cannot succeed", () => {
     screen.getByRole("button", { name: "Change generation settings" }),
   );
   expect(onChangeSettings).toHaveBeenCalledTimes(1);
-  expect(generate).not.toHaveBeenCalled();
+  expect(started).not.toHaveBeenCalled();
   unregister();
 });
 
@@ -182,35 +205,33 @@ it("says nothing was generated when no draft ever arrived", () => {
 });
 
 it("shows startup failures and retries directly", () => {
-  const generate = vi.fn(() => new Promise<void>(() => {}));
   renderWithProviders(<EvalGenerationWorkspace {...target} />);
   expect(screen.getByRole("alert")).toBeVisible();
   expect(screen.queryByTestId("generating-case-skeleton")).toBeNull();
   const unregister = registerEvalSuite(target, {
     read: () => ({}),
-    generate,
     save: vi.fn(),
   });
   fireEvent.click(screen.getByRole("button", { name: "Retry generation" }));
-  expect(generate).toHaveBeenCalledTimes(1);
+  expect(started).toHaveBeenCalledTimes(1);
   expect(screen.getAllByTestId("generating-case-skeleton")).toHaveLength(8);
   unregister();
 });
 
 it("keeps the confirmed options for retries even if stored preferences change", () => {
-  const generate = vi.fn(() => new Promise<void>(() => {}));
-  const unregister = registerEvalSuite(target, { read: () => ({}), generate, save: vi.fn() });
+  const unregister = registerEvalSuite(target, { read: () => ({}), save: vi.fn() });
   const config = { simple: 5, multiTool: 5, multiTurn: 3, complex: 3, negative: 4, varyUserStyles: false, toolCoverage: "read-write" as const };
   renderWithProviders(<EvalGenerationWorkspace {...target} config={config} />);
   expect(screen.getAllByTestId("generating-case-skeleton")).toHaveLength(20);
-  expect(generate.mock.calls[0]).toEqual([
-    expect.any(String), expect.any(Function),
-    { caseMix: { simple: 5, multiTool: 5, multiTurn: 3, complex: 3, negative: 4 }, varyUserStyles: false, toolCoverage: "read-write" },
-  ]);
+  expect(startedOptions(0)).toEqual({
+    caseMix: { simple: 5, multiTool: 5, multiTurn: 3, complex: 3, negative: 4 },
+    varyUserStyles: false,
+    toolCoverage: "read-write",
+  });
   localStorage.clear();
   act(() => seed("error", [], "Try again"));
   fireEvent.click(screen.getByRole("button", { name: "Retry generation" }));
-  expect(generate.mock.calls[1]).toEqual(generate.mock.calls[0].map((arg) => typeof arg === "function" ? expect.any(Function) : arg));
+  expect(startedOptions(1)).toEqual(startedOptions(0));
   unregister();
 });
 
@@ -224,7 +245,7 @@ it("explains a model-limit refusal instead of echoing its raw body", () => {
     <EvalGenerationWorkspace {...target} autoStart={false} />,
   );
   const alert = screen.getByRole("alert");
-  expect(alert).toHaveTextContent(/MCPJam (model )?limit reached\./);
+  expect(alert).toHaveTextContent(/Out of MCPJam credits\./);
   expect(alert).not.toHaveTextContent("user_rate_limit");
   expect(
     screen.getByRole("button", { name: "Retry generation" }),

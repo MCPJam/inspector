@@ -1,6 +1,7 @@
 import { useAction } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import type { EvalIteration } from "./types";
+import { registerArtifactUrls, useArtifactUrlEpoch } from "@/lib/artifact-urls";
 
 export function useEvalTraceBlob({
   iteration,
@@ -51,6 +52,7 @@ export function useEvalTraceBlob({
         // chatSessions path. Gate skips the roundtrip only when neither
         // source is present.
         const data = await getBlob({ iterationId: iteration._id });
+        registerArtifactUrls(data);
         if (!cancelled) {
           setBlob(data);
           onTraceLoadedRef.current?.();
@@ -73,6 +75,31 @@ export function useEvalTraceBlob({
       cancelled = true;
     };
   }, [enabled, getBlob, iteration?.blob, iteration?.chatSessionId]);
+
+  // The trace's widget HTML and screenshots arrive as short-lived artifact
+  // links. When one expires anywhere on the page, re-read the trace in the
+  // background and swap the fresh links in without blanking the view.
+  const artifactUrlEpoch = useArtifactUrlEpoch();
+  const handledArtifactUrlEpochRef = useRef(artifactUrlEpoch);
+  const iterationId = iteration?._id;
+  const hasTraceSource = Boolean(iteration?.blob || iteration?.chatSessionId);
+  useEffect(() => {
+    if (artifactUrlEpoch === handledArtifactUrlEpochRef.current) return;
+    handledArtifactUrlEpochRef.current = artifactUrlEpoch;
+    if (!enabled || !iterationId || !hasTraceSource) return;
+    let cancelled = false;
+    getBlob({ iterationId })
+      .then((data) => {
+        registerArtifactUrls(data);
+        if (!cancelled) setBlob(data);
+      })
+      .catch(() => {
+        // Keep what is shown; the next expired link retries.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactUrlEpoch, enabled, getBlob, hasTraceSource, iterationId]);
 
   return {
     blob,

@@ -1,11 +1,52 @@
-# Use specific Node.js version to match local/CI runtimes and dependency engines
-ARG NODE_VERSION=24.14.0
+# Use specific Node.js version to match local/CI runtimes and dependency engines.
+# 24.21 runs ahead of CI's 24.14, and the Container Scan workflow's gate
+# verifies the Debian layer on every change. UNPINNED build-time apt/npm
+# upgrades are not the way to fix base-image CVEs here — Railway caches that
+# layer while CI rebuilds cold, so the scanned image silently drifts from the
+# deployed one. A pinned version (the perl-base step below) is deterministic
+# either way. There are two pins to re-evaluate when the weekly Container Scan
+# fails on a fixable CRITICAL: this one for the Debian/Node base, and the npm
+# pin plus its overlays in the base stage for npm's bundled dependencies (the
+# node-tar fix for CVE-2026-59873 now comes from that npm pin).
+ARG NODE_VERSION=24.21.0
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
 # against glibc and will not launch on musl. Widget-probe rendering (synthetic
 # monitors + browser-render evals) needs a launchable Chromium in this image.
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 WORKDIR /usr/src/app
+
+# The base image's npm bundles dependencies that are behind their upstream
+# security fixes. npm 11.21.0 carries the patched tar and ip-address; no npm
+# release yet bundles the fixed brace-expansion or undici, so overlay those two
+# into npm's tree at their pinned fixed versions (undici has no dependencies;
+# brace-expansion's balanced-match resolves to npm's bundled copy).
+# Everything here is pinned, so a Railway cache hit and a cold CI build produce
+# the same bytes. Delete the overlays — then the npm pin — once the
+# NODE_VERSION pin bundles an npm whose own copies have caught up. The first
+# command fails the build once the base npm reaches the pin, so that moment
+# cannot pass unnoticed. The npm cache is cleared because this stage ships.
+RUN node -e 'const d="/usr/local/lib/node_modules/npm",v=require(d+"/package.json").version;if(require(d+"/node_modules/semver").gte(v,"11.21.0")){console.error("base npm "+v+" is at or past the npm@11.21.0 pin: re-evaluate the npm pin and the brace-expansion/undici overlays");process.exit(1)}' \
+    && npm install -g npm@11.21.0 --no-audit --no-fund \
+    && cd /tmp \
+    && npm pack brace-expansion@5.0.12 undici@6.29.0 --loglevel=error \
+    && tar -xzf brace-expansion-5.0.12.tgz \
+    && rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+    && mv package /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+    && tar -xzf undici-6.29.0.tgz \
+    && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \
+    && mv package /usr/local/lib/node_modules/npm/node_modules/undici \
+    && rm /tmp/brace-expansion-5.0.12.tgz /tmp/undici-6.29.0.tgz \
+    && npm cache clean --force
+
+# The newest node:24 bookworm-slim build ships perl-base 5.36.0-7+deb12u3,
+# which carries CRITICAL CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376.
+# bookworm-security has the fix. Pinned, as the header above explains; the
+# install fails loudly once a later security update replaces this version in
+# the archive. Delete this step once the NODE_VERSION image ships deb12u4.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+    && rm -rf /var/lib/apt/lists/*
 
 ################################################################################
 # Install workspace dependencies with a single root lockfile.
@@ -37,12 +78,18 @@ COPY vitest/package.json ./vitest/package.json
 RUN npm ci --legacy-peer-deps
 
 ################################################################################
+# Keep test/build tools out of the shipped image while retaining workspace links.
+FROM deps AS production-deps
+RUN npm prune --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+
+################################################################################
 # Build the inspector and its workspace dependencies.
 FROM deps AS build
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 ARG VITE_MCPJAM_HOSTED_MODE
+ARG VITE_ENVIRONMENT
 ARG VITE_MCPJAM_NONPROD_LOCKDOWN
 ARG VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS
 ARG VITE_WORKOS_API_HOSTNAME
@@ -69,6 +116,10 @@ ARG VITE_MCPJAM_VIEW_SUBDOMAINS
 # neither of which Railway publishes. Mark the variable Sealed in Railway so it
 # is not readable back out of the dashboard or API.
 ARG SENTRY_AUTH_TOKEN
+# Same handling as SENTRY_AUTH_TOKEN, for `@posthog/rollup-plugin` in the same
+# config: a PostHog personal API key with error tracking write. Absent, the
+# plugin is disabled and PostHog exceptions stay unsymbolicated.
+ARG POSTHOG_PERSONAL_API_KEY
 
 COPY evaluators ./evaluators
 RUN npm run build -w @mcpjam/evaluators
@@ -100,11 +151,15 @@ COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 # transport: its bridge and the MCP server Codex spawns are uploaded into a
 # sandbox and executed there, so nothing in the import graph reaches them and
 # `codex-appserver-bootstrap.ts` imports the generated const at top level.
+# `bundle:local-harness-layer` likewise: the local runtime's Inspector layer
+# (launcher + bridges) is a generated const `local/inspector-layer.ts` imports,
+# even though a hosted server never runs a local harness.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run bundle:plugin-shim -w @mcpjam/inspector && \
-    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector
+    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector && \
+    npm run bundle:local-harness-layer -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
@@ -128,6 +183,7 @@ RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
 # SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABLE_KEY; fi; \
     if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
+    if [ -n "$VITE_ENVIRONMENT" ]; then export VITE_ENVIRONMENT; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
     if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \
@@ -137,6 +193,7 @@ RUN if [ -n "$VITE_STRIPE_PUBLISHABLE_KEY" ]; then export VITE_STRIPE_PUBLISHABL
     if [ -n "$VITE_MCPJAM_VIEW_MOUNT" ]; then export VITE_MCPJAM_VIEW_MOUNT; fi; \
     if [ -n "$VITE_MCPJAM_VIEW_SUBDOMAINS" ]; then export VITE_MCPJAM_VIEW_SUBDOMAINS; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
+    if [ -n "$POSTHOG_PERSONAL_API_KEY" ]; then export POSTHOG_PERSONAL_API_KEY; fi; \
     MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
 ################################################################################
@@ -159,11 +216,11 @@ COPY sdk/package.json /usr/src/app/sdk/package.json
 COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
 
-COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
+COPY --from=production-deps /usr/src/app/node_modules /usr/src/app/node_modules
 # Workspace-local deps that can't hoist to root (e.g. @workos-inc/node@^10
 # while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
 # mcpjam-inspector/node_modules and must be carried into the runtime image.
-COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
+COPY --from=production-deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 
 # Bake in Chromium + its system libraries — the same command CI runs
 # (test.yml) — so widget probes render at runtime instead of recording
@@ -175,8 +232,13 @@ COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 # Build-time egress required: cdn.playwright.dev (browser binary) and the
 # Debian apt mirrors (--with-deps system libs). If the build environment
 # blocks cdn.playwright.dev this step is where it fails — loudly, by design.
+#
+# Calls the CLI by path, not `npx playwright`: `playwright` and the dev-only
+# `@playwright/test` both declare the `playwright` bin, so `npm ci` links
+# `.bin/playwright` to the latter and the production-deps prune deletes that
+# link along with it, leaving `npx` with "playwright: not found".
 USER root
-RUN npx playwright install --with-deps chromium \
+RUN node /usr/src/app/node_modules/playwright/cli.js install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 USER node
 

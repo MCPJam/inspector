@@ -114,4 +114,18 @@ describe("SystemPromptSelector temperature control", () => {
     expect(sliderIsDisabled()).toBe(false);
     expect(screen.getByText(/Lower values \(0-0\.3\)/)).toBeInTheDocument();
   });
+
+  it("disables the slider with an explanation while a reasoning effort is set", () => {
+    renderSelector({ reasoningEffort: "high" });
+
+    expect(sliderIsDisabled()).toBe(true);
+    expect(screen.getByTestId("temperature-disabled-by-effort")).toBeInTheDocument();
+  });
+
+  it("keeps the slider usable when no reasoning effort is set", () => {
+    renderSelector({ reasoningEffort: undefined });
+
+    expect(sliderIsDisabled()).toBe(false);
+    expect(screen.queryByTestId("temperature-disabled-by-effort")).toBeNull();
+  });
 });

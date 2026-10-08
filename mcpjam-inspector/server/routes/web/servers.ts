@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
-import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import {
+  HOSTED_MODE,
+  WEB_CONNECT_TIMEOUT_MS,
+  WEB_SERVER_CHECK_DEADLINE_MS,
+} from "../../config.js";
+import { withinToolListingBudget } from "../../utils/within-budget.js";
 import {
   mapRuntimeError,
   webErrorFromRoute,
@@ -29,7 +34,11 @@ import {
   assertAllowedHostedTargetUrl,
 } from "../../utils/hosted-egress-guard.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
-import { redactHostedDoctorTransportDetail } from "../../utils/hosted-doctor-redaction.js";
+import {
+  projectHostedValidateInitInfo,
+  redactHostedDoctorTransportDetail,
+} from "../../utils/hosted-doctor-redaction.js";
+import { projectHostedConnectFailureLogs } from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
@@ -37,14 +46,43 @@ import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
 
+// Hosted, a failure is reported like every other MCP route's (MJ-001; see
+// `withEphemeralConnection`), and a successful connect's log envelope reports
+// received frames by their envelope as well.
 servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
     projectServerSchema,
-    (manager, body) => validateServerCore(c, manager, body),
-    { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
-  )
+    // Hosted, bounded by the Connect button's own deadline (counted from the
+    // request's arrival, queue wait included); on expiry the ephemeral
+    // connection's cleanup stops the stuck connect.
+    (manager, body) =>
+      withinToolListingBudget(
+        validateServerCore(c, manager, body),
+        remainingServerCheckBudget(c.get("serverCheckStartedAt")),
+        () => `"${body.serverId}"`,
+      ),
+    {
+      timeoutMs: WEB_CONNECT_TIMEOUT_MS,
+      ...(HOSTED_MODE
+        ? { redactSuccessLogs: projectHostedConnectFailureLogs }
+        : {}),
+    },
+  ),
 );
+
+/**
+ * What is left of `WEB_SERVER_CHECK_DEADLINE_MS` for a check that reached the
+ * server at `startedAt`. No start time means no server-check middleware ran
+ * (outside hosted), and then no deadline.
+ */
+export function remainingServerCheckBudget(
+  startedAt: number | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (startedAt === undefined) return undefined;
+  return Math.max(0, WEB_SERVER_CHECK_DEADLINE_MS - (now - startedAt));
+}
 
 /**
  * Connect-and-inspect core shared by POST /api/web/servers/validate and the
@@ -60,6 +98,13 @@ export async function validateServerCore(
   manager: any,
   body: { projectId: string; serverId: string }
 ) {
+  // The doctor's target check, so a stored URL the hosted inspector will not
+  // dial is answered as the caller's to fix (400) rather than as a failed
+  // connection. A no-op outside hosted mode.
+  const configuredUrl = manager.getServerConfig?.(body.serverId)?.url;
+  if (typeof configuredUrl === "string" || configuredUrl instanceof URL) {
+    await assertHostedServerTarget(String(configuredUrl));
+  }
   await manager.getToolsForAiSdk([body.serverId]);
   const snapshot = await exportSingleServerForInspection(
     manager,
@@ -77,8 +122,15 @@ export async function validateServerCore(
     });
   });
   // Same success envelope as the local /api/mcp/connect path so the inspector
-  // client's `storeInitInfo` takes one code path on both surfaces.
-  return buildConnectSuccessEnvelope(manager, body.serverId);
+  // client's `storeInitInfo` takes one code path on both surfaces. Hosted, its
+  // initialization info is projected (MJ-001).
+  const envelope = buildConnectSuccessEnvelope(manager, body.serverId);
+  return HOSTED_MODE
+    ? {
+        ...envelope,
+        initInfo: projectHostedValidateInitInfo(envelope.initInfo),
+      }
+    : envelope;
 }
 
 async function persistHostedConnectInspection(
@@ -157,7 +209,11 @@ servers.post("/doctor", async (c) => {
 
   try {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
-    rpcCollector = createHostedRpcLogCollector(rawBody);
+    // A hosted doctor response carries only its projected envelope (MJ-001),
+    // so the connection's JSON-RPC frames are not collected for it.
+    rpcCollector = HOSTED_MODE
+      ? undefined
+      : createHostedRpcLogCollector(rawBody);
     const timeoutMs = WEB_CONNECT_TIMEOUT_MS;
     const result = await runHostedDoctor(
       c,
@@ -180,11 +236,11 @@ servers.post("/doctor", async (c) => {
 export default servers;
 
 /**
- * Refuse a doctor target the hosted inspector must not dial, mapping the two
- * guard outcomes the way the conformance routes do: a blocked address is the
- * caller's problem (400), a resolver failure is ours (503).
+ * Refuse a doctor or validate target the hosted inspector must not dial,
+ * mapping the two guard outcomes the way the conformance routes do: a blocked
+ * address is the caller's problem (400), a resolver failure is ours (503).
  */
-async function assertHostedDoctorTarget(url: string): Promise<void> {
+async function assertHostedServerTarget(url: string): Promise<void> {
   try {
     await assertAllowedHostedTargetUrl(url, "Server URL");
   } catch (error) {
@@ -229,22 +285,17 @@ export async function runHostedDoctor(
   // conformance routes make, and a no-op outside hosted mode. This is the
   // caller-facing refusal: a stored URL that is already a private address gets
   // a 400 naming the host they typed, rather than a transport error.
-  await assertHostedDoctorTarget(config.url);
+  await assertHostedServerTarget(config.url);
 
-  // THE DOCTOR'S TWO LEGS, NOW ON ONE TRANSPORT.
+  // THE DOCTOR'S TWO LEGS, ON ONE TRANSPORT.
   //
   // `runServerDoctor` probes over `fetchFn`, records a failed probe, and
   // connects anyway — and its connection goes through `withEphemeralClient`,
-  // which threads the config's own `baseFetch` into the MCP transport. Before
-  // MJ-001 the probe had `createGuardedFetch` (which re-checks each hop but
-  // resolves DNS twice, leaving the rebinding window its own docblock
-  // describes) and the connection had nothing at all: a public host that
-  // answered `302 Location: http://127.0.0.1:6379/` was dialled there, and the
-  // socket's own error came back in the response.
-  //
-  // Both legs now dial the pinned transport — resolve once, classify, pin the
-  // address into the socket, re-run on every hop. One transport rather than two
-  // so the probe and the connection cannot disagree about what is dialable.
+  // which threads the config's own `baseFetch` into the MCP transport. Both
+  // legs dial the pinned transport: resolve once, classify, pin the address
+  // into the socket, and re-run all of it on every redirect hop. One transport
+  // rather than two so the probe and the connection cannot disagree about what
+  // is dialable.
   const doctorFetch = hostedMcpBaseFetch();
 
   const result = await runServerDoctor({

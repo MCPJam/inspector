@@ -93,6 +93,12 @@ export type SuiteCapabilities = {
   };
   features: {
     computers: SuiteFeatureGate;
+    /**
+     * Custom images and image pins. Absent on a backend older than the
+     * `computers-enabled` / `sandbox-images-enabled` split — that backend
+     * gated image pins on `computers`, so read this with that fallback.
+     */
+    "sandbox-images"?: SuiteFeatureGate;
     environments: SuiteFeatureGate;
     skills: SuiteFeatureGate;
     "claude-code-harness": SuiteFeatureGate;
@@ -132,6 +138,18 @@ export type SuiteCapabilities = {
       role: "advisory";
       template: null;
       execution: "not_wired";
+      calibration: "unavailable";
+    };
+    /**
+     * Absent on a backend that predates rubric checks. The settings card and
+     * its scorer row render only when this is present: an older backend would
+     * strip an authored slot it does not know, and a card that saves into
+     * nothing is worse than no card.
+     */
+    rubricChecks?: {
+      role: "advisory";
+      template: { version: number; hash: string };
+      execution: "wired";
       calibration: "unavailable";
     };
   };
@@ -290,6 +308,13 @@ export function useSuiteCapabilities(
  * what authorizes a goal-completion Warn control. An older backend has no
  * `judges` map — do not invent severity support from today's `judge` fields.
  */
+/** True when this deployment grades rubric checks, and so stores the slot. */
+export function hasRubricChecksCapability(
+  capabilities: SuiteCapabilities | null | undefined,
+): boolean {
+  return capabilities?.judges?.rubricChecks != null;
+}
+
 export function hasJudgeSeverityCapability(
   capabilities: SuiteCapabilities | null | undefined,
 ): boolean {

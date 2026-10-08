@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { getClientIp } from "../../utils/client-ip.js";
 import { ErrorCode, WebRouteError, readJsonBody } from "./errors.js";
+import { backendFailureRouteError } from "./backend-error.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 const REPORT_RATE_LIMIT = 10;
 const REPORT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -53,7 +55,7 @@ async function storeReport(args: { message: string }): Promise<{
   emailDeliveryStatus?: "sent" | "failed";
 }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
 
   if (!convexUrl || !serviceToken) {
     throw new WebRouteError(
@@ -91,11 +93,13 @@ async function storeReport(args: { message: string }): Promise<{
     error?: string;
   } | null;
   if (!response.ok || body?.ok !== true) {
-    throw new WebRouteError(
-      response.status >= 400 ? response.status : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      body?.error ?? "Failed to store report"
-    );
+    throw backendFailureRouteError({
+      source: "caniuse",
+      status: response.status,
+      body,
+      message: "Failed to store report",
+      code: ErrorCode.SERVER_UNREACHABLE,
+    });
   }
   return {
     storage: "backend",
@@ -133,7 +137,7 @@ async function storeSubscriber(args: { email: string }): Promise<{
   created?: boolean;
 }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
 
   if (!convexUrl || !serviceToken) {
     throw new WebRouteError(
@@ -170,11 +174,13 @@ async function storeSubscriber(args: { email: string }): Promise<{
     error?: string;
   } | null;
   if (!response.ok || body?.ok !== true) {
-    throw new WebRouteError(
-      response.status >= 400 ? response.status : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      body?.error ?? "Failed to save subscription"
-    );
+    throw backendFailureRouteError({
+      source: "caniuse",
+      status: response.status,
+      body,
+      message: "Failed to save subscription",
+      code: ErrorCode.SERVER_UNREACHABLE,
+    });
   }
   return { storage: "backend", created: body.created };
 }

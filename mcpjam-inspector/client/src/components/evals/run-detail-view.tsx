@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "./types";
 import { RunMetadataDisplay } from "./run-metadata-display";
 import {
   useCallback,
@@ -16,13 +17,21 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
-import { formatRunId, runClientIdentity, runClientLogo } from "./helpers";
+import {
+  cancellableRunIds,
+  formatRunId,
+  runClientIdentity,
+  runClientLogo,
+} from "./helpers";
 import {
   buildOpenAiSubmissionReport,
   renderOpenAiSubmissionReport,
 } from "@/lib/evals/openai-submission-report";
 import { buildSubmissionCasesFromRun } from "./run-submission";
-import { computeIterationPassed } from "./pass-criteria";
+import {
+  computeIterationPassed,
+  computeMeasuredIterationResult,
+} from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { ImportEvidenceCard } from "./import-evidence-card";
@@ -62,8 +71,8 @@ import { useStageFindings } from "@/components/evaluate/use-stage-findings";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowUpDown, Download, Share2 } from "lucide-react";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
+import { ArrowUpDown, Download, Loader2, Share2, Square } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
@@ -172,7 +181,7 @@ interface RunDetailViewProps {
    * through to {@link RunAccuracyHeroBand} for future re-surfacing; no
    * header UI consumes it today.
    */
-  compareBaseRun?: EvalSuiteRun | null;
+  compareBaseRun?: EvalSuiteRunListItem | null;
   onCompareWithRun?: (baseRunId: string) => void;
   /**
    * `namedHostId` → client display name. When the run was triggered against
@@ -191,6 +200,13 @@ interface RunDetailViewProps {
    * the row when sharing is available.
    */
   onShare?: () => void;
+  /**
+   * Stops the run. Passed by every surface that can reach a run while it is
+   * still going; without it the folded layout has no stop control at all,
+   * because it also hides the SuiteHeader row that carries one.
+   */
+  onCancelRun?: (runIds: readonly string[]) => void;
+  cancellingRunId?: string | null;
   /**
    * Navigate to another run on the accuracy hero's recent-run dot. Required for
    * CI/commit-detail callers so the jump stays on `/evals/runs/...` instead of
@@ -295,7 +311,7 @@ export function RunIterationsSidebar({
   onSelectIteration?: (id: string) => void;
   onEditTestCase?: (testCaseId: string) => void;
   /** When set, shows run overview row above the iteration list (CI sidebar + inline run detail). */
-  runForOverview?: EvalSuiteRun | null;
+  runForOverview?: EvalSuiteRunListItem | null;
   /** Optional row below overview (e.g. link to full runs table). */
   runOverviewExtra?: ReactNode;
   /** Opens run-level insights in the main pane (no iteration). */
@@ -328,13 +344,13 @@ export function RunIterationsSidebar({
     // grading mode `enforce` was reached from gating evidence (predicates,
     // gates, tool errors) the browser cannot see at all. The matcher survives
     // inside that helper for rows with no stored result; see its docblock.
-    const passed = caseGroupsForSelectedRun.filter((i) =>
-      computeIterationPassed(i),
-    ).length;
-    const failed = caseGroupsForSelectedRun.filter(
-      (i) => !computeIterationPassed(i),
-    ).length;
-    const total = caseGroupsForSelectedRun.length;
+    // An infra row measured nothing: in neither the rate nor its total.
+    const measured = caseGroupsForSelectedRun.filter(
+      (i) => computeMeasuredIterationResult(i) !== "infra_error",
+    );
+    const passed = measured.filter((i) => computeIterationPassed(i)).length;
+    const failed = measured.filter((i) => !computeIterationPassed(i)).length;
+    const total = measured.length;
     const passRate = total > 0 ? passed / total : 0;
     return { passed, failed, total, passRate };
   }, [runForOverview, caseGroupsForSelectedRun]);
@@ -472,6 +488,8 @@ export function RunDetailView({
   hideAccuracyHero = false,
   onExportTraces,
   onShare,
+  onCancelRun,
+  cancellingRunId = null,
   decisionSummarySlot,
   stageFindingsEnabled = false,
   onViewStageTrace,
@@ -481,7 +499,7 @@ export function RunDetailView({
     onEditTestCaseProp ??
     ((testCaseId: string) =>
       navigateApp(
-        buildEvalsPath({
+        buildEvaluatePath({
           type: "test-edit",
           suiteId: selectedRunDetails.suiteId,
           testId: testCaseId,
@@ -503,6 +521,7 @@ export function RunDetailView({
     requested: serverQualityRequested,
     failedGeneration: serverQualityFailedGeneration,
     error: serverQualityError,
+    signInRequired: serverQualitySignInRequired,
     requestServerQuality,
     unavailable: serverQualityUnavailable,
   } = useServerQuality(selectedRunDetails, { autoRequest: true });
@@ -529,13 +548,13 @@ export function RunDetailView({
     selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
     null;
   const runEnvironments = useSandboxImages(
-    runComputerEnvId ? selectedRunDetails.projectId ?? null : null,
+    runComputerEnvId ? (selectedRunDetails.projectId ?? null) : null,
   );
   // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
   // the only durable identifier once the environment is deleted).
   const runComputerEnvLabel = runComputerEnvId
-    ? runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
-        ?.name ?? runComputerEnvId
+    ? (runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
+        ?.name ?? runComputerEnvId)
     : null;
   // Project-environment provenance frozen at run start (name + revision) —
   // renders the "Environment" chip. Distinct from the sandbox-image pin
@@ -543,13 +562,18 @@ export function RunDetailView({
   // kill-switch hides env names/revisions on retained historical runs too.
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const runProjectEnvironmentRef = projectEnvironmentsEnabled
-    ? selectedRunDetails.configSnapshot?.environmentRef ?? null
+    ? (selectedRunDetails.configSnapshot?.environmentRef ?? null)
     : null;
   // OpenAI submission evidence (INS-5). Offered only when the run pinned a
   // plugin: the document's value is naming the exact bundle it is evidence
   // about, which a plugin-free run cannot do.
   const pluginSubmissionVersions =
     selectedRunDetails.configSnapshot?.environmentPluginVersions ?? [];
+  const cancellableIds = cancellableRunIds([selectedRunDetails]);
+  const canCancelRun = Boolean(onCancelRun) && cancellableIds.length > 0;
+  // Spinner only. The disabled state is the wider `cancellingRunId !== null`,
+  // so a cancel in flight anywhere blocks a second one.
+  const isCancellingRun = cancellableIds.some((id) => id === cancellingRunId);
   const downloadSubmissionReport = useCallback(() => {
     const report = buildOpenAiSubmissionReport({
       // The run row carries no suite NAME (CI/commit-detail parents have no
@@ -707,6 +731,7 @@ export function RunDetailView({
         requested={serverQualityRequested}
         failedGeneration={serverQualityFailedGeneration}
         error={serverQualityError}
+        signInRequired={serverQualitySignInRequired}
         onRetry={() => requestServerQuality(true)}
         source={source}
         hostNamesById={hostNamesById}
@@ -801,7 +826,11 @@ export function RunDetailView({
 
   const runClient = useMemo(() => {
     const identity = runClientIdentity(selectedRunDetails, hostNamesById);
-    return { hostId: identity.namedHostId, displayName: identity.name, logoSrc: runClientLogo(selectedRunDetails) };
+    return {
+      hostId: identity.namedHostId,
+      displayName: identity.name,
+      logoSrc: runClientLogo(selectedRunDetails),
+    };
   }, [selectedRunDetails, hostNamesById]);
 
   const accuracyHero = showAccuracyHero ? (
@@ -824,7 +853,7 @@ export function RunDetailView({
           return;
         }
         navigateApp(
-          buildEvalsPath({
+          buildEvaluatePath({
             type: "run-detail",
             suiteId: selectedRunDetails.suiteId,
             runId,
@@ -1214,10 +1243,32 @@ export function RunDetailView({
       {/* Renders nothing. Sits above every layout branch below because all of
           them gate on the answer it reports. */}
       {stageFunnelProbe}
-      {onExportTraces || pluginSubmissionVersions.length > 0 || onShare ? (
+      {onExportTraces ||
+      pluginSubmissionVersions.length > 0 ||
+      onShare ||
+      canCancelRun ? (
         // Always-on run-level actions — placed here (not the accuracy hero) so
         // they survive the folded run-detail layout that hides the hero.
         <div className="mb-3 flex shrink-0 justify-end gap-2">
+          {canCancelRun ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              aria-label="Cancel run"
+              data-testid="run-detail-cancel"
+              disabled={cancellingRunId !== null}
+              onClick={() => onCancelRun!(cancellableIds)}
+              className="gap-1.5"
+            >
+              {isCancellingRun ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Square className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Cancel run
+            </Button>
+          ) : null}
           {onShare ? (
             <Button
               variant="outline"

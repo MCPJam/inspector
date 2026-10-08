@@ -34,8 +34,11 @@ import {
   environmentServerIds,
   environmentServerNames,
   resolveEnvironmentForLaunch,
+  EVAL_LAUNCH_SERVER_SOURCE,
+  translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
+import { getServiceCredential } from "./service-credential.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -68,7 +71,7 @@ export function isScheduledEvalsWorkerEnabled(): boolean {
 
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) return null;
   return { convexUrl, serviceToken };
 }
@@ -84,7 +87,10 @@ async function postServiceRoute(
     );
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), SERVICE_ROUTE_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    SERVICE_ROUTE_TIMEOUT_MS,
+  );
   let response: Response;
   try {
     response = await fetch(`${env.convexUrl}${path}`, {
@@ -187,7 +193,8 @@ export async function executeClaimedRun(
     return;
   }
 
-  let manager: Awaited<ReturnType<typeof createAuthorizedManager>>["manager"] | null =
+  let manager:
+    Awaited<ReturnType<typeof createAuthorizedManager>>["manager"] | null =
     null;
   try {
     const bearer = await getConvexBearerForDelegation(
@@ -210,6 +217,7 @@ export async function executeClaimedRun(
           const resolved = await resolveEnvironmentForLaunch(
             createConvexClient(bearer),
             {
+              serverSource: EVAL_LAUNCH_SERVER_SOURCE,
               projectId: claimed.projectId!,
               environmentId: claimed.environmentId!,
             },
@@ -220,7 +228,12 @@ export async function executeClaimedRun(
             resolvedEnvironment: resolved,
           };
         })()
-      : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);
+      : await fetchSuiteRunServerSelection(
+          bearer,
+          claimed.suiteId,
+          undefined,
+          "authorized",
+        );
 
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal.
@@ -270,7 +283,7 @@ export async function executeClaimedRun(
       await reportComplete({
         triggerId: claimed.triggerId,
         ok: false,
-        failureReason: classifyFailure(error),
+        failureReason: classifyFailure(translateEnvironmentResolveError(error)),
       });
       return;
     }
@@ -316,7 +329,7 @@ export async function executeClaimedRun(
     await reportComplete({
       triggerId: claimed.triggerId,
       ok: false,
-      failureReason: classifyFailure(error),
+      failureReason: classifyFailure(translateEnvironmentResolveError(error)),
     });
   } finally {
     if (manager) {
@@ -374,7 +387,8 @@ export function startScheduledEvalsWorker(options?: {
 
   const loop = (async () => {
     while (!abort.signal.aborted) {
-      let waitMs = POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
+      let waitMs =
+        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
       try {
         const claimed = await claim(claimedBy);
         if (claimed === "disabled") {

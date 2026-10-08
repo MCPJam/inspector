@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ErrorBox } from "../error";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
@@ -17,6 +18,21 @@ beforeEach(() => {
 });
 
 describe("ErrorBox daily-limit handling", () => {
+  it("shows a BYOK balance error without retry or MCPJam credit prompts", () => {
+    const message =
+      "Your Anthropic API account has insufficient credits. Add credits in Anthropic or use another API key.";
+    render(
+      <ErrorBox message={message} code="provider_error" isRetryable={false}
+        onRetry={vi.fn()} onResetChat={vi.fn()} />,
+    );
+    expect(screen.getByText(message, { exact: false })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry/i }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText(/buy.*credits|MCPJam credits/i))
+      .not.toBeInTheDocument();
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
   const guestLimitProps = {
     message:
       "Add your own API key in Settings > LLM Providers to keep chatting now, or try again tomorrow.",
@@ -87,5 +103,79 @@ describe("ErrorBox daily-limit handling", () => {
     render(<ErrorBox message="Locked" walletLocked onResetChat={vi.fn()} />);
 
     expect(screen.getByText(/Account under review/i)).toBeInTheDocument();
+  });
+});
+
+describe("ErrorBox provider_not_allowlisted", () => {
+  const message =
+    'The "openai" provider is not enabled on MCPJam\'s AI Gateway provider allowlist, so MCPJam cannot serve this model right now.';
+
+  it("explains the hosted gateway refusal without a retry or an API-key fix", () => {
+    const onRetry = vi.fn();
+    render(
+      <ErrorBox
+        message={message}
+        code="provider_not_allowlisted"
+        statusCode={403}
+        isRetryable={false}
+        isMCPJamPlatformError
+        onRetry={onRetry}
+        onResetChat={vi.fn()}
+      />
+    );
+
+    const banner = screen.getByTestId("chat-error-provider-not-allowlisted");
+    expect(banner).toHaveTextContent("Model provider not enabled on MCPJam");
+    expect(banner).toHaveTextContent('The "openai" provider is not enabled');
+    expect(banner).toHaveTextContent(
+      "Retrying or changing your API key won't help."
+    );
+    expect(banner).toHaveTextContent(
+      "Choose a model from a different provider."
+    );
+    expect(banner).toHaveTextContent(/BYOK/);
+    expect(banner).not.toHaveTextContent(/check your api key/i);
+    expect(banner).not.toHaveTextContent(/temporary issue/i);
+    expect(
+      screen.queryByRole("button", { name: /retry/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the model picker's provider tab for the user's own key", () => {
+    const release = useModelPickerIntentStore
+      .getState()
+      .registerProvidersTabResponder();
+    const before = useModelPickerIntentStore.getState().openProvidersTabNonce;
+    render(<ErrorBox message={message} code="provider_not_allowlisted" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use your own provider key" })
+    );
+
+    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
+      before + 1
+    );
+    release();
+  });
+
+  it("offers no provider-key button when no model picker can open", () => {
+    // e.g. a hosted study chat in minimal mode, which mounts no picker.
+    useModelPickerIntentStore.setState({ providersTabResponderCount: 0 });
+    render(<ErrorBox message={message} code="provider_not_allowlisted" />);
+
+    expect(
+      screen.getByTestId("chat-error-provider-not-allowlisted")
+    ).toHaveTextContent(/BYOK/);
+    expect(
+      screen.queryByRole("button", { name: "Use your own provider key" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to the catalog sentence when the message is blank", () => {
+    render(<ErrorBox message="" code="provider_not_allowlisted" />);
+
+    expect(
+      screen.getByTestId("chat-error-provider-not-allowlisted")
+    ).toHaveTextContent("Retrying or changing your API key won't help.");
   });
 });

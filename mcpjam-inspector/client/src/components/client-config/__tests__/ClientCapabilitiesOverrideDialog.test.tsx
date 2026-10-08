@@ -54,6 +54,13 @@ describe("ClientCapabilitiesOverrideDialog", () => {
     expect(screen.getByRole("button", { name: "Clear override" })).toBeEnabled();
   });
 
+  it.each(["[]", "null", "42"])("explains the required object shape for %s", (value) => {
+    render(<ClientCapabilitiesOverrideDialog open onOpenChange={vi.fn()} hostStyle="claude" override={undefined} onSave={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value } });
+    expect(screen.getByText('Enter a JSON object enclosed in { }, such as {"key": "value"}.')).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
   it("shows a validation error when JSON is invalid", () => {
     const onSave = vi.fn();
     const onOpenChange = vi.fn();
@@ -75,5 +82,10 @@ describe("ClientCapabilitiesOverrideDialog", () => {
     expect(
       screen.getByText(/not valid JSON/i),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: '{"serverTools": {}}' } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({ serverTools: {} });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

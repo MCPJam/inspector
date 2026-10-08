@@ -1,0 +1,77 @@
+{
+  "$comment": "Harness x model compatibility evidence. Rows are evaluated in order; the first row whose harness matches, whose versionRange admits the runtime version and whose familyPattern matches the canonical model id wins. versionRange is \"*\" (any version, including an unknown one), \"<=A.B.x\" or \">A.B.x\". When the runtime version is unknown and a version-specific row's pattern matches, the verdict is unknown. Mirrored byte-for-byte between mcpjam-inspector/shared/harness-model-support-evidence.json (source) and mcpjam-backend convex/lib/harnessModelSupportEvidence.json.",
+  "rows": [
+    {
+      "harness": "claude-code",
+      "versionRange": "*",
+      "familyPattern": "^anthropic/claude-(haiku|sonnet|opus)-\\d+(\\.\\d+)?$",
+      "status": "supported",
+      "evidence": "Claude Code accepts the haiku/sonnet/opus family ids natively (toClaudeCodeModel maps them to CLI model names).",
+      "observedAt": "2026-09-25"
+    },
+    {
+      "harness": "claude-code",
+      "versionRange": "*",
+      "familyPattern": "^anthropic/",
+      "status": "unknown",
+      "evidence": "Anthropic model outside the haiku/sonnet/opus families: no native Claude Code model id has been verified.",
+      "observedAt": "2026-09-25"
+    },
+    {
+      "harness": "claude-code",
+      "versionRange": "*",
+      "familyPattern": ".*",
+      "status": "unsupported",
+      "evidence": "Claude Code only runs Anthropic models.",
+      "observedAt": "2026-09-25"
+    },
+    {
+      "harness": "codex",
+      "versionRange": "<=0.149.x",
+      "familyPattern": "^openai/gpt-5\\.6($|-)",
+      "status": "unsupported",
+      "evidence": "Loopback capture 2026-09-01: the pinned Codex CLI sends tools: [] for the gpt-5.6 line, so the model cannot call MCP tools.",
+      "observedAt": "2026-09-01"
+    },
+    {
+      "harness": "codex",
+      "versionRange": ">0.149.x",
+      "familyPattern": "^openai/gpt-5\\.6($|-)",
+      "status": "unknown",
+      "evidence": "The gpt-5.6 tool-less behavior was measured only on Codex <=0.149.x; newer CLI versions have not been captured.",
+      "observedAt": "2026-09-01"
+    },
+    {
+      "harness": "codex",
+      "versionRange": "*",
+      "familyPattern": "^openai/gpt-5",
+      "status": "supported",
+      "evidence": "Codex runs the OpenAI gpt-5 family natively (toCodexModel).",
+      "observedAt": "2026-09-25"
+    },
+    {
+      "harness": "codex",
+      "versionRange": "*",
+      "familyPattern": ".*",
+      "status": "unsupported",
+      "evidence": "Codex only runs OpenAI gpt-5 family models.",
+      "observedAt": "2026-09-25"
+    },
+    {
+      "harness": "cursor",
+      "versionRange": "*",
+      "familyPattern": "^cursor/auto$",
+      "status": "supported",
+      "evidence": "Cursor's agent CLI selects its own model; cursor/auto is the only selectable id.",
+      "observedAt": "2026-09-25"
+    },
+    {
+      "harness": "cursor",
+      "versionRange": "*",
+      "familyPattern": ".*",
+      "status": "unsupported",
+      "evidence": "Cursor's agent CLI does not accept an explicit model id.",
+      "observedAt": "2026-09-25"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadLastOwnProviderModelId,
+  loadLeadModelProviderHint,
+  saveLeadModelProviderHint,
   loadSelectedModelId,
   loadSelectedModelIds,
   replaceLeadModelId,
@@ -9,11 +11,19 @@ import {
   saveSelectedModelIds,
   subscribeSelectedModelId,
   subscribeSelectedModelIds,
+  loadSelectedModelSelections,
+  migrateSelectedModelsToV2,
+  normalizeSelectedModelSelections,
+  saveSelectedModelSelections,
+  subscribeSelectedModelSelections,
+  type SelectedModelsMigrationContext,
 } from "../selected-model-storage";
+import { comparisonKey, type ModelSelection } from "@mcpjam/sdk/browser";
 
 const LEAD_KEY = "mcp-inspector-selected-model";
 const ARRAY_KEY = "mcp-inspector-selected-models";
 const OWN_PROVIDER_KEY = "mcp-inspector-last-own-provider-model";
+const PROVIDER_HINT_KEY = "mcp-inspector-selected-model-provider";
 
 describe("selected-model-storage", () => {
   beforeEach(() => {
@@ -249,5 +259,206 @@ describe("selected-model-storage", () => {
       replaceLeadModelId("b");
       expect(cb).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("lead model provider hint", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it("round-trips the pair it was picked as", () => {
+    saveLeadModelProviderHint({
+      modelId: "anthropic/claude-sonnet-5",
+      provider: "openrouter",
+    });
+    expect(loadLeadModelProviderHint()).toEqual({
+      modelId: "anthropic/claude-sonnet-5",
+      provider: "openrouter",
+    });
+  });
+
+  it("is empty until something is picked", () => {
+    expect(loadLeadModelProviderHint()).toBeNull();
+  });
+
+  it("clears on null", () => {
+    saveLeadModelProviderHint({ modelId: "a/b", provider: "openrouter" });
+    saveLeadModelProviderHint(null);
+    expect(localStorage.getItem(PROVIDER_HINT_KEY)).toBeNull();
+    expect(loadLeadModelProviderHint()).toBeNull();
+  });
+
+  // Whatever is in storage came from a browser we do not control; a bad value
+  // must read as "no hint", which means the id-only resolution of before.
+  it.each([
+    ["not JSON", "{oops"],
+    ["a bare string", JSON.stringify("openrouter")],
+    ["missing provider", JSON.stringify({ modelId: "a/b" })],
+    ["blank id", JSON.stringify({ modelId: " ", provider: "openrouter" })],
+    ["wrong types", JSON.stringify({ modelId: 1, provider: true })],
+  ])("reads %s as no hint", (_label, raw) => {
+    localStorage.setItem(PROVIDER_HINT_KEY, raw);
+    expect(loadLeadModelProviderHint()).toBeNull();
+  });
+});
+
+describe("compare line-up storage v2", () => {
+  const V2_KEY = "mcp-inspector-selected-model-selections.v2";
+  const SONNET = "anthropic/claude-sonnet-5";
+  const GPT = "openai/gpt-5";
+  const openRouterSonnet: ModelSelection = {
+    modelId: SONNET,
+    source: "local",
+    connectionRef: { kind: "localProvider", providerKey: "openrouter" },
+    fallback: { provider: "openrouter", model: "none" },
+  };
+  const context = (
+    overrides: Partial<SelectedModelsMigrationContext> = {},
+  ): SelectedModelsMigrationContext => ({
+    catalogStatus: "live",
+    hostedCatalogModelIds: new Set([SONNET, GPT]),
+    ownKeySelectionsFor: () => [],
+    ...overrides,
+  });
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it("honours a provider hint that names exactly one own-key connection", () => {
+    saveSelectedModelIds([SONNET, GPT]);
+    saveLeadModelProviderHint({ modelId: SONNET, provider: "openrouter" });
+    const ownKeySelectionsFor = vi.fn((modelId: string, provider: string) =>
+      modelId === SONNET && provider === "openrouter" ? [openRouterSonnet] : [],
+    );
+
+    const migrated = migrateSelectedModelsToV2(
+      context({ ownKeySelectionsFor }),
+    );
+
+    // Both ids are hosted catalog ids, but the OpenRouter pick stays on the
+    // user's key: the hint wins over catalog membership.
+    expect(migrated).toEqual([
+      openRouterSonnet,
+      {
+        modelId: GPT,
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      },
+    ]);
+    expect(ownKeySelectionsFor).toHaveBeenCalledWith(SONNET, "openrouter");
+    expect(loadSelectedModelSelections()).toEqual(migrated);
+  });
+
+  it("converts an id in the live hosted catalog to a plain hosted selection", () => {
+    saveSelectedModelIds([GPT]);
+    const migrated = migrateSelectedModelsToV2(context());
+    expect(migrated).toEqual([
+      {
+        modelId: GPT,
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      },
+    ]);
+    // Default selection: the card keys exactly as the bare id did in v1.
+    expect(comparisonKey(migrated![0]!)).toBe(GPT);
+  });
+
+  it("stores an id outside the catalog as legacy (own key only), never hosted", () => {
+    saveSelectedModelIds(["gpt-4o", "x-ai/grok-9"]);
+    expect(migrateSelectedModelsToV2(context())).toEqual([
+      { source: "legacy", modelId: "gpt-4o" },
+      { source: "legacy", modelId: "x-ai/grok-9" },
+    ]);
+  });
+
+  it("does not migrate until the catalog is live, keeping the v1 behaviour", () => {
+    saveSelectedModelIds([SONNET, "gpt-4o"]);
+    for (const catalogStatus of ["loading", "fallback"] as const) {
+      // Even with the snapshot's ids at hand, nothing is decided off them.
+      expect(migrateSelectedModelsToV2(context({ catalogStatus }))).toBeNull();
+    }
+    expect(localStorage.getItem(V2_KEY)).toBeNull();
+    expect(loadSelectedModelSelections()).toBeNull();
+    expect(loadSelectedModelIds()).toEqual([SONNET, "gpt-4o"]);
+  });
+
+  it("waits while the hinted row is not listed yet (org config loading)", () => {
+    saveSelectedModelIds([SONNET]);
+    saveLeadModelProviderHint({ modelId: SONNET, provider: "openrouter" });
+    expect(
+      migrateSelectedModelsToV2(context({ isProviderRowListed: () => false })),
+    ).toBeNull();
+    expect(localStorage.getItem(V2_KEY)).toBeNull();
+  });
+
+  it("does not honour a hint that names more than one connection", () => {
+    saveSelectedModelIds(["gpt-4o"]);
+    saveLeadModelProviderHint({ modelId: "gpt-4o", provider: "openai" });
+    const second: ModelSelection = {
+      ...openRouterSonnet,
+      modelId: "openai/gpt-4o",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "org-openai" },
+    };
+    expect(
+      migrateSelectedModelsToV2(
+        context({ ownKeySelectionsFor: () => [openRouterSonnet, second] }),
+      ),
+    ).toEqual([{ source: "legacy", modelId: "gpt-4o", provider: "openai" }]);
+  });
+
+  it("migrates once, keeps the v1 key for rollback, and notifies", () => {
+    saveSelectedModelIds([GPT]);
+    const callback = vi.fn();
+    const unsubscribe = subscribeSelectedModelSelections(callback);
+    migrateSelectedModelsToV2(context());
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(loadSelectedModelIds()).toEqual([GPT]);
+
+    saveSelectedModelIds(["gpt-4o"]);
+    expect(migrateSelectedModelsToV2(context())).toEqual([
+      {
+        modelId: GPT,
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      },
+    ]);
+    expect(callback).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("prefers the caller's in-memory v1 list over the stored one", () => {
+    saveSelectedModelIds(["gpt-4o"]);
+    expect(migrateSelectedModelsToV2(context({ v1ModelIds: [GPT] }))).toEqual([
+      {
+        modelId: GPT,
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      },
+    ]);
+  });
+
+  it("keeps two efforts of one model as two entries, deduped and capped", () => {
+    const hosted = (effort?: "low" | "high"): ModelSelection => ({
+      modelId: SONNET,
+      source: "hosted",
+      fallback: { provider: "openrouter", model: "none" },
+      ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+    });
+    saveSelectedModelSelections([
+      hosted("low"),
+      hosted("high"),
+      // Same comparisonKey as the first (fallback is not identity).
+      { ...hosted("low"), fallback: { provider: "none", model: "none" } },
+      { modelId: "not canonical", source: "hosted" } as never,
+      hosted(),
+      { source: "legacy", modelId: "gpt-4o" },
+    ]);
+    expect(loadSelectedModelSelections()).toEqual([
+      hosted("low"),
+      hosted("high"),
+      hosted(),
+    ]);
+    expect(normalizeSelectedModelSelections("nope")).toEqual([]);
   });
 });

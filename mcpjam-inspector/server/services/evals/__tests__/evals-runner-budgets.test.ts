@@ -111,7 +111,50 @@ const assistantTurnMock = vi.hoisted(() => vi.fn());
 vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => assistantTurnMock(...args),
 }));
-import { runEvalSuiteWithAiSdk } from "../../evals-runner.js";
+// Pass-through unless a test rewrites the options the runner hands the holder
+// (to stub the box and observe its heartbeat).
+const harnessBoxOptionsOverride = vi.hoisted(() => ({
+  current: undefined as ((options: any) => any) | undefined,
+}));
+vi.mock("../../../utils/harness/harness-box.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../../utils/harness/harness-box.js")
+    >();
+  return {
+    ...actual,
+    acquireHarnessBox: (options: any) =>
+      actual.acquireHarnessBox(
+        harnessBoxOptionsOverride.current?.(options) ?? options,
+      ),
+  };
+});
+// A stubbed box has no attachments to seed; pass-through otherwise.
+const seedAttachmentsOverride = vi.hoisted(() => ({
+  current: undefined as (() => Promise<{ note: null }>) | undefined,
+}));
+vi.mock(
+  "../../../utils/computers/eval-attachments-seed.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../../utils/computers/eval-attachments-seed.js")
+      >();
+    return {
+      ...actual,
+      seedEvalCaseAttachments: (
+        ...args: Parameters<typeof actual.seedEvalCaseAttachments>
+      ) =>
+        seedAttachmentsOverride.current?.() ??
+        actual.seedEvalCaseAttachments(...args),
+    };
+  },
+);
+import {
+  isRunDeletedError,
+  runEvalSuiteWithAiSdk,
+} from "../../evals-runner.js";
+import { ConvexError } from "convex/values";
 
 import {
   EXECUTION_BUDGET_DEFAULTS,
@@ -253,6 +296,24 @@ describe("provisionEvalSandbox — capacity", () => {
     expect(requests).toBe(1);
   });
 
+  it("names the run first, and the iteration alone for a single-case run", async () => {
+    const bodies: unknown[] = [];
+    global.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ sandboxId: "s1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    await provisionEvalSandbox(args);
+    await provisionEvalSandbox({ bearer: "token", iterationId: "i9" });
+    // A suite-run body is unchanged on the wire, key order included.
+    expect(JSON.stringify(bodies[0])).toBe(
+      JSON.stringify({ runId: "r1", iterationId: "i1" }),
+    );
+    expect(bodies[1]).toEqual({ iterationId: "i9" });
+  });
+
   it("hands back a non-capacity refusal immediately, without retrying", async () => {
     // A 409 is an ANSWER — no image pinned, attempt not running. Waiting on it
     // buys nothing and spends the iteration's clock.
@@ -314,9 +375,14 @@ describe("provisionEvalSandbox — capacity", () => {
     // saturated recorded genuine failures, and a capacity blip read as a
     // quality regression on the run's chart.
     //
-    // Asserted through a budget too small for the first wait to fit, so the
+    // Asserted through a budget too small for the first WAIT to fit, so the
     // loop reaches its terminal in real time rather than the test waiting out
-    // a real backoff.
+    // a real backoff. A second is the right size: far under the 7.5s floor on
+    // that first wait, and far over what one mocked attempt costs. A budget of
+    // a millisecond also stops in real time, but it can expire before the
+    // first attempt is even made on a loaded runner — and then there is no
+    // control-plane result to relay, so the assertion below fails on a
+    // fallback this test is not about.
     respond = () =>
       new Response(
         JSON.stringify({
@@ -326,7 +392,7 @@ describe("provisionEvalSandbox — capacity", () => {
         }),
         { status: 503, headers: { "content-type": "application/json" } },
       );
-    const result = await provisionEvalSandbox({ ...args, timeoutMs: 1 });
+    const result = await provisionEvalSandbox({ ...args, timeoutMs: 1_000 });
     // The control plane's OWN refusal is relayed — its status, its code, its
     // `resource` — rather than a message this layer invented about a failure
     // it only passed along.
@@ -336,11 +402,11 @@ describe("provisionEvalSandbox — capacity", () => {
       code: "at_capacity",
       resource: "desktops",
     });
-    // It really did try, and really did stop.
-    expect(requests).toBeGreaterThanOrEqual(1);
-    expect(requests).toBeLessThanOrEqual(
-      EVAL_SANDBOX_CAPACITY_POLICY.maxAttempts,
-    );
+    // It really did try, and really did stop — and with this budget the count
+    // is EXACT, not a range: one attempt fits, and the 7.5s floor on the wait
+    // that would precede a second one does not. A range here would pass just
+    // as happily if the budget stopped being enforced before the retry.
+    expect(requests).toBe(1);
   });
 });
 
@@ -452,6 +518,7 @@ describe.each(["local", "hosted"] as const)(
         streamTextMock.mockImplementation(({ abortSignal }) => ({
           consumeStream: () => waitForAbort(abortSignal),
           response: Promise.resolve({ messages: [] }),
+          responseMessages: Promise.resolve([]),
           steps: Promise.resolve([]),
           totalUsage: Promise.resolve({}),
           finishReason: Promise.resolve("stop"),
@@ -601,3 +668,321 @@ describe.each(["local", "hosted"] as const)(
     });
   },
 );
+
+describe("hosted iteration box heartbeat", () => {
+  afterEach(() => {
+    harnessBoxOptionsOverride.current = undefined;
+    seedAttachmentsOverride.current = undefined;
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  /**
+   * One hosted iteration on a pinned computer, with the box stubbed so only
+   * its heartbeat and release are observed. `turn` decides how the agent run
+   * ends.
+   */
+  async function runOnBox(turn: "hangs" | "throws") {
+    vi.useFakeTimers();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT", "1");
+    vi.stubEnv("E2B_API_KEY", "test-key");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+    const touch = vi.fn(async () => "touched" as const);
+    const release = vi.fn(async () => {});
+    harnessBoxOptionsOverride.current = (options) => ({
+      ...options,
+      provision: async () => ({
+        ok: true as const,
+        box: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
+      }),
+      release,
+      touch,
+    });
+    seedAttachmentsOverride.current = async () => ({ note: null });
+    executeStepsMock.mockImplementation(() =>
+      turn === "hangs"
+        ? // Ignores its abort: the iteration is abandoned after the grace.
+          new Promise(() => {})
+        : Promise.reject(new Error("engine blew up")),
+    );
+    const snapshot = {
+      title: "Case",
+      query: "Hello",
+      model: "gpt-5-mini",
+      provider: "openai",
+    };
+    const row: Record<string, any> = {
+      _id: "iter-1",
+      testCaseId: "case-1",
+      iterationNumber: 1,
+      testCaseSnapshot: snapshot,
+      status: "pending",
+      result: "pending",
+    };
+    const pending = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder: {
+        startIteration: vi.fn(async () => row._id),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (args) => Object.assign(row, args)),
+        finalize: vi.fn(async () => {}),
+      },
+      config: {
+        tests: [
+          {
+            ...snapshot,
+            runs: 1,
+            testCaseId: "case-1",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+          },
+        ],
+        environment: { servers: ["srv-1"], computerEnvironmentId: "env-1" },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: [row] }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, args) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(row, args);
+        }),
+      },
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      },
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        unitTimeoutMs: 100,
+        runTimeoutMs: 10 * 60_000,
+      },
+    } as any);
+    // Past the iteration budget AND its 30s unwind grace.
+    await vi.advanceTimersByTimeAsync(31_000);
+    await pending;
+    return { row, touch, release };
+  }
+
+  it("an iteration abandoned past its grace stops beating, though nothing releases its box", async () => {
+    const { row, touch, release } = await runOnBox("hangs");
+    // The agent run started on the box and never came back.
+    expect(executeStepsMock).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe("timed_out");
+    // Several beats' worth of the eval scope's TTL: an abandoned holder used
+    // to touch forever, keeping the box live until the backend's ceiling.
+    await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
+    expect(touch).not.toHaveBeenCalled();
+    // The abort is not a teardown; the idle reaper takes the box.
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("an iteration whose turn throws releases its box and stops beating", async () => {
+    const { touch, release } = await runOnBox("throws");
+    expect(release).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
+    expect(touch).not.toHaveBeenCalled();
+  });
+});
+
+// Deleting a suite (or run) mid-run: the cancellation checker is the only
+// thing that stops the whole run. Production masks a plain error as
+// "Server Error", so the checker must act on the structured refusal and
+// must NOT act on the mask (an outage looks the same).
+describe("cancellation checker: deleted run", () => {
+  const deleted = () =>
+    new ConvexError({
+      code: "NOT_FOUND",
+      reason: "eval_parent_deleted",
+      message: "Suite run not found",
+    });
+  const masked = () => new Error("[Request ID: abc123] Server Error");
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  async function startHangingRun(options: {
+    getRun: (args: Record<string, unknown>) => Promise<unknown>;
+    recorderSaysDeleted?: boolean;
+  }) {
+    vi.useFakeTimers();
+    const snapshot = {
+      title: "Case",
+      query: "Hello",
+      model: "gpt-4-turbo",
+      provider: "openai",
+    };
+    const rows = [
+      {
+        _id: "iter-1",
+        testCaseId: "case-1",
+        iterationNumber: 1,
+        testCaseSnapshot: snapshot,
+        status: "pending",
+        result: "pending",
+      },
+    ] as Array<Record<string, any>>;
+    const recorder = {
+      startIteration: vi.fn(async () => "iter-1"),
+      beginExecutionAttempt: vi.fn(async () => {}),
+      finishIteration: vi.fn(async () => {}),
+      finalize: vi.fn(async () => {}),
+      isRunDeleted: vi.fn(() => options.recorderSaysDeleted === true),
+    };
+    const getRunCalls: Array<Record<string, unknown>> = [];
+    const convexClient = {
+      query: vi.fn(async (name: string, args: Record<string, unknown>) => {
+        if (name === "testSuites:getTestSuiteRunDetails")
+          return { iterations: rows };
+        if (name === "testSuites:getTestSuiteRun") {
+          getRunCalls.push(args);
+          // The pre-run check reads the run once before any poll.
+          if (getRunCalls.length === 1) return { status: "running" };
+          return options.getRun(args);
+        }
+        return { status: "running" };
+      }),
+      mutation: vi.fn(async () => ({})),
+      action: vi.fn(async () => {}),
+    };
+    const manager = {
+      getToolsForAiSdk: vi.fn(async () => ({})),
+      listTools: vi.fn(async () => ({ tools: [] })),
+      getAllToolAnnotations: vi.fn(() => ({})),
+      hasCachedToolAnnotations: vi.fn(() => true),
+      getConnectionStatus: vi.fn(() => "connected"),
+      listServers: vi.fn(() => ["srv-1"]),
+      getAllToolsMetadata: vi.fn(() => ({})),
+      executeTool: vi.fn(),
+    };
+    // The iteration is still working when the suite is deleted: it only ends
+    // when the run is aborted.
+    executeStepsMock.mockImplementation(
+      async ({ isAborted }: { isAborted: () => boolean }) => {
+        await new Promise<void>((resolve) => {
+          const tick = setInterval(() => {
+            if (isAborted()) {
+              clearInterval(tick);
+              resolve();
+            }
+          }, 5);
+        });
+        return { cancelled: true };
+      },
+    );
+    const pending = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder,
+      config: {
+        tests: [
+          {
+            ...snapshot,
+            runs: 1,
+            testCaseId: "case-1",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: manager,
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        turnTimeoutMs: 120_000,
+        unitTimeoutMs: 120_000,
+        runTimeoutMs: 60_000,
+      },
+    } as any);
+    return { pending, recorder, getRunCalls };
+  }
+
+  it("stops the run on the structured refusal, naming the suite on the retry", async () => {
+    const { pending, recorder, getRunCalls } = await startHangingRun({
+      // A backend that can only answer readably when the suite is named.
+      getRun: async (args) => {
+        throw "suiteId" in args ? deleted() : masked();
+      },
+    });
+    await vi.advanceTimersByTimeAsync(10_100);
+    await pending;
+
+    expect(getRunCalls).toContainEqual({ runId: "run-1", suiteId: "suite-1" });
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "cancelled",
+        stopReason: "user_cancelled",
+      }),
+    );
+  });
+
+  it("keeps running on a masked Server Error: an outage must not cancel runs", async () => {
+    const { pending, recorder } = await startHangingRun({
+      getRun: async () => {
+        throw masked();
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(recorder.finalize).not.toHaveBeenCalled();
+
+    // Only the run's own deadline ends it.
+    await vi.advanceTimersByTimeAsync(31_000);
+    await pending;
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "timed_out",
+        stopReason: "run_timeout",
+      }),
+    );
+  });
+
+  it("stops the run when an iteration write already learned the run was deleted", async () => {
+    const { pending, recorder } = await startHangingRun({
+      getRun: async () => ({ status: "running" }),
+      recorderSaysDeleted: true,
+    });
+    await vi.advanceTimersByTimeAsync(10_100);
+    await pending;
+
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "cancelled" }),
+    );
+  });
+
+  it("recognizes the refusal and the legacy text, never the mask", () => {
+    expect(isRunDeletedError(deleted())).toBe(true);
+    expect(isRunDeletedError(new Error("Suite run not found"))).toBe(true);
+    expect(isRunDeletedError(masked())).toBe(false);
+    expect(
+      isRunDeletedError(
+        new ConvexError({ code: "NOT_FOUND", message: "Project not found" }),
+      ),
+    ).toBe(true);
+  });
+});

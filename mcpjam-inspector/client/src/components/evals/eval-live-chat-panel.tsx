@@ -49,19 +49,14 @@ import {
 } from "@/components/chat-v2/thread/thread-helpers";
 import type { PromptTurnToolCall } from "@/shared/steps";
 import {
+  getUserContextBlocks,
+  startsUserTurn,
+} from "@/shared/user-context-message";
+import {
   PlaygroundStateProvider,
   usePlaygroundState,
 } from "@/components/ui-playground/hooks/use-playground-state";
-import {
-  ScenarioChatUiOverrideProvider,
-  ScenarioHostStyleProvider,
-  ScenarioHostThemeProvider,
-} from "@/contexts/scenario-client-style-context";
-import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
-import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import { getScenarioShellStyle } from "@/lib/scenario-client-style";
-import { cn } from "@/lib/utils";
+import { HostStyledShell } from "@/components/chat-v2/host-styled-shell";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useSharedAppState } from "@/state/app-state-context";
 import { PlaygroundMain } from "@/components/ui-playground/PlaygroundMain";
@@ -104,6 +99,11 @@ export type CapturedTurn = {
  * Fold the live chat's messages into per-user-turn capture: each `user` message
  * starts a turn (its text = prompt); the assistant tool calls that follow (until
  * the next user message) become that turn's expected tool calls, deduped by name.
+ *
+ * Context the user added (`shared/user-context-message.ts`) is not a prompt
+ * they typed: a skill, a widget's state or a prompt's example turn starts no
+ * turn (`startsUserTurn`), and a tool run by hand starts one as
+ * `Execute <tool>`.
  */
 export function messagesToCapturedTurns(messages: UIMessage[]): CapturedTurn[] {
   const turns: CapturedTurn[] = [];
@@ -111,11 +111,19 @@ export function messagesToCapturedTurns(messages: UIMessage[]): CapturedTurn[] {
   const seenForCurrent = new Set<string>();
   for (const message of messages) {
     if (message.role === "user") {
-      const text = (message.parts ?? [])
-        .filter((p): p is { type: "text"; text: string } => p.type === "text")
-        .map((p) => p.text)
-        .join("")
-        .trim();
+      if (!startsUserTurn(message)) continue;
+      const toolRun = getUserContextBlocks(message)?.find(
+        (block) => block.kind === "tool-run",
+      );
+      const text = toolRun
+        ? `Execute \`${toolRun.subject}\``
+        : (message.parts ?? [])
+            .filter(
+              (p): p is { type: "text"; text: string } => p.type === "text",
+            )
+            .map((p) => p.text)
+            .join("")
+            .trim();
       current = { prompt: text, expectedToolCalls: [] };
       seenForCurrent.clear();
       turns.push(current);
@@ -168,7 +176,6 @@ export function EvalLiveChatPanel({
   // widget runtime scope is derived from preferences (mirrors how the old
   // TraceViewer preview installed its own scope). Threading the case's host so
   // caps match the suite Run exactly is a follow-up.
-  const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
   // Bind the surface to the case's servers (single-server mode falls back to the
   // first). Empty → PlaygroundMain still shows the composer (no server gate).
@@ -190,57 +197,41 @@ export function EvalLiveChatPanel({
 
   return (
     <PlaygroundStateProvider value={state}>
-      <ActiveMcpProfileProvider value={undefined}>
-        <ActiveHostCapsResolverScope activeHost={null} hostStyle={hostStyle}>
-          <ScenarioHostStyleProvider value={hostStyle}>
-            <ScenarioHostCapabilitiesOverrideProvider
-              value={hostCapabilitiesOverride}
-            >
-              <ScenarioChatUiOverrideProvider value={chatUiOverride}>
-                <ScenarioHostThemeProvider value={themeMode}>
-                  <div
-                    className={cn(
-                      "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                      themeMode === "dark" && "dark",
-                    )}
-                    data-host-style={hostStyle}
-                    style={shellStyle}
-                  >
-                    <PlaygroundMain
-                      activeProjectId={projectId}
-                      serverName={primaryServerName}
-                      enableMultiModelChat={false}
-                      isExecuting={state.isExecuting}
-                      executingToolName={state.selectedTool}
-                      invokingMessage={state.invokingMessage}
-                      pendingExecution={state.pendingExecution}
-                      onExecutionInjected={state.handleExecutionInjected}
-                      onWidgetStateChange={(_toolCallId, widgetState) =>
-                        state.setWidgetState(widgetState)
-                      }
-                      deviceType={state.deviceType}
-                      onDeviceTypeChange={state.setDeviceType}
-                      ensureServersReady={ensureServersReady}
-                      initialInput={autoRun ? undefined : initialPrompt}
-                      autoRunInput={autoRun ? initialPrompt : undefined}
-                      blockSubmitUntilServerConnected
-                      hideWelcomeHero
-                      hideCenterHeaderChrome
-                      hideInlineEdit
-                      hideMessageEdit
-                      suppressHistoryConflictToast
-                      onMessagesChange={handleMessagesChange}
-                      recorder={recorder}
-                      evalChatHandoff={evalChatHandoff}
-                      onEvalChatHandoffConsumed={onEvalChatHandoffConsumed}
-                    />
-                  </div>
-                </ScenarioHostThemeProvider>
-              </ScenarioChatUiOverrideProvider>
-            </ScenarioHostCapabilitiesOverrideProvider>
-          </ScenarioHostStyleProvider>
-        </ActiveHostCapsResolverScope>
-      </ActiveMcpProfileProvider>
+      <HostStyledShell
+        hostSnapshot={{ hostStyle, hostCapabilitiesOverride, chatUiOverride }}
+        activeHost={null}
+        themeMode={themeMode}
+        className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        <PlaygroundMain
+          activeProjectId={projectId}
+          serverName={primaryServerName}
+          enableMultiModelChat={false}
+          isExecuting={state.isExecuting}
+          executingToolName={state.selectedTool}
+          invokingMessage={state.invokingMessage}
+          pendingExecution={state.pendingExecution}
+          onExecutionInjected={state.handleExecutionInjected}
+          onWidgetStateChange={(_toolCallId, widgetState) =>
+            state.setWidgetState(widgetState)
+          }
+          deviceType={state.deviceType}
+          onDeviceTypeChange={state.setDeviceType}
+          ensureServersReady={ensureServersReady}
+          initialInput={autoRun ? undefined : initialPrompt}
+          autoRunInput={autoRun ? initialPrompt : undefined}
+          blockSubmitUntilServerConnected
+          hideWelcomeHero
+          hideCenterHeaderChrome
+          hideInlineEdit
+          hideMessageEdit
+          suppressHistoryConflictToast
+          onMessagesChange={handleMessagesChange}
+          recorder={recorder}
+          evalChatHandoff={evalChatHandoff}
+          onEvalChatHandoffConsumed={onEvalChatHandoffConsumed}
+        />
+      </HostStyledShell>
     </PlaygroundStateProvider>
   );
 }

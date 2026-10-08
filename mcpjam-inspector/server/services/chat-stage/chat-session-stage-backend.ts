@@ -12,8 +12,9 @@
  * worker able to choose its own stamp could declare its stale work fresh,
  * which is the one thing the stamp exists to prevent.
  */
-
+import { SWARM_STAGE_EVIDENCE_VERSION } from "@mcpjam/sdk/contract";
 import { logger } from "../../utils/logger.js";
+import { getServiceCredential } from "../service-credential.js";
 
 /** Per-request cap so a stalled Convex cannot wedge the pass. */
 const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
@@ -30,7 +31,7 @@ export class ChatStageBackendError extends Error {
 /** Present only on a deployment that IS an infrastructure peer. */
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) return null;
   return { convexUrl, serviceToken };
 }
@@ -87,6 +88,8 @@ export type ClaimedStageEvidence = {
   lifecycle?: unknown;
   readiness?: unknown;
   criteria?: unknown;
+  criterionDefinitions?: unknown;
+  swarmPolicy?: unknown;
   goalScore?: unknown;
 };
 
@@ -115,6 +118,7 @@ export async function claimNextStageDerivation(
 ): Promise<StageClaimOutcome> {
   const { status, body } = await postServiceRoute(`${BASE_PATH}/claim`, {
     claimedBy,
+    evidenceVersion: SWARM_STAGE_EVIDENCE_VERSION,
   });
   if (status === 404) return { kind: "disabled" };
   if (status !== 200 || !body?.ok) {

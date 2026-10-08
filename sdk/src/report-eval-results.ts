@@ -48,6 +48,21 @@ const CHUNK_SIZE_LIMIT = 200;
 const ONE_SHOT_RESULT_LIMIT = 200;
 const CHUNK_TARGET_BYTES = 1024 * 1024;
 
+/**
+ * Headroom left when weighing one result against {@link CHUNK_TARGET_BYTES}:
+ * the ids and framing a result picks up after the widget-offload decision, plus
+ * a margin so the decision is never a byte away from wrong.
+ */
+const RESULT_ENVELOPE_SLACK = 4096;
+
+/**
+ * Widget HTML is uploaded as text, never `text/html`: storage serves an object
+ * back with the type it was uploaded with, so HTML stored as HTML renders and
+ * runs its scripts when the storage URL is opened directly. Replay reads the
+ * bytes as text, so nothing that displays the widget changes.
+ */
+const WIDGET_HTML_STORAGE_CONTENT_TYPE = "text/plain; charset=utf-8";
+
 export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 
 /**
@@ -142,10 +157,6 @@ type NormalizedReportingError = {
   isReportingBackendIncompatible: boolean;
 };
 
-type EvalArtifactUploadUrlResponse = {
-  uploadUrl: string;
-};
-
 function resolveApiKey(
   input: Pick<ReportEvalResultsInput, "apiKey">
 ): string | undefined {
@@ -210,10 +221,7 @@ export function __resetPrintedRunUrls(): void {
  * project, and then the right suite. One line makes the upload's destination
  * addressable.
  *
- * The route is the UNFLAGGED `/evals/suite/:suiteId/runs/:runId`, not
- * `/ci-evals/…`: the latter sits behind the `evaluate-ci` flag and its
- * redirect drops the run path, so a link there lands flag-less readers on a
- * bare list instead of their run.
+ * Links open the exact uploaded run in the public Evaluate experience.
  *
  * `?project=` prefers the id the BACKEND resolved, falling back to a
  * caller-configured project and omitting the param entirely for the
@@ -258,7 +266,7 @@ export function buildRunUrl(
         // at all. Built through `URL` rather than concatenation so it stays
         // encoded and stays out of the string-building this module retired.
         new URL(
-          `/evals/suite/${encodeURIComponent(
+          `/evaluate/suite/${encodeURIComponent(
             suiteId
           )}/runs/${encodeURIComponent(runId)}`,
           appOrigin
@@ -678,21 +686,6 @@ function validateReportingResponse(
       invalid();
     return;
   }
-  if (path.endsWith("artifacts/upload-url")) {
-    if (!id("uploadUrl")) invalid();
-    try {
-      const url = new URL(body.uploadUrl as string);
-      if (
-        !["https:", "http:"].includes(url.protocol) ||
-        url.username ||
-        url.password
-      )
-        invalid();
-    } catch {
-      invalid();
-    }
-    return;
-  }
   if (path.endsWith("runs/iterations")) {
     if (!count(body.inserted) || !count(body.skipped) || !count(body.total))
       invalid();
@@ -770,6 +763,19 @@ function validateReportingResponse(
   }
 }
 
+/** A rejection body's message, through {@link normalizeReportingErrorMessage}. */
+function normalizeRejection(
+  value: Record<string, unknown>
+): NormalizedReportingError {
+  return normalizeReportingErrorMessage(
+    typeof value.error === "string"
+      ? value.error
+      : typeof value.message === "string"
+        ? value.message
+        : "Reporting request was rejected"
+  );
+}
+
 async function requestWithRetry<T>(
   config: RuntimeConfig,
   path: string,
@@ -788,14 +794,6 @@ async function requestWithRetry<T>(
       { endpoint: path }
     );
   let attemptCount = 0;
-  const normalize = (value: Record<string, unknown>) =>
-    normalizeReportingErrorMessage(
-      typeof value.error === "string"
-        ? value.error
-        : typeof value.message === "string"
-          ? value.message
-          : "Reporting request was rejected"
-    );
   try {
     return await reportingRequest(
       config,
@@ -810,7 +808,7 @@ async function requestWithRetry<T>(
       },
       (response) => {
         if (response.ok === false) {
-          const error = normalize(response);
+          const error = normalizeRejection(response);
           throw new EvalReportingError(error.message, {
             endpoint: path,
             ...error,
@@ -820,7 +818,7 @@ async function requestWithRetry<T>(
         return response as T;
       },
       (error) => {
-        const normalized = normalize(error.body);
+        const normalized = normalizeRejection(error.body);
         return (
           !normalized.isBillingLimitReached &&
           !normalized.isReportingBackendIncompatible &&
@@ -833,7 +831,7 @@ async function requestWithRetry<T>(
     );
   } catch (error) {
     if (error instanceof ReportingHttpError) {
-      const normalized = normalize(error.body);
+      const normalized = normalizeRejection(error.body);
       throw new EvalReportingError(normalized.message, {
         endpoint: path,
         attemptCount,
@@ -895,23 +893,14 @@ async function finalizeEvalRun(
   );
 }
 
-async function getEvalArtifactUploadUrl(
-  config: RuntimeConfig
-): Promise<string> {
-  const response = await requestWithRetry<EvalArtifactUploadUrlResponse>(
-    config,
-    ingestPath(config, "artifacts/upload-url"),
-    {}
-  );
-  if (!response.uploadUrl) {
-    throw new Error("Eval artifact upload URL response was missing uploadUrl");
-  }
-  return response.uploadUrl;
-}
-
-async function uploadBlobToConvex(
+/**
+ * Store one artifact's bytes through the ingestion API and return its storage
+ * id (MJ-006): the raw body goes to `artifacts` with its own `Content-Type`.
+ * 429/5xx answers, network errors and timeouts retry on the same schedule as
+ * every other ingestion call, honouring `Retry-After`.
+ */
+async function uploadIngestArtifact(
   config: RuntimeConfig,
-  uploadUrl: string,
   body: string,
   contentType: string
 ): Promise<string> {
@@ -925,19 +914,55 @@ async function uploadBlobToConvex(
     throw new ReportingProtocolError(
       "Eval artifact exceeds the configured byte limit"
     );
-  return reportingRequest(
-    config,
-    uploadUrl,
-    { method: "POST", headers: { "Content-Type": contentType }, body },
-    (response) => {
-      if (typeof response.storageId !== "string" || !response.storageId.trim())
-        throw new ReportingProtocolError(
-          "Invalid artifact upload acknowledgment"
+  const path = ingestPath(config, "artifacts");
+  let attemptCount = 0;
+  try {
+    return await reportingRequest(
+      config,
+      `${config.baseUrl}${path}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": contentType,
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body,
+      },
+      (response) => {
+        if (
+          response.ok === false ||
+          typeof response.storageId !== "string" ||
+          !response.storageId.trim()
+        )
+          throw new ReportingProtocolError(
+            "Invalid artifact upload acknowledgment"
+          );
+        return response.storageId;
+      },
+      (error) => {
+        const normalized = normalizeRejection(error.body);
+        return (
+          !normalized.isBillingLimitReached &&
+          !normalized.isReportingBackendIncompatible &&
+          isRetryableStatus(error.status)
         );
-      return response.storageId;
-    },
-    (error) => isRetryableStatus(error.status)
-  );
+      },
+      (count) => {
+        attemptCount = count;
+      }
+    );
+  } catch (error) {
+    if (error instanceof ReportingHttpError) {
+      const normalized = normalizeRejection(error.body);
+      throw new EvalReportingError(normalized.message, {
+        endpoint: path,
+        attemptCount,
+        statusCode: error.status,
+        ...normalized,
+      });
+    }
+    throw toEvalReportingError(error, path, attemptCount);
+  }
 }
 
 function removeInlineWidgetHtml(
@@ -976,12 +1001,10 @@ async function uploadWidgetSnapshots(
       }
 
       try {
-        const uploadUrl = await getEvalArtifactUploadUrl(config);
-        const storageId = await uploadBlobToConvex(
+        const storageId = await uploadIngestArtifact(
           config,
-          uploadUrl,
           snapshot.widgetHtml,
-          "text/html; charset=utf-8"
+          WIDGET_HTML_STORAGE_CONTENT_TYPE
         );
         uploadedSnapshots.push(
           removeInlineWidgetHtml({
@@ -1016,6 +1039,56 @@ async function uploadWidgetSnapshots(
   }
 
   return rewrittenResults;
+}
+
+/**
+ * Send widget HTML to blob storage when leaving it inline would make a single
+ * result too large to upload. Only the results that do not fit are rewritten —
+ * every other snapshot stays inline, in the one request it always did.
+ *
+ * A result is weighed inside the request that will actually carry it: the
+ * reporting envelope around it, plus room for the per-result fields added after
+ * this point (`externalIterationId`), so a result that only just fits here does
+ * not become one that only just fails on the wire.
+ */
+async function offloadOversizedWidgetSnapshots(
+  config: RuntimeConfig,
+  input: ReportEvalResultsInput,
+  results: EvalResultInput[]
+): Promise<EvalResultInput[]> {
+  const envelopeBytes = getByteLength(
+    JSON.stringify({ ...buildReportingBody(input), results: [] })
+  );
+  const budget = CHUNK_TARGET_BYTES - envelopeBytes - RESULT_ENVELOPE_SLACK;
+  const oversized = new Set<number>();
+  results.forEach((result, index) => {
+    if (
+      Array.isArray(result.widgetSnapshots) &&
+      result.widgetSnapshots.length > 0 &&
+      getByteLength(JSON.stringify(result)) > budget
+    ) {
+      oversized.add(index);
+    }
+  });
+  if (oversized.size === 0) {
+    return results;
+  }
+  const rewritten = await uploadWidgetSnapshots(
+    config,
+    results.filter((_result, index) => oversized.has(index))
+  );
+  // Put each rewritten result back at its own index so order is unchanged.
+  // A short list would silently reinstate the oversized result this whole
+  // function exists to remove, so treat it as the contract break it is.
+  if (rewritten.length !== oversized.size) {
+    throw new ReportingProtocolError(
+      "Widget snapshot upload returned a different number of results"
+    );
+  }
+  const queue = [...rewritten];
+  return results.map((result, index) =>
+    oversized.has(index) ? queue.shift()! : result
+  );
 }
 
 function shouldUseOneShotUpload(
@@ -1129,9 +1202,17 @@ async function reportEvalResultsInternal(
   const config = createRuntimeConfig(input);
   await requireReportingCapabilities(config, input);
   const terminalStatus = await resolveTerminationStatus(config, input);
-  // Backend stores inline widget evidence after content hashing and authorization.
-  // Pre-uploading fresh blob IDs would change identical retry payloads.
-  const uploadedResults = input.results;
+  // Backend stores inline widget evidence after content hashing and
+  // authorization, and inline keeps a retry resending identical bytes — so that
+  // stays the default. But widget HTML is a whole built app, and two tool calls
+  // of one can push a single result past the 1MB request-body limit, which
+  // chunking cannot fix because it only splits BETWEEN results. Those offload
+  // to blob storage instead, once, before the retry loop below.
+  const uploadedResults = await offloadOversizedWidgetSnapshots(
+    config,
+    input,
+    input.results
+  );
   const externalRunId = input.externalRunId ?? generateExternalRunId();
   const serverReplayConfigs = resolveServerReplayConfigs(input);
   input = {

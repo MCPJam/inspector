@@ -11,6 +11,7 @@ import {
 } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
+import { upstreamRefusalFromResponse } from "./upstream-refusal.js";
 
 /**
  * Inspector-side adapter for backend eval test-case generation.
@@ -245,8 +246,14 @@ export async function generateTestCases(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to generate test cases: ${errorText}`);
+    // The backend's refusals (its daily platform budget, the caller's own
+    // allowance, a model their plan excludes) keep their status, their `code`
+    // and their `Retry-After` all the way to the caller. Flattening them into
+    // a message here is what turned every one of them into a 500.
+    throw await upstreamRefusalFromResponse(
+      response,
+      "Failed to generate test cases",
+    );
   }
 
   const data = (await response.json()) as {

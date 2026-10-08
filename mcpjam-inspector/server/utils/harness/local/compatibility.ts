@@ -11,18 +11,21 @@
  * (invariant 13). "Unsupported" never degrades into "run it anyway with
  * whatever mode the SDK defaults to".
  *
- * ── Why Codex is not native-eligible ──────────────────────────────────────
- * Verified against the pinned packages: `@ai-sdk/harness-codex@1.0.98`
- * declares `supportsBuiltinToolApprovals: false` and rejects every permission
- * mode except `allow-all`, starting Codex unrestricted. That configuration
- * assumes the AI SDK sandbox provider IS the security boundary. A supervised
- * native provider supplies no such boundary, so the same configuration on a
- * host means an unrestricted agent with the OS user's authority and no
- * approval gate. It is therefore hosted / local-isolated only, and the
- * manifest says so structurally rather than in a comment: `nativePlatforms` is
- * empty, so no platform check can accidentally admit it.
+ * ── Codex: a different adapter, the same rules ────────────────────────────
+ * The published `@ai-sdk/harness-codex` drives `codex exec`, declares
+ * `supportsBuiltinToolApprovals: false` and refuses every permission mode but
+ * `allow-all` — an unrestricted agent with no approval gate, which on a host
+ * with no outer boundary is exactly what this module exists to refuse. So the
+ * LOCAL Codex entry is MCPJam's own app-server adapter
+ * (`codex-appserver/`), whatever transport hosted Codex uses: real approval
+ * requests (attended Playground: `allow-reads` / `allow-edits` → Codex
+ * `untrusted`), and, for unattended evals and swarms, `allow-all` ONLY inside
+ * Codex's own OS command sandbox with an explicit workspace-write policy
+ * (`codex-appserver/shared/sandbox-policy.ts`) on targets where that sandbox
+ * was measured to hold (`unattendedSandboxTargets`). A target whose probe
+ * failed refuses unattended local Codex; it never runs it unrestricted.
  *
- * A staged worktree does not change this. Staging protects review and
+ * A staged worktree does not change any of this. Staging protects review and
  * apply-back semantics; it does not stop a process from reading or writing the
  * rest of the machine.
  */
@@ -34,6 +37,16 @@ import type {
   SupportedLocalHarnessId,
 } from "./targets.js";
 import { PACK_TREE_DIGESTS } from "./pack-digests.generated.js";
+import { conformanceVersionFor } from "./runtime-compat.js";
+import {
+  CODEX_BRIDGE_BUNDLE_DIGEST,
+  CODEX_LOCAL_ADAPTER_IDENTITY,
+  PINNED_CODEX_VERSION,
+} from "../codex-appserver/local-identity.js";
+import {
+  LOCAL_UNATTENDED_SANDBOX_POLICY,
+  type CodexWorkspaceWriteSandboxPolicy,
+} from "../codex-appserver/shared/sandbox-policy.js";
 
 /** How the vendor runtime is obtained. */
 export type LocalHarnessRuntimePolicy =
@@ -52,13 +65,23 @@ export type LocalHarnessRuntimePolicy =
        * missing directory gives and the correct one.
        */
       bundleDigest: Readonly<Partial<Record<LocalPackTarget, string>>>;
-      /** Launcher path relative to the bundle root.
+      /**
+       * Where the bridge launcher and the bridge come from (invariant 1: two
+       * trusted sources, never a third).
+       *
+       *  - `inspector-layer`: from the Inspector distribution itself — written
+       *    to a content-addressed, read-only layer and re-hashed against the
+       *    digest compiled into this build before every exec
+       *    (`inspector-layer.ts`). The pack then carries vendor bytes only.
+       *  - `pack`: from inside the verified pack (`launcherRelativePath`), the
+       *    layout every pack had before the split.
+       */
+      launcherSource: "inspector-layer" | "pack";
+      /** Launcher path relative to the bundle root, for `launcherSource: "pack"`.
        *
        *  The pack ships `launcher.mjs`, an Inspector-owned wrapper that forces
        *  every listener the bridge opens onto loopback and then imports the
-       *  adapter's verbatim `bridge.mjs`. The bridge file itself stays
-       *  byte-identical to the adapter's copy — the provider compares it — so
-       *  the loopback constraint cannot be applied by patching it. */
+       *  adapter's verbatim `bridge.mjs`. */
       launcherRelativePath: string;
       /** The pack's own Node binary, relative to the bundle root.
        *
@@ -139,13 +162,39 @@ export interface LocalHarnessCompatibility {
   permissionProfileMapping: PermissionProfileMapping;
   /** Platforms this harness may run NATIVE on. Empty = never native. */
   nativePlatforms: readonly LocalPlatform[];
+  /**
+   * The exact pack TARGETS (OS + architecture) whose evidence is complete,
+   * when narrower than "every architecture of `nativePlatforms`" (D8).
+   *
+   * A target outside this set is refused natively and is not advertised by
+   * the release gate, even when its OS is listed — so one certified
+   * architecture can ship while another stays explicitly unavailable.
+   * Absent = every target of every native platform.
+   */
+  nativeTargets?: readonly LocalPackTarget[];
+  /**
+   * Targets where the harness's own OS command sandbox was measured to hold
+   * the unattended policy (D2). Present only for harnesses whose unattended
+   * local runs depend on that sandbox (Codex); a target outside it refuses
+   * unattended local execution rather than running without the sandbox.
+   */
+  unattendedSandboxTargets?: readonly LocalPackTarget[];
+  /**
+   * The command-sandbox policy an unattended (`unrestricted`) local run of
+   * this harness starts under (D2). Declared together with
+   * `unattendedSandboxTargets`: a harness whose unattended runs depend on its
+   * own OS sandbox names the exact policy here, and the turn hands it to the
+   * adapter as a separate field — it is never a permission mode.
+   */
+  unattendedSandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
   /** Isolation backends conformance has passed for this harness, PER
    *  PLATFORM. A backend proven on Linux says nothing about macOS, and a
    *  single flat list would let one platform's evidence admit another's. */
   isolatedBackends: Readonly<
     Partial<Record<LocalPlatform, readonly LocalIsolationBackend[]>>
   >;
-  /** Bumped whenever the lifecycle evidence is re-gathered. */
+  /** The recorded lifecycle evidence stamp, read from the generated
+   *  compatibility record. Empty = no evidence, which refuses every tuple. */
   lifecycleConformanceVersion: string;
   /**
    * The adapter's DECLARED bootstrap directory, relative to the session's
@@ -183,7 +232,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
 > = {
   "claude-code": {
     harnessId: "claude-code",
-    adapterVersion: "1.0.100",
+    adapterVersion: "1.0.121",
     runtime: {
       source: "managed-bundle",
       bundleName: "claude-code",
@@ -196,11 +245,17 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
       // been built for linux-x64"). Both fail closed; only the second names a
       // pack a user could go looking for.
       bundleDigest: PACK_TREE_DIGESTS["claude-code"],
+      // The patched bridge (with the MCP SDK, `zod` and `ws` compiled in) and
+      // the launcher are the Inspector layer's. The pack is `bin/node`, the
+      // agent SDK with its platform CLI and declared peers, and the Windows
+      // job launcher; the launcher resolves the bridge's one external import,
+      // the agent SDK, into it.
+      launcherSource: "inspector-layer",
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
       jobLauncherRelativePath: "bin/mcpjam-job-launcher.exe",
       vendorPackages: {
-        "@anthropic-ai/claude-code": "pinned-by-adapter-bridge-lockfile",
+        "@anthropic-ai/claude-agent-sdk": "pinned-by-claude-code-vendor-lockfile",
       },
     },
     argvPolicy: { requiredFlags: [], deniedFlags: [] },
@@ -209,9 +264,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     permissionProfileMapping: {
       "read-only": "allow-reads",
       "workspace-edits": "allow-edits",
-      // `unrestricted` is deliberately absent: Claude Code CAN surface
-      // approvals, so there is no reason to offer a profile that switches them
-      // off on a host.
+      unrestricted: "allow-all",
     },
     // Native eligibility is per platform. macOS and Linux have POSIX process
     // groups, which is what whole-tree cleanup is built on there.
@@ -232,43 +285,78 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     nativePlatforms: ["darwin", "linux", "win32"],
     // Empty until a backend's escape probes actually pass (I6).
     isolatedBackends: {},
-    lifecycleConformanceVersion: "",
+    // From the generated record (`runtime-compat.generated.json`), written with
+    // the pin that the evidence was gathered against — never typed by hand.
+    lifecycleConformanceVersion: conformanceVersionFor("claude-code"),
     adapterBootstrapDir: ".harness-bootstrap/claude-code",
-    adapterBootstrapFiles: [
-      "package.json",
-      "pnpm-lock.yaml",
-      "pnpm-workspace.yaml",
-      "bridge.mjs",
-    ],
+    // A local session's recipe is the Inspector layer's (`pack-bootstrap.ts`):
+    // the bridge, compared against the layer's copy. The adapter's install
+    // files (`package.json`, the lockfile, `.npmrc`, `pnpm-workspace.yaml`)
+    // install a vendor graph in a sandbox; locally the pack already is it, and
+    // a recipe naming them fails closed.
+    adapterBootstrapFiles: ["bridge.mjs"],
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },
   codex: {
     harnessId: "codex",
-    adapterVersion: "1.0.98",
+    // MCPJam's app-server adapter, not an npm package: the bridge bundle hash
+    // plus the exact CLI (see `codex-appserver/local-identity.ts`). The
+    // Inspector layer — compiled in, re-hashed before every exec, part of the
+    // launch identity — is what actually enforces it.
+    adapterVersion: CODEX_LOCAL_ADAPTER_IDENTITY,
     runtime: {
       source: "managed-bundle",
       bundleName: "codex",
       bundleDigest: PACK_TREE_DIGESTS.codex,
+      // The bridge, its host-tools MCP entrypoint and the launcher are the
+      // Inspector layer's; the pack is `bin/node`, `@openai/codex` and its
+      // platform package (and the Windows job launcher). `ws` is compiled
+      // into the layer's bridge, so it is not a vendor package any more.
+      launcherSource: "inspector-layer",
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
+      jobLauncherRelativePath: "bin/mcpjam-job-launcher.exe",
       vendorPackages: {
-        "@openai/codex-sdk": "pinned-by-adapter-bridge-lockfile",
+        "@openai/codex": PINNED_CODEX_VERSION,
       },
     },
     argvPolicy: { requiredFlags: [], deniedFlags: [] },
     configStrategy: "explicit-config-root",
-    supportsBuiltinToolApprovals: false,
-    // No mapping at all: the adapter rejects every mode but `allow-all`, and
-    // `allow-all` on a host with no outer boundary is the thing this plan
-    // exists to prevent. Codex earns a mapping when its adapter gains a
-    // reviewed restricted mode, or inside a verified isolation backend.
-    permissionProfileMapping: {},
-    nativePlatforms: [],
+    // The app-server adapter raises real approval requests.
+    supportsBuiltinToolApprovals: true,
+    // Attended profiles map to Codex `untrusted` (every command and file
+    // change asks). `unrestricted` — unattended evals and swarms only, never
+    // the Playground (`localPermissionModeFor` / `resolveLocalCompatibility`)
+    // — is `allow-all` ONLY together with `unattendedSandboxPolicy` below, and
+    // only on a target in `unattendedSandboxTargets`. The bridge refuses
+    // `allow-all` without that policy when supervised locally, so it can
+    // never become `danger-full-access` on a user's machine.
+    permissionProfileMapping: {
+      "read-only": "allow-reads",
+      "workspace-edits": "allow-edits",
+      unrestricted: "allow-all",
+    },
+    // Evidence: the 2026-09-30 macOS arm64 product-assembly probe and the
+    // linux-x64 app-server probes (`codex-appserver/README.md`). Every other
+    // target stays refused until its own evidence lands (D8).
+    nativePlatforms: ["darwin", "linux"],
+    nativeTargets: ["darwin-arm64", "linux-x64"],
+    // No target has passed the unattended sandbox probe on the pinned binary
+    // yet, so unattended local Codex is refused everywhere.
+    unattendedSandboxTargets: [],
+    unattendedSandboxPolicy: LOCAL_UNATTENDED_SANDBOX_POLICY,
     isolatedBackends: {},
-    lifecycleConformanceVersion: "",
-    adapterBootstrapDir: ".harness-bootstrap/codex",
-    adapterBootstrapFiles: ["package.json", "pnpm-lock.yaml", "bridge.mjs"],
-    bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
+    // From the generated record, like Claude Code's: dark until the Codex
+    // lifecycle conformance legs pass and the pin records them.
+    lifecycleConformanceVersion: conformanceVersionFor("codex"),
+    adapterBootstrapDir: ".harness-bootstrap/codex-appserver",
+    // A local session's recipe is the Inspector layer's (`pack-bootstrap.ts`),
+    // so these are the only files it writes, and each is compared against the
+    // layer's copy. The hosted recipe's `package.json` and lockfile install
+    // the vendor graph in a sandbox; locally the pack already IS that graph,
+    // and a recipe naming them fails closed.
+    adapterBootstrapFiles: ["bridge.mjs", "host-tools-mcp.mjs"],
+    bridgeBundleDigest: CODEX_BRIDGE_BUNDLE_DIGEST,
   },
 };
 
@@ -295,11 +383,15 @@ export type LocalCompatibilityResult =
     };
 
 export interface LocalCompatibilityQuery {
+  scope?: "attended" | "unattended";
   harnessId: string;
   platform: LocalPlatform | null;
   targetKind: "local-native" | "local-isolated";
   permissionProfile: LocalPermissionProfile;
   backend?: LocalIsolationBackend;
+  /** This machine's pack target, for a manifest that narrows to exact
+   *  targets (`nativeTargets`). `null` = no pack target at all. */
+  packTarget?: LocalPackTarget | null;
   /** The adapter version actually installed, read from the package at call
    *  time so a lockfile drift cannot pass unnoticed. Required: a caller that
    *  cannot state it cannot be allowed to skip the pin. */
@@ -330,6 +422,7 @@ export function localPermissionModeFor(
   harnessId: string,
   permissionProfile: LocalPermissionProfile,
   targetKind: "local-native" | "local-isolated",
+  scope: "attended" | "unattended" = "attended",
 ): "allow-reads" | "allow-edits" | "allow-all" | null {
   // OWN properties only, for the same reason `resolveLocalCompatibility` does
   // it below: `toString`, `constructor` or `__proto__` resolve to an inherited
@@ -348,10 +441,45 @@ export function localPermissionModeFor(
   // Mirrors the refusal in `resolveLocalCompatibility`: `unrestricted` never
   // runs natively whatever a manifest says, so it can never resolve to a mode
   // here either.
-  if (permissionProfile === "unrestricted" && targetKind === "local-native") {
+  if (permissionProfile === "unrestricted" && targetKind === "local-native" && scope !== "unattended") {
     return null;
   }
   return manifest.permissionProfileMapping[permissionProfile] ?? null;
+}
+
+/**
+ * The command-sandbox policy a local turn of this harness must start under,
+ * or `null` when it runs without one.
+ *
+ * Non-null only for an UNATTENDED `unrestricted` native turn of a harness
+ * whose manifest names `unattendedSandboxPolicy` (Codex). Like
+ * `localPermissionModeFor`, this is the turn path's pre-flight answer: the
+ * policy is folded into the runtime fingerprint and handed to the adapter
+ * before preparation runs, and preparation (`resolveLocalCompatibility`) is
+ * what refuses a target the sandbox was never measured on.
+ */
+export function localSandboxPolicyFor(
+  harnessId: string,
+  permissionProfile: LocalPermissionProfile,
+  targetKind: "local-native" | "local-isolated",
+  scope: "attended" | "unattended" = "attended",
+): Readonly<CodexWorkspaceWriteSandboxPolicy> | null {
+  const manifests = LOCAL_HARNESS_MANIFEST as Record<
+    string,
+    LocalHarnessCompatibility | undefined
+  >;
+  const manifest = Object.prototype.hasOwnProperty.call(manifests, harnessId)
+    ? manifests[harnessId]
+    : undefined;
+  if (
+    manifest?.unattendedSandboxPolicy === undefined ||
+    permissionProfile !== "unrestricted" ||
+    targetKind !== "local-native" ||
+    scope !== "unattended"
+  ) {
+    return null;
+  }
+  return manifest.unattendedSandboxPolicy;
 }
 
 export function resolveLocalCompatibility(
@@ -442,6 +570,21 @@ export function resolveLocalCompatibility(
         message: reason,
       };
     }
+    if (
+      manifest.nativeTargets !== undefined &&
+      query.packTarget !== undefined &&
+      (query.packTarget === null ||
+        !manifest.nativeTargets.includes(query.packTarget))
+    ) {
+      return {
+        ok: false,
+        status: "native-not-eligible",
+        message:
+          `${query.harnessId} has not been certified on ` +
+          `${query.packTarget ?? "this architecture"} yet (certified: ` +
+          `${manifest.nativeTargets.join(", ") || "none"}).`,
+      };
+    }
   } else {
     if (query.backend === undefined) {
       return {
@@ -480,10 +623,10 @@ export function resolveLocalCompatibility(
     };
   }
 
-  // `unrestricted` never runs without an outer boundary, whatever a manifest
-  // says. Checked here as well as in the mapping so a future manifest edit
-  // cannot re-open it by accident.
+  // Attended native turns cannot use unrestricted permissions. Authorized
+  // evals and swarms deliberately run as the OS user without containment.
   if (
+    query.scope !== "unattended" &&
     query.permissionProfile === "unrestricted" &&
     query.targetKind === "local-native"
   ) {
@@ -494,6 +637,29 @@ export function resolveLocalCompatibility(
         `the unrestricted profile requires a verified isolation backend. ` +
         `Native mode has no host containment, so an unrestricted turn there ` +
         `would run with the OS user's full authority.`,
+    };
+  }
+
+  // An unattended run of a harness that depends on its OWN command sandbox
+  // (D2, Codex) needs that sandbox measured on this exact target. Anywhere
+  // else it is refused — never run without the sandbox. A caller that cannot
+  // state its target is refused too: this is the gate, not a hint.
+  if (
+    query.permissionProfile === "unrestricted" &&
+    query.targetKind === "local-native" &&
+    manifest.unattendedSandboxTargets !== undefined &&
+    (query.packTarget == null ||
+      !manifest.unattendedSandboxTargets.includes(query.packTarget))
+  ) {
+    return {
+      ok: false,
+      status: "backend-not-verified",
+      message:
+        `unattended local ${query.harnessId} runs inside its own command ` +
+        `sandbox, and that sandbox has not been verified on ` +
+        `${query.packTarget ?? "this architecture"} yet (verified: ` +
+        `${manifest.unattendedSandboxTargets.join(", ") || "none"}). ` +
+        `Run this eval or swarm in the cloud.`,
     };
   }
 

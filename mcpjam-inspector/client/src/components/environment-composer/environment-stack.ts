@@ -26,6 +26,25 @@ import type {
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { isNamedEnvironment } from "@/lib/environment-label";
+import {
+  harnessModelRefusalReason,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
+import type { HarnessModelPurpose } from "@/shared/harness-model-support";
+import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
+import type { ModelDefinition } from "@/shared/types";
+import { selectionBesideLegacyId } from "@/components/chat-v2/shared/model-selection";
+import {
+  dedupeModelTargets,
+  environmentModelTarget,
+  modelTarget,
+  modelTargetConfigKey,
+  modelTargetKey,
+  type ModelTarget,
+} from "@/lib/model-target";
+
+export type { ModelTarget } from "@/lib/model-target";
+export { modelTargetKey } from "@/lib/model-target";
 
 /**
  * Structured model axis (D2). Never auto-seed a host's default modelId as
@@ -34,13 +53,81 @@ import { isNamedEnvironment } from "@/lib/environment-label";
  */
 export type ModelSelection = {
   includeClientDefaults: boolean;
-  explicitModelIds: string[];
+  /**
+   * Explicit model choices in list order, unique by `comparisonKey`
+   * ({@link modelTargetKey}): each is a model id plus the saved selection
+   * (`@mcpjam/sdk` `ModelSelection`) behind it — which credentials and
+   * settings the cell runs with. Two efforts of one model are two targets,
+   * so two cells; a target with no selection is an unlabelled pick and runs
+   * exactly like a bare id. See {@link syncExplicitTargets}.
+   */
+  explicitTargets: ModelTarget[];
 };
 
 export const DEFAULT_MODEL_SELECTION: ModelSelection = {
   includeClientDefaults: true,
-  explicitModelIds: [],
+  explicitTargets: [],
 };
+
+/** The distinct model ids among the explicit targets, in list order. */
+export function explicitModelIds(
+  selection: ModelSelection | undefined,
+): string[] {
+  return [
+    ...new Set((selection?.explicitTargets ?? []).map((t) => t.modelId)),
+  ];
+}
+
+/** Explicit targets from bare ids (no saved selections). */
+export function modelSelectionFromIds(
+  modelIds: readonly string[],
+  includeClientDefaults = false,
+): ModelSelection {
+  return {
+    includeClientDefaults,
+    explicitTargets: dedupeModelTargets(modelIds.map((id) => modelTarget(id))),
+  };
+}
+
+/**
+ * Read a model selection stored by any build: today's `explicitTargets`, or
+ * the older parallel `explicitModelIds` + `explicitModelSelections` (keyed by
+ * id). `undefined` when the value is neither.
+ */
+export function parseStoredModelSelection(
+  value: unknown,
+): ModelSelection | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.includeClientDefaults !== "boolean") return undefined;
+  if (Array.isArray(record.explicitTargets)) {
+    const targets = record.explicitTargets.flatMap((entry): ModelTarget[] => {
+      if (!entry || typeof entry !== "object") return [];
+      const { modelId, selection } = entry as Record<string, unknown>;
+      return typeof modelId === "string" && modelId
+        ? [modelTarget(modelId, selection as SavedModelSelection | undefined)]
+        : [];
+    });
+    return {
+      includeClientDefaults: record.includeClientDefaults,
+      explicitTargets: dedupeModelTargets(targets),
+    };
+  }
+  const ids = record.explicitModelIds;
+  if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) {
+    const saved = (record.explicitModelSelections ?? {}) as Record<
+      string,
+      SavedModelSelection | undefined
+    >;
+    return {
+      includeClientDefaults: record.includeClientDefaults,
+      explicitTargets: dedupeModelTargets(
+        (ids as string[]).map((id) => modelTarget(id, saved[id])),
+      ),
+    };
+  }
+  return undefined;
+}
 
 export type EnvironmentStack = {
   /** Primary fan-out axis. Required for the compose (resolve) path. */
@@ -75,7 +162,7 @@ export type EnvironmentComposerState = {
 };
 
 export function emptyModelSelection(): ModelSelection {
-  return { includeClientDefaults: true, explicitModelIds: [] };
+  return { includeClientDefaults: true, explicitTargets: [] };
 }
 
 export function emptyEnvironmentStack(): EnvironmentStack {
@@ -121,36 +208,122 @@ export function modelChoiceCount(
 ): number {
   const resolved = selection ?? emptyModelSelection();
   return (
-    (resolved.includeClientDefaults ? 1 : 0) + resolved.explicitModelIds.length
+    (resolved.includeClientDefaults ? 1 : 0) + resolved.explicitTargets.length
   );
 }
 
-/** Inherit first, then explicit ids in list order. Host-major mint uses this. */
+/** A client × model cell the client's harness cannot run, and why. */
+export type SkippedModelCell = {
+  clientId: string;
+  modelId: string;
+  reason: string;
+};
+
+/**
+ * Inherit first, then explicit ids in list order. Host-major mint uses this.
+ *
+ * With a `harness` target, explicit models the harness cannot run for
+ * `purpose` (the harness × model evidence table, at the runtime's pinned
+ * version) are NOT minted into cells — they are returned in `skipped` with the
+ * reason, so the surface can say which client × model pairs it left out
+ * instead of minting an environment the run admission will refuse. The
+ * inherit cell is never skipped here: the client's own model is the host's
+ * configuration, judged by the server's admission.
+ */
 export function expandModelChoices(
   selection: ModelSelection | undefined,
-): Array<{
-  modelId: string | undefined;
-}> {
+  options?: {
+    /** The client these choices fan out for (reported on skipped cells). */
+    clientId?: string;
+    /** The client's harness, `null`/absent for an emulated client. */
+    harness?: HarnessModelTarget | null;
+    /** Defaults to `eval`: every composer surface launches compared runs. */
+    purpose?: HarnessModelPurpose;
+  },
+): {
+  cells: Array<{
+    modelId: string | undefined;
+    /** The saved selection behind an explicit id, when it has one. */
+    modelSelection?: SavedModelSelection;
+  }>;
+  skipped: SkippedModelCell[];
+} {
   const resolved = selection ?? emptyModelSelection();
-  const choices: Array<{ modelId: string | undefined }> = [];
+  const cells: Array<{
+    modelId: string | undefined;
+    modelSelection?: SavedModelSelection;
+  }> = [];
+  const skipped: SkippedModelCell[] = [];
   if (resolved.includeClientDefaults) {
-    choices.push({ modelId: undefined });
+    cells.push({ modelId: undefined });
   }
-  for (const modelId of resolved.explicitModelIds) {
-    choices.push({ modelId });
+  for (const target of dedupeModelTargets(resolved.explicitTargets)) {
+    const { modelId } = target;
+    const reason = harnessModelRefusalReason(
+      modelId,
+      options?.harness,
+      options?.purpose ?? "eval",
+    );
+    if (reason) {
+      skipped.push({ clientId: options?.clientId ?? "", modelId, reason });
+      continue;
+    }
+    cells.push(
+      target.selection
+        ? { modelId, modelSelection: target.selection }
+        : { modelId },
+    );
   }
-  return choices;
+  return { cells, skipped };
 }
 
+/**
+ * Fill in the saved selection of every explicit target that has none, after a
+ * picker edit: the row the user just picked (when it is that id) wins, else
+ * the first listed row with that id (hosted rows list first, matching the
+ * legacy hosted-first read). A row that cannot be saved beside its unchanged
+ * id ({@link selectionBesideLegacyId}) leaves the target unlabelled. A target
+ * that already carries a selection keeps it, so two efforts of one model stay
+ * two targets; the list is then deduped by `comparisonKey`.
+ */
+export function syncExplicitTargets(
+  next: ModelSelection,
+  context: {
+    models: readonly ModelDefinition[];
+    picked?: ModelDefinition;
+  },
+): ModelSelection {
+  const targets = next.explicitTargets.map((target): ModelTarget => {
+    const normalized = modelTarget(target.modelId, target.selection);
+    if (normalized.selection) return normalized;
+    const row =
+      context.picked && String(context.picked.id) === target.modelId
+        ? context.picked
+        : context.models.find((model) => String(model.id) === target.modelId);
+    return modelTarget(
+      target.modelId,
+      row ? selectionBesideLegacyId(row, "evalTarget") : undefined,
+    );
+  });
+  return {
+    includeClientDefaults: next.includeClientDefaults,
+    explicitTargets: dedupeModelTargets(targets),
+  };
+}
+
+/**
+ * Same choices, order-insensitive. Config-strict: two effort levels of one
+ * model, or a stored selection versus none, are different compositions.
+ */
 export function sameModelSelection(
   a: ModelSelection,
   b: ModelSelection,
 ): boolean {
   if (a.includeClientDefaults !== b.includeClientDefaults) return false;
-  if (a.explicitModelIds.length !== b.explicitModelIds.length) return false;
-  const left = [...a.explicitModelIds].sort();
-  const right = [...b.explicitModelIds].sort();
-  return left.every((id, i) => id === right[i]);
+  if (a.explicitTargets.length !== b.explicitTargets.length) return false;
+  const left = a.explicitTargets.map(modelTargetConfigKey).sort();
+  const right = b.explicitTargets.map(modelTargetConfigKey).sort();
+  return left.every((key, i) => key === right[i]);
 }
 
 /**
@@ -209,7 +382,9 @@ export function stackFromEnvironment(
     computerEnvironmentId: env.computerEnvironmentId ?? null,
     modelSelection: {
       includeClientDefaults: !env.modelId,
-      explicitModelIds: env.modelId ? [env.modelId] : [],
+      explicitTargets: env.modelId
+        ? [modelTarget(env.modelId, env.modelSelection)]
+        : [],
     },
   };
 }
@@ -275,8 +450,10 @@ export function environmentsCarryModels(
   return environments.some((env) => Boolean(env.modelId));
 }
 
+/** The env's model choice by `comparisonKey`; the inherit cell otherwise. */
 function modelChoiceKey(env: ProjectEnvironmentView): string {
-  return env.modelId ?? "__inherit__";
+  const target = environmentModelTarget(env);
+  return target ? modelTargetKey(target) : "__inherit__";
 }
 
 function modelChoiceSetsAgree(
@@ -304,13 +481,23 @@ function reconstructModelSelection(
   if (slots?.modelsEnabled !== true) {
     return emptyModelSelection();
   }
-  const keys = new Set<string>();
+  // One target per distinct comparisonKey: two efforts of one model are two
+  // targets, never collapsed onto whichever environment came first.
+  let inherit = false;
+  const targets: ModelTarget[] = [];
   for (const env of environments) {
-    keys.add(modelChoiceKey(env));
+    const target = environmentModelTarget(env);
+    if (target) targets.push(target);
+    else inherit = true;
   }
+  const explicitTargets = dedupeModelTargets(targets).sort((a, b) => {
+    const left = modelTargetKey(a);
+    const right = modelTargetKey(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
   return {
-    includeClientDefaults: keys.has("__inherit__") || keys.size === 0,
-    explicitModelIds: [...keys].filter((k) => k !== "__inherit__").sort(),
+    includeClientDefaults: inherit || explicitTargets.length === 0,
+    explicitTargets,
   };
 }
 
@@ -329,9 +516,10 @@ function reconstructModelSelection(
  *    resolution, so disagreeing there changes nothing.
  *
  * With `modelsEnabled`, two same-host environments that differ only by model
- * choice are representable (inherit ∪ explicit). Per-host asymmetry — one
- * client carrying a different choice set — still collapses. Duplicate
- * (host, model) cells still collapse.
+ * choice are representable (inherit ∪ explicit) — including two efforts of
+ * one model, which are two targets by `comparisonKey`. Per-host asymmetry —
+ * one client carrying a different choice set — still collapses. Duplicate
+ * (host, comparisonKey) cells still collapse.
  *
  * Neither is the deliberate homogenizing the compose model is allowed to do (the
  * user picking a shared value and applying it) — both are silent losses. Callers

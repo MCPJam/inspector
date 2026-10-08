@@ -11,8 +11,16 @@ const context = {
   projectId: "projectaaaaaaaaa",
   authenticated: true,
   remoteProject: true,
+  // The Integrations tab is behind its own beta gate, so the shared context is
+  // a flagged-in reader; the flagged-out case is its own test below.
+  features: { integrations: true },
 };
 describe("settings destinations", () => {
+  it("keeps the BYOK explainer under Usage & billing", () => {
+    expect(
+      resolveSettingsDestination("/organizations/org-a/billing/byok")?.id,
+    ).toBe("org-billing");
+  });
   it("makes Support a searchable Settings destination", () => {
     expect(resolveSettingsDestination("/settings/support")?.id).toBe(
       "personal-support",
@@ -110,6 +118,17 @@ describe("settings destinations", () => {
       searchSettings("secrets", { ...context, remoteProject: false }),
     ).toEqual([]);
   });
+  it("hides the Integrations tab entirely when its beta flag is off", () => {
+    const flaggedOff = { ...context, features: {} };
+    expect(
+      searchSettings("", flaggedOff).some(
+        (r) => r.destination.id === "org-integrations",
+      ),
+    ).toBe(false);
+    // Its sections go with it: a flagged-off reader must not find Slack by
+    // searching for it either.
+    expect(searchSettings("Slack", flaggedOff)).toEqual([]);
+  });
   it("searches integration controls only when their existing availability allows them", () => {
     expect(searchSettings("Slack", context)[0].target).toBe("slack");
     expect(searchSettings("GitHub", context)).toEqual([]);
@@ -123,13 +142,15 @@ describe("settings destinations", () => {
       searchSettings("spend limit", { ...context, personalOrganization: true }),
     ).toEqual([]);
     expect(
-      searchSettings("GitHub", { ...context, features: { github: true } })[0]
-        .target,
+      searchSettings("GitHub", {
+        ...context,
+        features: { integrations: true, github: true },
+      })[0].target,
     ).toBe("github");
     expect(
       searchSettings("OTLP", {
         ...context,
-        features: { observability: true },
+        features: { integrations: true, observability: true },
       })[0].target,
     ).toBe("observability");
   });

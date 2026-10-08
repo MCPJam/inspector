@@ -7,7 +7,7 @@
 //
 // Per FILE: this package's `tokens-parity` test reads `tokens.css` through
 // `import.meta.url`, which jsdom turns into http: and `readFileSync` rejects.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
@@ -670,6 +670,52 @@ describe("ServerPickerPanel — removing a group", () => {
       screen.getByRole("button", { name: "Delete Group 1" }),
     ).toBeDisabled();
   });
+
+  it("greys out delete for a group in use and says why on hover", async () => {
+    // Radix's tooltip measures itself; jsdom has no ResizeObserver.
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const onDeleteGroup = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          onDeleteGroup,
+          groups: [
+            {
+              id: "g_1",
+              name: "Group 1",
+              serverNames: ["excalidraw"],
+              deleteDisabledReason: "In use by a test suite.",
+            },
+            { id: "g_2", name: "Group 2", serverNames: ["sample"] },
+          ],
+        })}
+      />,
+    );
+
+    const blocked = screen.getByRole("button", { name: "Delete Group 1" });
+    expect(blocked).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("button", { name: "Delete Group 2" }),
+    ).toBeEnabled();
+
+    await userEvent.hover(blocked);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "In use by a test suite.",
+    );
+    await userEvent.click(blocked);
+    expect(onDeleteGroup).not.toHaveBeenCalled();
+  });
 });
 
 describe("ServerPickerPanel — a draft the catalog moved under", () => {
@@ -779,6 +825,69 @@ describe("ServerPickerPanel — an unanswered catalog", () => {
     );
     expect(
       screen.getByText("No servers in this project yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Add server only when the caller can send the user somewhere", async () => {
+    const onAddServer = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({ servers: [], catalogKnown: true, onAddServer })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+    expect(onAddServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invent an Add server control the caller never gave it", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({ servers: [], catalogKnown: true })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+  });
+
+  it("does not offer Add server while the catalog is still unknown", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({
+          servers: [],
+          catalogKnown: false,
+          onAddServer: vi.fn(),
+        })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+  });
+
+  it("offers Add server on the groups tab only when the project has no servers", async () => {
+    const onAddServer = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          servers: [],
+          groups: [],
+          catalogKnown: true,
+          onAddServer,
+        })}
+      />,
+    );
+    expect(screen.queryByText(/Create new group/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+    expect(onAddServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer Add server on the groups tab when servers already exist", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", groups: [], onAddServer: vi.fn() })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Create new group/ }),
     ).toBeInTheDocument();
   });
 });

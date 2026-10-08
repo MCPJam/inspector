@@ -26,6 +26,56 @@ const request = {
 };
 
 describe("Streamable HTTP error diagnostics", () => {
+  it.each([
+    [429, "30"],
+    [429, "Mon, 21 Sep 2026 12:00:00 GMT"],
+    [503, "30"],
+    [503, "Mon, 21 Sep 2026 12:00:00 GMT"],
+    [429, "not-a-delay"],
+    [429, ""],
+  ])(
+    "preserves raw Retry-After on HTTP %s (%j) without replaying the call",
+    async (status, retryAfter) => {
+      const fetchFn = vi.fn(
+        async () =>
+          new Response("slow down", {
+            status,
+            headers: {
+              "Retry-After": retryAfter,
+              "Set-Cookie": "private-session=secret",
+            },
+          })
+      );
+      const transport = transportFor(fetchFn as typeof fetch);
+
+      const error = await transport.send(request).catch((error) => error);
+
+      expect(error).toBeInstanceOf(SdkHttpError);
+      expect(error.status).toBe(status);
+      expect(error.data).toEqual({
+        status,
+        statusText: "",
+        text: "slow down",
+        retryAfter,
+      });
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(error.message).not.toContain("private-session");
+    }
+  );
+
+  it("does not invent Retry-After when the server sends none", async () => {
+    const fetchFn = vi.fn(
+      async () => new Response("slow down", { status: 429 })
+    );
+    const transport = transportFor(fetchFn as typeof fetch);
+
+    const error = await transport.send(request).catch((error) => error);
+
+    expect(error).toBeInstanceOf(SdkHttpError);
+    expect(error.data).not.toHaveProperty("retryAfter");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces the status and challenge for an empty 401 through the transport", async () => {
     const transport = transportFor(
       vi.fn(

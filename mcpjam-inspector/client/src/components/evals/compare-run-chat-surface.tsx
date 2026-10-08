@@ -202,23 +202,22 @@ export function CompareRunChatSurface({
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <TraceViewer
-          trace={traceForViewer}
-          model={traceModel ?? undefined}
-          isLoading={isLoading}
-          toolsMetadata={toolsMetadata}
-          toolServerMap={toolServerMap}
-          connectedServerIds={connectedServerIds}
-          forcedViewMode="chat"
-          hideToolbar
-          fillContent
-          interactive={interactive}
-          recorder={recorderWithResolver}
-          {...(sendFollowUpMessage ? { sendFollowUpMessage } : {})}
-        />
-      </div>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/50 bg-background">
+      <TraceViewer
+        trace={traceForViewer}
+        model={traceModel ?? undefined}
+        isLoading={isLoading}
+        toolsMetadata={toolsMetadata}
+        toolServerMap={toolServerMap}
+        connectedServerIds={connectedServerIds}
+        forcedViewMode="chat"
+        hideToolbar
+        fillContent
+        frame="none"
+        interactive={interactive}
+        recorder={recorderWithResolver}
+        {...(sendFollowUpMessage ? { sendFollowUpMessage } : {})}
+      />
     </div>
   );
 }

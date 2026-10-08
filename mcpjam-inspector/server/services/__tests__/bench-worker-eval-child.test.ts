@@ -100,9 +100,19 @@ describe("defaultRunEvalCell", () => {
     expect(request.projectId).toBe("proj-1");
     expect(request.serverIds).toEqual(["srv-1"]);
     expect(request.suiteRerun).toBe(true);
+    // The cell runs its environment, ephemerally (the exam suite runs none),
+    // and the host pin is not sent beside it.
     expect(request.environmentId).toBe("env-sonnet");
-    expect(request.namedHostId).toBe("host-emulated");
+    expect(request.ephemeralEnvironment).toBe(true);
+    expect(request).not.toHaveProperty("namedHostId");
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a named-client-only cell before opening connections", () => {
+    const entry = { ...ENTRY, environmentId: undefined };
+    expect(() => resolveEvalCellSpec(JOB, entry)).toThrow(/environmentId/);
+    expect(createAuthorizedManager).not.toHaveBeenCalled();
+    expect(prepareEvalRun).not.toHaveBeenCalled();
   });
 
   it("runs the child as the run's scoped bearer, not the inspector", async () => {

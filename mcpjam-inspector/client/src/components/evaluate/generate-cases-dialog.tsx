@@ -16,17 +16,33 @@ import {
   saveGenerateConfig,
   type GenerateCasesConfig,
 } from "@/lib/evals/eval-generation-config";
+import type { EvalSuiteEnvironmentTarget } from "../evals/types";
+import { EnvironmentTargetPicker } from "../evals/environment-target-picker";
 
 export function GenerateCasesDialog({
   suiteId,
+  environmentChoices,
   onClose,
   onGenerate,
 }: {
   suiteId: string;
+  /**
+   * An environment suite whose environments connect different servers: the
+   * environments to pick from. Generation needs one.
+   */
+  environmentChoices?: EvalSuiteEnvironmentTarget[] | null;
   onClose: () => void;
   onGenerate: (config: GenerateCasesConfig) => void;
 }) {
   const [initial] = useState(() => loadGenerateConfig(suiteId));
+  const [environmentId, setEnvironmentId] = useState<string | undefined>(() =>
+    environmentChoices?.some(
+      (target) => target.environmentId === initial.environmentId,
+    )
+      ? initial.environmentId
+      : undefined,
+  );
+  const needsEnvironment = Boolean(environmentChoices?.length);
   const [testSet, setTestSet] = useState<"quick" | "comprehensive">(
     initial.testSet ?? "quick",
   );
@@ -44,7 +60,11 @@ export function GenerateCasesDialog({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            const config = generationPreset(testSet, coverage);
+            if (needsEnvironment && !environmentId) return;
+            const config: GenerateCasesConfig = {
+              ...generationPreset(testSet, coverage),
+              ...(needsEnvironment && environmentId ? { environmentId } : {}),
+            };
             saveGenerateConfig(suiteId, config);
             onGenerate(config);
           }}
@@ -56,6 +76,14 @@ export function GenerateCasesDialog({
               Choose the size and scope of this batch.
             </DialogDescription>
           </DialogHeader>
+          {environmentChoices?.length ? (
+            <EnvironmentTargetPicker
+              idPrefix="generate"
+              targets={environmentChoices}
+              value={environmentId}
+              onChange={setEnvironmentId}
+            />
+          ) : null}
           <fieldset className="space-y-3">
             <legend className="text-sm font-medium">Test set</legend>
             <RadioGroup
@@ -124,7 +152,9 @@ export function GenerateCasesDialog({
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit">Generate cases</Button>
+            <Button type="submit" disabled={needsEnvironment && !environmentId}>
+              Generate cases
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

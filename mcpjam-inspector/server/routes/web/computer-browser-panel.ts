@@ -38,6 +38,7 @@ import { Hono } from "hono";
 import { verifyComputerBrowserToken } from "../../utils/computers/browser-token.js";
 import type { ComputerBrowserClaims } from "../../utils/computers/browser-token.js";
 import {
+  computerUnavailableError,
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   touchComputerActivity,
@@ -235,7 +236,7 @@ export function createComputerBrowserPanelRoutes(
       return {
         ok: false,
         status: 503,
-        error: `Computer unavailable: ${info.error}`,
+        error: computerUnavailableError(info, "sandbox-info"),
       };
     }
     if (

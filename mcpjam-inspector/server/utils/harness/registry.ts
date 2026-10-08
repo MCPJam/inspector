@@ -11,18 +11,34 @@
  * `HarnessId` is the SDK's `Harness` union, so a persistence-layer id without an
  * adapter is a COMPILE error.
  */
-import { createClaudeCode } from "@ai-sdk/harness-claude-code";
-import { createCodex } from "@ai-sdk/harness-codex";
+import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
+import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
+export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
+import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
+import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
+export {
+  CURSOR_CLI_CHECKSUMS,
+  CURSOR_CLI_VERSION,
+} from "./cursor-bootstrap.js";
 import { createCodexAppServer } from "./codex-appserver/index.js";
-import { codexAppServerTransportEnabled } from "./harness-flags.js";
+import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type {
   HarnessV1AuthenticationEnvironment,
   HarnessV1PermissionMode,
 } from "@ai-sdk/harness";
 import { asSchema } from "ai";
-import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import {
+  HARNESS_REASONING_EFFORTS,
+  type Harness,
+} from "@mcpjam/sdk/host-config/internal";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  harnessModelSupport,
+  harnessPinnedVersion,
+  type HarnessModelSupportVerdict,
+} from "@/shared/harness-model-support";
 import {
   HARNESS_MCP_DELIVERY,
   type HarnessMcpDelivery,
@@ -30,7 +46,6 @@ import {
 import {
   attributeCursorToolCall,
   parseHarnessToolName,
-  serializeHarnessMcpJson,
   toAcpMcpServers,
   type HarnessMcpJson,
 } from "./mcp-config.js";
@@ -67,7 +82,7 @@ export type HarnessId = Harness;
  *  of `'auto'` / `'ai-gateway'` / `'direct'`) is what keeps the adapters from
  *  reading the SERVER's own process env for a model credential — the property
  *  COMP-23 depends on. One flat type is accepted by both `createClaudeCode` and
- *  `createCodex`. */
+ *  `createCodexAppServer`. */
 export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 
 /** Escape a value for safe interpolation INSIDE a single-quoted shell word.
@@ -221,12 +236,10 @@ export type HarnessBuiltinToolInfo = {
  *    (`deliverMcpServers`), pointed at MCPJam's signed per-server proxy, and
  *    the model calls the tools through native function calling. Claude Code.
  *
- *  - `host-executed` — the runtime cannot make an MCP tool model-callable
- *    (Codex: `codex exec --experimental-json` completes the MCP handshake and
- *    answers `tools/list`, but never registers the tools as callable functions
- *    — openai/codex#19425, and see `@ai-sdk/harness-codex`'s
- *    `src/bridge/cli-relay.ts`, whose whole existence is the harness authors
- *    hitting this same wall for their OWN host tools). MCPJam instead projects
+ *  - `host-executed` — MCPJam keeps enforcement in its own process (Codex:
+ *    the retired `codex exec` transport could not make an MCP tool
+ *    model-callable at all, openai/codex#19425; on app-server the relay keeps
+ *    MCPJam's tool policy and approval gate the single authority). MCPJam projects
  *    each selected server's tools into host-executed AI SDK tools passed as the
  *    agent's `tools`, which the bridge relays back out of the sandbox and
  *    MCPJam executes IN-PROCESS against the already-authorized
@@ -295,8 +308,34 @@ type HarnessRuntimeAdapterBase = {
    * fingerprint, so adding this field forks no existing session.
    */
   transport?: "exec" | "app-server";
+  /**
+   * Does a PENDING approval live in the runtime PROCESS rather than on disk?
+   *
+   * Claude Code's conversation is on disk, so a local turn paused on an
+   * approval can be torn down and re-driven. Codex app-server's pending
+   * approval is an open JSON-RPC request inside one live process (and, for a
+   * host tool, an open relay call), so a local pause must PARK that process
+   * (`local/approval-park.ts`) and the decision must be delivered to it —
+   * never replayed into a new one.
+   */
+  liveApprovalRuntime?: boolean;
+  /**
+   * The adapter applies `HarnessCreateArgs.sandboxPolicy` to its runtime. An
+   * adapter without this flag cannot contain an unattended local turn, so the
+   * turn runner refuses to start one rather than run it unrestricted.
+   */
+  acceptsSandboxPolicy?: boolean;
   /** Human-facing runtime name for preflight/availability messages + UI. */
   displayName: string;
+  /**
+   * The reasoning efforts this adapter is VERIFIED to apply when handed one
+   * through `HarnessCreateArgs.reasoningEffort`. Declared per adapter and
+   * REQUIRED, so a new adapter has to say (empty = "none yet"): a saved
+   * effort on a harness host is refused before any spend when the adapter
+   * does not list it, never silently dropped. Read from the SDK table
+   * (`HARNESS_REASONING_EFFORTS`) so the UI's picker and this gate agree.
+   */
+  supportedReasoningEfforts: readonly ModelReasoningEffort[];
   /** Whether this harness must run inside an attached personal computer. Drives
    *  the availability preflight (data-plane requirement). */
   requiresComputer: boolean;
@@ -347,14 +386,12 @@ type HarnessRuntimeAdapterBase = {
   prepareSkills(skills: RuntimeSkill[]): PreparedHarnessSkills;
   /** Can the adapter install a whole PLUGIN BUNDLE natively (the plugin folder
    *  as the runtime's own plugin/marketplace unit), rather than MCPJam projecting
-   *  the bundle's components into per-kind channels (skills param, `.mcp.json`)?
+   *  the bundle's components into per-kind channels (skills, native MCP config)?
    *
    *  FALSE for both adapters today, and deliberately so (INS-8):
-   *   - Codex's installed harness (`@ai-sdk/harness-codex`) exposes no
-   *     plugin-install hook, and its bridge documents that MCP tools are not
-   *     model-callable through `codex exec --experimental-json` at all
-   *     (openai/codex#19425) — half a bundle is not an installed bundle.
-   *   - Claude Code's adapter delivers skills + `.mcp.json`, not a plugin unit.
+   *   - Codex's adapter exposes no plugin-install hook, and its MCP tools are
+   *     host-executed — half a bundle is not an installed bundle.
+   *   - Claude Code's adapter delivers skills + MCP config, not a plugin unit.
    *  Advertising it means enforcing it: `runHarnessTurn` throws if an adapter
    *  sets this without `deliverPluginBundles`. */
   supportsPluginBundles: boolean;
@@ -368,11 +405,19 @@ type HarnessRuntimeAdapterBase = {
   /** Map a host model id to the harness's native model id/alias, if it needs
    *  one. Undefined ⇒ let the harness use its default. */
   toNativeModel?(modelId: string): string | undefined;
-  /** Can this runtime actually run the given host model? Claude Code runs any
-   *  Anthropic model the CLI accepts (true); Codex only the gpt-5 family it maps.
-   *  The preflight rejects unsupported models rather than letting the runtime
-   *  silently fall back to its own default. */
-  supportsModel(modelId: string): boolean;
+  /** The runtime CLI version this adapter pins (`HARNESS_PINNED_VERSIONS`),
+   *  or undefined when the adapter does not pin one (Cursor). The model-support
+   *  evidence is evaluated against it. */
+  pinnedRuntimeVersion: string | undefined;
+  /** The evidence-table verdict for the given CANONICAL host model at this
+   *  adapter's pinned runtime version — see `shared/harness-model-support.ts`.
+   *  `supported` / `unsupported` / `unknown`, with the reason and the row. */
+  modelSupport(modelId: string): HarnessModelSupportVerdict;
+  /** Can this runtime run the given host model? True only for a `supported`
+   *  verdict, or an `unknown` one when the caller passes `allowUnknown`
+   *  (Playground chat). The preflight rejects the rest rather than letting the
+   *  runtime silently fall back to its own default. */
+  supportsModel(modelId: string, opts?: { allowUnknown?: boolean }): boolean;
   /** Map a runtime tool name back to MCPJam tool identity. Claude Code namespaces
    *  MCP tools `mcp__<server>__<tool>`; other harnesses differ, so this is
    *  per-adapter rather than pinned to Claude's scheme. */
@@ -426,6 +471,29 @@ type HarnessRuntimeAdapterBase = {
 export type HarnessCreateArgs = {
   modelId: string;
   auth: HarnessAuth;
+  /**
+   * The reasoning effort this turn asked for. An adapter that lists efforts in
+   * `supportedReasoningEfforts` MUST apply it through its own runtime option;
+   * one that lists none never receives it (the refusal helper stops the turn
+   * first), so a value arriving here is always one the adapter declared.
+   */
+  reasoningEffort?: ModelReasoningEffort;
+  /**
+   * The permission mode this turn's runtime runs under, as the turn resolved
+   * it. An adapter may shape its runtime by it (Claude Code runs background
+   * tasks only under `allow-all`); absent means unknown, never permissive.
+   */
+  permissionMode?: HarnessV1PermissionMode;
+  /**
+   * The command-sandbox policy an UNATTENDED local turn runs under (D2), set
+   * only by the local arm from the compatibility manifest
+   * (`localSandboxPolicyFor`). It is not a permission mode: the turn is
+   * `allow-all` because nobody is there to approve, and this policy is what
+   * contains its commands. Only an adapter with `acceptsSandboxPolicy` may
+   * receive it; the turn refuses to hand it to any other rather than let it be
+   * silently dropped.
+   */
+  sandboxPolicy?: Readonly<CodexWorkspaceWriteSandboxPolicy>;
 };
 
 /** Brokered model access: MCPJam supplies the credential, so the adapter needs
@@ -495,7 +563,7 @@ export type HarnessExternalAccountBrokerBinding = {
 };
 
 /** NATIVE delivery, `sandbox-files` mechanism: MCPJam writes runtime config
- *  into the box before the process starts (Claude Code's `.mcp.json`). */
+ *  into the box before the process starts. */
 type NativeSandboxFilesArm = {
   mcpDelivery: "native";
   mcpNativeDelivery: "sandbox-files";
@@ -507,7 +575,7 @@ type NativeSandboxFilesArm = {
 
 /** NATIVE delivery, `session-config` mechanism: there is no file to write —
  *  the servers are a CONSTRUCTOR setting the adapter forwards into its session
- *  handshake (Cursor's ACP `session/new`). */
+ *  handshake (Claude Code's start message or Cursor's ACP `session/new`). */
 type NativeSessionConfigArm = {
   mcpDelivery: "native";
   mcpNativeDelivery: "session-config";
@@ -552,468 +620,6 @@ export type HarnessRuntimeAdapter = HarnessRuntimeAdapterBase &
   (BrokeredModelAccessArm | ExternalAccountModelAccessArm) &
   (NativeSandboxFilesArm | NativeSessionConfigArm | HostExecutedArm);
 
-/* ── Claude Code bridge patches ────────────────────────────────────────────
- *
- * Two groups survive on the `@ai-sdk/harness-claude-code@1.0.x` stable line.
- * A third — injecting `parent_tool_use_id: null` into the outbound user message
- * — was RETIRED at the stable bump: the adapter's own `toUserMessage` now sets
- * it, and re-applying ours would have written the key twice.
- *
- * Every needle below is quoted from the vendored `dist/bridge/index.mjs` and
- * must match VERBATIM. A miss throws rather than silently shipping an
- * unpatched bridge; `registry.test.ts` runs the patcher against the really
- * installed package so a version bump fails loudly here instead of at runtime.
- */
-
-/** Group B — assistant-text fallback.
- *
- *  The bridge emits assistant text ONLY from `stream_event` text deltas. When
- *  the CLI returns a non-streamed response the turn ends with empty output, so
- *  we synthesize text parts from the assistant message's text blocks and, as a
- *  last resort, from the terminal `result`.
- *
- *  Everything lives inside `createEmitStreamEvent`, whose closure already owns
- *  `emit` and the per-turn `state`. On the canary line the `result` fallback sat
- *  in the main turn loop; on stable that loop calls `emitStreamEvent(msg)` for
- *  the `result` message too, so both fallbacks share one scope and one dedup
- *  variable. */
-const CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE = `  let streamStarted = false;
-  return (msg) => {
-    const type = msg.type;`;
-const CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH = `  let streamStarted = false;
-  let streamedAssistantText = false;
-  let lastEmittedFallbackText;
-  let fallbackTextSeq = 0;
-  const emitAssistantTextFallback = (text) => {
-    const normalized = typeof text === "string" ? text : "";
-    if (!normalized || streamedAssistantText || normalized === lastEmittedFallbackText) return;
-    const id = \`mcpjam-fallback-\${Date.now()}-\${++fallbackTextSeq}\`;
-    emit({ type: "text-start", id });
-    emit({ type: "text-delta", id, delta: normalized });
-    emit({ type: "text-end", id });
-    lastEmittedFallbackText = normalized;
-    // Mirror the adapter's own structured-output path: text emitted outside a
-    // step is dropped unless the step is open when the result arrives.
-    state.stepOpen = true;
-  };
-  return (msg) => {
-    const type = msg.type;`;
-
-const CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE = `    if (type === "stream_event") {
-      handleStreamEvent({`;
-const CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `    if (type === "stream_event") {
-      if (msg.event?.type === "content_block_delta" && msg.event?.delta?.type === "text_delta" && typeof msg.event?.delta?.text === "string" && msg.event.delta.text.length > 0) {
-        streamedAssistantText = true;
-      }
-      handleStreamEvent({`;
-
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `      for (const block of msg.message.content) {
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `      for (const block of msg.message.content) {
-        if (block.type === "text" && typeof block.text === "string") {
-          emitAssistantTextFallback(block.text);
-          continue;
-        }
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-
-/** `createEmitStreamEvent` has no `result` branch of its own, so this adds one.
- *  It is anchored AFTER the `parent_tool_use_id` sub-agent guard so a subagent's
- *  terminal result never leaks into the parent transcript. */
-const CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `    if (msg.parent_tool_use_id != null) {
-      return;
-    }`;
-const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != null) {
-      return;
-    }
-    if (type === "result" && msg.subtype === "success") {
-      emitAssistantTextFallback(msg.result);
-    }`;
-
-/** Group C — AI Gateway model overrides.
- *
- *  Claude Code puts its own native id on the wire (`haiku`, `claude-sonnet-4-5`,
- *  a dated snapshot); the Gateway wants `anthropic/claude-<family>-<major>.<minor>`.
- *  `settings.modelOverrides` bridges that.
- *
- *  The companion `CLAUDE_CODE_EFFORT_LEVEL` write this group used to carry is
- *  GONE from the patch: stable exposes a first-class `env` option on
- *  `createClaudeCode`, so it is passed as configuration instead (see
- *  `createHarness` below). */
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";`;
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
-function gatewayModelOverrideSettingsFor(model) {
-  if (typeof model !== "string") return undefined;
-  let overrides;
-  if (model === "haiku") {
-    overrides = {
-      haiku: "anthropic/claude-haiku-4.5",
-      "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-      "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5"
-    };
-  } else {
-    if (!model.startsWith("claude-")) return undefined;
-    const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
-    if (!match) return undefined;
-    const [, family, major, minor] = match;
-    overrides = {
-      [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
-    };
-  }
-  return { modelOverrides: overrides };
-}`;
-
-/** `permissionOptions` is spread LAST into the query options and carries its own
- *  `settings` whenever a permission mode or an inactive native tool produces ask
- *  rules. Injecting `settings` earlier in the literal would be silently clobbered
- *  by that spread, so the overrides are MERGED on top of it here instead. */
-const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE = `      ...permissionOptions,
-      mcpServers,
-      cwd: workdir,`;
-const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
-      ...(gatewayModelOverrideSettingsFor(start.model) ? { settings: { ...(permissionOptions.settings ?? {}), ...gatewayModelOverrideSettingsFor(start.model) } } : {}),
-      mcpServers,
-      cwd: workdir,`;
-
-/* The 1.0.100 bridge moved the turn loop out of createEmitStreamEvent and
- * stopped stamping parent_tool_use_id on its own user messages. Keep a
- * second, deliberately small patch path for that shape. The old path above is
- * still needed for the canary/stable fixture and is left byte-for-byte
- * compatible with it. */
-const MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE = `  let streamStarted = false;
-  const partialBlocks = /* @__PURE__ */ new Map();`;
-const MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH = `  let streamStarted = false;
-  let streamedAssistantText = false;
-  let lastEmittedFallbackText;
-  let fallbackTextSeq = 0;
-  const emitAssistantTextFallback = (text) => {
-    const normalized = typeof text === "string" ? text : "";
-    if (!normalized || streamedAssistantText || normalized === lastEmittedFallbackText) return;
-    const id = \`mcpjam-fallback-\${Date.now()}-\${++fallbackTextSeq}\`;
-    emit({ type: "text-start", id });
-    emit({ type: "text-delta", id, delta: normalized });
-    emit({ type: "text-end", id });
-    lastEmittedFallbackText = normalized;
-  };
-  const partialBlocks = /* @__PURE__ */ new Map();`;
-const MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE = `      if (type === "stream_event") {
-        handleStreamEvent(msg.event, partialBlocks, emit);`;
-const MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `      if (type === "stream_event") {
-        if (msg.event?.type === "content_block_delta" && msg.event?.delta?.type === "text_delta" && typeof msg.event?.delta?.text === "string" && msg.event.delta.text.length > 0) {
-          streamedAssistantText = true;
-        }
-        handleStreamEvent(msg.event, partialBlocks, emit);`;
-const MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `        for (const block of msg.message.content) {
-          if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-const MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `        for (const block of msg.message.content) {
-          if (block.type === "text" && typeof block.text === "string") {
-            emitAssistantTextFallback(block.text);
-            continue;
-          }
-          if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-const MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `        if (msg.subtype === "success") {
-          const emptyResult = !msg.result?.trim?.();`;
-const MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `        if (msg.subtype === "success") {
-          const emptyResult = !msg.result?.trim?.();
-          if (type === "result" && msg.subtype === "success" && !emptyResult) {
-            emitAssistantTextFallback(msg.result);
-          }`;
-const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE = `  const toUserMessage = (text) => ({
-    type: "user",
-    message: {
-      role: "user",
-      content: [{ type: "text", text }]
-    }
-  });`;
-const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH = `  const toUserMessage = (text) => ({
-    type: "user",
-    message: {
-      role: "user",
-      content: [{ type: "text", text }]
-    },
-    parent_tool_use_id: null
-  });`;
-const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE = `  const q = claudeSdk.query({`;
-const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOverrideSettingsFor(model) {
-    if (typeof model !== "string") return undefined;
-    let overrides;
-    if (model === "haiku") {
-      overrides = {
-        haiku: "anthropic/claude-haiku-4.5",
-        "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-        "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5"
-      };
-    } else {
-      if (!model.startsWith("claude-")) return undefined;
-      const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
-      if (!match) return undefined;
-      const [, family, major, minor] = match;
-      overrides = {
-        [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
-      };
-    }
-    return { modelOverrides: overrides };
-  }
-  const q = claudeSdk.query({`;
-
-function patchModernClaudeCodeBridgeContent(content: string): string {
-  let patched = content;
-  const replacements = [
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH,
-    ],
-    [
-      CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE,
-      CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH,
-    ],
-  ] as const;
-
-  for (const [needle, replacement] of replacements) {
-    if (!patched.includes(needle)) {
-      throw new Error(
-        "Unable to patch Claude Code bridge bootstrap: modern bridge shape changed",
-      );
-    }
-    patched = patched.replace(needle, replacement);
-  }
-
-  return patched;
-}
-
-function patchClaudeCodeBridgeContent(content: string): string {
-  let patched = content;
-
-  // Route the CANARY line to its own anchor set. Despite the name, the
-  // `MODERN_*` group below is the canary one: the stable-line anchors are the
-  // `CLAUDE_CODE_BRIDGE_*` group above, and those are what 1.0.100 matches.
-  //
-  // The discriminator is the stream-event call shape — canary passes its
-  // arguments positionally, stable passes a single object. `mcpToolUseIds` and
-  // a `const partialBlocks` binding, which used to gate this, are present on
-  // BOTH lines (stable's reads `state.partialBlocks`), so the pair never
-  // discriminated: every bridge took the canary branch and the stable anchors
-  // were unreachable, which is why a `npm ci` install of the pinned 1.0.100
-  // threw "modern bridge shape changed" while a stale canary node_modules
-  // passed.
-  if (patched.includes("handleStreamEvent(msg.event,")) {
-    return patchModernClaudeCodeBridgeContent(patched);
-  }
-
-  if (!patched.includes("emitAssistantTextFallback")) {
-    for (const [needle, replacement] of [
-      [
-        CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE,
-        CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH,
-      ],
-      [
-        CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE,
-        CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH,
-      ],
-      [
-        CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE,
-        CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH,
-      ],
-      [
-        CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE,
-        CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH,
-      ],
-    ] as const) {
-      if (!patched.includes(needle)) {
-        throw new Error(
-          "Unable to patch Claude Code bridge bootstrap: assistant text shape changed",
-        );
-      }
-      patched = patched.replace(needle, replacement);
-    }
-  }
-
-  if (!patched.includes("gatewayModelOverrideSettingsFor")) {
-    for (const [needle, replacement] of [
-      [
-        CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE,
-        CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH,
-      ],
-      [
-        CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE,
-        CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH,
-      ],
-    ] as const) {
-      if (!patched.includes(needle)) {
-        throw new Error(
-          "Unable to patch Claude Code bridge bootstrap: model override shape changed",
-        );
-      }
-      patched = patched.replace(needle, replacement);
-    }
-  }
-
-  /* The adapter now sets `parent_tool_use_id` itself. If a future version drops
-   * it again the sub-agent guard silently stops filtering, so fail loudly
-   * rather than let a subagent's stream merge into the parent transcript. */
-  if (!patched.includes("parent_tool_use_id")) {
-    throw new Error(
-      "Unable to verify Claude Code bridge bootstrap: user-message shape changed",
-    );
-  }
-
-  return patched;
-}
-
-/**
- * Config written beside the adapter's bundled manifest so its `pnpm install`
- * can install a working Claude Code CLI.
- *
- * WHY THIS EXISTS. `@anthropic-ai/claude-code` ships a `postinstall`
- * (`node install.cjs`) that fetches its platform-native binary; without it the
- * CLI starts and immediately reports `claude native binary not installed`.
- * pnpm 10 stopped running dependency build scripts by default, and the
- * computer template installs pnpm UNPINNED (`npm install -g pnpm`), so a
- * rebuilt image changes behaviour with whatever pnpm is current.
- *
- * TWO INDEPENDENT LAYERS, because the first one is a moving target:
- *
- *   1. ALLOW the build to run, so the postinstall happens normally.
- *   2. Failing that, do not let a SKIPPED build be FATAL. The adapter's own
- *      recipe re-runs `install.cjs` by hand after the install — but that
- *      rescue only fires when the install step exits zero. Turning
- *      `ERR_PNPM_IGNORED_BUILDS` back into a warning is what lets the
- *      adapter repair itself.
- *
- * Layer 2 is the durable one. It survives a rename of the allow-list setting,
- * which has already happened once: the first version of this patch shipped
- * only `.npmrc`, verified against pnpm 10 — and pnpm 11 reads none of its
- * settings from `.npmrc`, so it broke every harness bootstrap the moment the
- * recipe hash changed and snapshots stopped hiding it.
- *
- * WHAT CHANGED AT THE STABLE BUMP. Newer `@ai-sdk/harness-claude-code@1.0.x`
- * releases may ship their OWN `pnpm-workspace.yaml`, pinning the build it
- * needs by exact version (`allowBuilds: { '@anthropic-ai/claude-code@<v>':
- * true }`). Older/newly rebuilt adapters may omit it, so
- * {@link patchClaudeCodeHarnessBootstrap} adds an equivalent version-pinned
- * file from the bundled manifest and falls back to bounded compatibility
- * settings only when that manifest cannot be read. The adapter may also keep
- * a conditional `install.cjs` rescue in its recipe; we leave that command
- * intact and verify it still ends with `claude --version`.
- *
- * `.npmrc` STAYS. pnpm 10 does not read `allowBuilds` from
- * `pnpm-workspace.yaml`, and the computer template installs pnpm UNPINNED
- * (`npm install -g pnpm`), so a box that has not been rebuilt still resolves
- * pnpm 10 and still needs the `.npmrc` spelling. Verified against pnpm 10.34.5
- * and 11.24.0.
- *
- * WHY NOT THE MANIFEST. `onlyBuiltDependencies` would be narrower, but the
- * manifest is a bundled asset of `@ai-sdk/harness-claude-code`, not ours to
- * amend, and editing it would invalidate the `--frozen-lockfile` the adapter
- * installs with. It also does not work here: pnpm 11 ignored it under `--dir`
- * in testing, while the settings below took effect.
- *
- * The permissiveness is bounded by where it lands: one directory inside a
- * disposable sandbox that already runs an agent with full shell access.
- */
-const CLAUDE_CODE_BOOTSTRAP_NPMRC =
-  "dangerously-allow-all-builds=true\nstrict-dep-builds=false\n";
-
-/** pnpm 11's home for the same two settings, written ONLY as a fallback for a
- *  future adapter that stops shipping its own; see
- *  {@link CLAUDE_CODE_BOOTSTRAP_NPMRC}. */
-const CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE =
-  "dangerouslyAllowAllBuilds: true\nstrictDepBuilds: false\n";
-
-function pnpmWorkspaceForClaudeCodeBootstrap(
-  files: Awaited<
-    ReturnType<NonNullable<HarnessAgentAdapter["getBootstrap"]>>
-  >["files"],
-): string {
-  const packageFile = files.find((file) => file.path.endsWith("/package.json"));
-  if (packageFile) {
-    try {
-      const pkg = JSON.parse(packageFile.content) as {
-        dependencies?: Record<string, unknown>;
-      };
-      const version = pkg.dependencies?.["@anthropic-ai/claude-code"];
-      if (
-        typeof version === "string" &&
-        /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)
-      ) {
-        return `allowBuilds:\n  '@anthropic-ai/claude-code@${version}': true\n`;
-      }
-    } catch {
-      // Fall through to the bounded compatibility fallback below.
-    }
-  }
-  return CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE;
-}
-
-export function patchClaudeCodeHarnessBootstrap(
-  harness: HarnessAgentAdapter,
-): HarnessAgentAdapter {
-  const originalGetBootstrap = harness.getBootstrap?.bind(harness);
-  if (!originalGetBootstrap) return harness;
-
-  let cachedPatchedBootstrap:
-    | Awaited<ReturnType<NonNullable<typeof originalGetBootstrap>>>
-    | undefined;
-
-  return {
-    ...harness,
-    getBootstrap: async (...args) => {
-      if (cachedPatchedBootstrap) return cachedPatchedBootstrap;
-      const bootstrap = await originalGetBootstrap(...args);
-      // The adapter ships its own version-pinned `pnpm-workspace.yaml` since
-      // the stable line. Appending a second entry for the same path would write
-      // the file twice with conflicting content, so ours is a FALLBACK: it is
-      // added only if the adapter stops shipping one. `.npmrc` is always ours —
-      // the adapter ships none, and pnpm 10 reads nothing else.
-      const shipsPnpmWorkspace = bootstrap.files.some((file) =>
-        file.path.endsWith("/pnpm-workspace.yaml"),
-      );
-      cachedPatchedBootstrap = {
-        ...bootstrap,
-        files: [
-          ...bootstrap.files.map((file) =>
-            file.path.endsWith("/bridge.mjs")
-              ? { ...file, content: patchClaudeCodeBridgeContent(file.content) }
-              : file,
-          ),
-          {
-            path: `${bootstrap.bootstrapDir}/.npmrc`,
-            content: CLAUDE_CODE_BOOTSTRAP_NPMRC,
-          },
-          ...(shipsPnpmWorkspace
-            ? []
-            : [
-                {
-                  path: `${bootstrap.bootstrapDir}/pnpm-workspace.yaml`,
-                  content: pnpmWorkspaceForClaudeCodeBootstrap(bootstrap.files),
-                },
-              ]),
-        ],
-      };
-      return cachedPatchedBootstrap;
-    },
-  };
-}
-
 /** Map a host model id (Gateway `creator/model`, e.g.
  *  `anthropic/claude-opus-4.7`) to a Claude Code native model id. Haiku is the
  *  exception: Claude Code accepts the `haiku` alias as a main model, but rejects
@@ -1054,63 +660,74 @@ function toClaudeCodeModel(modelId: string): string | undefined {
   ) {
     return withoutProvider;
   }
+  // Another Anthropic model (the evidence table's `unknown` row: no native id
+  // verified). Playground chat may still run it with a warning, and then the
+  // honest attempt is the model's own id — passing nothing would let the CLI
+  // silently run its DEFAULT model under this model's name. Evals and swarms
+  // never get here: they refuse an unverified pair before the turn starts.
+  if (m.startsWith("anthropic/") && /^claude-[a-z0-9.-]+$/.test(withoutProvider)) {
+    return withoutProvider;
+  }
   return undefined;
 }
 
 /**
- * Model LINES the pinned Codex CLI resolves but equips with NO tools.
+ * Model support is no longer decided here. Which models each harness can run
+ * is an evidence table keyed by the runtime VERSION
+ * (`shared/harness-model-support-evidence.json`, read through
+ * `shared/harness-model-support.ts`), and every adapter asks it at its pinned
+ * CLI version — see {@link modelSupportFor}.
  *
- * Not a guess and not a forward guard — a measurement. Driving the pinned
- * binary through every gpt-5-family id in MCPJam's hosted catalog
- * (`.spike-codex-appserver`, gate P5) produced:
- *
- *   gpt-5, -chat, -codex, -mini, -nano, -pro ......... 10 tools
- *   gpt-5.1-*, gpt-5.3-* ............................. 10 tools
- *   gpt-5.2-*, gpt-5.4-*, gpt-5.5-* .................. 11 tools
- *   gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra ......... 0 TOOLS
- *
- * The 5.6 line is the dangerous case precisely because the CLI KNOWS it: there
- * is no "unknown model" warning to notice, the turn completes, and the model
- * simply never gets a tool. The user sees a Codex host answer from chat alone
- * and has no way to tell it never had the ability to act. All three are already
- * in the hosted catalog, so this is a live defect, not a hypothetical.
- *
- * A LINE prefix rather than exact ids, because the failure is a property of the
- * model line and OpenAI ships new members of a line (`-luna`, `-sol`, `-terra`)
- * without our involvement.
- *
- * VERSION-KEYED to the pinned Codex CLI. Re-measure on a version bump
- * (`node probe/run-gates.mjs --gate P5`) and move a line out of this list only
- * with the matrix to show for it.
+ * The Codex tool-less gate that used to live here (`gpt-5.6*` refused because
+ * the pinned 0.149.x CLI resolves the line but equips it with NO tools —
+ * measured by `.spike-codex-appserver` gate P5, re-run with
+ * `node probe/run-gates.mjs --gate P5` on a version bump) is now the table's
+ * `codex <=0.149.x` row, with the measurement as its evidence. A newer CLI
+ * reads that pair as `unknown` until someone measures it, instead of silently
+ * inheriting the old verdict.
  */
-const CODEX_TOOL_LESS_MODEL_LINES = ["gpt-5.6"] as const;
 
 /** Map a host model id to a Codex-native OpenAI model. ALLOWLIST, not a blanket
  *  `openai/` strip: only the gpt-5 family (what Codex CLI runs) passes through;
  *  anything else ⇒ undefined so Codex uses its own pinned default rather than
- *  being forced onto a model it can't run.
- *
- *  The tool-less lines above are refused on top of that, which is what turns a
- *  silent chat-only turn into a `model-unsupported` pre-flight refusal the user
- *  can act on.
- *
- *  Why a line DENYLIST inside the family allowlist rather than an exact-id
- *  allowlist: the hosted catalog is dynamic (the backend can add models with no
- *  inspector deploy — see `hosted-model-catalog.ts`), so an exact list would
- *  refuse newly hosted models that work perfectly well, trading a silent-bad
- *  turn for a loud-wrong refusal on the common path. The denylist targets
- *  exactly the measured failure and nothing else. */
+ *  being forced onto a model it can't run. Whether a mapped model is actually
+ *  RUN is the evidence table's call ({@link modelSupportFor}), so a line the
+ *  pinned CLI runs without tools is refused by the preflight, not dropped
+ *  here. */
 function toCodexModel(modelId: string): string | undefined {
   if (!modelId.toLowerCase().startsWith("openai/")) return undefined;
   const slug = modelId.slice("openai/".length);
   if (!/^gpt-5/i.test(slug)) return undefined;
-  const lower = slug.toLowerCase();
-  // Exact id or a `<line>-<variant>` member of it. Guarded on the separator so
-  // a future `gpt-5.60` line is NOT swallowed by the `gpt-5.6` entry.
-  const toolLess = CODEX_TOOL_LESS_MODEL_LINES.some(
-    (line) => lower === line || lower.startsWith(`${line}-`),
-  );
-  return toolLess ? undefined : slug;
+  return slug;
+}
+
+/** The evidence-table verdict for `modelId` on `harnessId` at its pinned
+ *  runtime version. One helper so every adapter (both Codex transports
+ *  included) reads the same table the same way. */
+function modelSupportFor(
+  harnessId: HarnessId,
+): (modelId: string) => HarnessModelSupportVerdict {
+  return (modelId) =>
+    harnessModelSupport({
+      harnessId,
+      runtimeVersion: harnessPinnedVersion(harnessId),
+      modelId,
+    });
+}
+
+/** `supportsModel` derived from the verdict: `supported`, or `unknown` when
+ *  the caller explicitly allows an unverified pair (Playground chat). */
+function supportsModelFor(
+  harnessId: HarnessId,
+): (modelId: string, opts?: { allowUnknown?: boolean }) => boolean {
+  const support = modelSupportFor(harnessId);
+  return (modelId, opts) => {
+    const { status } = support(modelId);
+    return (
+      status === "supported" ||
+      (status === "unknown" && opts?.allowUnknown === true)
+    );
+  };
 }
 
 /** Convert a built-in tool's input schema to JSON Schema, or omit on failure.
@@ -1185,9 +802,76 @@ function memoizedBuiltinTools(
 // runs with `buildBrokerDummyAuth` placeholders pointed at the metered model
 // proxy, which normalizes its own per-protocol proxyBaseUrl.
 
+/**
+ * CLI environment a Claude Code turn runs with, whatever its effort: the
+ * model pins below, and whether background tasks run.
+ *
+ * Background tasks run on `allow-all` turns only. The bridge's background
+ * drain (`claude-code-background-drain.ts`) holds such a turn open until its
+ * background agents report back, so the answer reaches the chat the way it
+ * does in stock Claude Code.
+ *
+ * Every other mode turns them off. Under `allow-reads` the main thread pauses
+ * for approval on any edit, and a paused turn's model lease is revoked, so
+ * the drain stops whatever runs in the background at the first approval:
+ * background work there would be cut off almost every time. Off, the same
+ * subagent runs in the foreground and its answer comes back inside the turn
+ * that asked for it. An unknown mode counts as not `allow-all`.
+ */
+function claudeCodeTurnEnv(
+  permissionMode: HarnessV1PermissionMode | undefined,
+  modelId: string,
+): Record<string, string> {
+  return {
+    ...claudeCodeModelPins(modelId),
+    ...(permissionMode === "allow-all"
+      ? {}
+      : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
+  };
+}
+
+const CLAUDE_CODE_MODEL_FAMILIES = ["haiku", "sonnet", "opus"] as const;
+
+/**
+ * Every model Claude Code picks for ITSELF resolves to the turn's model.
+ *
+ * Besides the model it is given, the CLI reaches for its family aliases on
+ * its own: plan mode switches to the `sonnet` alias (CLI 2.1.245 sends
+ * `claude-sonnet-5` right after `EnterPlanMode`, even on a Haiku turn), and
+ * background functionality and the `Explore` subagent use `haiku`. The
+ * turn's model lease admits only the model the user picked (plus that
+ * model's own alias), so each of those calls was refused with
+ * `403 Model not allowed for this lease`, ending the turn.
+ *
+ * Pinning the OTHER families' aliases (`ANTHROPIC_DEFAULT_<FAMILY>_MODEL`) to
+ * the turn's canonical id sends those calls to the chosen model — the one
+ * the lease admits exactly and the user is billed for. The chosen family's
+ * own alias is left alone, so the main model keeps its existing path (the
+ * bridge's Gateway model overrides). An id outside the three families pins
+ * all three.
+ */
+function claudeCodeModelPins(modelId: string): Record<string, string> {
+  const native = toClaudeCodeModel(modelId);
+  const family = CLAUDE_CODE_MODEL_FAMILIES.find(
+    (candidate) =>
+      native === candidate || native?.startsWith(`claude-${candidate}-`),
+  );
+  const pins: Record<string, string> = {};
+  for (const candidate of CLAUDE_CODE_MODEL_FAMILIES) {
+    if (candidate === family) continue;
+    pins[`ANTHROPIC_DEFAULT_${candidate.toUpperCase()}_MODEL`] = modelId;
+  }
+  return pins;
+}
+
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
+  // Nothing verified yet: an effort on this harness is refused, not dropped.
+  // `createHarness` below already maps an effort (`effort` option + adaptive
+  // thinking), but it stays inert (the SDK row is empty) until the live check
+  // against the AI Gateway verifies it. See `HARNESS_REASONING_EFFORTS`.
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   requiresComputer: true,
   // MCPJam brokers the model credential: Convex mints a lease, E2B injects it
   // outside the VM, and the model proxy meters the spend.
@@ -1229,138 +913,180 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // tool-approval-request and resumes with the decision), same path as native.
   supportsHostExecutedToolApproval: true,
   // The CLI's own MCP client connects to the servers from inside the sandbox,
-  // via the `.mcp.json` written below — real native function calling. Read from
+  // via its session MCP configuration — real native function calling. Read from
   // the shared declaration so the host editor's promises about which knobs bite
   // move with this, instead of being re-asserted by hand on the client.
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
-  // …by writing `.mcp.json` into the session workdir (see deliverMcpServers).
-  mcpNativeDelivery: "sandbox-files",
+  // …through the SDK session configuration, without writing into the workspace.
+  mcpNativeDelivery: "session-config",
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.
   skillsWriteOptions: { trailingNewline: true },
   prepareSkills: prepareClaudeCodeSkills,
   // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
-  // (skills param + `.mcp.json`), which is not the same contract.
+  // (skills param + MCP configuration), which is not the same contract.
   supportsPluginBundles: false,
   // Claude Code does not emit file-change stream parts.
   fileChangeToolName: undefined,
-  listBuiltinTools: memoizedBuiltinTools(() => createClaudeCode()),
+  listBuiltinTools: memoizedBuiltinTools(() => createClaudeCodeHarness()),
   toNativeModel: toClaudeCodeModel,
-  // The CLI runs any Anthropic model we map into its native id shape; other
-  // providers are left to the runtime default rather than blocked in preflight.
-  supportsModel: () => true,
+  // Which models the pinned CLI runs is the evidence table's call, at the
+  // pinned version: haiku/sonnet/opus supported, other Anthropic ids unknown,
+  // everything else unsupported.
+  pinnedRuntimeVersion: harnessPinnedVersion("claude-code"),
+  modelSupport: modelSupportFor("claude-code"),
+  supportsModel: supportsModelFor("claude-code"),
   parseToolName: parseHarnessToolName,
-  async deliverMcpServers({ writeTextFile, sessionWorkDir, mcpJson }) {
-    // Write the host's MCP servers into the session workdir before Claude Code
-    // starts, so it connects to them on launch.
-    await writeTextFile({
-      path: `${sessionWorkDir}/.mcp.json`,
-      content: serializeHarnessMcpJson(mcpJson),
+  // No `model` here: the adapter no longer reads one at construction. The
+  // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
+  createHarness({ modelId, auth, mcpJson, reasoningEffort, permissionMode }) {
+    // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
+    // provider failure reaches an eval as fields rather than a sentence. A
+    // local session swaps this bootstrap for the Inspector layer's
+    // (`withLocalRuntimeBootstrap`): the bridge it runs is the one compiled
+    // into the layer and re-hashed before every exec.
+    return createHostedClaudeCodeHarness({
+      mcpServers: mcpJson.mcpServers,
+      auth,
+      // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
+      // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects
+      // (400: expected 'disabled' | 'enabled'). Pin thinking off until the
+      // gateway accepts adaptive. (`"off"` on the canary line; the stable
+      // line takes the richer `{ type }` config, where `'disabled'` is the
+      // same wire behavior.)
+      //
+      // WITH an effort the turn asks for adaptive thinking (the only shape the
+      // `effort` option controls), so the disabled pin is dropped for it.
+      // A turn with no effort keeps the exact options above.
+      ...(reasoningEffort ? {} : { thinking: { type: "disabled" as const } }),
+      // AI Gateway's Anthropic-compat schema rejects the newer
+      // output_config.effort request field ("400 output_config.effort: Extra
+      // inputs are not permitted"). "unset" makes the CLI omit the field
+      // entirely (verified in CLI 0.2.x-2.1.x: CLAUDE_CODE_EFFORT_LEVEL of
+      // "unset"/"auto" short-circuits effort resolution).
+      //
+      // This used to be a `process.env.… ??=` write injected into the bridge
+      // source. Stable's first-class `env` merges OVER the bridge process
+      // env, so unlike `??=` it is now authoritative rather than a default —
+      // deliberate: the sandbox env is ours, and the adapter's own `effort`
+      // option is the supported way to ask for a value.
+      //
+      // With an effort, the env is set to that level instead: it beats the
+      // `--effort` flag, so leaving "unset" would silently drop the request.
+      ...(reasoningEffort
+        ? {
+            effort: reasoningEffort,
+            thinking: { type: "adaptive" as const },
+            env: {
+              ...claudeCodeTurnEnv(permissionMode, modelId),
+              CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort,
+            },
+          }
+        : {
+            env: {
+              ...claudeCodeTurnEnv(permissionMode, modelId),
+              CLAUDE_CODE_EFFORT_LEVEL: "unset",
+            },
+          }),
     });
-  },
-  createHarness({ modelId, auth }) {
-    const nativeModel = toClaudeCodeModel(modelId);
-    // Dual-`ai` boundary cast: createClaudeCode returns a HarnessV1 from its own
-    // (nested) @ai-sdk/harness copy, nominally distinct from this server's copy
-    // that HarnessAgent uses. Structurally identical; the drive reads loosely.
-    return patchClaudeCodeHarnessBootstrap(
-      createClaudeCode({
-        ...(nativeModel ? { model: nativeModel } : {}),
-        auth,
-        // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
-        // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects
-        // (400: expected 'disabled' | 'enabled'). Pin thinking off until the
-        // gateway accepts adaptive. (`"off"` on the canary line; the stable
-        // line takes the richer `{ type }` config, where `'disabled'` is the
-        // same wire behavior.)
-        thinking: { type: "disabled" },
-        // AI Gateway's Anthropic-compat schema rejects the newer
-        // output_config.effort request field ("400 output_config.effort: Extra
-        // inputs are not permitted"). "unset" makes the CLI omit the field
-        // entirely (verified in CLI 0.2.x-2.1.x: CLAUDE_CODE_EFFORT_LEVEL of
-        // "unset"/"auto" short-circuits effort resolution).
-        //
-        // This used to be a `process.env.… ??=` write injected into the bridge
-        // source. Stable's first-class `env` merges OVER the bridge process
-        // env, so unlike `??=` it is now authoritative rather than a default —
-        // deliberate: the sandbox env is ours, and the adapter's own `effort`
-        // option is the supported way to ask for a value.
-        env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" },
-      }) as unknown as HarnessAgentAdapter,
-    );
   },
 };
 
-const codexExecAdapter: HarnessRuntimeAdapter = {
+/**
+ * Codex, over MCPJam's own `codex app-server` adapter (`codex-appserver/`), in
+ * every venue: local and hosted Playground, evals and swarms.
+ *
+ * It replaced the published `@ai-sdk/harness-codex` adapter, which drove
+ * `codex exec`: that bridge built its thread with `approvalPolicy: "never"` and
+ * `danger-full-access` hardcoded and refused every permission mode but
+ * `allow-all`, so a Codex host could never pause for approval and every
+ * approval host was refused. app-server raises real
+ * `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`
+ * requests under `untrusted`, verified against the pinned binary — a denied
+ * command reports `declined` and does not run — and reports typed items for
+ * shell, patches and web search, so the trace shows what actually happened.
+ *
+ * MCP delivery is HOST-EXECUTED, in both venues: every MCP call is relayed back
+ * to this process and runs on its own manager, under the tool policy and the
+ * framework's `toolApproval`, wherever the Codex process itself runs. Codex
+ * 0.149.1 does raise its own approval for an MCP `tools/call` (an
+ * `mcp_tool_call` elicitation, PROBES.md (d)), but the relay is rendered with
+ * `default_tools_approval_mode = "approve"` so MCPJam's gate is the single
+ * authority instead of a second prompt nobody answers. Native delivery stays a
+ * follow-up: it would move enforcement into a process MCPJam does not own.
+ */
+const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
-  // The transport that has been in production. Named explicitly now that a
-  // second one exists, so a reader of either arm can tell which is which.
-  transport: "exec",
+  // Folded into the runtime fingerprint, so a lane saved under the retired
+  // exec transport forks (with a visible "runtime-changed" reset) instead of
+  // resuming onto a different protocol.
+  transport: "app-server",
   displayName: "Codex",
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
   requiresComputer: true,
   // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
   // Anthropic one.
   modelAccess: "broker",
-  // Codex doesn't support built-in tool approval requests — use allow-all.
+  // Hosted: `never` + `danger-full-access`, the disposable box being the
+  // boundary. Locally the bridge refuses `allow-all` without an explicit
+  // workspace-write sandbox policy, so it never becomes full access there.
   defaultPermissionMode: "allow-all",
-  // Unlike Claude Code (see `claudeCodeAdapter`, where the pause was available
-  // all along under the right permission mode), this one is a real upstream
-  // wall, not a mode we failed to select. `@ai-sdk/harness-codex`'s bridge
-  // builds its thread with `approvalPolicy: "never"` and
-  // `sandboxMode: "danger-full-access"` HARDCODED, so Codex is never asked to
-  // pause and no `tool-approval-request` is ever emitted. The adapter drives
-  // `codex exec` (upstream's own `doCompact` docs say so), a batch mode with no
-  // channel to interrupt; the interactive `codex app-server` transport that
-  // could carry approvals is not what the AI SDK adapter speaks. Reaching it
-  // would mean authoring our own adapter, so this stays false on evidence.
-  supportsNativeToolApproval: false,
-  // Never honored while supportsNativeToolApproval is false; keep it the
-  // same as the default mode so a future flip is an explicit decision.
-  approvalPermissionMode: "allow-all",
-  // Inert for Codex either way: its MCP servers are HOST-EXECUTED (see
-  // `mcpDelivery` below), so `harnessToolApprovalRefusalReason` reads
-  // `supportsHostExecutedToolApproval` for this harness, never this flag.
+  liveApprovalRuntime: true,
+  // `turn/start.sandboxPolicy`; the bridge refuses `allow-all` without it
+  // whenever it is supervised locally.
+  acceptsSandboxPolicy: true,
+  // The pause is real. `HarnessAgent` also refuses to construct with a
+  // non-allow-all mode unless the underlying harness declares
+  // `supportsBuiltinToolApprovals`, which `createCodexAppServer` does.
+  supportsNativeToolApproval: true,
+  // "allow-reads" for the same reason as Claude Code and Cursor: it is the
+  // narrowest framework mode that pauses on side-effecting work. The bridge
+  // maps it to Codex's `untrusted` policy, which on 0.149.1 asks about EVERY
+  // command — reads included — and every file change (PROBES.md (c)). So an
+  // approval-gated Codex host prompts more than a Claude Code one; nothing
+  // here may claim reads run without a prompt.
+  approvalPermissionMode: "allow-reads",
+  // MCPJam's tools run in MCPJam's process and the framework gates them there,
+  // before `execute`, through `HarnessAgent`'s `toolApproval` map. This is the
+  // flag `harnessToolApprovalRefusalReason` reads for Codex, because Codex's
+  // MCP delivery is host-executed.
+  supportsHostExecutedToolApproval: true,
+  // False because MCP delivery is host-executed: MCPJam's own gate applies to
+  // relayed calls (above), and codex's MCP approval is configured off for the
+  // relay. Only relevant if MCP delivery ever becomes native.
   supportsMcpToolApproval: false,
-  // Codex docs say host-executed AI SDK approvals can work, but it's not wired/
-  // tested in MCPJam yet — keep false for v1; flip without code churn later.
-  supportsHostExecutedToolApproval: false,
-  // COMP-39: Codex reaches the host's MCP servers, but NOT through
-  // `mcp_servers`. Writing `~/.codex/config.toml` merges cleanly and is a
-  // silent no-op — the codex bridge documents that codex never registers an MCP
-  // tool as model-callable in `codex exec --experimental-json` (the mode the
-  // SDK drives): the handshake completes and `tools/list` answers, but the
-  // model can't call anything (openai/codex#19425). So MCPJam projects each
-  // selected server's tools into HOST-EXECUTED AI SDK tools instead; the bridge
-  // relays the invocations back out (`cli-relay.ts`) and MCPJam runs them
-  // in-process. See `HarnessMcpDelivery` and `host-executed-mcp-tools.ts`.
+  // COMP-39: MCPJam projects each selected server's tools into HOST-EXECUTED
+  // AI SDK tools; the bridge relays the invocations back out and MCPJam runs
+  // them in-process. See `HarnessMcpDelivery` and `host-executed-mcp-tools.ts`.
   // Read from the shared declaration — the client's Behavior tab derives from
   // the same value, so "MCPJam builds these tools, so the host's construction
   // knobs apply" is stated once for both sides.
   mcpDelivery: HARNESS_MCP_DELIVERY.codex,
-  // INS-8: skills ARE delivered. `codex-harness.ts` writes every `skills` entry
-  // to `$HOME/.agents/skills/<name>/SKILL.md` during `doStart`, before it spawns
-  // the CLI, and points the process at that HOME — the same delivery contract
-  // Claude Code has. Parity with the Claude path (payload shape, on-box target
-  // paths, supporting files, name acceptance) is asserted against the REAL
-  // adapter in `__tests__/codex-skill-parity.test.ts`.
+  // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
+  // `$HOME/.agents/skills/<name>/SKILL.md` before it starts Codex, the same
+  // root the retired exec transport used.
   supportsSkills: true,
   skillsBaseDir: CODEX_SKILLS_BASE,
-  // Mirrors `writeCodexSkills` in `@ai-sdk/harness-codex` (library default).
   skillsWriteOptions: { trailingNewline: false },
   prepareSkills: prepareCodexSkills,
-  // Codex has no plugin-install interface in the installed harness — MCPJam
-  // still projects a plugin's components (skills param, host-executed MCP
-  // tools), which is not the same contract as a native bundle install.
+  // Codex has no plugin-install interface — MCPJam still projects a plugin's
+  // components (skills param, host-executed MCP tools), which is not the same
+  // contract as a native bundle install.
   supportsPluginBundles: false,
-  // Codex surfaces file mutations as `file-change` stream parts (some don't
-  // originate from a model-callable tool); we render them as this native tool.
-  fileChangeToolName: "fileChange",
-  listBuiltinTools: memoizedBuiltinTools(() => createCodex()),
+  // The bridge emits patches as a real `tool-call`/`tool-result` pair (an
+  // approval must attach to a tool call, and a `file-change` part has no
+  // toolCallId), so the turn runner's synthetic file-change tool naming is not
+  // wanted here.
+  fileChangeToolName: undefined,
+  listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
   toNativeModel: toCodexModel,
-  // Codex only runs the gpt-5 family it maps; anything else would silently fall
-  // back to Codex's default model, so the preflight rejects it.
-  supportsModel: (modelId) => toCodexModel(modelId) !== undefined,
+  // Codex only runs the gpt-5 family, and at the pinned 0.149.x not the
+  // tool-less gpt-5.6 line; anything else would silently fall back to Codex's
+  // default model (or run without tools), so the preflight rejects it.
+  pinnedRuntimeVersion: harnessPinnedVersion("codex"),
+  modelSupport: modelSupportFor("codex"),
+  supportsModel: supportsModelFor("codex"),
   // SAME scheme as Claude Code, deliberately: the projected host tools are named
   // `mcp__<sanitizedServer>__<tool>` (see `host-executed-mcp-tools.ts`), so a
   // relayed call attributes back to its serverId exactly as a native Claude Code
@@ -1368,83 +1094,15 @@ const codexExecAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth }) {
-    const nativeModel = toCodexModel(modelId);
-    // Same dual-`ai` boundary cast as Claude Code. `auth.openaiCompatible` is
-    // accepted by createCodex — the broker dummy auth always carries an
-    // explicit baseUrl so the CLI never reads the host env for it.
-    return createCodex({
-      ...(nativeModel ? { model: nativeModel } : {}),
-      auth,
-    }) as unknown as HarnessAgentAdapter;
-  },
-};
-
-/**
- * The SAME Codex host, over the interactive `codex app-server` protocol.
- *
- * Selected by `MCPJAM_CODEX_APPSERVER_TRANSPORT` (see `getHarnessAdapter`).
- * Everything a user can see about their host is unchanged — same id, same
- * display name, same model rules, same skills root, same MCP delivery — because
- * this is a transport swap, not a new harness. What changes is what the runtime
- * can be asked to do.
- *
- * The capability differences, and why each one moves:
- *
- *  - APPROVALS. `@ai-sdk/harness-codex`'s bridge builds its thread with
- *    `approvalPolicy: "never"` hardcoded and its `doStart` rejects any
- *    permission mode but `allow-all`, so no `tool-approval-request` can ever be
- *    emitted. app-server raises real `item/commandExecution/requestApproval`
- *    and `item/fileChange/requestApproval` requests under `untrusted`, verified
- *    against the pinned binary — a denied command reports `declined` and does
- *    not run. Both native and host-executed approval flip to true together
- *    because the pause is one mechanism serving both surfaces.
- *
- *  - ATTRIBUTION. The exec transport can name two tools. This one reports
- *    typed items for shell, patches and web search, so the trace shows what
- *    actually happened.
- *
- * MCP delivery stays HOST-EXECUTED, and that is a deliberate limit rather than
- * an oversight: codex 0.149.1 has no approval request for an MCP `tools/call`
- * at all, so under native delivery a Strict-mode host could not gate one. Host
- * execution keeps MCPJam the authority. Native delivery is a follow-up gated on
- * an answer to that, not on this transport.
- */
-const codexAppServerAdapter: HarnessRuntimeAdapter = {
-  ...codexExecAdapter,
-  transport: "app-server",
-  // The pause is real on this transport. `HarnessAgent` also refuses to
-  // construct with a non-allow-all mode unless the underlying harness declares
-  // `supportsBuiltinToolApprovals`, which `createCodexAppServer` does.
-  supportsNativeToolApproval: true,
-  // "allow-reads" for the same reason as Claude Code and Cursor: it is the
-  // narrowest mode that still pauses on side-effecting work while leaving reads
-  // free — the faithful mapping to the emulated engine, which gates tool CALLS
-  // and never reads. The bridge maps it to Codex's `untrusted` policy, under
-  // which Codex auto-approves the commands it knows to be read-only and asks
-  // about everything else.
-  approvalPermissionMode: "allow-reads",
-  // MCPJam's tools run in MCPJam's process and the framework gates them there,
-  // before `execute`, through `HarnessAgent`'s `toolApproval` map. This is the
-  // flag `harnessToolApprovalRefusalReason` reads for Codex, because Codex's
-  // MCP delivery is host-executed — so leaving it false would refuse every
-  // approval host with a server attached even though the pause works.
-  supportsHostExecutedToolApproval: true,
-  // Still false, and NOT because the mechanism is unproven: codex 0.149.1
-  // raises no approval request for an MCP tool call, so there is nothing to
-  // pause on. Only relevant if MCP delivery ever becomes native.
-  supportsMcpToolApproval: false,
-  // The bridge emits patches as a real `tool-call`/`tool-result` pair (an
-  // approval must attach to a tool call, and a `file-change` part has no
-  // toolCallId), so the turn runner's synthetic file-change tool naming is not
-  // wanted here.
-  fileChangeToolName: undefined,
-  listBuiltinTools: memoizedBuiltinTools(() => createCodexAppServer()),
-  createHarness({ modelId, auth }) {
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort }) {
     const nativeModel = toCodexModel(modelId);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
+      // Forwarded on the bridge `start` message, which sends it as
+      // `turn/start` `effort`.
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       auth,
+      ...(sandboxPolicy ? { sandboxPolicy } : {}),
     }) as unknown as HarnessAgentAdapter;
   },
 };
@@ -1456,6 +1114,8 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // different surfaces. Every preflight/refusal message a user reads comes from
   // here, so the distinction has to be in the name itself.
   displayName: "Cursor CLI",
+  // Nothing verified yet: an effort on this harness is refused, not dropped.
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["cursor"],
   requiresComputer: true,
   // NO BROKER. cursor-agent has no provider or gateway routing at all: it
   // authenticates with a `CURSOR_API_KEY` (the adapter's own `credentialEnv`
@@ -1469,7 +1129,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // environment, set once by an admin under Project Settings → Secrets.
   // Missing ⇒ the turn is refused up front with copy that says so, never
   // defaulted.
-  externalAccountCredentialEnv: ["CURSOR_API_KEY"],
+  externalAccountCredentialEnv: [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env],
   // …and it can be BROKERED, which is the preferred delivery and the only
   // one hosted evals and swarms accept at all (they refuse an environment that
   // selects materialized secrets — `evalSandboxes.ts`'s
@@ -1484,13 +1144,16 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // `Authorization: Bearer <CURSOR_API_KEY>`. MCPJam's egress transform is
   // host-scoped rather than path-scoped, so brokering the host covers that
   // exchange and any sibling call that authenticates the same way.
+  //
+  // Declared in `shared/external-credential-selection.ts` so the composer and
+  // the setup step that creates the secret use the SAME binding. (Lowercase
+  // header: `validateBrokerBinding` canonicalizes stored rows that way, so this
+  // is what a saved secret compares equal to.)
   externalAccountBrokerBinding: {
-    CURSOR_API_KEY: {
-      hosts: ["api2.cursor.sh"],
-      // LOWERCASE: `validateBrokerBinding` canonicalizes stored rows that way,
-      // so this is what a saved secret compares equal to.
-      header: "authorization",
-      template: "Bearer {}",
+    [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env]: {
+      hosts: [...EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.hosts],
+      header: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.header,
+      template: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.template,
     },
   },
   defaultPermissionMode: "allow-all",
@@ -1560,11 +1223,15 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // (a plan-gated model does not error; it answers "Upgrade your plan to
   // continue" in a normal end_turn, which the turn runner detects separately).
   toNativeModel: () => undefined,
-  // Never consulted: `runHarnessTurn` and the preflight skip every model gate
-  // for an external-account harness, because the model MCPJam knows about is
-  // not the model that runs. Declared `true` so the shape is satisfied without
-  // implying a check happened.
-  supportsModel: () => true,
+  // Never consulted by the gates: `runHarnessTurn` and the preflight skip every
+  // model gate for an external-account harness, because the model MCPJam knows
+  // about is not the model that runs (the sentinel rule replaces them). Read
+  // from the same table anyway — it says `cursor/auto` only — so a picker that
+  // asks gets the same answer. The CLI build is pinned (see
+  // `cursor-bootstrap.ts`), and every Cursor row is version-independent.
+  pinnedRuntimeVersion: harnessPinnedVersion("cursor"),
+  modelSupport: modelSupportFor("cursor"),
+  supportsModel: supportsModelFor("cursor"),
   // Name-only attribution, for the result parts that arrive without an input.
   // Cursor's stream name is an opaque `acp_tool_<id>`, so this can only ever
   // return it verbatim with no serverId — which is the correct answer for a
@@ -1574,11 +1241,12 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // — the adapter's own `isMcpToolCall` predicate keys off exactly those three
   // fields), so this hook is what makes Cursor MCP calls attributable at all.
   attributeToolCall: attributeCursorToolCall,
-  // The installed CLI is whatever `curl https://cursor.com/install | bash`
-  // fetched at bootstrap — the adapter pins its own version but NOT the CLI's,
-  // and two observed builds are four months of behaviour apart. Recording the
-  // version per session is what makes a silent upstream change attributable
-  // instead of a mystery regression.
+  // The CLI is PINNED: `pinCursorHarnessBootstrap` replaces the vendor's
+  // `curl https://cursor.com/install | bash` (which serves whatever Cursor
+  // shipped that day) with a checksummed download of `HARNESS_PINNED_VERSIONS
+  // .cursor`. Recording the version per session still earns its place: it is
+  // what makes a box that somehow runs another build — a stale template, a
+  // custom image — attributable instead of a mystery regression.
   runtimeVersionCommand: (sessionWorkDir) =>
     // Layout taken from the adapter's own bootstrap: `bootstrapDir` is
     // `.harness-bootstrap/<harnessId>` under the session workdir, and
@@ -1595,24 +1263,27 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     )}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version`,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return createCursor({
-      // The customer's own CURSOR_API_KEY, as the environment arm of
-      // HarnessV1Authentication. Passing an explicit env map (rather than
-      // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading the
-      // SERVER's process env for a credential — and the routing modes would
-      // only produce a warning here anyway, since Cursor cannot be re-routed.
-      auth,
-      // REQUIRED by this arm's signature: `session-config` delivery has no
-      // other channel, so a construction that forgot the servers would be a
-      // silently tool-less turn. The type makes that unwritable.
-      mcpServers: toAcpMcpServers(mcpJson),
-    }) as unknown as HarnessAgentAdapter;
+    return pinCursorHarnessBootstrap(
+      createCursor({
+        // The customer's own CURSOR_API_KEY, as the environment arm of
+        // HarnessV1Authentication. Passing an explicit env map (rather than
+        // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading
+        // the SERVER's process env for a credential — and the routing modes
+        // would only produce a warning here anyway, since Cursor cannot be
+        // re-routed.
+        auth,
+        // REQUIRED by this arm's signature: `session-config` delivery has no
+        // other channel, so a construction that forgot the servers would be a
+        // silently tool-less turn. The type makes that unwritable.
+        mcpServers: toAcpMcpServers(mcpJson),
+      }) as unknown as HarnessAgentAdapter,
+    );
   },
 };
 
 const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
   "claude-code": claudeCodeAdapter,
-  codex: codexExecAdapter,
+  codex: codexAdapter,
   cursor: cursorAdapter,
 };
 
@@ -1632,20 +1303,6 @@ export function getHarnessAdapter(id: string): HarnessRuntimeAdapter {
   // yielding a 500 downstream instead of a controlled unsupported-harness error.
   if (!isHarnessId(id)) {
     throw new Error(`Unsupported harness: ${id}`);
-  }
-  /*
-   * Codex's TRANSPORT is chosen here, at every lookup, rather than baked into
-   * the map at module load. Two reasons, and the second is the load-bearing
-   * one: tests toggle the flag between cases, and a value captured at import
-   * time would make them silently test the wrong arm.
-   *
-   * The id is unchanged either way — this is one host with two protocols, not
-   * two harnesses — so nothing downstream branches on which arm it got. What
-   * keeps a live session from crossing between them is the runtime
-   * fingerprint's `transport` dimension, which forks the lane on a flip.
-   */
-  if (id === "codex" && codexAppServerTransportEnabled()) {
-    return codexAppServerAdapter;
   }
   return HARNESS_ADAPTERS[id];
 }

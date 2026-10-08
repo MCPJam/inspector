@@ -10,15 +10,21 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import { ChevronLeft, Loader2, X } from "lucide-react";
+import { ChevronLeft, Loader2, Paperclip, X } from "lucide-react";
 import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
+import {
+  DESCRIBE_ATTACHMENT_ACCEPT,
+  appendToDraft,
+  readDescribeAttachment,
+} from "@/components/swarms/describe-attachment";
 import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
   resolveSwarmJourneyPayload,
@@ -78,16 +84,31 @@ import {
   SWARM_QUERIES,
   LaunchJourneyRunError,
   SwarmGenerateError,
+  fetchSwarmFundingPreview,
+  fundingChangeOf,
   generateSwarmPersonaBatch,
 } from "@/lib/swarm-api";
+import {
+  alsoFailedNotice,
+  fundingChangedNotice,
+  fundingPreviewRuns,
+  fundingReviewNotice,
+  fundingUnverifiedNotice,
+  fundingSplitOf,
+  launchOutcomeNotice,
+  launchRunOverrides,
+  withChosenIterations,
+  type FundingSplit,
+} from "@/components/swarms/swarm-funding-plan";
 import {
   MAX_RUBRIC_CRITERIA,
   mergeRubrics,
   serializeRubricForWire,
 } from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { useHostList } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -98,13 +119,24 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
-import type { ClusterTuning } from "@/lib/cluster-tuning";
 import { describeCloudServerBlock } from "@/lib/cloud-server-readiness";
-import { environmentLabel } from "@/lib/environment-label";
+import {
+  environmentLabel,
+  environmentLabelsById,
+} from "@/lib/environment-label";
+import { type EnvironmentMoveRow } from "@/components/swarms/reused-environment-move";
 import { ErrorCard } from "@/components/ui/error-card";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { WebApiError } from "@/lib/apis/web/base";
+import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import {
+  preflightSwarmTargets,
+  missingSwarmModelMessage,
+  SwarmTargetPreflightError,
+} from "./swarm-target-preflight";
 
 /**
  * The authoring rail. Findings is a state of a finished swarm, not a fourth
@@ -186,7 +218,7 @@ export function generationProgressLine(args: {
       : "";
   const patience =
     elapsedSeconds >= SLOW_GENERATION_SECONDS
-      ? " Still waiting on the generator — nothing is saved until you launch, so leaving and coming back costs nothing."
+      ? " Still generating. Nothing is saved until you launch."
       : "";
   return `${what}${elapsed}.${patience}`;
 }
@@ -208,7 +240,11 @@ export type CreateSwarmDraft = {
   name: string;
   description?: string;
   environmentIds?: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** The launch wave this swarm names — see `swarmRunGroupId` on the runs. */
@@ -230,7 +266,11 @@ export type CreateJourneyDraft = {
   goal: string;
   hostIds: string[];
   environmentIds: string[];
-  config: { sessionsPerTarget: number; maxTurns: number };
+  config: {
+    sessionsPerTarget: number;
+    maxTurns: number;
+    setupWrites?: boolean;
+  };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
   /** Authoring provenance — the swarm this journey is created in. */
@@ -317,27 +357,13 @@ async function runWithConcurrency<T>(
   await Promise.all(runners);
 }
 
-/**
- * Set equality over environment ids — order is irrelevant to what a run
- * executes, so a reordered-but-identical selection must not trigger an
- * override that says nothing.
- */
-function sameEnvironmentSelection(
-  stored: readonly string[] | null,
-  selection: readonly string[],
-): boolean {
-  const current = stored ?? [];
-  if (current.length !== selection.length) return false;
-  const wanted = new Set(selection);
-  return current.every((id) => wanted.has(id));
-}
-
 function errorMessageOf(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message) return err.message;
   return fallback;
 }
 
 export function NewSwarmCreateFlow({
+  organizationId,
   projectId,
   environments,
   hostNameById,
@@ -352,9 +378,9 @@ export function NewSwarmCreateFlow({
   onDone,
   onOpenSession,
   onSaveExistingPersona,
-  onSetInsightsTuning: _onSetInsightsTuning,
 }: {
   projectId: string;
+  organizationId?: string;
   environments: ProjectEnvironmentView[] | undefined;
   /** Host id → display name for auto-naming materialized envs. */
   hostNameById: (hostId: string) => string;
@@ -393,7 +419,13 @@ export function NewSwarmCreateFlow({
      * environment id) was therefore invisible to this interface, one rename
      * away from being silently dropped.
      */
-    opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
+    opts?: {
+      swarmRunGroupId?: string;
+      environmentIds?: string[];
+      sessionsPerTarget?: number;
+      /** Sponsored conversations the person was shown for THIS run. */
+      expectedSponsored?: number;
+    },
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -435,11 +467,22 @@ export function NewSwarmCreateFlow({
    * a surface on an older backend renders the flow unchanged rather than
    * offering a control whose mutation would be rejected.
    */
-  onSetInsightsTuning?: (tuning: ClusterTuning) => Promise<void>;
 }) {
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // Materialized targets carry an image pin only under its own flag.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  // Ad-hoc AND archived, because this is the lookup Confirm uses to say where a
+  // reused goal is set up to run, and both kinds are exactly what a journey
+  // ends up pointing at. It never feeds a list anyone picks from.
+  const allEnvironments = useProjectEnvironments(projectId, {
+    includeArchived: true,
+    includeAdhoc: true,
+  });
+  const convex = useConvex();
+  const navigate = useAppNavigate();
+  const [preflightModelFailure, setPreflightModelFailure] =
+    useState<SwarmTargetPreflightError | null>(null);
   const resolveComposerTargets = useComposerResolver(projectId);
   const { user: workOsUser } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -473,6 +516,41 @@ export function NewSwarmCreateFlow({
     restoredDraft?.step ?? "describe",
   );
   const [draft, setDraft] = useState(restoredDraft?.description ?? "");
+  const attachInputRef = useRef<HTMLInputElement>(null);
+  // A file whose read a remount cut short. Kept, and re-persisted, until a
+  // file is attached successfully: its text is still missing from the draft
+  // however many remounts later. It does not hold Continue — only a live read
+  // can finish, and this one never will.
+  const [interruptedFile, setInterruptedFile] = useState<string | null>(
+    restoredDraft?.attachingFile ?? null,
+  );
+  const [attachError, setAttachError] = useState<string | null>(
+    interruptedFile
+      ? `Reading ${interruptedFile} was interrupted when this view reloaded. Attach it again.`
+      : null,
+  );
+  const [draggingFile, setDraggingFile] = useState(false);
+  // The file being read, one at a time. Continue waits on it: a read that
+  // settled after generation started would append text the personas were
+  // never generated from. Persisted so a remount mid-read can say so.
+  const [attachingFile, setAttachingFile] = useState<string | null>(null);
+  const attachFile = useCallback(async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    setAttachingFile(file.name);
+    try {
+      const result = await readDescribeAttachment(file);
+      if (!result.ok) {
+        setAttachError(result.error);
+        return;
+      }
+      setAttachError(null);
+      setInterruptedFile(null);
+      setDraft((current) => appendToDraft(current, result.text));
+    } finally {
+      setAttachingFile(null);
+    }
+  }, []);
   /**
    * Required, and prefilled — see {@link suggestSwarmName}. Computed once via
    * the lazy initializer so it does not change under the user on re-render.
@@ -517,8 +595,7 @@ export function NewSwarmCreateFlow({
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
   // Sizes GENERATION only — how many personas and goals the Describe step
   // asks for. Confirm no longer picks it: iterations is the control there.
-  const pushIntensity =
-    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
+  const pushIntensity = restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY;
   // One entry per persona, keyed by its proposal key. Absent means the
   // default: a persona the user has not touched costs nothing to store,
   // and a regenerated slate mints new keys rather than inheriting numbers
@@ -540,6 +617,10 @@ export function NewSwarmCreateFlow({
         ...current,
         [personaKey]: next,
       }));
+      // The notice quotes the split as it stood when a launch stopped. A counter
+      // changes that split, and a notice left behind would then contradict the
+      // numbers it sits under.
+      setFundingNotice(null);
     },
     [],
   );
@@ -566,6 +647,15 @@ export function NewSwarmCreateFlow({
       : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /**
+   * The backend refused generation because the visitor is anonymous. Held
+   * separately from `errorMessage` because the remedy is a control, not a
+   * sentence: `ErrorCard` would render "Sign in to generate personas and
+   * journeys." with nothing to press.
+   */
+  const [generateSignInRequired, setGenerateSignInRequired] = useState<
+    string | null
+  >(null);
   // Sync latch: `generating`/`launching` are state, so two fast clicks in one
   // tick would both see the old value and fire twice.
   const inFlightRef = useRef(false);
@@ -581,12 +671,30 @@ export function NewSwarmCreateFlow({
   const persistedTargetsRef = useRef<LaunchTarget[] | null>(
     restoredDraft?.launch.targets ?? null,
   );
+  // Why a persona or goal of the first attempt was not created. A launch that
+  // follows a stop for review runs only what was created, and without this it
+  // would end in a plain success: the failure was said once, on the stop, and
+  // cleared with the next click. Cleared wherever the persisted rows are.
+  const creationIssueRef = useRef<string | null>(null);
   // Environments baked into those persisted journeys. If the user goes Back
   // and changes the env selection, retrying must NOT relaunch the old
   // single-client journeys while the matrix shows the new multi-client set.
   const persistedEnvironmentKeyRef = useRef<string | null>(
     restoredDraft?.launch.environmentKey ?? null,
   );
+  // The same rows as state, so Confirm can preview the sponsored split of the
+  // WHOLE launch once its goals exist. Mirrors the ref at each place it moves.
+  const [createdTargets, setCreatedTargets] = useState<LaunchTarget[] | null>(
+    restoredDraft?.launch.targets ?? null,
+  );
+  // Sponsored-split review: bumped to re-read the preview after a launch
+  // stopped on it, and the sentence explaining why it stopped.
+  const [fundingRefreshKey, setFundingRefreshKey] = useState(0);
+  const [fundingNotice, setFundingNotice] = useState<string | null>(null);
+  // What the Running screen says about a launch that stopped partway. The toast
+  // that announces it disappears, and the screen then shows only the runs that
+  // did launch, so the explanation stays until it is dismissed.
+  const [launchNotice, setLaunchNotice] = useState<string | null>(null);
   /**
    * The wave id for THIS swarm, minted once and reused across a retry.
    *
@@ -655,8 +763,14 @@ export function NewSwarmCreateFlow({
       serverAttachments,
       environmentsEnabled,
     });
+    // Latch only once something was actually seeded. Latching first meant a
+    // mount where hosts and environments were both momentarily empty — `next`
+    // is null then — latched forever and never re-seeded when the queries
+    // landed, leaving the composer blank for the rest of the flow.
+    // `use-swarm-default-target.ts` has always done it in this order.
+    if (!next) return;
     targetSeededRef.current = true;
-    if (next) setTargetState(next);
+    setTargetState(next);
   }, [
     attachmentsLoading,
     attachmentsQueryEnabled,
@@ -741,6 +855,9 @@ export function NewSwarmCreateFlow({
     if (persistedTargetsRef.current == null) return;
     if (persistedEnvironmentKeyRef.current === environmentSelectionKey) return;
     persistedTargetsRef.current = null;
+    creationIssueRef.current = null;
+    setCreatedTargets(null);
+    setFundingNotice(null);
     persistedEnvironmentKeyRef.current = null;
     // Those rows are no longer the ones we'd relaunch, so the wave they were
     // going to join is void too — the next attempt is a genuinely new swarm.
@@ -760,8 +877,8 @@ export function NewSwarmCreateFlow({
     (composeMode && targetState.stack.hostIds.length > 0);
 
   /**
-   * Swarm sessions run in MCPJam's cloud, so a target whose servers are absent
-   * or unreachable from there cannot produce a run — the resolver rejects it
+   * Cloud targets need cloud-reachable servers; local Claude Code targets
+   * can use this machine's servers. An empty selection still fails resolution
    * with `ENV_NO_SERVERS`, and only AFTER this flow has written personas, goals
    * and (in compose mode) an ad-hoc environment row. Blocking here keeps that
    * failure in front of the pickers that fix it. `null` = nothing measurable is
@@ -773,6 +890,38 @@ export function NewSwarmCreateFlow({
     environments: envList,
   });
   const serverBlock = describeCloudServerBlock(serverReadiness);
+  // An explicit override can run a legacy client without a default, but an
+  // inherit cell still needs that client's model (even alongside overrides).
+  const missingModelHost = composeMode
+    ? hosts.find(
+        (host) =>
+          targetState.stack.hostIds.includes(host.hostId) &&
+          host.modelId !== undefined &&
+          !host.modelId.trim() &&
+          (
+            targetState.stack.modelSelectionsByHost?.[host.hostId] ??
+            targetState.stack.modelSelection
+          )?.includeClientDefaults !== false,
+      )
+    : hosts.find(
+        (host) =>
+          host.modelId !== undefined &&
+          !host.modelId.trim() &&
+          envList.some(
+            (env) =>
+              targetState.environmentIds.includes(env.environmentId) &&
+              env.hostId === host.hostId &&
+              !env.modelId?.trim(),
+          ),
+      );
+  const modelBlock = missingModelHost
+    ? missingSwarmModelMessage(missingModelHost.name)
+    : null;
+  useEffect(() => {
+    setPreflightModelFailure(null);
+  }, [targetState]);
+  const modelRepairHostId =
+    missingModelHost?.hostId ?? preflightModelFailure?.hostId;
 
   // Generating and reusing are two independent doors into Confirm, and they
   // compose. Writing anything in the box asks for a generation (which needs
@@ -780,15 +929,28 @@ export function NewSwarmCreateFlow({
   // its own — those journeys carry their own environments, so requiring one
   // here would block a returning user over a field their run never reads.
   const wantsGenerate = draft.trim().length > 0;
+  // Counted after trim, the same way the routes count it, so the counter and
+  // the 400 it exists to prevent agree on where the line is.
+  const draftLength = draft.trim().length;
+  const draftTooLong = draftLength > SWARM_DESCRIPTION_MAX_CHARS;
   const canGenerate =
     wantsGenerate &&
+    !draftTooLong &&
     hasGenerateTargets &&
     authReadyForGeneration &&
     !generating &&
     !materializing;
   const hasSwarmName = swarmName.trim().length > 0;
+  // No attaching while personas are generated from the current draft, and one
+  // file at a time.
+  const attachDisabled = generating || materializing || attachingFile !== null;
   const canContinue =
-    generating || materializing || serverBlock !== null || !hasSwarmName
+    generating ||
+    materializing ||
+    attachingFile !== null ||
+    serverBlock !== null ||
+    modelBlock !== null ||
+    !hasSwarmName
       ? false
       : wantsGenerate
       ? canGenerate
@@ -798,10 +960,15 @@ export function NewSwarmCreateFlow({
   const continueHint = (() => {
     if (generating || materializing) return null;
     if (!canContinue) {
+      if (attachingFile !== null) return "Reading the attached file…";
       // The notice above carries the finding and the fix; repeating it here
       // would put the same two sentences on screen twice.
       if (serverBlock) return "Pick a server to continue.";
+      if (modelBlock) return modelBlock;
       if (!hasSwarmName) return "This swarm needs a name to continue.";
+      if (draftTooLong) {
+        return `Shorten the description to ${SWARM_DESCRIPTION_MAX_CHARS.toLocaleString()} characters to continue.`;
+      }
       if (wantsGenerate) {
         if (!workOsUser) {
           return "Sign in to generate personas with MCPJam models.";
@@ -846,15 +1013,15 @@ export function NewSwarmCreateFlow({
       liveEnvironments: envList,
       createEnvironment,
       skillsEnabled,
-      computersEnabled,
+      computersEnabled: sandboxImagesEnabled,
     }),
     [
-      computersEnabled,
       createEnvironment,
       draft,
       envList,
       hostNameById,
       projectId,
+      sandboxImagesEnabled,
       skillsEnabled,
       swarmName,
       targetState.stack,
@@ -945,6 +1112,29 @@ export function NewSwarmCreateFlow({
     }
 
     if (!resolved) return null;
+    // Runs before generation and again before persisting personas/goals. The
+    // launch mutation remains authoritative if the client changes afterwards.
+    try {
+      setPreflightModelFailure(null);
+      await preflightSwarmTargets({
+        environmentIds: resolved.environmentIds,
+        targets: resolved.environments,
+        hosts,
+        resolve: (environmentId) =>
+          convex.query(
+            "projectEnvironments:resolveEnvironmentForLaunch" as any,
+            { projectId, environmentId },
+          ),
+      });
+    } catch (error) {
+      if (
+        error instanceof SwarmTargetPreflightError &&
+        error.code === "ENV_MODEL_REQUIRED"
+      ) {
+        setPreflightModelFailure(error);
+      }
+      throw error;
+    }
     setResolvedEnvironmentIds(resolved.environmentIds);
     setResolvedEnvironments(resolved.environments);
     if (resolved.materialized?.createdIds.length) {
@@ -959,6 +1149,9 @@ export function NewSwarmCreateFlow({
     }
     return resolved;
   }, [
+    convex,
+    hosts,
+    projectId,
     composeMode,
     createdEnvOverlay,
     envList,
@@ -974,6 +1167,9 @@ export function NewSwarmCreateFlow({
     setGeneratingSince(Date.now());
     setDescribeStepError(null);
     setErrorMessage(null);
+    // Cleared on every attempt: a press is the one event that can mean the
+    // visitor signed in since the last refusal.
+    setGenerateSignInRequired(null);
     track("swarm_create_generate_started", {
       location: "swarms",
       intensity: pushIntensity,
@@ -1017,6 +1213,9 @@ export function NewSwarmCreateFlow({
       // A fresh slate is a fresh set of rows to create — drop any memory of
       // what a previous attempt persisted.
       persistedTargetsRef.current = null;
+      creationIssueRef.current = null;
+      setCreatedTargets(null);
+      setFundingNotice(null);
       persistedEnvironmentKeyRef.current = null;
       persistedRunGroupIdRef.current = null;
       persistedSwarmIdRef.current = null;
@@ -1050,16 +1249,25 @@ export function NewSwarmCreateFlow({
       // would say the same thing twice with nothing to act on.
       const limitDialogRaised =
         err instanceof SwarmGenerateError && err.limitDialogRaised;
-      setDescribeStepError(limitDialogRaised ? null : err);
+      // Same argument as the limit dialog one line up, for the same reason:
+      // this refusal gets its own affordance below, so repeating it in the
+      // error card would say it twice and offer nothing to act on either time.
+      // Asked of the error, not of its class: the proxy raises
+      // `SwarmGenerateError` on some paths and `WebApiError` on others, and
+      // checking only the first is what put the generic card in front of a
+      // guest. `signInRemedyMessage` owns that question for both.
+      const signInRefusal = signInRemedyMessage(err);
+      setGenerateSignInRequired(signInRefusal);
+      setDescribeStepError(limitDialogRaised || signInRefusal ? null : err);
       setErrorMessage(
-        limitDialogRaised
+        limitDialogRaised || signInRefusal
           ? null
           : err instanceof SwarmTargetMaterializeError ||
-              err instanceof ComposerResolveError ||
-              err instanceof SwarmGenerateError ||
-              err instanceof WebApiError
-            ? err.message
-            : errorMessageOf(err, "Failed to generate personas."),
+            err instanceof ComposerResolveError ||
+            err instanceof SwarmGenerateError ||
+            err instanceof WebApiError
+          ? err.message
+          : errorMessageOf(err, "Failed to generate personas."),
       );
     } finally {
       inFlightRef.current = false;
@@ -1084,21 +1292,65 @@ export function NewSwarmCreateFlow({
    * screen without writing a description or paying for a slate they didn't
    * ask for.
    */
+  /**
+   * Enter Confirm for a swarm built only from personas that already exist.
+   *
+   * Resolves the target FIRST, which generation has always done here and this
+   * path never did. In compose mode, which is every project without
+   * `project-environments-enabled`, the environment ids do not exist until this
+   * call mints or matches them, so Confirm used to render with an empty
+   * selection and could say nothing true: not where the swarm would run, not
+   * which reused goals were being moved off the setup they were written for,
+   * and not how many conversations the launch buys, since the estimate
+   * multiplies by `Math.max(1, environmentCount)` and quoted a multi-client
+   * fan-out as a single target.
+   *
+   * Ad-hoc rows are fingerprint-deduped, so resolving here reuses the row the
+   * launch would have minted moments later rather than accumulating one per
+   * visit. Generation already pays exactly this cost at exactly this point.
+   *
+   * Best effort, and deliberately NON-BLOCKING. A reuse-only swarm is allowed
+   * to reach Confirm with no target at all — its goals carry their own, and
+   * `canContinue` says as much. Failing the step here would strand exactly the
+   * returning user that rule exists to protect, over a target their run may
+   * never need. So a throw is swallowed: Confirm then discloses nothing about
+   * the target, which is what it did before this existed, and the launch
+   * reports the failure as loudly as it always has.
+   */
+  const handleContinueReused = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setMaterializing(true);
+    setErrorMessage(null);
+    setDescribeStepError(null);
+    try {
+      await resolveTargets();
+    } catch {
+      // Intentionally ignored — see above. `resolveTargets` throws before it
+      // publishes anything, so there is no half-resolved target to clean up.
+    } finally {
+      setMaterializing(false);
+      inFlightRef.current = false;
+    }
+    persistedTargetsRef.current = null;
+    creationIssueRef.current = null;
+    setCreatedTargets(null);
+    setFundingNotice(null);
+    persistedRunGroupIdRef.current = null;
+    persistedSwarmIdRef.current = null;
+    flowIdRef.current = null;
+    setProposed([]);
+    setStep("confirm");
+  }, [resolveTargets]);
+
   const handleContinue = useCallback(() => {
     if (!canContinue) return;
     if (wantsGenerate) {
       void handleGenerate();
       return;
     }
-    persistedTargetsRef.current = null;
-    persistedRunGroupIdRef.current = null;
-    persistedSwarmIdRef.current = null;
-    flowIdRef.current = null;
-    setProposed([]);
-    setErrorMessage(null);
-    setDescribeStepError(null);
-    setStep("confirm");
-  }, [canContinue, handleGenerate, wantsGenerate]);
+    void handleContinueReused();
+  }, [canContinue, handleContinueReused, handleGenerate, wantsGenerate]);
 
   const handleLaunch = useCallback(
     async (payload: ConfirmLaunchPayload) => {
@@ -1165,8 +1417,16 @@ export function NewSwarmCreateFlow({
       if (!readyToLaunch) return;
 
       setErrorMessage(null);
+      setFundingNotice(null);
+      setLaunchNotice(null);
 
       let firstError: string | null = null;
+      /**
+       * Why a persona or goal was not created, now or on the attempt that made
+       * the goals this launch runs. Kept apart from `firstError` so a launch
+       * that otherwise went through still says it.
+       */
+      let creationIssue: string | null = null;
       /**
        * Set when a launch came back 402. Distinct from `firstError` because it
        * changes what the summary SAYS: "some runs were rejected" is advice to
@@ -1184,6 +1444,8 @@ export function NewSwarmCreateFlow({
        * branch exists to avoid.
        */
       let billingError: string | null = null;
+      /** Set when the backend refused a run because its sponsored split had moved. */
+      let fundingChange = undefined as ReturnType<typeof fundingChangeOf>;
       let targets: LaunchTarget[] = [];
       let launched = 0;
       const runLabels = new Map<string, string>();
@@ -1226,6 +1488,7 @@ export function NewSwarmCreateFlow({
               config: {
                 sessionsPerTarget: DEFAULT_SWARM_ITERATIONS,
                 maxTurns: preset.maxTurns,
+                setupWrites: true,
               },
               ...(payload.judgeConfig
                 ? { judgeConfig: payload.judgeConfig }
@@ -1253,6 +1516,8 @@ export function NewSwarmCreateFlow({
 
         if (persistedTargetsRef.current) {
           targets = persistedTargetsRef.current;
+          creationIssue = creationIssueRef.current;
+          if (creationIssue) firstError ??= creationIssue;
         } else {
           // Reused journeys get this swarm's GRADING merged into their own
           // rubric — additive, structurally deduped, so existing criterion ids
@@ -1308,9 +1573,9 @@ export function NewSwarmCreateFlow({
                   err,
                   "A reused goal could not be updated for this swarm.",
                 );
-                // Only grading can fail here now, and grading is advisory: the
-                // run is still the one the user asked for, so it goes ahead
-                // ungraded rather than being dropped. (The environment
+                // Only the grading update can fail here now. The run is still
+                // the one the user asked for, so it goes ahead with the goal's
+                // previous grading rather than being dropped. (The environment
                 // selection can no longer fail at this point — it is applied at
                 // launch, where a rejection fails that launch loudly.)
               }
@@ -1325,6 +1590,11 @@ export function NewSwarmCreateFlow({
             // Draft rows with blank goals are authoring placeholders — skip
             // the whole persona rather than create an empty shell.
             if (journeys.length === 0) continue;
+            // What this persona's goals are born with. Kept on each created
+            // target so a counter moved after the first launch attempt can
+            // still reach the launch (see `withChosenIterations`).
+            const bornIterations =
+              iterationsByPersona[persona.key] ?? DEFAULT_SWARM_ITERATIONS;
 
             let personaRefId: string;
             try {
@@ -1340,10 +1610,11 @@ export function NewSwarmCreateFlow({
                 idempotencyKey: `${flowId}:persona:${persona.key}`,
               });
             } catch (err) {
-              firstError ??= errorMessageOf(
+              creationIssue ??= errorMessageOf(
                 err,
                 "A persona could not be created.",
               );
+              firstError ??= creationIssue;
               continue;
             }
             for (const journey of journeys) {
@@ -1363,10 +1634,9 @@ export function NewSwarmCreateFlow({
                   hostIds: envPayload!.hostIds,
                   environmentIds: envPayload!.environmentIds,
                   config: {
-                    sessionsPerTarget:
-                      iterationsByPersona[persona.key] ??
-                      DEFAULT_SWARM_ITERATIONS,
+                    sessionsPerTarget: bornIterations,
                     maxTurns: preset.maxTurns,
+                    setupWrites: true,
                   },
                   ...(payload.judgeConfig
                     ? { judgeConfig: payload.judgeConfig }
@@ -1388,12 +1658,15 @@ export function NewSwarmCreateFlow({
                   personaRole: persona.role,
                   avatarShape: persona.avatarShape,
                   avatarPalette: persona.avatarPalette,
+                  iterationsKey: persona.key,
+                  bornIterations,
                 });
               } catch (err) {
-                firstError ??= errorMessageOf(
+                creationIssue ??= errorMessageOf(
                   err,
                   "A goal could not be created.",
                 );
+                firstError ??= creationIssue;
               }
             }
           }
@@ -1403,32 +1676,100 @@ export function NewSwarmCreateFlow({
           // selection so adding Cursor later can't relaunch Excal-only rows.
           if (targets.length > 0) {
             persistedTargetsRef.current = targets;
+            creationIssueRef.current = creationIssue;
+            setCreatedTargets(targets);
             persistedEnvironmentKeyRef.current = environmentSelectionKey;
           }
         }
 
+        // The goals a previous attempt created are frozen; the iterations
+        // beside them are not. Confirm stays editable after a stop for review,
+        // so a counter moved since reaches the preview and the launch here.
+        targets = withChosenIterations(targets, iterationsByPersona);
+
+        // ── Sponsored split: verify, then launch what was shown ───────────
+        //
+        // Every run has a goal id now, so ask the backend how THIS launch's
+        // conversations would be funded (sponsored versus the organization's
+        // credits) and compare it with what the person was looking at. If it
+        // is not the same, stop BEFORE creating any run and show the new
+        // split: they launch again with it on screen. Otherwise each run is
+        // launched with the sponsored count that was shown, so the backend
+        // refuses it (409) rather than moving conversations onto org credits.
+        //
+        // A preview that fails, or sponsorship not applying here, is the
+        // launch exactly as it was before this existed.
+        let expectedSponsoredByRun: number[] | null = null;
+        let fundingSplit: FundingSplit | null = null;
+        if (targets.length > 0) {
+          try {
+            const preview = await fetchSwarmFundingPreview(
+              projectId,
+              fundingPreviewRuns(targets, envPayload?.environmentIds ?? null),
+            );
+            fundingSplit = fundingSplitOf(preview, targets.length);
+            if (fundingSplit) {
+              expectedSponsoredByRun = preview.runs.map((run) => run.sponsored);
+            }
+          } catch {
+            // Handled below with the "no usable split" case.
+          }
+        }
+        // No usable split at launch (the check failed, sponsorship stopped
+        // applying, or it answered for a different number of runs). With no
+        // split on screen that is an ordinary launch. With sponsored
+        // conversations shown, launching unchecked could move some onto org
+        // credits, so stop, refresh what is shown, and let them launch again.
+        //
+        // Both stops return before the launch's own summary, so a failure from
+        // earlier in this pass (a goal that could not be created) is said here.
+        if (!fundingSplit && (payload.funding.shownSponsored ?? 0) > 0) {
+          setFundingNotice(
+            fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
+          );
+          if (firstError) setErrorMessage(alsoFailedNotice(firstError));
+          setFundingRefreshKey((key) => key + 1);
+          return;
+        }
+        if (fundingSplit) {
+          const shown = payload.funding.shownSponsored;
+          if ((shown ?? 0) !== fundingSplit.sponsored) {
+            setFundingNotice(
+              fundingReviewNotice({ shown, now: fundingSplit }),
+            );
+            if (firstError) setErrorMessage(alsoFailedNotice(firstError));
+            setFundingRefreshKey((key) => key + 1);
+            return;
+          }
+        }
+        // With sponsored conversations in the wave, runs launch one at a time
+        // in the order the preview counted them, so each run's expected count
+        // is exactly what the backend will allocate to it.
+        const launchConcurrency = fundingSplit?.sponsored
+          ? 1
+          : LAUNCH_CONCURRENCY;
+
         await runWithConcurrency(
           targets,
-          LAUNCH_CONCURRENCY,
+          launchConcurrency,
           async (target) => {
             try {
               const result = await launchJourney(target.journeyId, {
                 swarmRunGroupId,
-                // The Describe selection, applied to THIS run only. Sent for
-                // reused journeys whose stored fan-out differs from it —
-                // journeys created above are already born with the selection,
-                // so an override would be a no-op restating their own config.
-                //
-                // `target.environmentIds === undefined` marks a
-                // just-created target; `null` marks a reused legacy journey
-                // with no stored fan-out, which DOES need the override.
-                ...(envPayload &&
-                target.environmentIds !== undefined &&
-                !sameEnvironmentSelection(
-                  target.environmentIds,
-                  envPayload.environmentIds,
-                )
-                  ? { environmentIds: envPayload.environmentIds }
+                // The Describe selection and the Confirm iterations, applied
+                // to THIS run only (see `launchRunOverrides`, which the
+                // sponsored-split preview shares so it asks about exactly
+                // these runs). Just-created targets send neither: they are
+                // born with both.
+                ...launchRunOverrides(
+                  target,
+                  envPayload?.environmentIds ?? null,
+                ),
+                ...(expectedSponsoredByRun
+                  ? {
+                      expectedSponsored:
+                        expectedSponsoredByRun[targets.indexOf(target)],
+                    }
                   : {}),
               });
               if (result.status === "launched") {
@@ -1455,6 +1796,15 @@ export function NewSwarmCreateFlow({
                 }
               }
             } catch (err) {
+              // The sponsored split moved under this run. Nothing was created
+              // for it, and the rest of the wave stops with it: continuing
+              // would launch runs against a split nobody looked at, and the
+              // only way to make them go through is more org credits.
+              const change = fundingChangeOf(err);
+              if (change) {
+                fundingChange = change;
+                return "stop";
+              }
               // The limit dialog already carries this sentence plus the
               // actions that clear it, so record NO message — an inline copy
               // would say the same thing twice with nothing to act on. The
@@ -1508,6 +1858,43 @@ export function NewSwarmCreateFlow({
         intensity: pushIntensity,
       });
 
+      if (fundingChange) {
+        const launchedJourneyIds = new Set(
+          launchedBatch.map((run) => run.journeyId),
+        );
+        const notice = fundingChangedNotice({
+          launched,
+          total: targets.length,
+          actualSponsored: fundingChange.actualSponsored,
+          totalConversations: fundingChange.totalConversations,
+          remaining: targets
+            .filter((target) => !launchedJourneyIds.has(target.journeyId))
+            .map((target) => target.label),
+        });
+        // Re-read the split so Confirm shows the one a new launch would get.
+        // The remaining runs are NEVER retried here: they would run against a
+        // split nobody looked at.
+        setFundingRefreshKey((key) => key + 1);
+        if (launched === 0 || launchedBatch.length === 0) {
+          setFundingNotice(notice);
+          // A run that failed earlier in this pass is often why the split moved
+          // (it did not take the share the preview counted on it); without it
+          // a deterministic failure loops on "review the split" forever.
+          if (firstError) setErrorMessage(alsoFailedNotice(firstError));
+          return;
+        }
+        // Runs that did launch are real and stay on the Running screen, with
+        // the explanation kept there beyond the toast.
+        toast.warning(notice);
+        setFundingNotice(null);
+        setLaunchNotice(
+          firstError ? `${notice} ${alsoFailedNotice(firstError)}` : notice,
+        );
+        launchedRunLabelsRef.current = runLabels;
+        setLaunchedRuns(launchedBatch);
+        setStep("running");
+        return;
+      }
       if (
         limitDialogBlocked &&
         (launched === 0 || launchedBatch.length === 0)
@@ -1538,25 +1925,54 @@ export function NewSwarmCreateFlow({
         return;
       }
       if (launched === targets.length) {
-        toast.success(
-          `Launched ${launched} ${launched === 1 ? "run" : "runs"}`,
-        );
+        if (creationIssue) {
+          // Everything that was created launched, but a persona or goal that
+          // should have been was not. That is not a plain success, and the
+          // explanation has to outlive the toast.
+          const notice = launchOutcomeNotice({
+            launched,
+            total: targets.length,
+            failure: creationIssue,
+          });
+          toast.warning(notice);
+          setLaunchNotice(notice);
+        } else {
+          toast.success(
+            `Launched ${launched} ${launched === 1 ? "run" : "runs"}`,
+          );
+        }
       } else if (limitDialogBlocked) {
-        // No cause named here — the dialog already carries it. The count is
-        // what this toast adds: the runs that DID land are real.
+        // No cause named in the toast — the dialog already carries it. The count
+        // is what this toast adds: the runs that DID land are real. The dialog
+        // closes, and the Running screen then shows only those runs, so a short
+        // note stays beside them.
         toast.warning(`Launched ${launched} of ${targets.length} runs`);
+        setLaunchNotice(
+          `Launched ${launched} of ${targets.length} runs. The rest were not started because a usage limit was reached.`,
+        );
       } else if (billingBlocked) {
         // ONE billing message for the whole wave. The count matters here in a
         // way it doesn't for other partial failures: the remaining runs were
         // never attempted, so "N of M" would read as M-N transient failures
         // to retry rather than as a hard stop.
-        toast.warning(
-          `Launched ${launched} of ${targets.length} runs — ${
-            billingError ?? "the organization's credit limit was reached."
-          }`,
-        );
+        const notice = `Launched ${launched} of ${targets.length} runs — ${
+          billingError ?? "the organization's credit limit was reached."
+        }`;
+        toast.warning(notice);
+        setLaunchNotice(notice);
       } else {
         toast.warning(`Launched ${launched} of ${targets.length} runs`);
+        // The toast names no cause, and the Running screen then shows only the
+        // runs that did launch. Keep the reason where the runs are.
+        if (firstError) {
+          setLaunchNotice(
+            launchOutcomeNotice({
+              launched,
+              total: targets.length,
+              failure: firstError,
+            }),
+          );
+        }
       }
       // Stay in the wizard on Running — Overview gets the runs when the user
       // leaves. Labels are handed off then so session grouping still names them.
@@ -1594,6 +2010,8 @@ export function NewSwarmCreateFlow({
     proposed.length > 0 ||
     launchedRuns.length > 0 ||
     generatingSince !== null ||
+    attachingFile !== null ||
+    interruptedFile !== null ||
     targetState.environmentIds.length > 0 ||
     targetState.stack.hostIds.length > 0;
 
@@ -1643,6 +2061,7 @@ export function NewSwarmCreateFlow({
       launchedRuns,
       runLabels: [...launchedRunLabelsRef.current.entries()],
       generatingSince,
+      attachingFile: attachingFile ?? interruptedFile,
       launch: {
         flowId: flowIdRef.current,
         swarmId: persistedSwarmIdRef.current,
@@ -1652,6 +2071,8 @@ export function NewSwarmCreateFlow({
       },
     });
   }, [
+    attachingFile,
+    interruptedFile,
     createdEnvOverlay,
     draft,
     generatingSince,
@@ -1711,10 +2132,7 @@ export function NewSwarmCreateFlow({
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
-    onDone(
-      launchedRunLabelsRef.current,
-      persistedRunGroupIdRef.current,
-    );
+    onDone(launchedRunLabelsRef.current, persistedRunGroupIdRef.current);
   }, [onDone]);
 
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave
@@ -1818,21 +2236,39 @@ export function NewSwarmCreateFlow({
     });
   }, [envListForPayload, environmentIds, hostNameById]);
 
-  const environmentLabels = useMemo(
-    () =>
-      environmentIds.map((environmentId) => {
-        const env = envListForPayload.find(
-          (entry) => entry.environmentId === environmentId,
-        );
-        // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
-        // different failure from a row that merely has no name, which
-        // `environmentLabel` covers with the client name.
-        return env
-          ? environmentLabel(env, { hostName: hostNameById })
-          : environmentId.slice(0, 8);
-      }),
-    [envListForPayload, environmentIds, hostNameById],
-  );
+  /**
+   * Every environment row in the project, INCLUDING ad-hoc ones, keyed by id.
+   *
+   * Named-only lists are right for pickers; this is a LOOKUP, and the rows it
+   * must answer for are exactly the ones a picker hides. Whenever the
+   * environments flag is off, which is every project but one, a reused goal was
+   * set up against an ad-hoc row minted from a client and a server group.
+   * Without those rows Confirm cannot name where a goal runs today, and cannot
+   * compare its client or server group against where this launch will run it.
+   *
+   * Rows this flow just minted are layered on top, because the mutation returns
+   * them before the query that lists them catches up. Appending rather than
+   * prepending keeps every other row's `#n` stable.
+   */
+  const environmentRowsById = useMemo(() => {
+    const byId = new Map<string, ProjectEnvironmentView>();
+    for (const env of allEnvironments ?? []) byId.set(env.environmentId, env);
+    for (const env of envListForPayload) byId.set(env.environmentId, env);
+    const rows = [...byId.values()];
+    const labels = environmentLabelsById(rows, { hostName: hostNameById });
+    const out = new Map<string, EnvironmentMoveRow>();
+    for (const env of rows) {
+      out.set(env.environmentId, {
+        environmentId: env.environmentId,
+        label:
+          labels.get(env.environmentId) ??
+          environmentLabel(env, { hostName: hostNameById }),
+        hostId: env.hostId,
+        serverAttachmentId: env.serverAttachmentId ?? null,
+      });
+    }
+    return out;
+  }, [allEnvironments, envListForPayload, hostNameById]);
 
   const groundingEnvironmentId =
     environmentIds[0] ?? targetState.environmentIds[0] ?? null;
@@ -1881,11 +2317,13 @@ export function NewSwarmCreateFlow({
       >
         {step === "running" ? (
           <NewSwarmRunningStep
+            organizationId={organizationId}
             projectId={projectId}
             runs={launchedRuns}
             fallbackColumns={runningFallbackColumns}
             environments={envList}
             hosts={hosts}
+            launchNotice={launchNotice}
             onLeave={leaveRunning}
             onOpenSession={openRunningSession}
             onRunsComplete={() => setRunsComplete(true)}
@@ -1901,7 +2339,9 @@ export function NewSwarmCreateFlow({
             iterationsByPersona={iterationsByPersona}
             onIterationsChange={handleIterationsChange}
             environmentCount={environmentIds.length}
-            environmentLabels={environmentLabels}
+            environmentIds={environmentIds}
+            environmentRowsById={environmentRowsById}
+            hostNameById={hostNameById}
             launching={launching}
             errorMessage={errorMessage}
             // Back is the same move as the Describe breadcrumb, so it goes
@@ -1924,6 +2364,10 @@ export function NewSwarmCreateFlow({
             onSaveReusedGoal={async (journeyRefId, goal) => {
               await onUpdateJourney(journeyRefId, { goal });
             }}
+            projectId={projectId}
+            createdTargets={createdTargets}
+            fundingRefreshKey={fundingRefreshKey}
+            fundingNotice={fundingNotice}
           />
         ) : (
           <div
@@ -1989,7 +2433,82 @@ export function NewSwarmCreateFlow({
                 onChange={(event) => setDraft(event.target.value)}
                 placeholder={DESCRIBE_PLACEHOLDER}
                 data-testid="new-swarm-describe-input"
+                aria-invalid={draftTooLong || undefined}
+                aria-describedby="new-swarm-describe-count"
+                // Only file drags are taken over; dragging selected text in
+                // keeps the textarea's native drop.
+                onDragOver={(event) => {
+                  if (!event.dataTransfer.types.includes("Files")) return;
+                  // Always claim a file drag: an unclaimed drop makes the
+                  // browser open the file in place of the app.
+                  event.preventDefault();
+                  if (attachDisabled) return;
+                  setDraggingFile(true);
+                }}
+                onDragLeave={() => setDraggingFile(false)}
+                onDrop={(event) => {
+                  if (!event.dataTransfer.types.includes("Files")) return;
+                  event.preventDefault();
+                  if (attachDisabled) return;
+                  setDraggingFile(false);
+                  void attachFile(event.dataTransfer.files);
+                }}
+                className={cn(
+                  draggingFile && "border-dashed border-primary bg-primary/5",
+                )}
               />
+              {/* No `maxLength`: it silently truncates a paste, and pasted
+                  research is exactly the input this box is sized for. Over the
+                  cap, the count turns red and Continue explains why it won't
+                  move. An attached file lands under the same count. */}
+              <div className="flex items-center justify-between gap-2">
+                <input
+                  ref={attachInputRef}
+                  type="file"
+                  accept={DESCRIBE_ATTACHMENT_ACCEPT}
+                  tabIndex={-1}
+                  aria-hidden
+                  className="sr-only"
+                  data-testid="new-swarm-describe-file-input"
+                  onChange={(event) => {
+                    void attachFile(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  title="Or drop a .txt or .md file on the box"
+                  disabled={attachDisabled}
+                  onClick={() => attachInputRef.current?.click()}
+                  data-testid="new-swarm-describe-attach"
+                >
+                  <Paperclip />
+                  Attach .txt or .md
+                </Button>
+                <p
+                  id="new-swarm-describe-count"
+                  data-testid="new-swarm-describe-count"
+                  className={cn(
+                    "text-xs tabular-nums",
+                    draftTooLong ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {draftLength.toLocaleString()} /{" "}
+                  {SWARM_DESCRIPTION_MAX_CHARS.toLocaleString()}
+                </p>
+              </div>
+              {attachError ? (
+                <p
+                  role="alert"
+                  className="text-xs text-destructive"
+                  data-testid="new-swarm-describe-attach-error"
+                >
+                  {attachError}
+                </p>
+              ) : null}
 
               {/* Attached personas, as removable rows. They keep their own
                   goals and environments, so they read as what they are —
@@ -2069,8 +2588,25 @@ export function NewSwarmCreateFlow({
                 runs it through `describeError`, so this still gains the
                 container, icon and details disclosure that make a long backend
                 sentence readable instead of a wall of red text. */}
+            {generateSignInRequired ? (
+              <GuestSignInMessage
+                compact
+                message={generateSignInRequired}
+                location="swarm_create_generate"
+              />
+            ) : null}
+
             {describeStepError || errorMessage ? (
               <ErrorCard error={describeStepError ?? errorMessage} />
+            ) : null}
+            {modelRepairHostId ? (
+              <Button
+                type="button"
+                variant="link"
+                onClick={() => navigate(buildHostsPath(modelRepairHostId))}
+              >
+                Edit client
+              </Button>
             ) : null}
 
             <div className="flex flex-wrap items-center justify-end gap-3 pt-4">

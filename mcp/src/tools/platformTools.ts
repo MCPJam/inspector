@@ -7,12 +7,17 @@
  * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
  * helpers here.
  */
+import type {
+  SwarmJourneyFinding,
+  SwarmJourneyFindings,
+} from "@mcpjam/sdk/contract";
 import {
   callServerToolOperation,
   renderServerWidgetOperation,
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -35,6 +40,7 @@ import {
   createProjectOperation,
   updateProjectOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   cancelEvalRunOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
@@ -46,7 +52,7 @@ import {
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
-  getScenarioOperation,
+  getStudyOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -67,8 +73,10 @@ import {
   cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
+  describePlatformRefusal,
   isPlatformApiError,
-  listScenariosOperation,
+  platformRefusalHint,
+  listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   sendChatMessageOperation,
@@ -117,50 +125,49 @@ import {
   getSecretOperation,
   deleteSecretOperation,
   generatePersonasOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   listClientsOperation,
   getClientOperation,
   createClientOperation,
@@ -175,6 +182,7 @@ import {
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  sendFeedbackOperation,
   ALL_OPERATIONS,
   formatPermalinkLines,
   runOperationWithPermalinks,
@@ -185,6 +193,7 @@ import {
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
+  PLATFORM_WIDGETS_ENABLED,
   PLATFORM_WIDGET_RESOURCE_URIS,
   tagPlatformWidgetPayload,
   type PlatformWidgetView,
@@ -192,8 +201,100 @@ import {
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
-/** Every catalog operation registered as a tool, in list order. */
-export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
+/**
+ * Catalog tools HELD off this surface while their feature is in beta.
+ *
+ * This catalog is one static list, built with no caller in hand, so it cannot
+ * offer a beta only to the organizations that have it. Advertising these to
+ * everyone would offer most callers tools they cannot use, so they are
+ * withheld from everyone instead, until the tool list is resolved per caller.
+ * REST, the SDK and the CLI are unaffected.
+ *
+ * Each held operation keeps its place, and its rationale, in
+ * `CATALOG_OPERATIONS_INCLUDING_HELD` below; `PLATFORM_CATALOG_OPERATIONS`
+ * filters it out and `EXCLUDED_FROM_CATALOG` gives the reason. Releasing a
+ * feature is deleting its entry here.
+ */
+const HELD_WHILE_IN_BETA: ReadonlyArray<{
+  feature: string;
+  operations: ReadonlyArray<PlatformOperation<any, any>>;
+}> = [
+  {
+    feature: "conformance and readiness",
+    operations: [
+      startClaudeReadinessRunOperation,
+      startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
+      getReadinessRunOperation,
+      listReadinessRunsOperation,
+      cancelReadinessRunOperation,
+      getReadinessReportOperation,
+      startConformanceRunOperation,
+      getConformanceRunOperation,
+      listConformanceRunsOperation,
+      getConformanceReportOperation,
+    ],
+  },
+  { feature: "unified sessions", operations: [searchSessionsOperation] },
+  {
+    feature: "the registry directory",
+    operations: [
+      searchRegistryDirectoryOperation,
+      getRegistryDirectoryServerOperation,
+      listRegistryDirectorySourcesOperation,
+      installRegistryDirectoryServerOperation,
+    ],
+  },
+  {
+    feature: "the hosted browser",
+    operations: [
+      driveChatSessionBrowserOperation,
+      observeChatSessionBrowserOperation,
+    ],
+  },
+  {
+    feature: "Cloud Skills",
+    operations: [listProjectSkillsOperation, getProjectSkillOperation],
+  },
+  {
+    feature: "Computers",
+    operations: [listImagesOperation, getImageOperation],
+  },
+  {
+    feature: "Agent Plugins",
+    operations: [listProjectPluginsOperation, getPluginVersionOperation],
+  },
+  {
+    feature: "GitHub checks",
+    operations: [
+      listEvalGithubReposOperation,
+      connectEvalGithubRepoOperation,
+      listEvalCheckReposOperation,
+      connectEvalCheckRepoOperation,
+    ],
+  },
+  {
+    feature: "description experiments",
+    operations: [
+      proposeEvalDescriptionRewriteOperation,
+      startEvalDescriptionExperimentOperation,
+      getEvalDescriptionExperimentOperation,
+    ],
+  },
+  { feature: "scheduled runs", operations: [setEvalSuiteScheduleOperation] },
+];
+
+const HELD_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  HELD_WHILE_IN_BETA.flatMap(({ operations }) =>
+    operations.map((operation) => operation.name)
+  )
+);
+
+/**
+ * Every operation this catalog carries, in list order — including the held
+ * betas, which `PLATFORM_CATALOG_OPERATIONS` filters out.
+ */
+const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   PlatformOperation<any, any>
 > = [
   getMeOperation,
@@ -238,6 +339,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -273,6 +375,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   getEvalRunOperation,
   // The DENOMINATOR half of the chain story, beside the run read that is
   // the numerator half. `get_eval_run` says what one trial did and where it
@@ -336,8 +439,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // agent that cannot list them cannot use the tools that demand them.
   listProjectSkillsOperation,
   getProjectSkillOperation,
-  listScenariosOperation,
-  getScenarioOperation,
+  listStudiesOperation,
+  getStudyOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   // Agent Playground: drive a conversation against a project's MCP servers
@@ -387,50 +490,49 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getSecretOperation,
   deleteSecretOperation,
   generatePersonasOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
-  archiveJourneyOperation,
-  generateJourneysOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  listJourneyRunSessionsOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
+  archiveGoalOperation,
+  generateGoalsOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  listGoalRunSessionsOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
   archiveSwarmOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
-  publishScenarioOperation,
-  unpublishScenarioOperation,
-  getUserTestingScenarioOperation,
-  listUserTestingSessionsOperation,
-  getUserTestingSessionOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  requestUserTestingInsightsOperation,
-  cancelUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  setUserTestingGuestExecutionOperation,
-  rotateUserTestingLinkOperation,
-  upsertUserTestingMemberOperation,
-  removeUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
+  publishStudyOperation,
+  unpublishStudyOperation,
+  listStudySessionsOperation,
+  getStudySessionOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  updateStudyOperation,
+  requestStudyInsightsOperation,
+  cancelStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  setStudyGuestExecutionOperation,
+  rotateStudyLinkOperation,
+  upsertStudyMemberOperation,
+  removeStudyMemberOperation,
+  rebindStudyOperation,
   // Clients — the product's own primary noun, and until now the one thing an
   // MCP agent could read nowhere and write nowhere. The two reads plus the
   // four bounded writes; `delete_client` stays out (see the exclusion map).
@@ -448,10 +550,30 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   installRegistryDirectoryServerOperation,
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
+  // Platform feedback: the agent's channel to the MCPJam team at the moment a
+  // tool fails or a capability is missing. SENDS TEXT OUTSIDE THE CALLER'S
+  // ORGANIZATION, which the description, the `openWorldHint` and the hint
+  // below all say.
+  sendFeedbackOperation,
 ];
+
+/** Every catalog operation registered as a tool, in list order. */
+export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
+  PlatformOperation<any, any>
+> = CATALOG_OPERATIONS_INCLUDING_HELD.filter(
+  (operation) => !HELD_OPERATION_NAMES.has(operation.name)
+);
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(
+    HELD_WHILE_IN_BETA.flatMap(({ feature, operations }) =>
+      operations.map((operation) => [
+        operation.name,
+        `Held while ${feature} is in beta. This catalog is one static list for every caller, so it would offer the tool to organizations that cannot use it; it returns when the tool list is resolved per caller.`,
+      ])
+    )
+  ),
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
   // Its create/update siblings moved INTO the catalog; this reason had to stop
   // being the blanket one they shared, because that rationale is no longer
@@ -525,7 +647,7 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
   // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
-  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // rotate is already `rotate_study_link`. The I5 operations span three
   // resource types and belong with the Share dialog / agent-op registry until
   // this catalog grows a dedicated share group — same decision as CLI
   // `op-bindings.ts`.
@@ -542,11 +664,11 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   revoke_eval_gate_waiver:
     "The other half of the same decision: revoking re-blocks a release somebody else deliberately unblocked. Offered on the attended agent surface behind an approval, not here.",
   get_share_settings:
-    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+    "Scenario share already appears on get_study. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
   set_share_mode:
-    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+    "Scenario exposure is already update_study. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
   rotate_share_link:
-    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
+    "Scenario rotation is already rotate_study_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
   // PROJECT SECRET WRITES. Excluded for a reason that has nothing to do with
   // how destructive they are, and everything to do with their INPUT: the
   // plaintext credential is an argument, so it would transit model context and
@@ -606,41 +728,43 @@ const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
     !catalogOperationNames.has(operation.name) &&
     !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
 );
+// A held operation must be one the catalog would otherwise register; holding
+// anything else would leave its real exclusion reason unwritten.
+const orderedOperationNames = new Set(
+  CATALOG_OPERATIONS_INCLUDING_HELD.map((operation) => operation.name)
+);
+const strayHeldOperations = [...HELD_OPERATION_NAMES].filter(
+  (name) => !orderedOperationNames.has(name)
+);
 if (
   staleCatalogExclusions.length > 0 ||
-  uncoveredCatalogOperations.length > 0
+  uncoveredCatalogOperations.length > 0 ||
+  strayHeldOperations.length > 0
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
       ","
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`
+      .join(",")}; heldOutsideCatalog=${strayHeldOperations.join(",")}`
   );
 }
 
 /**
  * Operations that REMOVE OR INVALIDATE something that already existed, DERIVED
- * from the catalog's own `risk` metadata rather than listed here. They
- * advertise an explicit `destructiveHint: true`, unlike `mayBeDestructive`
- * operations, whose effects are merely unknowable to us.
+ * from the catalog's own `risk` metadata rather than listed here.
  *
- * Not only permanent deletion — that was the whole membership when this
- * comment was written, and it stopped being true when `update_client` and
- * `set_client_servers` joined. The taxonomy in the SDK's `risk` field says
- * "removes or invalidates something that existed", and a deterministic
- * OVERWRITE qualifies: replacing a live setting invalidates the one that was
- * in force, and a replacement server list detaches every server it omits.
- * Those two are idempotent (unlike a soft delete, applying the same edit twice
- * does not compound) and they remain in the catalog behind compare-and-set;
- * what stays OUT is resource removal, which no precondition makes
- * recoverable.
+ * Not only permanent deletion: `update_client` and `set_client_servers` carry
+ * `risk: "destructive"` because replacing a live setting invalidates the one
+ * that was in force, and a replacement server list detaches every server it
+ * omits. They remain in the catalog behind compare-and-set; what stays OUT is
+ * resource removal, which no precondition makes recoverable.
  *
  * Deriving is the whole point of that field: it exists so five surfaces make
- * one decision from one place instead of each re-deriving it, and a hand-kept
- * copy here reinstates exactly the drift it was added to remove — the next
- * operation shipped with `risk: "destructive"` and forgotten in this list would
- * silently advertise `destructiveHint: false`.
+ * one decision from one place instead of each re-deriving it. This set can
+ * only ADD to what `ADDITIVE_WRITE_NAMES` below already leaves destructive; a
+ * `risk: "destructive"` operation is never advertised as additive, even if
+ * someone lists it there.
  *
  * `LEGACY_DESTRUCTIVE_NAMES` covers the operations that predate `risk`. It
  * shrinks to nothing as those are backfilled; it does not grow.
@@ -650,8 +774,7 @@ const LEGACY_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   deleteEvalCaseOperation.name,
   deleteProjectServerOperation.name,
   deleteProjectOperation.name,
-  // Cancelling a run terminates in-flight work — state-changing, so clients
-  // should be able to confirm before it fires.
+  // Cancelling a run terminates in-flight work.
   cancelEvalRunOperation.name,
 ]);
 
@@ -664,54 +787,124 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
 );
 
 /**
- * Destructive operations a client must NOT auto-retry.
+ * Writes that are PURELY ADDITIVE — they create new rows or start new work and
+ * never change, replace, cancel, revoke or delete anything that already
+ * exists. Only these advertise `destructiveHint: false`; every other write
+ * advertises `true`.
  *
- * `idempotentHint: true` is a promise that repeating the call is safe after a
- * dropped response. It is false for both kinds below, in opposite ways: the
- * soft deletes answer not-found on a second call, so an auto-retrying client
- * surfaces a spurious error for work that succeeded; and rotating a share link
- * MINTS A NEW ONE each time, so a retry invalidates the link the first call
- * just handed back.
+ * Claude's directory review asks for `destructiveHint: true` on every tool
+ * that "modifies or deletes data", which is wider than `risk: "destructive"`:
+ * an update overwrites what was there, a forced insight regeneration replaces
+ * the previous analysis, a cancel ends work in flight, and making a project
+ * private revokes members' access. The MCP spec reads the same way — `false`
+ * promises "only additive updates". So the hint is not derived from `risk`.
+ *
+ * OPT-IN, one name at a time, and that direction is the point: a write nobody
+ * reviewed advertises the conservative `true`. A forgotten entry here costs a
+ * confirmation prompt; a forgotten entry in a deny-list would tell clients a
+ * destructive tool is safe. Audited against the handlers on 2026-10-06.
+ *
+ * Deliberately NOT here, though they look additive:
+ * - `connect_project_server` and `install_registry_server`: a new connection
+ *   request can evict the caller's oldest unopened one at the concurrency cap,
+ *   and `reauthorize` cancels the requests in flight for that URL.
+ * - `request_eval_run_judge`, `request_swarm_run_insights`,
+ *   `request_study_insights`: a forced or failed-only regrade overwrites the
+ *   stored verdicts or analysis.
+ * - `upsert_study_member`: re-inviting clears `revokedAt`, so it can restore
+ *   access someone revoked.
  */
-const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
-  // A widget render EXECUTES the caller's tool first, and nobody can promise
-  // that running a third party's tool twice is safe. It reaches this list
-  // rather than `call_server_tool`'s absent-hints branch because its
-  // `risk: "destructive"` classification takes precedence above — which lands
-  // it STRICTER than the bare tool call (explicitly destructive, explicitly
-  // not retryable), never looser.
-  renderServerWidgetOperation.name,
-  deletePersonaOperation.name,
-  // A HARD delete of a credential: the row and the ciphertext both go, and a
-  // second call cannot find the row to report the same outcome.
-  deleteSecretOperation.name,
-  archiveJourneyOperation.name,
-  archiveSwarmOperation.name,
-  removeUserTestingMemberOperation.name,
-  rotateUserTestingLinkOperation.name,
+const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
+  "create_project",
+  "create_project_server",
+  "create_eval_suite",
+  "create_eval_case",
+  "create_eval_cases",
+  "generate_eval_cases",
+  "import_eval_cases",
+  "run_eval_case",
+  "run_eval_suite",
+  "backtest_eval_run",
+  "backtest_eval_run_judge",
+  "ensure_adhoc_environment",
+  "create_persona",
+  "generate_personas",
+  "create_goal",
+  "generate_goals",
+  "launch_goal_run",
+  "create_swarm",
+  // Each call mints a new study with its own share link; a taken name is
+  // refused rather than overwritten.
+  "publish_study",
+  "create_client",
+  "duplicate_client",
+  "send_feedback",
 ]);
 
 /**
- * Non-destructive writes a client MAY safely repeat.
+ * Writes a client MAY safely repeat after a dropped response: the identical
+ * call lands on the state the first one produced and answers success — not a
+ * conflict, not a not-found, and not a second effect. Each was checked against
+ * its handler on 2026-10-06:
  *
- * The default for this branch is `false`, and for its usual inhabitants that is
- * right: starting a run or creating a suite twice produces two of them, so a
- * client that auto-retried a dropped response would silently double the work.
+ * - `delete_project_server` answers `{deleted: true}` again (the soft delete
+ *   never checks `deletedAt`).
+ * - `cancel_eval_run`, `cancel_goal_run`, `cancel_project_server_connection`
+ *   treat an already-cancelled target as a no-op that returns it.
+ * - `send_feedback` replays the stored receipt for a key, and dedupes
+ *   identical content without one for 24 hours.
+ * - `ensure_adhoc_environment` returns the same content-addressed row.
+ * - Dismissing, undismissing, re-inviting and archiving a goal set a state
+ *   that a repeat sets again; `update_project` writes the same values with no
+ *   token to go stale.
  *
- * Cancelling is the opposite shape. The backend treats cancelling an
- * already-terminal request as a no-op that returns the row rather than an
- * error, so a repeat after a dropped response lands on exactly the state the
- * first call produced. Declaring that is not a nicety: `idempotentHint: false`
- * tells a client NOT to retry, which on a lost response leaves the request
- * holding one of the owner's connection slots — the precise failure this
- * operation exists to clear.
- *
- * OPT-IN, one name at a time. Idempotency is a promise about a specific
- * handler's behavior, and the honest default for anything not examined is the
- * conservative `false` above.
+ * OPT-IN; absent means `idempotentHint: false`, the conservative claim.
+ * Looks idempotent and is not: the compare-and-set edits (`update_client`,
+ * `set_client_servers`) answer 409 because the first call rotated the config
+ * id; the hard deletes (`delete_eval_suite`, `delete_eval_case`,
+ * `uninstall_registry_server`) answer not-found; unpublishing a named study
+ * answers not-found; rotating a share link mints another; and anything that
+ * runs a third party's tool cannot promise a repeat is harmless.
  */
 const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
-  cancelProjectServerConnectionOperation.name,
+  "delete_project_server",
+  "cancel_eval_run",
+  "cancel_goal_run",
+  "cancel_project_server_connection",
+  "send_feedback",
+  "ensure_adhoc_environment",
+  "dismiss_swarm_finding",
+  "undismiss_swarm_finding",
+  "dismiss_study_finding",
+  "undismiss_study_finding",
+  "upsert_study_member",
+  "update_project",
+  // The preflight reads the goal by id whether or not it is archived, and the
+  // mutation is a no-op on an archived row; a repeat answered
+  // `{archived: true}` on production.
+  "archive_goal",
+]);
+
+/**
+ * Writes whose effect reaches people OUTSIDE the caller's organization.
+ *
+ * `openWorldHint: true` is how MCP says a tool interacts with an open world
+ * rather than a closed domain, and sending text to the MCPJam team is exactly
+ * that: the report leaves the organization the caller is working in. Clients
+ * that gate or label such tools read this.
+ *
+ * Its own list, deliberately not derived from `risk: "exposure"`: the other
+ * exposure operations (the secret writes) move data WITHIN the organization's
+ * own project and have not been evaluated for this claim. Opt-in, one name at
+ * a time, like `IDEMPOTENT_WRITE_NAMES`.
+ *
+ * MCP defaults an absent `openWorldHint` to true, so leaving it off the other
+ * tools claims nothing about them either way. Marking any of them `false` needs
+ * its own review: several reach the caller's MCP servers, model providers or
+ * GitHub, which is open-world.
+ */
+const EXTERNAL_COMMUNICATION_NAMES: ReadonlySet<string> = new Set([
+  sendFeedbackOperation.name,
 ]);
 
 /**
@@ -730,8 +923,8 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
   [getEvalRunOperation.name]: "eval_run",
   [listEvalRunIterationsOperation.name]: "eval_run_iterations",
-  [listScenariosOperation.name]: "scenarios",
-  [getScenarioOperation.name]: "scenario",
+  [listStudiesOperation.name]: "scenarios",
+  [getStudyOperation.name]: "scenario",
 };
 
 export function registerPlatformCatalogTools(
@@ -739,7 +932,11 @@ export function registerPlatformCatalogTools(
   context: PlatformToolContext
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
-    const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
+    // `PLATFORM_WIDGETS_ENABLED` off ⇒ no view, so every tool takes the plain
+    // branch below and registers with no UI resource and no tagged payload.
+    const view = PLATFORM_WIDGETS_ENABLED
+      ? PLATFORM_TOOL_WIDGET_VIEWS[operation.name]
+      : undefined;
     registrar.registerTool(
       operation.name,
       {
@@ -748,11 +945,104 @@ export function registerPlatformCatalogTools(
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
-      async (input) => runPlatformOperation(context, operation, input),
+      async (input) =>
+        runPlatformOperation(
+          context,
+          operation,
+          input,
+          MCP_RESULT_PROJECTIONS[operation.name]
+        ),
       view ? platformWidgetUi(context, operation, view) : undefined
     );
   }
 }
+
+/**
+ * `list_models` answers with the whole public catalog: about 255 models and
+ * 440 KB, three-quarters of it per-model observation timestamps and marketing
+ * copy. The text rendering is capped, but `structuredContent` would still
+ * carry all of it into a client, and Claude's directory review asks for
+ * responses sized to the task. This keeps what choosing a model needs.
+ *
+ * MCP-only: the CLI and REST still return the full rows, and the omitted
+ * fields are named in the result so nothing is silently missing.
+ */
+const MODEL_CATALOG_OMITTED_FIELDS = [
+  "description",
+  "observations",
+  "architecture (beyond modalities)",
+  "top_provider",
+  "per_request_limits",
+  "default_parameters",
+  "pricing (beyond prompt and completion)",
+] as const;
+
+function stringList(value: unknown): string[] | undefined {
+  return Array.isArray(value) &&
+    value.every((entry) => typeof entry === "string")
+    ? (value as string[])
+    : undefined;
+}
+
+export function compactModelCatalogForModel(payload: object): object {
+  const items = (payload as { items?: unknown }).items;
+  if (!Array.isArray(items)) return payload;
+  return {
+    ...payload,
+    items: items.map((raw) => {
+      const model = (raw ?? {}) as Record<string, unknown>;
+      const pricing = (model.pricing ?? {}) as Record<string, unknown>;
+      const architecture = (model.architecture ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const parameters = stringList(model.supported_parameters);
+      return {
+        id: model.id,
+        name: model.name,
+        ...(model.provider !== undefined ? { provider: model.provider } : {}),
+        ...(model.providerSource !== undefined
+          ? { providerSource: model.providerSource }
+          : {}),
+        ...(model.context_length !== undefined
+          ? { contextLength: model.context_length }
+          : {}),
+        ...(pricing.prompt !== undefined || pricing.completion !== undefined
+          ? {
+              pricingPerToken: {
+                prompt: pricing.prompt,
+                completion: pricing.completion,
+              },
+            }
+          : {}),
+        ...(stringList(architecture.input_modalities)
+          ? { inputModalities: architecture.input_modalities }
+          : {}),
+        ...(stringList(architecture.output_modalities)
+          ? { outputModalities: architecture.output_modalities }
+          : {}),
+        ...(parameters ? { supportsTools: parameters.includes("tools") } : {}),
+        ...(Array.isArray(model.supportedReasoningEfforts)
+          ? { supportedReasoningEfforts: model.supportedReasoningEfforts }
+          : {}),
+        ...(model.guestAllowed !== undefined
+          ? { guestAllowed: model.guestAllowed }
+          : {}),
+        ...(model.deprecated_at !== undefined && model.deprecated_at !== null
+          ? { deprecatedAt: model.deprecated_at }
+          : {}),
+      };
+    }),
+    compacted: { omittedFields: [...MODEL_CATALOG_OMITTED_FIELDS] },
+  };
+}
+
+/** Per-tool reshaping of a successful result, applied on this surface only. */
+const MCP_RESULT_PROJECTIONS: Readonly<
+  Record<string, ((payload: object) => object) | undefined>
+> = {
+  list_models: compactModelCatalogForModel,
+};
 
 /**
  * UI registration for a widget-backed tool: the shared app bundle under the
@@ -785,35 +1075,33 @@ export function platformWidgetUi(
 export function operationAnnotations(
   operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
+  // The title goes here as well as on the tool: Claude's directory reads a
+  // tool's display name from `annotations.title` only, and flags every tool
+  // without one even when its top-level `title` is set.
+  return { title: operation.title, ...behaviorAnnotations(operation) };
+}
+
+function behaviorAnnotations(
+  operation: PlatformOperation<unknown, unknown>
+): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
   }
-  // Known-destructive deletes: announce it explicitly so clients can confirm.
-  if (DESTRUCTIVE_OPERATION_NAMES.has(operation.name)) {
-    return {
-      readOnlyHint: false,
-      destructiveHint: true,
-      // Only claim idempotent when a repeat is genuinely safe. A soft delete
-      // answers not-found on the second call and a link rotation mints a new
-      // link, so promising idempotency for those turns a dropped response into
-      // either a spurious error or an invalidated link.
-      idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE_NAMES.has(operation.name),
-    };
-  }
-  // Operations whose effects are unknowable upstream (call_server_tool runs
-  // arbitrary third-party tools) omit destructive/idempotent hints on
-  // purpose: per spec, clients must then assume destructive — the honest
-  // claim.
-  if (operation.mayBeDestructive) {
-    return { readOnlyHint: false };
-  }
-  // Remaining non-read operations (run_eval_suite, create_eval_suite) create
-  // resources but never destroy or overwrite them — and creating twice makes
-  // two, so only the names that have been checked claim a safe repeat.
+  // `mayBeDestructive` operations (call_server_tool, send_chat_message) run
+  // the caller's own third-party tools, whose effects nobody upstream can
+  // know. They used to omit the hint so clients would assume destructive;
+  // Claude's directory wants it stated, so it is stated.
+  const additive =
+    ADDITIVE_WRITE_NAMES.has(operation.name) &&
+    !DESTRUCTIVE_OPERATION_NAMES.has(operation.name) &&
+    operation.mayBeDestructive !== true;
   return {
     readOnlyHint: false,
-    destructiveHint: false,
+    destructiveHint: !additive,
     idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
+    ...(EXTERNAL_COMMUNICATION_NAMES.has(operation.name)
+      ? { openWorldHint: true }
+      : {}),
   };
 }
 
@@ -917,7 +1205,21 @@ function errorStructuredContent(
   error: unknown
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
-    return { error: { code: error.code, message: error.message } };
+    // A usage-limit refusal also carries WHEN to come back and whether credits
+    // would help — allowlisted by `describePlatformRefusal`, never the raw
+    // server envelope — so an agent can wait instead of looping or suggesting
+    // a top-up that cannot lift it.
+    const refusal = describePlatformRefusal(error);
+    return {
+      error: {
+        code: error.code,
+        message: error.message,
+        // The failing request's id, so a report of this failure can be joined
+        // to the server's logs. Only responses carry one.
+        ...(error.requestId ? { requestId: error.requestId } : {}),
+        ...(refusal ? { refusal } : {}),
+      },
+    };
   }
   return undefined;
 }
@@ -926,7 +1228,22 @@ function describeOperationError(error: unknown): string {
   if (isPlatformApiError(error)) {
     // Wire errors keep their stable code for agent retry logic; synthesized
     // client-side errors (status 0) are already self-explanatory messages.
-    return error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    const message =
+      error.status > 0 ? `${error.code}: ${error.message}` : error.message;
+    // In the text as well as `structuredContent`, for the same reason as the
+    // retry guidance below: the text is the channel every host shows a model.
+    const base = error.requestId
+      ? `${message} (request id: ${error.requestId})`
+      : message;
+    // Hosts vary in whether the model sees `structuredContent`, so the retry
+    // guidance is in the text too.
+    const refusal = describePlatformRefusal(error);
+    return [
+      base,
+      refusal ? platformRefusalHint(refusal) : undefined,
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(" ");
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -951,6 +1268,7 @@ export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
 export const MODEL_CONTRACT_JSON_CAP = 600;
 
 type EnvelopeLike = {
+  journeyFindings?: SwarmJourneyFindings | null;
   schemaVersion: number;
   findings: Array<Record<string, unknown>>;
   truncation: {
@@ -976,9 +1294,103 @@ function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
   );
 }
 
-function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+export const MODEL_MAX_SESSION_IDS_PER_FINDING = 5;
+export const MODEL_EXCERPT_CAP = 400;
+export const MODEL_PHRASE_CAP = 240;
+
+/**
+ * Cut `text` to at most `cap` characters, ellipsis included, preferring the
+ * last word boundary. Text with no space to cut at is hard-cut rather than
+ * collapsed to a bare ellipsis.
+ */
+export function clampAtWord(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const head = text.slice(0, cap - 1);
+  const space = head.lastIndexOf(" ");
+  return (space > 0 ? head.slice(0, space) : head).trimEnd() + "…";
+}
+
+const JOURNEY_BASIS_RANK: Record<SwarmJourneyFinding["basis"], number> = {
+  verifiedMechanism: 0,
+  populationFact: 1,
+  sessionReport: 2,
+};
+
+/**
+ * Compact a swarm run's `journeyFindings` the way {@link compactEnvelope}
+ * compacts the envelope's own findings: verified mechanisms first, a head
+ * slice, evidence capped per finding, model phrases clamped. Personas and
+ * populations are never touched: they are the counts every sentence rests on.
+ */
+export function compactJourneyFindings(value: SwarmJourneyFindings) {
   let omittedEvidence = 0;
   let contractTruncated = false;
+  const clampPhrase = (phrase: string | null, cap: number) => {
+    if (phrase === null || phrase.length <= cap) return phrase;
+    contractTruncated = true;
+    return clampAtWord(phrase, cap);
+  };
+  const findings = [...value.findings]
+    .sort((a, b) => JOURNEY_BASIS_RANK[a.basis] - JOURNEY_BASIS_RANK[b.basis])
+    .slice(0, MODEL_MAX_FINDINGS)
+    .map((finding) => {
+      omittedEvidence += Math.max(
+        0,
+        finding.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
+      );
+      omittedEvidence += Math.max(
+        0,
+        finding.sessionIds.length - MODEL_MAX_SESSION_IDS_PER_FINDING
+      );
+      let reportExcerpt = finding.reportExcerpt;
+      if (reportExcerpt) {
+        omittedEvidence += Math.max(
+          0,
+          reportExcerpt.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
+        );
+        reportExcerpt = {
+          actual: clampPhrase(reportExcerpt.actual, MODEL_EXCERPT_CAP)!,
+          // This object is REBUILT rather than spread, so a field left out
+          // here is silently dropped from everything the model reads.
+          ...(reportExcerpt.account
+            ? {
+                account: clampPhrase(reportExcerpt.account, MODEL_EXCERPT_CAP)!,
+              }
+            : {}),
+          citations: reportExcerpt.citations.slice(
+            0,
+            MODEL_MAX_EVIDENCE_PER_FINDING
+          ),
+        };
+      }
+      return {
+        ...finding,
+        sessionIds: finding.sessionIds.slice(
+          0,
+          MODEL_MAX_SESSION_IDS_PER_FINDING
+        ),
+        citations: finding.citations.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING),
+        outcomePhrase: clampPhrase(finding.outcomePhrase, MODEL_PHRASE_CAP),
+        mechanismPhrase: clampPhrase(finding.mechanismPhrase, MODEL_PHRASE_CAP),
+        fixPhrase: clampPhrase(finding.fixPhrase, MODEL_PHRASE_CAP),
+        reportExcerpt,
+      };
+    });
+  const omittedFindings = value.findings.length - findings.length;
+  return {
+    value: { ...value, findings },
+    omittedFindings,
+    omittedEvidence,
+    contractTruncated,
+  };
+}
+
+function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+  const journey = envelope.journeyFindings
+    ? compactJourneyFindings(envelope.journeyFindings)
+    : null;
+  let omittedEvidence = journey?.omittedEvidence ?? 0;
+  let contractTruncated = journey?.contractTruncated ?? false;
   // Findings arrive ready-first from the producer, so a head slice keeps
   // every server-ready finding before any investigation is dropped.
   const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
@@ -1008,13 +1420,15 @@ function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
     }
     return next;
   });
-  const omittedFindings = envelope.findings.length - kept.length;
+  const omittedFindings =
+    envelope.findings.length - kept.length + (journey?.omittedFindings ?? 0);
   if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
     return envelope;
   }
   return {
     ...envelope,
     findings: kept,
+    ...(journey ? { journeyFindings: journey.value } : {}),
     truncation: {
       truncated: true,
       omittedFindings: envelope.truncation.omittedFindings + omittedFindings,

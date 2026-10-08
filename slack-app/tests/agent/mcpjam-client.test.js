@@ -29,6 +29,24 @@ describe('mcpjam-client', () => {
     assert.deepStrictEqual(result, { reply: 'hello', toolCalls: [], createdResources: [], proposedActions: [] });
   });
 
+  it('preserves the completed job ID for delivery acknowledgement', async () => {
+    let calls = 0;
+    const result = await runAgentTurn([{ role: 'user', content: 'hi' }], CTX, {
+      fetchImpl: async () =>
+        Response.json(
+          ++calls === 1
+            ? { jobId: 'job-1', status: 'pending' }
+            : {
+                jobId: 'job-1',
+                status: 'completed',
+                result: { reply: 'Done', replyHandle: { channel: 'C', ts: '1' } },
+              },
+        ),
+    });
+    assert.strictEqual(result.jobId, 'job-1');
+    assert.deepStrictEqual(result.replyHandle, { channel: 'C', ts: '1' });
+  });
+
   it('maps RATE_LIMITED errors to a capacity message', async () => {
     await assert.rejects(
       runAgentTurn([{ role: 'user', content: 'hi' }], CTX, {

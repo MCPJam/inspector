@@ -25,6 +25,10 @@
  */
 
 export const ANALYTICS_EVENTS = {
+  // One outcome per logical plugin App launch (closed vocabulary, no content).
+  extension_launch_completed: { source: "client" },
+  // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
+  platform_launch_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
@@ -122,6 +126,20 @@ export const ANALYTICS_EVENTS = {
 
   // --- Billing / revenue funnel (migrated) ---
   billing_upsell_gate_viewed: { source: "client" },
+  // Organization billing funnel. Properties are deliberately categorical:
+  // flow/source/plan/interval/outcome/failure_kind only. Never attach prices,
+  // Stripe ids, organization ids, invoice ids, or raw error strings as event
+  // properties. Organization attribution belongs only in PostHog's native
+  // `organization` group.
+  billing_plans_viewed: { source: "client" },
+  billing_flow_started: { source: "client" },
+  // A handoff means Checkout or the Stripe portal opened; it does not mean
+  // Stripe collected payment. Trusted payment outcomes come from the backend.
+  billing_handoff_succeeded: { source: "client" },
+  // An action means the app received a terminal result itself (for example a
+  // paid seat, scheduled plan change, or confirmed cancellation).
+  billing_action_succeeded: { source: "client" },
+  billing_flow_failed: { source: "client" },
   credit_topup_checkout_started: { source: "client" },
   credit_topup_checkout_failed: { source: "client" },
   credit_topup_return_cancelled: { source: "client" },
@@ -147,6 +165,7 @@ export const ANALYTICS_EVENTS = {
   // text), location: chat_tab | playground_single | playground_compare.
   chat_starter_prompt_clicked: { source: "client" },
   chat_tab_viewed: { source: "client" },
+  platform_paid_fallback_notice: { source: "client" },
   chat_voice_input_recording_canceled: { source: "client" },
   chat_voice_input_recording_started: { source: "client" },
   chat_voice_input_recording_stopped: { source: "client" },
@@ -213,6 +232,19 @@ export const ANALYTICS_EVENTS = {
   local_harness_runtime_install_completed: { source: "client" },
   local_harness_runtime_install_failed: { source: "client" },
   local_harness_unavailable: { source: "client" },
+  // --- Local harness runtime lifecycle (server; background work included) ---
+  // Fired by the installer and the launch path, including installs nobody is
+  // watching (boot prefetch, background updates). Enums, versions, durations
+  // and counts only — never a digest, path, machine id or installer message.
+  // {harness_id, pack_version, trigger, stage, reason, role, duration_ms}.
+  local_runtime_install_started: { source: "server" },
+  local_runtime_install_succeeded: { source: "server" },
+  local_runtime_install_failed: { source: "server" },
+  local_runtime_candidate_probe_failed: { source: "server" },
+  local_runtime_update_activated: { source: "server" },
+  local_runtime_launch_failed_after_update: { source: "server" },
+  local_runtime_rolled_back_to_previous: { source: "server" },
+  local_runtime_time_to_first_usable_turn: { source: "server" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
@@ -261,6 +293,24 @@ export const ANALYTICS_EVENTS = {
   evaluate_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
+  // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
+  // counts arrivals by a SIGNED-OUT visitor only, and `location` separates
+  // Swarms from User Testing rather than one audience from another.
+  //
+  // It used to fire for plan-locked members too, back when both shared one
+  // component, which quietly inflated the sign-up funnel with billing
+  // impressions. They are separate components now and a plan-locked arrival
+  // is counted by `billing_upsell_gate_viewed`, which the upsell itself
+  // fires. Do not re-point this event at the shared shell without splitting
+  // the audiences again.
+  //
+  // The nudge pair measures the dialog the guest CTA opens; the
+  // sign-up/sign-in clicks inside it reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with the same location, exactly as the invite
+  // nudge below does.
+  guest_feature_preview_shown: { source: "client" },
+  guest_feature_nudge_shown: { source: "client" },
+  guest_feature_nudge_dismissed: { source: "client" },
   guest_refresh_failure: { source: "client" },
   guest_refresh_success: { source: "client" },
   host_capabilities_dialog_opened: { source: "client" },
@@ -333,6 +383,19 @@ export const ANALYTICS_EVENTS = {
   onboarding_connect_excalidraw_error: { source: "client" },
   onboarding_connect_excalidraw_success: { source: "client" },
   onboarding_first_run_eligible: { source: "client" },
+  // --- Explicit first-run server-choice funnel ---
+  // These events are emitted only through first-run-onboarding-analytics.ts,
+  // whose narrow typed API accepts enums and counts instead of server objects.
+  // NEVER attach a server name, URL, command, credential, or raw error.
+  first_run_onboarding_entered: { source: "client" },
+  first_run_onboarding_screen_viewed: { source: "client" },
+  first_run_onboarding_server_selected: { source: "client" },
+  first_run_onboarding_connection_started: { source: "client" },
+  first_run_onboarding_connection_succeeded: { source: "client" },
+  first_run_onboarding_connection_failed: { source: "client" },
+  first_run_onboarding_connection_cancelled: { source: "client" },
+  first_run_onboarding_setup_later_clicked: { source: "client" },
+  first_run_onboarding_playground_opened: { source: "client" },
   playground_compare_lead_promoted: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },
@@ -366,6 +429,14 @@ export const ANALYTICS_EVENTS = {
   // sign-in vs create-account conversion across control and treatment.
   plan_limit_create_account_clicked: { source: "client" },
   plan_limit_see_plans_clicked: { source: "client" },
+  // --- Plan confirmation step on the organization plans page ---
+  // The modal that stands between an Upgrade/Change plan card and Stripe.
+  // `shown` vs `submitted` measures how many confirmations are abandoned, and
+  // `interval_selected` says how often the cycle is changed at the last step.
+  plans_upgrade_confirm_shown: { source: "client" },
+  plans_upgrade_confirm_interval_selected: { source: "client" },
+  plans_upgrade_confirm_submitted: { source: "client" },
+  plans_upgrade_confirm_dismissed: { source: "client" },
   credit_topup_dialog_shown: { source: "client" },
   credit_topup_package_selected: { source: "client" },
   credit_topup_dialog_dismissed: { source: "client" },
@@ -397,6 +468,12 @@ export const ANALYTICS_EVENTS = {
   save_tool_button_clicked: { source: "client" },
   saved_request_item_loaded: { source: "client" },
   server_card_clicked: { source: "client" },
+  // How a connect, reconnect or OAuth completion ended — one per attempt, from
+  // `lib/connect-outcome-telemetry.ts`. Props: outcome (success | failure |
+  // timeout | cancelled), flow (connect | reconnect | background), hosted,
+  // transport, error_slug?, http_status?, duration_ms?. Never a server
+  // name, URL or error text.
+  server_connect_outcome: { source: "client" },
   server_detail_modal_closed: { source: "client" },
   server_detail_modal_connect_clicked: { source: "client" },
   server_detail_modal_disconnect_clicked: { source: "client" },
@@ -473,8 +550,9 @@ export const ANALYTICS_EVENTS = {
 
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
-  // state (none | provisioning | invite_sent | pending_admin_approval |
-  // active | invite_declined | invite_expired | error).
+  // state (none | automatic_invite_pending | provisioning | invite_sent |
+  // pending_admin_approval | active | invite_declined | invite_expired |
+  // error).
   home_shared_slack_card_viewed: { source: "client" },
   home_shared_slack_provision_clicked: { source: "client" },
   home_shared_slack_invite_opened: { source: "client" },
@@ -509,6 +587,9 @@ export const ANALYTICS_EVENTS = {
   project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
+  // A signed-in tab's WorkOS session was rejected on refresh (usually the
+  // max session length running out); the user is sent back to sign in.
+  workos_session_expired: { source: "client" },
   // `browser_pane_session_summary`   props: engine, transport, tier, fps,
   //   kbps, rtt, input_to_paint_p50/p95, frames, dropped. ONE event per pane,
   //   on unmount — a per-frame event would be tens of thousands of captures an

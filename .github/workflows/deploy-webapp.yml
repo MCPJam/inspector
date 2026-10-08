@@ -47,11 +47,6 @@ on:
         description: "Branch, tag, or SHA to deploy (defaults to the caller's SHA)"
         required: false
         type: string
-      apply_release_patch:
-        description: "Apply the shared release patch artifact before deploying"
-        required: false
-        default: false
-        type: boolean
       require_staging_green:
         description: "Require a successful Deploy Staging run for the deployed SHA"
         required: false
@@ -87,7 +82,7 @@ jobs:
       RAILWAY_PRODUCTION_ENVIRONMENT: ${{ vars.RAILWAY_PRODUCTION_ENVIRONMENT }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.sha }}
 
@@ -104,7 +99,7 @@ jobs:
 
       - name: Require green staging run for the deployed SHA
         if: ${{ inputs.require_staging_green == true || inputs.require_staging_green == 'true' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           DEPLOY_SHA: ${{ steps.resolved.outputs.sha }}
         with:
@@ -144,20 +139,6 @@ jobs:
             }
 
             core.info(`Found successful staging deploy run ${matchingRun.id} for ${headSha}.`);
-
-      # release.yml versions packages in its preflight job and passes the diff
-      # along as an artifact, so production ships the same tree that was
-      # published to npm rather than the pre-bump one.
-      - name: Download release patch
-        if: ${{ inputs.apply_release_patch == true || inputs.apply_release_patch == 'true' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        if: ${{ inputs.apply_release_patch == true || inputs.apply_release_patch == 'true' }}
-        run: git apply --binary .release-plan/release.patch
 
       # Pinned to match deploy-staging.yml and pr-preview.yml. An unpinned
       # install picks up whatever shipped that morning, on the one workflow

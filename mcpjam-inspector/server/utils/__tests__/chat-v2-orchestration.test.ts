@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../skill-tools.js", () => ({
   getSkillToolsAndPrompt: vi.fn(),
@@ -92,6 +92,22 @@ describe("prepareChatV2", () => {
     expect(result.resolvedTemperature).toBe(0.5);
   });
 
+  it("omits the resolved temperature under a reasoning effort", async () => {
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+      reasoningEffort: "high",
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
   it("leaves an omitted temperature omitted instead of substituting 0.7", async () => {
     // A caller that expressed no preference gets the provider's default. The
     // chat UI always sends its slider value, so this covers the SDK, the API
@@ -120,12 +136,32 @@ describe("prepareChatV2", () => {
         provider: "openai",
         hosted: true,
         supportedParameters: ["tools", "max_tokens"],
+        supportedParametersComplete: true,
       } as any,
       systemPrompt: "Base prompt.",
       temperature: 0.5,
     });
 
     expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature when the catalog's parameter list is partial", async () => {
+    // Only a complete list may withdraw it: the legacy DTO reported just
+    // `structured_outputs` for every hosted row.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/gpt-4o",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["structured_outputs"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
   });
 
   it("keeps temperature when the catalog lists it", async () => {
@@ -1875,5 +1911,194 @@ describe("first-class page tools in prepareChatV2", () => {
     expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
     expect(result.enhancedSystemPrompt).toContain("None are available right now");
     expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+  });
+});
+
+describe("account routing snapshots", () => {
+  it("keeps an in-flight turn on its selected account after a default change", async () => {
+    const { jsonSchema } = await import("ai");
+    const { setManagerConnections } = await import("../mcp-connections.js");
+    const a = {
+      serverId: "server",
+      connectionId: "a".repeat(32),
+      key: "server",
+      label: "Acme",
+      isDefault: true,
+    };
+    const b = {
+      serverId: "server",
+      connectionId: "b".repeat(32),
+      key: "server#" + "b".repeat(32),
+      label: "Side",
+      isDefault: false,
+    };
+    const executeA = vi.fn(async () => ({
+      content: [{ type: "text", text: "A" }],
+    }));
+    const executeB = vi.fn(async () => ({
+      content: [{ type: "text", text: "B" }],
+    }));
+    const schema = jsonSchema({ type: "object", properties: {} });
+    const manager = mockManager({});
+    manager.getToolsForAiSdkByServer = vi
+      .fn()
+      .mockResolvedValue({
+        [a.key]: { search: { inputSchema: schema, execute: executeA } },
+        [b.key]: { search: { inputSchema: schema, execute: executeB } },
+      });
+    setManagerConnections(manager, { server: [a, b] });
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    setManagerConnections(manager, {
+      server: [
+        { ...a, key: "other", isDefault: false },
+        { ...b, key: "server", isDefault: true },
+      ],
+    });
+    await result.allTools.search.execute!(
+      { link_id: b.connectionId },
+      { toolCallId: "b-call", messages: [], context: {} },
+    );
+    expect(executeA).not.toHaveBeenCalled();
+    expect(executeB).toHaveBeenCalledOnce();
+    expect(result.toolConnections?.get("b-call")).toMatchObject({
+      connectionId: b.connectionId,
+      key: b.key,
+    });
+    expect(JSON.parse(JSON.stringify(result.connectionsAtTurn))).toEqual(
+      [a, b].map((c) => ({
+        serverId: c.serverId,
+        connectionId: c.connectionId,
+        label: c.label,
+      })),
+    );
+    // Eval callers explicitly opt out even when using a local manager with aliases.
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server"],
+      connectionsByServerId: {},
+      modelDefinition: { id: "gpt-4o", provider: "openai" } as any,
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+      ["server"],
+      undefined,
+    );
+  });
+});
+
+describe("prepareChatV2 tool-listing budget", () => {
+  const USER_SERVER_HOP = Symbol.for("mcpjam.errorUserServerHop");
+
+  function hungManager(statuses: Record<string, string>) {
+    const manager = mockManager({});
+    manager.getToolsForAiSdk = vi.fn(() => new Promise(() => {}));
+    manager.getConnectionStatus = vi.fn((id: string) => statuses[id]);
+    return manager;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fails a hung listing as the user's MCP server timing out", async () => {
+    vi.useFakeTimers();
+    const manager = hungManager({ srv: "connecting" });
+
+    const pending = prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      serverLabels: { srv: "DHL Tracking" },
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      toolListingTimeoutMs: 30_000,
+    });
+    const settled = pending.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const error = (await settled) as Error;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/MCP server ".*" timed out/);
+    expect(error.message).toBe(
+      'MCP server "DHL Tracking" timed out: connecting and listing tools took longer than 30s.',
+    );
+    expect((error as any)[USER_SERVER_HOP]).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("names only the servers that are still not connected", async () => {
+    vi.useFakeTimers();
+    const manager = hungManager({ up: "connected", down: "connecting" });
+
+    const settled = prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["up", "down"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      toolListingTimeoutMs: 30_000,
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const error = (await settled) as Error;
+
+    expect(error.message).toContain('MCP server "down" timed out');
+    expect(error.message).not.toContain('"up"');
+  });
+
+  it("does not blame a stale selected id the listing never reached", async () => {
+    vi.useFakeTimers();
+    const manager = hungManager({ live: "connected" });
+    manager.hasServer = vi.fn((id: string) => id === "live");
+
+    const settled = prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["stale", "live"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      toolListingTimeoutMs: 30_000,
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const error = (await settled) as Error;
+
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["live"], undefined);
+    expect(error.message).toContain('MCP server "live" timed out');
+    expect(error.message).not.toContain("stale");
+  });
+
+  it("does not arm a timer without a budget", async () => {
+    vi.useFakeTimers();
+    const manager = mockManager({});
+
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    const hung = hungManager({ srv: "connecting" });
+    let settled = false;
+    void prepareChatV2({
+      mcpClientManager: hung,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+    }).finally(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(settled).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("clears the timer when the listing answers in time", async () => {
+    vi.useFakeTimers();
+    const manager = mockManager({});
+
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      toolListingTimeoutMs: 30_000,
+    });
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

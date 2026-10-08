@@ -6,7 +6,7 @@
  * computer), so a case's attachments must be re-materialized into the box every
  * iteration to stay reproducible. The bytes live in Convex `_storage`, pinned by
  * content-hash into the run's `configSnapshot` at run start (mcpjam-backend
- * `testSuites.ts`); here we resolve those pins to short-lived download URLs
+ * `testSuites.ts`); here we resolve those pins to download URLs
  * (`/evals/sandbox/attachments`) and write each file to its frozen path inside
  * the box via the E2B file API.
  *

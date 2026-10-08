@@ -7,10 +7,12 @@ vi.mock("@sentry/node", () => ({
 
 const mockIngest = vi.fn();
 vi.mock("@axiomhq/js", () => ({
-  Axiom: vi.fn().mockImplementation(() => ({
-    ingest: mockIngest,
-    flush: vi.fn().mockResolvedValue(undefined),
-  })),
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: mockIngest,
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 import * as Sentry from "@sentry/node";
@@ -397,5 +399,135 @@ describe("readRequestJson", () => {
     const c = { req: { json: () => Promise.resolve({ serverId: "srv_1" }) } };
 
     await expect(readRequestJson(c)).resolves.toEqual({ serverId: "srv_1" });
+  });
+});
+
+describe("reportRouteFailure — a surface's capture policy", () => {
+  // Ask MCPJam captures every failure, whatever its origin: a week of every
+  // self-hosted turn failing reached Sentry from nowhere, because each one was
+  // (correctly, for the Playground) classified as somebody else's. The policy
+  // changes what Sentry hears and NOTHING else — origin, hop and the Axiom row
+  // are exactly what they would have been.
+  const ALWAYS = {
+    always: true,
+    tags: { surface: "mcpjam_agent", page_class: "incident" },
+    fingerprint: ["mcpjam_agent", "test-site"],
+    level: "error" as const,
+  };
+
+  function axiomRows() {
+    return mockIngest.mock.calls.flatMap((call) => call[1] as unknown[]) as {
+      origin?: string;
+      hop?: string;
+      captured?: boolean;
+      source?: string;
+    }[];
+  }
+
+  it("captures a user_config failure on a user-server hop", () => {
+    const report = reportRouteFailure("agent failed", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+
+    expect(report.captured).toBe(true);
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [, context] = captureException.mock.calls[0] as [
+      unknown,
+      { tags: Record<string, string>; fingerprint?: string[]; level?: string },
+    ];
+    expect(context.tags).toMatchObject({
+      surface: "mcpjam_agent",
+      page_class: "incident",
+      capture_policy: "always",
+      error_origin: "user_config",
+    });
+    expect(context.fingerprint).toEqual(["mcpjam_agent", "test-site"]);
+    expect(context.level).toBe("error");
+  });
+
+  it("captures a deliberate 4xx, which the origin policy declines", () => {
+    const refusal = Object.assign(new Error("Daily limit reached"), {
+      status: 429,
+    });
+    const report = reportRouteFailure("agent refused", refusal, {
+      source: "agent.test",
+      hop: "mcpjam_internal",
+      capture: { ...ALWAYS, level: "warning" as const },
+    });
+
+    expect(report.captured).toBe(true);
+    expect(
+      (captureException.mock.calls[0]![1] as { level?: string }).level,
+    ).toBe("warning");
+  });
+
+  it("leaves the origin, the hop and the Axiom row exactly as they were", () => {
+    const withPolicy = reportRouteFailure("agent failed", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+    const rowWithPolicy = axiomRows().find((r) => r.source === "agent.test");
+    mockIngest.mockClear();
+    const without = reportRouteFailure("agent failed", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+    });
+    const rowWithout = axiomRows().find((r) => r.source === "agent.test");
+
+    expect(withPolicy.origin).toBe(without.origin);
+    expect(withPolicy.normalized.slug).toBe(without.normalized.slug);
+    expect(rowWithPolicy?.origin).toBe(rowWithout?.origin);
+    expect(rowWithPolicy?.hop).toBe("user_server_hop");
+    expect(rowWithout?.hop).toBe("user_server_hop");
+    // Only the capture outcome differs.
+    expect(rowWithPolicy?.captured).toBe(true);
+    expect(rowWithout?.captured).toBe(false);
+  });
+
+  it("reports the outcome explicitly, false for a decline", () => {
+    const declined = reportRouteFailure("not ours", deadServerError(), {
+      source: "agent.test",
+      hop: "user_server_hop",
+    });
+    expect(declined.captured).toBe(false);
+  });
+
+  it("never captures the same error twice, whichever policy asks second", () => {
+    const error = deadServerError();
+    const first = reportRouteFailure("first", error, {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+    const second = reportRouteFailure("second", error, {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+
+    expect(first.captured).toBe(true);
+    expect(second.captured).toBe(false);
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not capture an error an earlier decision already declined", () => {
+    // The stamp means "decided", not "captured": a later always-policy must
+    // not reopen a decline — the request-log backstop, which reads the
+    // RECORDED outcome instead, is what covers that case.
+    const error = deadServerError();
+    reportRouteFailure("declined", error, {
+      source: "playground.test",
+      hop: "user_server_hop",
+    });
+    const later = reportRouteFailure("agent", error, {
+      source: "agent.test",
+      hop: "user_server_hop",
+      capture: ALWAYS,
+    });
+    expect(later.captured).toBe(false);
+    expect(captureException).not.toHaveBeenCalled();
   });
 });

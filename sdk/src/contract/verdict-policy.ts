@@ -453,9 +453,29 @@ export const EVAL_VERDICT_DECISION_REASONS = [
 ] as const;
 export type EvalVerdictDecisionReason =
   (typeof EVAL_VERDICT_DECISION_REASONS)[number];
-export const evalVerdictDecisionReasonSchema = z.enum(
-  EVAL_VERDICT_DECISION_REASONS
-);
+export const evalVerdictDecisionReasonSchema = z
+  .enum(EVAL_VERDICT_DECISION_REASONS)
+  // Carried into `openapi.json` by `generate-swarm-report-schema.ts`: the spec
+  // is the only place a third-party integrator can read what a reason MEANS.
+  .describe(
+    "Why the verdict is what it is. The validity reasons are evaluated " +
+      "FIRST and make a run `inconclusive`; the task reasons decide " +
+      "`passed` / `failed` once validity holds. " +
+      "`configuredTrialsNotAttempted` — some configured trial never ran. " +
+      "`noGradeableTrials` — nothing in the suite was gradeable. " +
+      "`eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was " +
+      "not reached. `completionRateBelowMinimum` — measured, and under the " +
+      "floor. `completionRateNotMeasured` — nothing was attempted, so the " +
+      "floor is unsatisfiable; a not-measured rate never passes one. " +
+      "`evaluatorErrorRateAboveMaximum` — the grader failed too often for " +
+      "the run to describe the server. `evaluatorErrorRateNotMeasured` — " +
+      "the same unsatisfiable case for the ceiling. " +
+      "`caseHasNoEligibleTrials` — a case graded nothing, which is " +
+      "inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` " +
+      "— a case's own passing reason. `casePassRateBelowThreshold` — a case " +
+      "failed its threshold, and so therefore did the suite. " +
+      "`allMeasuredCasesMetThreshold` — the suite's only passing reason."
+  );
 
 export function isEvalVerdictDecisionReason(
   value: unknown
@@ -476,6 +496,9 @@ export function isEvalValidityDecisionReason(
 }
 
 // ── execution variants ───────────────────────────────────────────────────────
+/** Upper bound on {@link EvalExecutionVariant.selectionKey} (canonical JSON). */
+export const MAX_EVAL_EXECUTION_VARIANT_SELECTION_KEY_CHARS = 2000;
+
 /**
  * The provider/model pair one aggregate's trials executed under.
  *
@@ -500,6 +523,19 @@ export const evalExecutionVariantSchema = z
   .object({
     model: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
     provider: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS).optional(),
+    /**
+     * Present only when the variant ran a NON-default saved selection (an
+     * effort, a temperature, an org or local connection): the canonical
+     * selection JSON without `fallback`, i.e. `comparisonKey` minus its
+     * `modelId` prefix. Two entries of one model at Low and High are two
+     * variants. Omitted for a default selection, so every key stored before
+     * selections existed is unchanged.
+     */
+    selectionKey: z
+      .string()
+      .min(1)
+      .max(MAX_EVAL_EXECUTION_VARIANT_SELECTION_KEY_CHARS)
+      .optional(),
   })
   .strict();
 export type EvalExecutionVariant = z.infer<typeof evalExecutionVariantSchema>;
@@ -529,8 +565,11 @@ export function evalCaseAggregationKey(entry: {
 }): string {
   const sep = EVAL_CASE_AGGREGATION_KEY_SEPARATOR;
   if (!entry.executionVariant) return `${entry.caseId}${sep}`;
-  const { model, provider } = entry.executionVariant;
-  return `${entry.caseId}${sep}${provider ?? ""}${sep}${model}`;
+  const { model, provider, selectionKey } = entry.executionVariant;
+  const base = `${entry.caseId}${sep}${provider ?? ""}${sep}${model}`;
+  // Appended only for a non-default selection: a default variant keys exactly
+  // as it did before selections existed.
+  return selectionKey === undefined ? base : `${base}${sep}${selectionKey}`;
 }
 
 /**

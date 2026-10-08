@@ -43,6 +43,16 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@mcpjam/design-system/table";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import { reasoningEffortLabel } from "@/components/effort/effort-control";
+import {
   useOrgModelConfig,
   useOrgModelUsageSummary,
   type OrgModelUsageAggregate,
@@ -54,14 +64,25 @@ import {
 // Provider catalog -- defines known providers and their configuration fields
 // ---------------------------------------------------------------------------
 
+// "api-key-models": an OpenAI-compatible provider the backend reaches at a
+// fixed base URL (Moonshot, Z.ai, Qwen, MiniMax). The admin supplies a key and
+// the model ids to offer, since no static list covers them.
 type ProviderKind =
-  "api-key-only" | "azure" | "bedrock" | "ollama" | "openrouter" | "custom";
+  | "api-key-only"
+  | "api-key-models"
+  | "azure"
+  | "bedrock"
+  | "ollama"
+  | "openrouter"
+  | "custom";
 
 interface ProviderCatalogEntry {
   key: string;
   name: string;
   kind: ProviderKind;
   logo?: string;
+  /** Example model ids for an "api-key-models" provider's field. */
+  modelIdsPlaceholder?: string;
 }
 
 const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
@@ -96,6 +117,34 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     logo: "/mistral_logo.png",
   },
   { key: "xai", name: "xAI", kind: "api-key-only", logo: "/xai_logo.png" },
+  {
+    key: "moonshotai",
+    name: "Moonshot AI",
+    kind: "api-key-models",
+    logo: "/moonshot_light.png",
+    modelIdsPlaceholder: "kimi-k2-0905-preview",
+  },
+  {
+    key: "z-ai",
+    name: "Z.ai",
+    kind: "api-key-models",
+    logo: "/z-ai.png",
+    modelIdsPlaceholder: "glm-4.6",
+  },
+  {
+    key: "qwen",
+    name: "Qwen",
+    kind: "api-key-models",
+    logo: "/qwen_logo.png",
+    modelIdsPlaceholder: "qwen-plus",
+  },
+  {
+    key: "minimax",
+    name: "MiniMax",
+    kind: "api-key-models",
+    logo: "/minimax_logo.svg",
+    modelIdsPlaceholder: "MiniMax-M2",
+  },
   {
     key: "azure",
     name: "Azure OpenAI",
@@ -586,8 +635,11 @@ export function UsageSummaryCard({
   const total = summary?.total;
   const hasKnownCost = (total?.knownCostRequests ?? 0) > 0;
   const hasUsage = (total?.requestCount ?? 0) > 0;
+  // An older backend reports no reasoning split at all; show the tile only
+  // when it does, so a missing field never reads as "0 reasoning tokens".
+  const hasReasoningTotal = typeof total?.reasoningTokens === "number";
   const topProviders = summary?.byProvider.slice(0, 4) ?? [];
-  const topModels = summary?.byModel.slice(0, 4) ?? [];
+  const modelRows = usageModelRows(summary);
 
   return (
     <Card className="border-0 bg-transparent shadow-none">
@@ -610,7 +662,11 @@ export function UsageSummaryCard({
           </div>
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div
+              className={`grid gap-3 sm:grid-cols-2 ${
+                hasReasoningTotal ? "lg:grid-cols-5" : "lg:grid-cols-4"
+              }`}
+            >
               <UsageStat
                 label="Requests"
                 value={formatCount(total?.requestCount)}
@@ -627,6 +683,12 @@ export function UsageSummaryCard({
                 label="Output"
                 value={formatCount(total?.outputTokens)}
               />
+              {hasReasoningTotal ? (
+                <UsageStat
+                  label="Reasoning"
+                  value={formatCount(total?.reasoningTokens)}
+                />
+              ) : null}
             </div>
 
             {hasKnownCost ? (
@@ -640,10 +702,8 @@ export function UsageSummaryCard({
               </div>
             ) : null}
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <UsageBreakdown title="By Provider" rows={topProviders} />
-              <UsageBreakdown title="By Model" rows={topModels} />
-            </div>
+            <UsageBreakdown title="By Provider" rows={topProviders} />
+            <UsageByModelTable rows={modelRows} />
           </>
         )}
       </CardContent>
@@ -656,6 +716,101 @@ function UsageStat({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border border-border/40 px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="text-base font-semibold">{value}</div>
+    </div>
+  );
+}
+
+interface UsageModelRow {
+  key: string;
+  /** Model id, plus ` · <Effort>` when the backend split usage by effort. */
+  label: string;
+  aggregate: OrgModelUsageAggregate;
+}
+
+/** `default` (the call sent no effort) reads "Default"; anything else uses the shared effort label. */
+function usageEffortLabel(effort: string): string {
+  return effort === "default"
+    ? "Default"
+    : reasoningEffortLabel(effort as ModelReasoningEffort);
+}
+
+/**
+ * One row per model × effective effort (`byModelEffort`); a backend that
+ * predates the effort split only has `byModel`, so those rows show the bare
+ * model id.
+ */
+function usageModelRows(
+  summary: OrgModelUsageSummary | undefined,
+): UsageModelRow[] {
+  if (!summary) return [];
+  if (summary.byModelEffort) {
+    return summary.byModelEffort.map((row) => ({
+      key: row.key,
+      label: `${row.modelId} · ${usageEffortLabel(row.reasoningEffort)}`,
+      aggregate: row,
+    }));
+  }
+  return summary.byModel.map((row) => ({
+    key: row.key,
+    label: row.key,
+    aggregate: row,
+  }));
+}
+
+function UsageByModelTable({ rows }: { rows: UsageModelRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium uppercase text-muted-foreground">
+        By Model
+      </div>
+      <div className="rounded-md border border-border/40">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Model</TableHead>
+              <TableHead className="text-right">Requests</TableHead>
+              <TableHead className="text-right">Tokens</TableHead>
+              <TableHead className="text-right">Reasoning</TableHead>
+              <TableHead className="text-right">Cost</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map(({ key, label, aggregate }) => (
+              <TableRow key={key}>
+                <TableCell className="max-w-[16rem] truncate" title={label}>
+                  {label}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatCount(aggregate.requestCount)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatCount(aggregate.totalTokens)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {typeof aggregate.reasoningTokens === "number"
+                    ? formatCount(aggregate.reasoningTokens)
+                    : "—"}
+                </TableCell>
+                <TableCell
+                  className="text-right tabular-nums"
+                  title={
+                    aggregate.unknownCostRequests > 0
+                      ? `${formatCount(aggregate.unknownCostRequests)} request(s) without a reported cost`
+                      : undefined
+                  }
+                >
+                  {aggregate.knownCostRequests > 0
+                    ? `${formatCost(aggregate.knownCostUsd)}${
+                        aggregate.unknownCostRequests > 0 ? "+" : ""
+                      }`
+                    : "—"}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -718,12 +873,16 @@ function KnownProviderConfigDialog({
     secret?: string;
     baseUrl?: string;
     selectedModels?: string[];
+    modelIds?: string[];
   }) => Promise<void>;
   onCancel: () => void;
 }) {
   const [secret, setSecret] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [selectedModels, setSelectedModels] = useState("");
+  // Azure deployment names, Ollama model names, and the model ids of an
+  // "api-key-models" provider. All stored as the provider's `modelIds`.
+  const [modelIds, setModelIds] = useState("");
 
   // Reset fields when dialog opens
   useEffect(() => {
@@ -735,6 +894,7 @@ function KnownProviderConfigDialog({
           : (existing?.baseUrl ?? ""),
       );
       setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
+      setModelIds(existing?.modelIds?.join(", ") ?? "");
     }
   }, [open, existing, kind]);
 
@@ -746,11 +906,13 @@ function KnownProviderConfigDialog({
     open &&
       (!!secret ||
         baseUrl !== storedBaseUrl ||
-        selectedModels !== (existing?.selectedModels?.join(", ") ?? "")),
+        selectedModels !== (existing?.selectedModels?.join(", ") ?? "") ||
+        modelIds !== (existing?.modelIds?.join(", ") ?? "")),
     () => {
       setSecret("");
       setBaseUrl(storedBaseUrl);
       setSelectedModels(existing?.selectedModels?.join(", ") ?? "");
+      setModelIds(existing?.modelIds?.join(", ") ?? "");
       onCancel();
     },
     open && isSaving,
@@ -764,6 +926,12 @@ function KnownProviderConfigDialog({
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const parsedModelIds = modelIds
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const takesModelIds =
+    kind === "azure" || kind === "ollama" || kind === "api-key-models";
 
   const handleSave = () => {
     const args: Parameters<typeof onSave>[0] = { providerKey };
@@ -780,6 +948,9 @@ function KnownProviderConfigDialog({
     ) {
       args.selectedModels = parsedSelectedModels;
     }
+    if (takesModelIds && parsedModelIds.length > 0) {
+      args.modelIds = parsedModelIds;
+    }
     void onSave(args);
   };
 
@@ -787,8 +958,16 @@ function KnownProviderConfigDialog({
     switch (kind) {
       case "api-key-only":
         return !!secret.trim() || existing?.hasSecret;
+      case "api-key-models":
+        return (
+          (!!secret.trim() || existing?.hasSecret) && parsedModelIds.length > 0
+        );
       case "azure":
-        return (!!secret.trim() || existing?.hasSecret) && !!baseUrl.trim();
+        return (
+          (!!secret.trim() || existing?.hasSecret) &&
+          !!baseUrl.trim() &&
+          parsedModelIds.length > 0
+        );
       case "bedrock":
         return (
           (!!secret.trim() || existing?.hasSecret) &&
@@ -796,7 +975,7 @@ function KnownProviderConfigDialog({
           parsedSelectedModels.length > 0
         );
       case "ollama":
-        return !!baseUrl.trim();
+        return !!baseUrl.trim() && parsedModelIds.length > 0;
       case "openrouter":
         return (
           (!!secret.trim() || existing?.hasSecret) &&
@@ -894,6 +1073,45 @@ function KnownProviderConfigDialog({
                 Region of the Bedrock runtime endpoint. Paste a full URL instead
                 to use a custom endpoint.
               </p>
+            </div>
+          ) : null}
+
+          {/* Model ids -- azure deployments, ollama models, api-key-models */}
+          {takesModelIds ? (
+            <div>
+              <label
+                htmlFor="org-provider-model-ids"
+                className="text-sm font-medium"
+              >
+                {kind === "azure" ? "Deployment Names" : "Model Names"}{" "}
+                <span className="text-muted-foreground font-normal">
+                  (comma-separated)
+                </span>
+              </label>
+              <Input
+                id="org-provider-model-ids"
+                type="text"
+                value={modelIds}
+                onChange={(e) => setModelIds(e.target.value)}
+                placeholder={
+                  kind === "azure"
+                    ? "prod-gpt-5-1, eval-gpt-5-mini"
+                    : kind === "ollama"
+                      ? "llama3.2:latest, qwen3:8b"
+                      : (catalogEntry?.modelIdsPlaceholder ?? "")
+                }
+                className="mt-1"
+              />
+              {kind === "azure" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  The deployment names you created on this Azure OpenAI
+                  resource. Requests run on the deployment you pick.
+                </p>
+              ) : kind === "api-key-models" ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  The model ids to offer, as {name} names them in its API.
+                </p>
+              ) : null}
             </div>
           ) : null}
 

@@ -1,0 +1,498 @@
+import { describe, expect, it, vi } from "vitest";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
+import {
+  attachedSuiteEnvironments,
+  defaultQuickRunModelIds,
+  defaultQuickRunServerGroup,
+  ensureLocalEnvironmentServers,
+  planQuickRunTargets,
+  quickRunClientIds,
+  quickRunEnvironmentSelection,
+  resolveQuickRunEnvironments,
+} from "../environment-quick-run";
+
+function env(
+  id: string,
+  fields: Partial<ProjectEnvironmentView> = {},
+): ProjectEnvironmentView {
+  return {
+    environmentId: id,
+    projectId: "p",
+    hostId: "host-1",
+    serverAttachmentId: "group-1",
+    revision: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    ...fields,
+  };
+}
+
+describe("attachedSuiteEnvironments", () => {
+  it("keeps suite order and waits for every environment", () => {
+    const rows = [env("b"), env("a")];
+    expect(
+      attachedSuiteEnvironments({ environmentIds: ["a", "b"] }, rows)?.map(
+        (row) => row.environmentId,
+      ),
+    ).toEqual(["a", "b"]);
+    expect(
+      attachedSuiteEnvironments({ environmentIds: ["a", "missing"] }, rows),
+    ).toBeNull();
+    expect(
+      attachedSuiteEnvironments({ environmentIds: ["a"] }, undefined),
+    ).toBeNull();
+  });
+});
+
+describe("quickRunEnvironmentSelection", () => {
+  const selection = (effort: string) =>
+    ({
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+      settings: { reasoningEffort: effort },
+    }) as never;
+  const attached = [
+    env("a", {
+      hostId: "host-1",
+      modelId: "openai/gpt-5",
+      modelSelection: selection("high"),
+    }),
+    env("b", { hostId: "host-2", modelId: "openai/gpt-5" }),
+  ];
+
+  it("reads the selection the environment on that client and model saves", () => {
+    expect(
+      quickRunEnvironmentSelection(attached, "host-1", "openai/gpt-5"),
+    ).toEqual(selection("high"));
+  });
+
+  it("reads the effort of an environment that inherits its client's model", () => {
+    const inherited = [
+      env("c", { hostId: "host-3", modelSelection: selection("high") }),
+    ];
+    const clientModelId = (hostId: string) =>
+      hostId === "host-3" ? "openai/gpt-5" : undefined;
+    expect(
+      quickRunEnvironmentSelection(inherited, "host-3", "openai/gpt-5"),
+    ).toBeUndefined();
+    expect(
+      quickRunEnvironmentSelection(
+        inherited,
+        "host-3",
+        "openai/gpt-5",
+        clientModelId,
+      ),
+    ).toEqual(selection("high"));
+  });
+
+  it("is undefined for another client, another model, or an unpinned environment", () => {
+    expect(
+      quickRunEnvironmentSelection(attached, "host-2", "openai/gpt-5"),
+    ).toBeUndefined();
+    expect(
+      quickRunEnvironmentSelection(attached, "host-1", "openai/gpt-4o"),
+    ).toBeUndefined();
+  });
+});
+
+describe("quick runs of two efforts of one model", () => {
+  const selection = (effort?: string) =>
+    ({
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+      ...(effort ? { settings: { reasoningEffort: effort } } : {}),
+    }) as never;
+  const attached = [
+    env("low", { modelId: "openai/gpt-5", modelSelection: selection("low") }),
+    env("high", { modelId: "openai/gpt-5", modelSelection: selection("high") }),
+  ];
+
+  it("names no single selection when the client runs the model at two", () => {
+    expect(
+      quickRunEnvironmentSelection(attached, "host-1", "openai/gpt-5"),
+    ).toBeUndefined();
+  });
+
+  it("runs Low, Medium and High of one model as three targets", () => {
+    const plans = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: ["low", "medium", "high"].map((effort) => ({
+        key: effort,
+        hostId: "host-1",
+        modelId: "openai/gpt-5",
+        modelSelection: selection(effort),
+      })),
+    });
+    expect(plans.map((plan) => plan.kind)).toEqual([
+      "reuse",
+      "derive",
+      "reuse",
+    ]);
+    expect(plans[1]).toMatchObject({
+      overrides: { modelSelection: selection("medium") },
+    });
+  });
+
+  it("reuses an environment that inherits its client's model only at its own effort", () => {
+    const inherited = [env("inherits", { modelSelection: selection("high") })];
+    const clientModelId = () => "openai/gpt-5";
+    const plan = (effort: string) =>
+      planQuickRunTargets({
+        attached: inherited,
+        serverAttachmentId: "group-1",
+        targets: [
+          {
+            key: effort,
+            hostId: "host-1",
+            modelId: "openai/gpt-5",
+            modelSelection: selection(effort),
+          },
+        ],
+        clientModelId,
+      })[0]!.kind;
+    expect(plan("high")).toBe("reuse");
+    expect(plan("low")).toBe("derive");
+  });
+
+  it("reuses the environment of the requested target (by comparisonKey)", () => {
+    const plans = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: [
+        {
+          key: "k",
+          hostId: "host-1",
+          modelId: "openai/gpt-5",
+          modelSelection: selection("high"),
+        },
+      ],
+    });
+    expect(plans).toEqual([
+      { kind: "reuse", key: "k", environmentId: "high" },
+    ]);
+  });
+
+  it("derives a new target with its selection, and is ambiguous without one", () => {
+    const [derived] = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: [
+        {
+          key: "k",
+          hostId: "host-1",
+          modelId: "openai/gpt-5",
+          modelSelection: selection(),
+        },
+      ],
+    });
+    expect(derived).toMatchObject({
+      kind: "derive",
+      overrides: { modelId: "openai/gpt-5", modelSelection: selection() },
+    });
+    const [ambiguous] = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: [{ key: "k", hostId: "host-1", modelId: "openai/gpt-5" }],
+    });
+    expect(ambiguous?.kind).toBe("blocked");
+  });
+});
+
+describe("defaults", () => {
+  const attached = [
+    env("a", { hostId: "host-1", modelId: "m1" }),
+    env("b", { hostId: "host-2" }),
+    env("c", { hostId: "host-1" }),
+  ];
+
+  it("offers the environments' clients in order", () => {
+    expect(quickRunClientIds(attached)).toEqual(["host-1", "host-2"]);
+  });
+
+  it("starts on the shared group, or none when groups differ", () => {
+    expect(defaultQuickRunServerGroup(attached)).toBe("group-1");
+    expect(
+      defaultQuickRunServerGroup([
+        ...attached,
+        env("d", { serverAttachmentId: "group-2" }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("starts on the models a client's environments run", () => {
+    expect(
+      defaultQuickRunModelIds(attached, "host-1", () => "client-model"),
+    ).toEqual(["m1", "client-model"]);
+  });
+});
+
+describe("planQuickRunTargets", () => {
+  it("reuses the suite's own environment for the client, model and group", () => {
+    const plans = planQuickRunTargets({
+      attached: [
+        env("a", { modelId: "m1" }),
+        env("b", { modelId: "m2", skillSelection: null }),
+      ],
+      serverAttachmentId: "group-1",
+      targets: [{ key: "v", hostId: "host-1", modelId: "m2" }],
+    });
+    expect(plans).toEqual([{ kind: "reuse", key: "v", environmentId: "b" }]);
+  });
+
+  it("matches an environment that inherits the model from its client", () => {
+    const plans = planQuickRunTargets({
+      attached: [env("a")],
+      serverAttachmentId: "group-1",
+      targets: [{ key: "v", hostId: "host-1", modelId: "client-model" }],
+      clientModelId: () => "client-model",
+    });
+    expect(plans[0]).toMatchObject({ kind: "reuse", environmentId: "a" });
+  });
+
+  it("refuses two matching environments instead of guessing", () => {
+    const plans = planQuickRunTargets({
+      attached: [
+        env("a", { modelId: "m1" }),
+        env("b", {
+          modelId: "m1",
+          skillSelection: { mode: "explicit", skillIds: ["s"] },
+        }),
+      ],
+      serverAttachmentId: "group-1",
+      targets: [{ key: "v", hostId: "host-1", modelId: "m1" }],
+    });
+    expect(plans[0]?.kind).toBe("blocked");
+  });
+
+  it("derives a new model from the one setup the client's environments share", () => {
+    const source = env("a", {
+      modelId: "m1",
+      pluginVersionIds: ["pv-1"],
+      revision: 7,
+    });
+    const plans = planQuickRunTargets({
+      attached: [source],
+      serverAttachmentId: "group-2",
+      targets: [{ key: "v", hostId: "host-1", modelId: "m9" }],
+    });
+    // Plugin pins survive: the backend derives from the stored row.
+    expect(plans).toEqual([
+      {
+        kind: "derive",
+        key: "v",
+        source,
+        overrides: {
+          hostId: "host-1",
+          modelId: "m9",
+          serverAttachmentId: "group-2",
+        },
+      },
+    ]);
+  });
+
+  it("refuses a new combination when the setups to copy differ", () => {
+    const plans = planQuickRunTargets({
+      attached: [
+        env("a", { modelId: "m1" }),
+        env("b", {
+          modelId: "m2",
+          skillSelection: { mode: "explicit", skillIds: ["s"] },
+        }),
+      ],
+      serverAttachmentId: "group-1",
+      targets: [{ key: "v", hostId: "host-1", modelId: "m3" }],
+    });
+    expect(plans[0]?.kind).toBe("blocked");
+  });
+
+  it("refuses without a server group rather than running no servers", () => {
+    const plans = planQuickRunTargets({
+      attached: [env("a", { modelId: "m1" })],
+      serverAttachmentId: null,
+      targets: [{ key: "v", hostId: "host-1", modelId: "m9" }],
+    });
+    expect(plans[0]).toMatchObject({
+      kind: "blocked",
+      reason: "Pick a server group to run this case.",
+    });
+  });
+});
+
+describe("resolveQuickRunEnvironments", () => {
+  const reuse = { kind: "reuse" as const, key: "a", environmentId: "env-a" };
+  const derive = {
+    kind: "derive" as const,
+    key: "b",
+    source: env("src", { revision: 3 }),
+    overrides: { hostId: "h", modelId: "m", serverAttachmentId: "g" },
+  };
+
+  it("derives every new target in one call and keeps reused ones", async () => {
+    const convex = {
+      query: vi.fn(async () => ({
+        environmentQuickRuns: true,
+        environmentDerivation: true,
+      })),
+      mutation: vi.fn(async () => [
+        { environment: { environmentId: "env-b" } },
+      ]),
+    };
+    const resolved = await resolveQuickRunEnvironments(convex, {
+      projectId: "p",
+      plans: [reuse, derive],
+    });
+    expect([...resolved.entries()]).toEqual([
+      ["a", "env-a"],
+      ["b", "env-b"],
+    ]);
+    expect(convex.mutation).toHaveBeenCalledTimes(1);
+    expect(convex.mutation).toHaveBeenCalledWith(
+      "projectEnvironments:deriveEnvironments",
+      {
+        projectId: "p",
+        derivations: [
+          {
+            sourceEnvironmentId: "src",
+            expectedRevision: 3,
+            overrides: derive.overrides,
+          },
+        ],
+      },
+    );
+  });
+
+  it("refuses a blocked target before touching the backend", async () => {
+    const convex = { query: vi.fn(), mutation: vi.fn() };
+    await expect(
+      resolveQuickRunEnvironments(convex, {
+        projectId: "p",
+        plans: [reuse, { kind: "blocked", key: "c", reason: "No." }],
+      }),
+    ).rejects.toThrow("No.");
+    expect(convex.query).not.toHaveBeenCalled();
+  });
+
+  it("refuses on a deployment without environment quick runs", async () => {
+    const convex = {
+      query: vi.fn(async () => {
+        throw new Error("Could not find public function");
+      }),
+      mutation: vi.fn(),
+    };
+    await expect(
+      resolveQuickRunEnvironments(convex, { projectId: "p", plans: [reuse] }),
+    ).rejects.toThrow(/can't run a single case/);
+  });
+
+  it("refuses to derive without lossless derivation", async () => {
+    const convex = {
+      query: vi.fn(async () => ({ environmentQuickRuns: true })),
+      mutation: vi.fn(),
+    };
+    await expect(
+      resolveQuickRunEnvironments(convex, { projectId: "p", plans: [derive] }),
+    ).rejects.toThrow(/can't copy an environment/);
+    expect(convex.mutation).not.toHaveBeenCalled();
+  });
+});
+
+describe("ensureLocalEnvironmentServers", () => {
+  const ready: EnsureServersReadyResult = {
+    readyServerNames: [],
+    missingServerNames: [],
+    failedServerNames: [],
+    reauthServerNames: [],
+  };
+
+  function convexResolving(byEnvironment: Record<string, unknown>) {
+    return {
+      query: vi.fn(async (_name: string, args: { environmentId: string }) => {
+        const resolved = byEnvironment[args.environmentId];
+        if (resolved instanceof Error) throw resolved;
+        return resolved ?? null;
+      }),
+      mutation: vi.fn(),
+    };
+  }
+
+  it("connects each environment's servers once, by name, ids for a backend without names", async () => {
+    const convex = convexResolving({
+      "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+      "env-b": {
+        servers: [
+          { serverId: "srv-1", name: "billing" },
+          { serverId: "srv-2", name: "" },
+        ],
+      },
+      "env-c": { effectiveServerIds: ["srv-3"], selectedServerIds: [] },
+      // Refused here, reported precisely by the run route: not a blocker.
+      "env-d": new Error("ENV_NO_SERVERS"),
+    });
+    const ensureServersReady = vi.fn(async () => ready);
+    await expect(
+      ensureLocalEnvironmentServers({
+        convex,
+        projectId: "p",
+        environmentIds: ["env-a", "env-b", "env-a", "env-c", "env-d"],
+        ensureServersReady,
+      }),
+    ).resolves.toBeNull();
+    expect(convex.query).toHaveBeenCalledTimes(4);
+    expect(convex.query).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      {
+        projectId: "p",
+        environmentId: "env-a",
+        serverSource: "environment_only",
+      },
+    );
+    expect(ensureServersReady).toHaveBeenCalledWith([
+      "billing",
+      "srv-2",
+      "srv-3",
+    ]);
+  });
+
+  it("blocks on a failed or unauthorized server, not on one the pool does not know", async () => {
+    const convex = convexResolving({
+      "env-a": { servers: [{ serverId: "srv-1", name: "billing" }] },
+    });
+    const run = (readiness: EnsureServersReadyResult) =>
+      ensureLocalEnvironmentServers({
+        convex,
+        projectId: "p",
+        environmentIds: ["env-a"],
+        ensureServersReady: async () => readiness,
+      });
+    await expect(
+      run({ ...ready, missingServerNames: ["billing"] }),
+    ).resolves.toBeNull();
+    await expect(
+      run({
+        ...ready,
+        missingServerNames: ["plugin"],
+        reauthServerNames: ["billing"],
+      }),
+    ).resolves.toMatchObject({
+      missingServerNames: [],
+      reauthServerNames: ["billing"],
+    });
+  });
+
+  it("connects nothing when no environment names a server", async () => {
+    const ensureServersReady = vi.fn(async () => ready);
+    await expect(
+      ensureLocalEnvironmentServers({
+        convex: convexResolving({}),
+        projectId: "p",
+        environmentIds: ["env-a"],
+        ensureServersReady,
+      }),
+    ).resolves.toBeNull();
+    expect(ensureServersReady).not.toHaveBeenCalled();
+  });
+});

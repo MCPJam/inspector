@@ -47,18 +47,15 @@ export const LOCAL_COMPUTER_ENABLED =
  * supervised process on the machine that runs this inspector) — server-side
  * kill switch, enforced independently of any client flag.
  *
- * Default OFF, unlike `LOCAL_COMPUTER_ENABLED`. The difference is deliberate:
- * a local bash command is discrete and separately approved, while a local
- * harness is a long-lived agent process. It stays off until an operator turns
- * it on for an attended user AND the compatibility manifest carries
- * conformance evidence for that harness/runtime/platform/mode tuple — the flag
- * enables the feature, it does not certify it.
+ * Enabled by default on local deployments, but routing also requires a
+ * released, verified pack, lifecycle conformance, account rollout, and durable
+ * project authorization. Otherwise existing clients retain cloud execution.
  *
  * FORCED off in hosted mode regardless of env: a hosted server must never
  * start a vendor harness on itself.
  */
 export const LOCAL_HARNESS_ENABLED =
-  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED !== "false";
 
 /**
  * Scheduled eval runs — the deployment switch over ENABLING one, enforced on
@@ -259,6 +256,8 @@ const DEFAULT_CORS_ORIGINS = [
   "http://localhost:8080", // Electron renderer dev server
   `http://localhost:${SERVER_PORT}`, // Hono server
   `http://127.0.0.1:${SERVER_PORT}`, // Hono server production
+  `http://[::1]:${CLIENT_PORT}`, // IPv6 loopback, same two ports
+  `http://[::1]:${SERVER_PORT}`,
   "https://staging.mcpjam.com", // Hosted deployment
 ];
 
@@ -270,6 +269,33 @@ export const CORS_ORIGINS =
     ? WEB_ALLOWED_ORIGINS
     : Array.from(new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
 
+/**
+ * The shared `cors()` options BOTH production entry points use — `server/app.ts`
+ * (Electron / embedded) and `server/index.ts` (the standalone and hosted server,
+ * which is what `npm run dev:server` and the packaged binary run). They used to
+ * inline the same literal separately, which is how `exposeHeaders` landed on one
+ * of them and not the other.
+ *
+ * Neither exposed header is CORS-safelisted, so without this the browser hides
+ * both from JS on any cross-origin call — which `npm run dev` is, with the
+ * client on 5173 and the server on 6274. The error card reads `x-request-id` to
+ * give a stackless 5xx something reportable, and `use-chat-session` already
+ * reads `x-mcpjam-error-origin`; both were silently undefined off the hosted
+ * same-origin path.
+ */
+export const CORS_OPTIONS = {
+  origin: CORS_ORIGINS,
+  credentials: true,
+  // `x-mcpjam-failure-captured`: Ask MCPJam's browser reporter reads it to
+  // skip what the server already sent to Sentry; hidden, it double-reports.
+  exposeHeaders: [
+    "x-request-id",
+    "x-mcpjam-error-origin",
+    "X-MCPJam-Session",
+    "x-mcpjam-failure-captured",
+  ],
+};
+
 // Hosted web route timeouts (ms). Defined in `shared/` so the client can read
 // the same numbers to DESCRIBE what a hosted run does (the eval settings
 // Connection card names the call timeout); every server importer keeps
@@ -278,6 +304,7 @@ export {
   WEB_CONNECT_TIMEOUT_MS,
   WEB_CALL_TIMEOUT_MS,
   WEB_STREAM_TIMEOUT_MS,
+  WEB_SERVER_CHECK_DEADLINE_MS,
 } from "../shared/hosted-web-timeouts.js";
 // Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
 // derived from the call timeout, and a re-export does not bind the name here.
@@ -371,17 +398,21 @@ export const MCPJAM_HOSTED_ORIGIN =
   process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
   "https://app.mcpjam.com";
 
-// Admin-controlled host allowlist (comma-separated), honored in BOTH hosted
-// and self-hosted modes. In addition to localhost, these hosts may receive the
-// session token / guest bootstrap and are accepted as request Origins: hosted
-// deployments set their canonical app host(s); self-hosted operators set their
-// own LAN host (e.g. 192.168.x.x) to reach the inspector off-localhost.
-//
-// Note the hosted nuance: `GET /api/session-token` short-circuits to 410 in
-// hosted mode (that endpoint is dev/self-hosted only), so an allowlisted hosted
-// host receives the session token via production HTML injection rather than the
-// endpoint, and the guest bearer via `mayServeGuestBootstrap`. Self-hosted
-// hosts use the `/api/session-token` endpoint. Both paths gate on this list.
+/**
+ * Public origin a SELF-HOSTED deployment is reached at, for links the server
+ * puts in API replies (e.g. an import's `reviewUrl`).
+ *
+ * Without it those links name `localhost`, which is right for the local
+ * inspector and wrong for a deployment someone else opens. Hosted mode uses
+ * `MCPJAM_HOSTED_ORIGIN` instead. Never derived from a request.
+ */
+export const MCPJAM_PUBLIC_ORIGIN =
+  process.env.MCPJAM_PUBLIC_ORIGIN?.replace(/\/+$/, "") || null;
+
+// Admin-controlled host allowlist (comma-separated), honored in both modes.
+// These hosts are accepted as request Origins. Hosted deployments also use
+// this list for guest bootstrap delivery. Local session credentials are never
+// served over HTTP; allowlisted local browsers still need an access link.
 /**
  * Parse a raw `MCPJAM_ALLOWED_HOSTS` value into normalized entries. Exported so
  * the token gate (`ALLOWED_HOSTS` below, a module-load snapshot) and the origin

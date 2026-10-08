@@ -1,15 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
-const expectedMcpV2PackageVersion = "2.0.0";
-const expectedMcpV2Packages = [
-  "@modelcontextprotocol/client",
-  "@modelcontextprotocol/node",
-  "@modelcontextprotocol/server",
-];
+const expectedMcpV2PackageVersions = {
+  "@modelcontextprotocol/client": "2.2.0",
+  "@modelcontextprotocol/node": "2.0.0",
+  "@modelcontextprotocol/server": "2.2.0",
+};
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 const packageSpecs = {
@@ -84,6 +83,7 @@ try {
       cwd: installDir,
       env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
     });
+    await smokeLocalTest(installDir, tmpRoot);
   }
 
   if (packageSpecs.inspector.publish) {
@@ -91,6 +91,33 @@ try {
   }
 } finally {
   rmSync(tmpRoot, { recursive: true, force: true });
+}
+
+/**
+ * An account-free `mcpjam test` against the INSTALLED package: local config
+ * discovery, the production model factory (through a loopback provider stub
+ * reached via ANTHROPIC_BASE_URL), a real stdio MCP server, a single-case
+ * rerun, and cleanup of the server process. Shared with the CLI's built-dist
+ * test so the two cannot drift.
+ */
+async function smokeLocalTest(installDir, tmpRoot) {
+  const { runLocalTestSmoke } = await import(
+    path.join(rootDir, "cli", "tests", "support", "local-test-smoke.mjs")
+  );
+  // The fixture server resolves its MCP imports from the install, not the repo.
+  const fixturePath = path.join(installDir, "policy-target-server.mjs");
+  copyFileSync(
+    path.join(rootDir, "cli", "tests", "fixtures", "policy-target-server.mjs"),
+    fixturePath,
+  );
+  const workDir = path.join(tmpRoot, "local-test");
+  mkdirSync(workDir, { recursive: true });
+  await runLocalTestSmoke({
+    cliEntry: path.join(installDir, "node_modules", "@mcpjam", "cli", "dist", "index.js"),
+    fixturePath,
+    workDir,
+  });
+  console.log("mcpjam test local smoke passed against the installed package.");
 }
 
 function boolEnv(name) {
@@ -105,7 +132,9 @@ function readExpectedMcpV2Versions(packages) {
       readFileSync(path.join(rootDir, pkg.dir, "package.json"), "utf8"),
     );
 
-    for (const packageName of expectedMcpV2Packages) {
+    for (const [packageName, expectedMcpV2PackageVersion] of Object.entries(
+      expectedMcpV2PackageVersions,
+    )) {
       for (const [section, runtime] of [
         ["dependencies", true],
         ["peerDependencies", false],

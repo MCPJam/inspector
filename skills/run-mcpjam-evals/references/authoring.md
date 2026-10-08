@@ -37,15 +37,15 @@ Two things worth getting right the first time:
 
 ## Generating cases
 
-`generate_eval_cases` AI-generates cases from the suite's server tools and persists them. It **spends the organization's credits**, and it connects the servers to discover their tools, so it is not a dry run in any sense.
+`generate_eval_cases` AI-generates cases from the suite's server tools and persists them. The authoring model is **included with MCPJam — no customer credits are consumed** — but it counts against the organization's daily generation quota, and it connects the servers to discover their tools, so it is not a dry run in any sense.
 
-- Confirm before calling it, the same as `run_eval_suite`.
+- Confirm before calling it. Not because of money, but because it persists cases into the suite and takes a slice of a quota the whole organization shares.
 - Pass `idempotencyKey` if the call might be retried — a transport error is not proof nothing was generated.
 - `caseMix`, `caseModels`, and `varyUserStyles` shape the output. Generated cases are a starting point to review, not a suite to run and report on unread.
 
 ## Scheduling
 
-`set_eval_suite_schedule` turns on automatic runs and sets `intervalMinutes`. Every scheduled run bills like a manual one — an aggressive interval on a large suite is a standing charge, so say the multiplication out loud before enabling it. Disabling preserves the stored interval and environment pin, so it is reversible.
+Scheduled runs are in beta, so this server has no tool that turns them on; `get_eval_suite` still shows a suite's current `schedule`. If a suite already runs on a schedule, remember that every scheduled run bills like a manual one — an aggressive interval on a large suite is a standing charge.
 
 ## Before running what you just built
 

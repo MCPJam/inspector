@@ -513,12 +513,16 @@ export type {
   ToolSafetyClassification,
 } from "./tool-policy.js";
 export {
+  TOOL_POLICY_BLOCK_MARKER,
   TOOL_POLICY_DECISION_REASONS,
+  UnmatchedToolPolicyNameError,
   buildToolPolicySnapshot,
   classifyToolSafety,
   decideToolPolicy,
   decideToolPolicyFromSnapshot,
+  isToolPolicyBlockResult,
   isToolPolicyDecisionReason,
+  validateToolPolicyNames,
 } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
@@ -618,6 +622,26 @@ export {
   resolvedEvalValidityPolicySchema,
 } from "./verdict-policy.js";
 
+// ── the run verdict AGGREGATOR (v2) ─────────────────────────────────────────
+/**
+ * The producer side of the contract above: trial observations in, one
+ * `EvalVerdictDecision` out — a mirror of the backend aggregator hosted and
+ * SDK-ingest finalization call, held to the same generated run corpus. Plus
+ * the finalization adapter that reads one iteration's evidence as a trial.
+ */
+export type {
+  EvalCaseVerdictInput,
+  EvalTrialObservation,
+  EvalV2IterationEvidence,
+} from "./verdict-aggregate.js";
+export {
+  EvalVerdictAggregationError,
+  aggregateEvalCaseVerdict,
+  aggregateEvalRunVerdict,
+  evalV2IterationHasEvaluatorError,
+  evalV2TrialObservation,
+} from "./verdict-aggregate.js";
+
 /**
  * The generated JSON Schema (draft 2020-12) for a v2 verdict decision.
  *
@@ -689,6 +713,11 @@ export {
 
 // ── user-facing words for the closed vocabularies ────────────────────────────
 export {
+  SWARM_FINDING_DISPOSITION_LABELS,
+  SWARM_FINDING_COVERAGE_NOTE_LABELS,
+  SWARM_FINDING_SUMMARY_KIND_LABELS,
+  SWARM_FINDING_BASIS_LABELS,
+  SWARM_FINDING_SIGNAL_LABELS,
   DECISION_LABEL_VOCABULARIES,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
   DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
@@ -1118,6 +1147,11 @@ export {
 } from "./scorer-rollup.js";
 
 export { caseSourceSchema, type CaseSource } from "./case-source.js";
+export {
+  buildStageAuthoredCase,
+  type StageCaseSource,
+  type StageTurnSource,
+} from "./stage-authored-case.js";
 
 export {
   EXECUTION_BUDGET_CEILINGS,
@@ -1163,3 +1197,8 @@ export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";
 export * from "./goal-completion.js";
 export * from "./judge-settings.js";
+export * from "./swarm-session-verdict.js";
+export * from "./swarm-report.js";
+export * from "./eval-authoring.js";
+export * from "./eval-authoring-review.js";
+export * from "./swarm-finding.js";

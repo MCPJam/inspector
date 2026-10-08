@@ -279,6 +279,8 @@ interface EvalFixtureOptions {
    * validator.
    */
   environmentSecretGrants?: boolean;
+  /** Publish `modelSelections: true`; absent is a deployment that predates it. */
+  environmentModelSelections?: boolean;
   suiteDetail?: {
     settings?: Record<string, unknown>;
     revisionNumber?: number;
@@ -288,6 +290,8 @@ interface EvalFixtureOptions {
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
   runCaseResult?: "passed" | "failed" | "inconclusive" | null;
+  /** The execution record `run-case`'s iteration carries (absent: none). */
+  runCaseExecution?: Record<string, unknown>;
   /** Non-terminal keeps `--wait` polling until its deadline. */
   runCaseStatus?:
     | "running"
@@ -552,6 +556,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           modelMatrix: true,
           ephemeralEnvironmentLaunch: true,
           ...(options.environmentSecretGrants ? { secretGrants: true } : {}),
+          ...(options.environmentModelSelections
+            ? { modelSelections: true }
+            : {}),
         })
       );
       return;
@@ -583,8 +590,13 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       composeBodies.push(body);
       const modelId =
         typeof body.modelId === "string" ? body.modelId : undefined;
+      // Content-addressed like the backend: a selection's effort is part of
+      // the row, so two efforts of one model are two environments.
+      const effort = body.modelSelection?.settings?.reasoningEffort;
       const id = modelId
-        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}`
+        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}${
+            typeof effort === "string" ? `-${effort}` : ""
+          }`
         : "env-adhoc";
       res.end(
         JSON.stringify({
@@ -886,6 +898,17 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               isDlp: false,
               limitation: "not DLP",
               appliesTo: [],
+              providerRetention: {
+                openrouter: { data_collection: "deny", zdr: true },
+                gateway: {
+                  disallowPromptTraining: true,
+                  zeroDataRetention: true,
+                },
+                zeroDataRetention: true,
+                appliesTo: ["every analysis call"],
+                notAppliedTo: ["customer Playground chat"],
+                note: "provider, not MCPJam",
+              },
             },
             exportDefaults: {
               includeContent: false,
@@ -1122,6 +1145,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               expectedToolCalls: [],
               error:
                 result === "failed" ? "Authorization: Bearer top-secret" : null,
+              ...(options.runCaseExecution
+                ? { execution: options.runCaseExecution }
+                : {}),
             },
           ],
         })
@@ -2661,7 +2687,7 @@ test("eval run appends a View link in human format", async () => {
       lines.at(-1),
       "View: http://127.0.0.1:" +
         new URL(fixture.baseUrl).port +
-        "/evals/suite/suite-1/runs/run-case?project=proj-alpha"
+        "/evaluate/suite/suite-1/runs/run-case?project=proj-alpha"
     );
   } finally {
     await fixture.close();
@@ -2695,7 +2721,7 @@ test("eval status appends a View link in human format", async () => {
       lines.at(-1),
       "View: http://127.0.0.1:" +
         new URL(fixture.baseUrl).port +
-        "/evals/suite/suite-1/runs/run-1?project=proj-alpha"
+        "/evaluate/suite/suite-1/runs/run-1?project=proj-alpha"
     );
   } finally {
     await fixture.close();
@@ -3439,6 +3465,12 @@ test("eval run prints the disclosure block in human mode, before the run link", 
       run.stdout,
       /Export defaults: excludes content \(redacted by default\)/
     );
+    // Printed when the backend sends it, read off the flags, with what the
+    // policy does not cover NAMED rather than left out.
+    assert.match(
+      run.stdout,
+      /Analysis providers: zero data retention and no training required on platform-key analysis calls — NOT applied to: customer Playground chat/
+    );
     // "fires automatically" vs "fires only if asked" are different consent
     // stories — the fixture's goalCompletion touchpoint is
     // explicit-request-only, runInsights is auto-on-completion, and this
@@ -3685,6 +3717,54 @@ test("eval run --format human --reporter redirects the disclosure block to stder
   } finally {
     // A nonzero exit code otherwise leaks into `process.exitCode` for
     // whichever `main()` call in this file runs last.
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+// The record stays on the iteration, but `--wait` no longer prints it.
+test("eval run --wait does not print what each iteration ran on", async () => {
+  const fixture = await startEvalFixture({
+    runCaseExecution: {
+      requested: { source: "legacy", modelId: "anthropic/claude-sonnet-4.5" },
+      resolved: {
+        rail: "openrouter",
+        wireModelId: "anthropic/claude-sonnet-4.5",
+        offering: { rail: "openrouter", providerKey: "openrouter" },
+      },
+      effectiveSettings: { maxOutputTokens: 0 },
+      attempts: [],
+      deviation: {
+        kind: "provider_fallback",
+        reason: "The openrouter fallback served the request.",
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /View:/);
+    assert.doesNotMatch(run.stdout, /Iteration provenance/);
+    assert.doesNotMatch(run.stdout, /Ran on/);
+    assert.doesNotMatch(run.stdout, /Deviation:/);
+    assert.doesNotMatch(run.stderr, /Iteration provenance|Ran on/);
+  } finally {
     process.exitCode = 0;
     await fixture.close();
   }
@@ -6816,7 +6896,8 @@ test("eval run --compose-* mints ephemerally and does not attach", async () => {
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-computer",
             "default",
             "--compose-model",
@@ -6832,6 +6913,7 @@ test("eval run --compose-* mints ephemerally and does not attach", async () => {
     assert.equal(run.result.exitCode, 0);
     assert.deepEqual(fixture.composeBodies.at(-1), {
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       sandboxImageId: "img-default",
       modelId: "anthropic/claude-haiku-4.5",
     });
@@ -6871,7 +6953,8 @@ test("eval run --compose-secret grants a credential to the composed cell", async
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-secret",
             "secret-vercel-token"
           ),
@@ -6885,6 +6968,7 @@ test("eval run --compose-secret grants a credential to the composed cell", async
     assert.equal(run.result.exitCode, 0);
     assert.deepEqual(fixture.composeBodies.at(-1), {
       hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
       secretSelection: {
         mode: "explicit",
         secretIds: ["secret-vercel-token"],
@@ -7083,7 +7167,8 @@ test("eval run --compose-secret refuses a deployment that cannot grant", async (
           "suite-1",
           "--compose-host",
           "Claude Code",
-          "--compose-host-servers",
+          "--compose-server-group",
+          "group-pinned",
           "--compose-secret",
           "secret-vercel-token"
         ),
@@ -7119,7 +7204,8 @@ test("eval cases run --compose-secret refuses a deployment that cannot grant", a
           "echo works",
           "--compose-host",
           "Claude Code",
-          "--compose-host-servers",
+          "--compose-server-group",
+          "group-pinned",
           "--compose-secret",
           "secret-vercel-token"
         ),
@@ -7129,6 +7215,40 @@ test("eval cases run --compose-secret refuses a deployment that cannot grant", a
 
     assert.notEqual(run.result.exitCode, 0);
     assert.match(run.stderr, /does not support environment secret grants/);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval cases run --compose-model-selection with an empty value is refused before launch", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "cases",
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--case",
+          "echo works",
+          "--compose-host",
+          "Claude Code",
+          "--compose-server-group",
+          "group-pinned",
+          "--compose-model-selection",
+          ""
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
     assert.equal(fixture.composeBodies.length, 0);
     assert.equal(fixture.runBodies.length, 0);
   } finally {
@@ -7157,7 +7277,8 @@ test("eval run --compose-secret spends no EXTRA round trip to check", async () =
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-secret",
             "secret-vercel-token"
           ),
@@ -7191,7 +7312,8 @@ test("eval run --compose-secret spends no EXTRA round trip to check", async () =
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers"
+            "--compose-server-group",
+            "group-pinned"
           ),
           "--format",
           "json",
@@ -7225,7 +7347,8 @@ test("eval run --compose-model variadic launches one group without attaching", a
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--compose-model",
             "anthropic/claude-haiku-4.5",
             "google/gemini-2.5-flash"
@@ -7259,6 +7382,138 @@ test("eval run --compose-model variadic launches one group without attaching", a
   }
 });
 
+const EFFORT_SELECTION = {
+  modelId: "openai/gpt-5",
+  source: "hosted",
+  settings: { reasoningEffort: "high" },
+  fallback: { provider: "none", model: "none" },
+};
+
+test("eval run --compose-model-selection mints a cell carrying the selection", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-server-group",
+            "group-pinned",
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION)
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      serverAttachmentId: "group-pinned",
+      modelId: "openai/gpt-5",
+      modelSelection: EFFORT_SELECTION,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model-selection repeated for one model mints one cell per effort", async () => {
+  const fixture = await startEvalFixture({ environmentModelSelections: true });
+  const low = {
+    ...EFFORT_SELECTION,
+    settings: { reasoningEffort: "low" },
+  };
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-server-group",
+            "group-pinned",
+            "--compose-model-selection",
+            JSON.stringify(low),
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION),
+            // The same selection again is the same cell, not a third one.
+            "--compose-model-selection",
+            JSON.stringify(EFFORT_SELECTION)
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0, run.stderr);
+    assert.deepEqual(
+      fixture.composeBodies.map(
+        (body) => (body as { modelSelection?: unknown }).modelSelection
+      ),
+      [low, EFFORT_SELECTION]
+    );
+    assert.deepEqual(
+      (fixture.groupBodies.at(-1) as { targets?: unknown } | undefined)
+        ?.targets,
+      [
+      { environmentId: "env-adhoc-openai-gpt-5-low" },
+      { environmentId: "env-adhoc-openai-gpt-5-high" },
+      ]
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model-selection is refused on a deployment that predates selections", async () => {
+  // Without the preflight the selection reaches a backend validator that names
+  // nothing, and the user is told INTERNAL_ERROR for a version skew.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-host",
+          "Claude Code",
+          "--compose-server-group",
+          "group-pinned",
+          "--compose-model-selection",
+          JSON.stringify(EFFORT_SELECTION)
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support saved model selections/);
+    assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval run --save-targets attaches the composed cell", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -7274,7 +7529,8 @@ test("eval run --save-targets attaches the composed cell", async () => {
             "suite-1",
             "--compose-host",
             "Claude Code",
-            "--compose-host-servers",
+            "--compose-server-group",
+            "group-pinned",
             "--save-targets"
           ),
           "--format",
@@ -7348,7 +7604,39 @@ test("eval run refuses a composed run that names no servers", async () => {
     );
     assert.notEqual(run.result.exitCode, 0);
     assert.match(run.stderr, /--compose-server/);
-    assert.match(run.stderr, /--compose-host-servers/);
+    assert.doesNotMatch(run.stderr, /--compose-host-servers/);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run rejects --compose-host-servers and names its replacement", async () => {
+  // Eval runs take their servers from a server group alone, so following the
+  // client's list could only compose an environment the backend refuses to
+  // launch. Refused before anything is composed or launched.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-client",
+          "Claude Code",
+          "--compose-host-servers"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--compose-host-servers is no longer supported/);
+    assert.match(run.stderr, /--compose-server/);
     assert.equal(fixture.composeBodies.length, 0);
     assert.equal(fixture.runBodies.length, 0);
   } finally {

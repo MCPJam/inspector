@@ -57,6 +57,7 @@ import {
   expandComposeModelChoices,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
+  startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
@@ -66,6 +67,7 @@ import {
   listConformanceRunsOperation,
   getConformanceReportOperation,
   generateEvalCasesOperation,
+  importEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
   nameEnvironmentOperation,
@@ -126,41 +128,41 @@ import {
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
-  listJourneysOperation,
-  getJourneyOperation,
-  createJourneyOperation,
-  updateJourneyOperation,
+  listGoalsOperation,
+  getGoalOperation,
+  createGoalOperation,
+  updateGoalOperation,
   listSwarmsOperation,
   getSwarmOperation,
   createSwarmOperation,
   updateSwarmOperation,
-  listJourneyRunsOperation,
-  getJourneyRunOperation,
-  launchJourneyRunOperation,
-  cancelJourneyRunOperation,
+  listGoalRunsOperation,
+  getGoalRunOperation,
+  launchGoalRunOperation,
+  cancelGoalRunOperation,
   getSwarmOverviewOperation,
-  getJourneyRunScorecardOperation,
+  getGoalRunScorecardOperation,
   listSwarmFindingsOperation,
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
-  getWaveInsightsOperation,
-  requestWaveInsightsOperation,
-  cancelWaveInsightsOperation,
+  getSwarmRunInsightsOperation,
+  requestSwarmRunInsightsOperation,
+  cancelSwarmRunInsightsOperation,
   generatePersonasOperation,
-  generateJourneysOperation,
-  getUserTestingMetricsOperation,
-  getUserTestingUsageOperation,
-  listUserTestingFindingsOperation,
-  getUserTestingSignalsOperation,
-  getUserTestingInsightsOperation,
-  dismissUserTestingFindingOperation,
-  undismissUserTestingFindingOperation,
-  cancelUserTestingInsightsOperation,
-  requestUserTestingInsightsOperation,
-  updateUserTestingScenarioOperation,
-  upsertUserTestingMemberOperation,
-  rebindUserTestingScenarioOperation,
-  setUserTestingGuestExecutionOperation,
+  generateGoalsOperation,
+  getStudyMetricsOperation,
+  getStudyUsageOperation,
+  listStudyFindingsOperation,
+  getStudySignalsOperation,
+  getStudyInsightsOperation,
+  dismissStudyFindingOperation,
+  undismissStudyFindingOperation,
+  cancelStudyInsightsOperation,
+  requestStudyInsightsOperation,
+  updateStudyOperation,
+  upsertStudyMemberOperation,
+  rebindStudyOperation,
+  setStudyGuestExecutionOperation,
   getShareSettingsOperation,
   setShareModeOperation,
   setEvalSuiteScheduleOperation,
@@ -415,12 +417,7 @@ function describeComposeEvalSuiteRun(
   // read `suite smoke (host_a)` after a successful `listHosts`.
   const host = named(compose, "hostLabel") ?? named(compose, "host");
   const hostNote = host ? ` (${host})` : "";
-  const choices = expandComposeModelChoices({
-    model: named(compose, "model"),
-    models: readStringList(compose, "models"),
-    includeClientDefault: compose.includeClientDefault === true,
-  });
-  const n = choices.length;
+  const n = composeChoiceCount(compose);
   // `saveTargets` is the only attach the caller opted into. A single cell
   // against a backend that cannot launch ephemerally still ATTACHES (the
   // SDK compat fallback in `composeLaunchPolicy`). This copy must not
@@ -805,6 +802,48 @@ function describeClientImpact(input: Record<string, unknown>): string {
 }
 
 /** Read a string array off validated input, dropping non-strings. */
+type ComposeModelSelections = NonNullable<
+  Parameters<typeof expandComposeModelChoices>[0]["modelSelections"]
+>;
+
+/** `modelSelections` (+ the singular alias) as sent; malformed entries skipped. */
+function readComposeModelSelections(
+  compose: Record<string, unknown>,
+): ComposeModelSelections {
+  const raw = [
+    ...(Array.isArray(compose.modelSelections) ? compose.modelSelections : []),
+    ...(compose.modelSelection !== undefined ? [compose.modelSelection] : []),
+  ];
+  return raw.filter(
+    (entry): entry is ComposeModelSelections[number] =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { modelId?: unknown }).modelId === "string",
+  );
+}
+
+/**
+ * How many cells a composed run launches — the same expansion the op runs,
+ * selections included, so two efforts of one model are counted as two runs.
+ * A selection set the op will refuse is described by its models alone; the
+ * refusal itself comes from the op.
+ */
+function composeChoiceCount(compose: Record<string, unknown>): number {
+  const base = {
+    model: named(compose, "model"),
+    models: readStringList(compose, "models"),
+    includeClientDefault: compose.includeClientDefault === true,
+  };
+  try {
+    return expandComposeModelChoices({
+      ...base,
+      modelSelections: readComposeModelSelections(compose),
+    }).length;
+  } catch {
+    return expandComposeModelChoices(base).length;
+  }
+}
+
 function readStringList(input: Record<string, unknown>, key: string): string[] {
   const value = input[key];
   return Array.isArray(value)
@@ -1319,8 +1358,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     // say-so. Prompt-injected content plus a project name learned from
     // `list_projects` is all that takes. The dial at the target also fires the
     // moment the model calls, human or no human. In-app chat already requires
-    // approval for this operation (`APPROVAL_REQUIRED_IDS`); the tier now
-    // agrees with it.
+    // approval for this operation (it changes state, see
+    // `built-in-tools/mcpjam.ts`); the tier now agrees with it.
     //
     // The OAuth path does end up asking twice. That is the acceptable cost:
     // the first click authorizes "start probing this URL as me", the second
@@ -1452,14 +1491,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } against Anthropic's connector directory`,
       buttonLabel: "Run it",
       kind: "start",
-      // A FUNCTION because the hazard is in the input. The deterministic grade
-      // is free; only the opt-in model pass spends. Static `"spend"` would
-      // warn about money on every free run, and `"none"` would stay silent on
-      // the one run that costs something.
-      confirmSeverity: (input) =>
-        (input as { includeLlmObservations?: boolean }).includeLlmObservations
-          ? "spend"
-          : "none",
+      // Flat `"none"`, and it used to be a function of
+      // `includeLlmObservations` because that flag was the one thing here that
+      // spent. It is platform-paid now, so neither shape of this call touches
+      // the organization's credits and a money warning on either would be
+      // false. Still GATED: the start dials somebody else's server and
+      // persists a project row, which is what a person is approving.
+      confirmSeverity: () => "none",
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1467,7 +1505,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
-      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional model pass ran. That pass is platform-paid, so a run whose observations were `billing-blocked` was not refused for the organization's money — it is still a complete, valid grade, and the honest report is that the observations were skipped, never that the server has a problem.",
       "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
       '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
     ],
@@ -1482,10 +1520,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } against OpenAI's app directory`,
       buttonLabel: "Run it",
       kind: "start",
-      confirmSeverity: (input) =>
-        (input as { includeLlmObservations?: boolean }).includeLlmObservations
-          ? "spend"
-          : "none",
+      // See `start_claude_readiness_run` above: platform-paid either way, so
+      // there is no money to warn about.
+      confirmSeverity: () => "none",
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1493,6 +1530,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+    ],
+  },
+  {
+    operation: startMuseReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against Meta's Muse connector guidelines`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // Free: Muse has no model pass at all.
+      confirmSeverity: () => "none",
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
     ],
   },
   { operation: getReadinessRunOperation, tier: "direct" },
@@ -1797,11 +1855,33 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
-      // Generation calls the authoring model, so it spends credits exactly
-      // like the two run operations above. Without this the Slack and Discord
-      // approval cards omit the spend warning for the one operation whose
-      // cost is least obvious from its name.
-      confirmSeverity: "spend",
+      // The authoring model is platform-paid: no credits are consumed, so a
+      // money warning on the Slack and Discord approval cards would be false.
+      // Kept GATED rather than direct because it PERSISTS cases into the
+      // suite and takes a slice of a bounded daily quota — see
+      // TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
+      confirmSeverity: "none",
+    },
+  },
+  {
+    operation: importEvalCasesOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Import eval cases from ${
+          named(input, "fileName") ?? "a document"
+        } into ${named(input, "suite") ?? "(unnamed)"}`,
+      buttonLabel: "Import them",
+      kind: "generate",
+      // `none`, not absent, and NOT "spend": the authoring model is
+      // platform-paid, exactly like generation, so a money warning on the
+      // Slack and Discord approval cards would be false. A host's DEFAULT
+      // approval copy is worded around cost, so saying nothing would inherit
+      // the same false warning.
+      //
+      // Kept GATED rather than direct because it PERSISTS cases into the
+      // suite — see TIER_EXCEPTIONS in `__tests__/agent-op-registry.test.ts`.
+      confirmSeverity: "none",
     },
   },
   {
@@ -1902,10 +1982,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } from run ${named(input, "runId") ?? "(unnamed)"}`,
       buttonLabel: "Propose the rewrite",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `generate_eval_cases` above.
+      confirmSeverity: "none",
     },
     promptNotes: [
-      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
     ],
   },
   {
@@ -2080,13 +2161,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // the "tier derives from operation.risk" suite in agent-op-registry.test.ts
   // runs the derivation over every risk-classified operation. The only
   // lawful deviations are the ones NAMED in that suite's `TIER_EXCEPTIONS`
-  // map, each with a written reason (`cancel_journey_run` stays gated so
-  // stopping spend is approvable; `publish_scenario` stays excluded because
+  // map, each with a written reason (`cancel_goal_run` stays gated so
+  // stopping spend is approvable; `publish_study` stays excluded because
   // who may talk to your servers is a human call). Re-tiering an entry
   // against its risk fails CI until the exception is written down there.
   //
   // Deriving from shared metadata rather than re-deciding here is the fix for
-  // a real failure: `cancel_journey_run` was once excluded from this surface
+  // a real failure: `cancel_goal_run` was once excluded from this surface
   // citing a reason that only applied to the MCP catalog, because each
   // partition file argued the case independently and one of them got it wrong.
   {
@@ -2120,26 +2201,26 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getSecretOperation, tier: "direct" },
-  { operation: listJourneysOperation, tier: "direct" },
+  { operation: listGoalsOperation, tier: "direct" },
   {
-    operation: getJourneyOperation,
+    operation: getGoalOperation,
     tier: "direct",
     promptNotes: [
-      "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
+      "- A goal run produces `targets x iterations` conversations, and that total is what spends. Read `get_goal` before proposing a launch so the number in your proposal is the real one.",
     ],
   },
-  { operation: createJourneyOperation, tier: "direct" },
-  { operation: updateJourneyOperation, tier: "direct" },
+  { operation: createGoalOperation, tier: "direct" },
+  { operation: updateGoalOperation, tier: "direct" },
   { operation: listSwarmsOperation, tier: "direct" },
   { operation: getSwarmOperation, tier: "direct" },
   { operation: createSwarmOperation, tier: "direct" },
   { operation: updateSwarmOperation, tier: "direct" },
-  { operation: listJourneyRunsOperation, tier: "direct" },
+  { operation: listGoalRunsOperation, tier: "direct" },
   {
-    operation: getJourneyRunOperation,
+    operation: getGoalRunOperation,
     tier: "direct",
     promptNotes: [
-      "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
+      "- After a launch is approved, poll `get_goal_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
     ],
   },
   {
@@ -2150,39 +2231,45 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   {
-    operation: getJourneyRunScorecardOperation,
+    operation: getGoalRunScorecardOperation,
     tier: "direct",
     promptNotes: [
-      "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
+      "- To explain why a run failed, read `get_goal_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
     ],
   },
   { operation: listSwarmFindingsOperation, tier: "direct" },
   { operation: dismissSwarmFindingOperation, tier: "direct" },
   { operation: undismissSwarmFindingOperation, tier: "direct" },
-  { operation: getWaveInsightsOperation, tier: "direct" },
-  { operation: cancelWaveInsightsOperation, tier: "direct" },
+  { operation: getSwarmRunInsightsOperation, tier: "direct" },
+  { operation: cancelSwarmRunInsightsOperation, tier: "direct" },
 
   // ── GATED — the swarm operations that SPEND.
   {
-    operation: launchJourneyRunOperation,
+    operation: launchGoalRunOperation,
     tier: "gated",
     proposal: {
+      // BOTH selector spellings: `goalId` is canonical and `journey` its
+      // deprecated alias, so reading only the alias renders a valid proposal
+      // as "(unnamed)" with no target metadata. The target TYPE stays
+      // `journey` — it is a stored proposal discriminant, not a public noun.
       describe: (input) =>
-        `Launch journey ${named(input, "journey") ?? "(unnamed)"}`,
+        `Launch goal ${
+          named(input, "goalId") ?? named(input, "journey") ?? "(unnamed)"
+        }`,
       buttonLabel: "Launch it",
       kind: "start",
       confirmSeverity: "spend",
       target: (input) => {
-        const journey = named(input, "journey");
-        return journey ? { type: "journey", selector: journey } : undefined;
+        const selector = named(input, "goalId") ?? named(input, "journey");
+        return selector ? { type: "journey", selector } : undefined;
       },
     },
     promptNotes: [
-      "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
+      "- Launching a goal fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
     ],
   },
   {
-    operation: cancelJourneyRunOperation,
+    operation: cancelGoalRunOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2202,11 +2289,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       describe: () => "Draft personas with a model",
       buttonLabel: "Draft them",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid drafting: no credits, so no money warning. Gated
+      // because it is still a model pass against a bounded daily quota.
+      confirmSeverity: "none",
     },
   },
   {
-    operation: generateJourneysOperation,
+    operation: generateGoalsOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2221,21 +2310,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       },
       buttonLabel: "Draft them",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `generate_personas` above.
+      confirmSeverity: "none",
     },
   },
   {
-    operation: requestWaveInsightsOperation,
+    operation: requestSwarmRunInsightsOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
         `Analyze wave ${named(input, "wave") ?? "(unnamed)"} with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      confirmSeverity: "spend",
+      // The insight model call is on MCPJam, so there is no money to warn
+      // about. Gated because the daily insight quota it consumes is SHARED
+      // across the organization: one agent turn can take the slice a person
+      // was going to use.
+      confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+      "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
 
@@ -2248,27 +2343,27 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // conversations, and the metrics answer "how is this going" without pulling
   // anyone's words into a turn.
   {
-    operation: getUserTestingMetricsOperation,
+    operation: getStudyMetricsOperation,
     tier: "direct",
     promptNotes: [
-      "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+      "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
     ],
   },
   {
-    operation: getUserTestingUsageOperation,
+    operation: getStudyUsageOperation,
     tier: "direct",
     promptNotes: [
-      "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
+      "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",
     ],
   },
-  { operation: listUserTestingFindingsOperation, tier: "direct" },
-  { operation: getUserTestingSignalsOperation, tier: "direct" },
-  { operation: getUserTestingInsightsOperation, tier: "direct" },
-  { operation: dismissUserTestingFindingOperation, tier: "direct" },
-  { operation: undismissUserTestingFindingOperation, tier: "direct" },
-  { operation: cancelUserTestingInsightsOperation, tier: "direct" },
+  { operation: listStudyFindingsOperation, tier: "direct" },
+  { operation: getStudySignalsOperation, tier: "direct" },
+  { operation: getStudyInsightsOperation, tier: "direct" },
+  { operation: dismissStudyFindingOperation, tier: "direct" },
+  { operation: undismissStudyFindingOperation, tier: "direct" },
+  { operation: cancelStudyInsightsOperation, tier: "direct" },
   {
-    operation: requestUserTestingInsightsOperation,
+    operation: requestStudyInsightsOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2277,11 +2372,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
-      confirmSeverity: "spend",
+      // Platform-paid; see `request_swarm_run_insights` above for why it stays
+      // gated on a shared quota rather than on money.
+      confirmSeverity: "none",
     },
   },
   {
-    operation: updateUserTestingScenarioOperation,
+    operation: updateStudyOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2310,7 +2407,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: upsertUserTestingMemberOperation,
+    operation: upsertStudyMemberOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2326,7 +2423,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: rebindUserTestingScenarioOperation,
+    operation: rebindStudyOperation,
     tier: "gated",
     proposal: {
       describe: (input) =>
@@ -2342,7 +2439,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
   },
   {
-    operation: setUserTestingGuestExecutionOperation,
+    operation: setStudyGuestExecutionOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -2362,7 +2459,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: (input) => (input.enabled === true ? "spend" : "none"),
     },
     promptNotes: [
-      "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+      "- `set_study_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
   // ── Client authoring ──────────────────────────────────────────────────
@@ -2561,7 +2658,7 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Same as list_trace_destinations: admin configuration, available on REST/SDK/CLI.",
   list_trace_destination_backfills:
     "Backfill history is operational detail for an admin diagnosing an export. Available on REST/SDK/CLI.",
-  archive_journey:
+  archive_goal:
     "Removes a journey from the roster; the agent proposes authoring, never destruction.",
   archive_swarm:
     "Removes a container from the roster; the agent proposes authoring, never destruction.",
@@ -2570,32 +2667,32 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // can page through them turns an agent turn into a transcript reader.
   // Mirrors the `list_chat_sessions` precedent below. Still available on REST,
   // the CLI and MCP, where the caller is asking for them explicitly.
-  list_journey_run_sessions:
+  list_goal_run_sessions:
     "Session bodies are conversations; reading them is not a turn concern. Available on REST/CLI/MCP.",
   // User testing: session listings and transcripts. PRIVACY, not risk — real
   // visitors' conversations, and a chat surface that can page them is a
   // transcript reader. Mirrors the `list_chat_sessions` precedent below.
   // Available on REST/CLI/MCP, where the caller asked for them explicitly.
-  list_user_testing_sessions:
+  list_study_sessions:
     "Visitor conversations; not a turn concern. Available on REST/CLI/MCP.",
-  get_user_testing_session:
+  get_study_session:
     "A real person's conversation with your product. Available on REST/CLI/MCP.",
-  get_user_testing_scenario:
-    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. Available on REST/CLI/MCP.",
+  get_study:
+    "One read now, and the stricter half decides: its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. The settings half that the deprecated get_scenario served is excluded with it rather than split out. Available on REST/CLI/MCP.",
   // Access REMOVAL. The agent proposes authoring, never destruction — and
   // these two take access away from people who currently have it, with no way
   // to hand it back except by re-inviting them individually.
-  rotate_user_testing_link:
+  rotate_study_link:
     "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
   rotate_share_link:
-    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_user_testing_link.",
-  remove_user_testing_member:
+    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_study_link.",
+  remove_study_member:
     "Revokes a named person's access; the agent proposes authoring, never destruction.",
 
   // Scenarios (user testing).
-  publish_scenario:
+  publish_study:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",
-  unpublish_scenario:
+  unpublish_study:
     "Tears down a live scenario and every guest session on it — destructive, and the agent proposes authoring rather than destruction.",
 
   // Identity and catalogs the agent turn is already scoped by. Re-offering them
@@ -2701,8 +2798,7 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "A widget-bearing variant for MCP Apps hosts; the agent uses list_project_servers.",
 
   // Chat surfaces the agent must not read: another person's conversations.
-  list_scenarios: "Published scenarios are a human sharing surface.",
-  get_scenario: "Published scenarios are a human sharing surface.",
+  list_studies: "Published studies are a human sharing surface.",
   list_chat_sessions:
     "Other people's conversations are not the agent's to read.",
   // Same doctrine, and search does not soften it: a query that returns titles
@@ -2715,6 +2811,11 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
   uninstall_registry_server:
     "Agent proposes authoring, never destruction — same rule as delete_project_server.",
+  // Platform feedback ships to MCP, the CLI and the app first. The Slack and
+  // Discord headless turns follow once there is real volume to learn from: a
+  // bot relaying a channel's text to the MCPJam team needs its own disclosure.
+  send_feedback:
+    "v1 ships MCP/CLI/UI first; the Slack/Discord bot follows once volume is seen.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(

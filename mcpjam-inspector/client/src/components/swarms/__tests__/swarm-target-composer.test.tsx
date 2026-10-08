@@ -12,14 +12,24 @@ const { navigateAppMock } = vi.hoisted(() => ({ navigateAppMock: vi.fn() }));
 const flagState = vi.hoisted(() => ({
   skills: false,
   computers: false,
+  sandboxImages: false,
   environments: true,
 }));
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => flagState.skills,
 }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => flagState.computers,
+}));
+vi.mock("@/hooks/useSandboxImagesEnabled", () => ({
+  useSandboxImagesEnabled: () => flagState.sandboxImages,
 }));
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => flagState.environments,
@@ -59,6 +69,10 @@ vi.mock("convex/react", () => ({
 }));
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
+}));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 vi.mock("@/components/project-environments/environment-picker", () => ({
   EnvironmentPicker: ({
@@ -165,6 +179,7 @@ beforeEach(() => {
   localStorage.clear();
   flagState.skills = false;
   flagState.computers = false;
+  flagState.sandboxImages = false;
   flagState.environments = true;
   cloudState.ephemeralAvailable = true;
 });
@@ -267,8 +282,11 @@ describe("SwarmTargetComposer", () => {
     ).toBeVisible();
   });
 
-  it("hides the computer select when computers-enabled is off", () => {
-    flagState.computers = false;
+  it("hides the image select when sandbox-images-enabled is off", () => {
+    // Computers on, images off: the personal-computer flag no longer reveals
+    // the image pin — that is the whole point of the split.
+    flagState.computers = true;
+    flagState.sandboxImages = false;
     render(<Harness />);
     expect(
       screen.queryByTestId("new-swarm-sandbox-image")
@@ -276,8 +294,8 @@ describe("SwarmTargetComposer", () => {
     expect(screen.queryByText(/Computer · default/i)).not.toBeInTheDocument();
   });
 
-  it("shows the computer select when computers-enabled is on", () => {
-    flagState.computers = true;
+  it("shows the image select when sandbox-images-enabled is on", () => {
+    flagState.sandboxImages = true;
     render(<Harness />);
     expect(screen.getByTestId("new-swarm-sandbox-image")).toBeVisible();
     expect(screen.getByTestId("new-swarm-sandbox-image")).toHaveTextContent(
@@ -304,6 +322,7 @@ describe("SwarmTargetComposer", () => {
     // a pin seeded from a saved environment/draft must remain clearable back
     // to "Computer · default" (the opt-out the notice promises).
     flagState.computers = true;
+    flagState.sandboxImages = true;
     cloudState.ephemeralAvailable = false;
     render(<Harness />);
     expect(screen.getByTestId("new-swarm-cloud-unreachable")).toBeVisible();
@@ -324,6 +343,7 @@ describe("SwarmTargetComposer", () => {
     // Loading/fetch-failure must never paint the warning — only a real
     // server `false` may.
     flagState.computers = true;
+    flagState.sandboxImages = true;
     cloudState.ephemeralAvailable = undefined;
     render(<Harness />);
     expect(
@@ -451,6 +471,15 @@ describe("SwarmTargetComposer — the block's way out", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
     expect(navigateAppMock).toHaveBeenCalledWith("/servers");
+  });
+
+  it("opens New Client from Add clients instead of leaving to the clients page", () => {
+    navigateAppMock.mockClear();
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("button", { name: "Add clients" }));
+    expect(navigateAppMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
   });
 });
 

@@ -118,6 +118,14 @@ export interface SupervisedLocalHarnessProviderOptions {
   bridgeReadinessTimeoutMs?: number;
   /** Called once the bridge is up AND its binding has been verified. */
   onBridgeStarted?: (args: { pid: number; port: number }) => Promise<void>;
+  /**
+   * Called when the bridge could not be started for a reason attributable to
+   * the RUNTIME — the spawn itself failed, or the bridge never came up on
+   * loopback. Not for a changed runtime (that is a consent question), a port
+   * somebody else holds, or an abort. Feeds the pack's health record, which
+   * is what rolls a broken update back to the permitted previous pack.
+   */
+  onBridgeFailed?: (args: { phase: "spawn" | "readiness"; message: string }) => void;
   /** Maximum bytes one file API operation may read or write. */
   maxFileBytes?: number;
   /** Test seam. Production is always the host platform. */
@@ -368,7 +376,7 @@ async function writeBytesAtomically(
  * install — and only when that file actually exists. Nothing is guessed into
  * the child: absent, the CLI reports the missing shell itself.
  */
-async function resolveGitBashPath(
+export async function resolveGitBashPath(
   platform: NodeJS.Platform,
 ): Promise<string | undefined> {
   if (platform !== "win32") return undefined;
@@ -619,8 +627,39 @@ export function createSupervisedLocalHarnessProvider(
     // passes through unchanged and is judged by `confinePath` as before.
     const confine = (path: string) =>
       confinePath(fromAdapterPath(path, platform), { roots });
+    // The same check against the session's OWN state only. Runtime state —
+    // Codex's rollouts, CODEX_HOME, the relay credential — must never land in
+    // the granted workspace even though the agent may write there.
+    const confineToSessionState = (path: string) =>
+      confinePath(fromAdapterPath(path, platform), { roots: [roots[0]!] });
 
-    const gitBashPath = await resolveGitBashPath(platform);
+    // Git Bash is how Claude Code runs shell commands on Windows. Codex runs
+    // its own shell, so it is neither looked up nor handed to it.
+    const gitBashPath =
+      opts.harnessId === "claude-code"
+        ? await resolveGitBashPath(platform)
+        : undefined;
+    // The runtime this session launches from — the vendor pack and, where the
+    // harness has one, the Inspector layer — must sit OUTSIDE both roots the
+    // session may write. Inside one, the agent could rewrite the bytes it is
+    // launched from between the pre-exec re-hash and the exec; refused rather
+    // than run. (A workspace that contains the runtime root is a choice like a
+    // parent of the home directory, which the grant rules do not refuse.)
+    for (const runtimeDir of [
+      opts.runtime.rootPath,
+      ...(opts.runtime.layer !== undefined ? [opts.runtime.layer.root] : []),
+    ]) {
+      for (const writable of roots) {
+        if (runtimeDir === writable || runtimeDir.startsWith(writable + sep)) {
+          throw new Error(
+            `the local runtime at ${runtimeDir} is inside a directory this ` +
+              `session may write, so it cannot be protected from the agent it ` +
+              `launches. Pick a workspace that does not contain the Inspector's ` +
+              `runtime directory.`,
+          );
+        }
+      }
+    }
     const env = {
       ...buildLocalHarnessEnv({
         syntheticHome,
@@ -628,6 +667,11 @@ export function createSupervisedLocalHarnessProvider(
         platform,
         ...(opts.scopedEnv ? { scoped: opts.scopedEnv } : {}),
         ...(gitBashPath !== undefined ? { gitBashPath } : {}),
+        // Named in the agent's own deny rules, alongside sibling sessions.
+        extraDeniedRoots: [
+          ...(opts.runtime.layer !== undefined ? [opts.runtime.layer.root] : []),
+          opts.runtime.rootPath,
+        ],
       }),
       ...opts.launcher.requiredEnv,
     };
@@ -642,11 +686,20 @@ export function createSupervisedLocalHarnessProvider(
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
+      ...(opts.runtime.layer !== undefined
+        ? {
+            layerRoot: opts.runtime.layer.root,
+            layerFiles: opts.runtime.layer.files,
+            // The layer's launcher resolves a vendor SDK import into the
+            // verified pack and nowhere else.
+            launcherVendorRoot: opts.runtime.rootPath,
+          }
+        : {}),
       adapterBootstrapFiles: opts.manifest.adapterBootstrapFiles,
       bootstrapOverlayDir: bootstrapOverlay,
       nodeExecutable: opts.launcher.executable,
-      // Launch the pack's loopback wrapper rather than the remapped
-      // `bridge.mjs`, which stays byte-identical so the recipe compare holds.
+      // Launch the loopback/resolution wrapper (the Inspector layer's, or a
+      // legacy pack's) rather than `bridge.mjs` directly.
       bridgeLauncherPath: opts.runtime.launcherPath,
       // The framework's default working directory (and the bridge's cwd), in
       // the shape the adapter composes with. `confine` turns it native.
@@ -658,6 +711,7 @@ export function createSupervisedLocalHarnessProvider(
       // otherwise check: they are consumed by the child, not by a filesystem
       // call we make.
       confine,
+      confineToSessionState,
     };
 
     /**
@@ -992,6 +1046,8 @@ export function createSupervisedLocalHarnessProvider(
           if (isBridge) bridgeClaimed = false;
         };
         let handle: Awaited<ReturnType<typeof opts.supervisor.spawnSupervised>>;
+        const aborted = () => (signal ?? abortSignal)?.aborted === true;
+        let spawning = false;
         try {
           await assertRuntimeUnchanged();
           // Before the bridge exists, not after: once it is running, an
@@ -1001,6 +1057,7 @@ export function createSupervisedLocalHarnessProvider(
           if (isBridge) {
             await assertBridgePortUnclaimed({ port: opts.bridgePort });
           }
+          spawning = true;
           handle = await opts.supervisor.spawnSupervised({
             sessionId,
             executable: translated.executable,
@@ -1023,9 +1080,13 @@ export function createSupervisedLocalHarnessProvider(
           });
         } catch (error) {
           releaseBridgeClaim();
+          if (isBridge && spawning && !aborted()) {
+            opts.onBridgeFailed?.({ phase: "spawn", message: error instanceof Error ? error.message : String(error) });
+          }
           throw error;
         }
         if (isBridge) {
+          let bridgeReady = false;
           try {
             // MANDATORY, not an optional callback: the loopback guarantee is
             // only a guarantee if a bridge that binds the wrong interface
@@ -1047,6 +1108,7 @@ export function createSupervisedLocalHarnessProvider(
               isBridgeAlive: async () =>
                 opts.supervisor.liveProcessCount(sessionId) > 0,
             });
+            bridgeReady = true;
             if (opts.onBridgeStarted) {
               await opts.onBridgeStarted({
                 pid: handle.pid,
@@ -1070,6 +1132,12 @@ export function createSupervisedLocalHarnessProvider(
                 exitBeforeStop,
               ).catch(() => "no diagnosis could be read");
               error.message = `${error.message} (bridge: ${said})`;
+            }
+            if (!bridgeReady && !aborted()) {
+              opts.onBridgeFailed?.({
+                phase: "readiness",
+                message: error instanceof Error ? error.message : String(error),
+              });
             }
             throw error;
           }
@@ -1170,8 +1238,8 @@ export function createSupervisedLocalHarnessProvider(
  * Resolved on both sides before comparison: a prefix test on the raw string
  * would accept `<root>/../../etc`, and this ends in a recursive delete.
  */
-async function removeSessionStateDir(dir: string): Promise<void> {
-  const root = resolve(localHarnessStateRoot());
+export async function removeSessionStateDir(dir: string): Promise<void> {
+  const root = resolve(`${localHarnessStateRoot()}-sessions`);
   const target = resolve(dir);
   if (target === root || !target.startsWith(root + sep)) {
     logger.warn("[local-harness] refusing to remove state outside the root", {
@@ -1198,5 +1266,5 @@ export function sessionStateDirFor(
       )} is not a single safe path segment`,
     );
   }
-  return join(stateRoot, "sessions", sessionId);
+  return join(`${stateRoot}-sessions`, sessionId);
 }

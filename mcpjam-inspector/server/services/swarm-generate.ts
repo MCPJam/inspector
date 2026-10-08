@@ -152,7 +152,7 @@ export async function generateSwarmPersona(
     environmentId?: string;
     journeyCount: number;
     signal?: AbortSignal;
-  }
+  } & SwarmGenerationGrounding
 ): Promise<GenerateSwarmPersonaResult> {
   const data = await postGenerate<{
     ok?: boolean;
@@ -168,6 +168,10 @@ export async function generateSwarmPersona(
         : {}),
       ...(args.environmentId ? { environmentId: args.environmentId } : {}),
       journeyCount: args.journeyCount,
+      ...(args.description ? { description: args.description } : {}),
+      ...(args.existingPersonas?.length
+        ? { existingPersonas: args.existingPersonas }
+        : {}),
     },
     args.signal
   );
@@ -291,6 +295,7 @@ export async function generateSwarmJourneys(
   bearer: string,
   args: {
     projectId: string;
+    swarmRefId?: string;
     /** Exactly one grounding source — the route's zod refine enforces it. */
     serverAttachmentId?: string;
     environmentId?: string;
@@ -307,6 +312,7 @@ export async function generateSwarmJourneys(
     bearer,
     {
       projectId: args.projectId,
+      ...(args.swarmRefId ? { swarmRefId: args.swarmRefId } : {}),
       ...(args.serverAttachmentId
         ? { serverAttachmentId: args.serverAttachmentId }
         : {}),

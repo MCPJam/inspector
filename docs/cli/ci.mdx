@@ -367,9 +367,10 @@ uploads reports to GitHub. It sets up Node automatically. It tests the suite's
 saved server; it does not build or deploy your PR's source code.
 
 <Note>
-The action's `evals-v1` tag must be published after its live smoke test passes
-before the example below can be used. The direct CLI integration in the next
-section remains available independently.
+`evals-v1` is published by MCPJam's release workflow, which smoke-tests the
+action live and then moves the tag. Until the first release moves it, pin a full
+commit SHA instead — `uses: MCPJam/inspector/actions/evals@<40-character sha>` —
+or use the direct CLI integration below, which does not depend on the tag.
 </Note>
 
 Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
@@ -509,12 +510,14 @@ Use `--wait-timeout <ms>` to replace the 35-minute default. `--out` defaults to 
 <Warning>
 **`eval run --wait` sets a verdict-based exit code.** `0` pass, `1` a completed run's verdict failed (the ONLY condition that produces `1`), `2` usage error or an invalid suite file, `3` auth failed (no credential, or the platform rejected it, at launch or mid-wait), `4` a connection/setup failure this CLI itself observed before evaluation ran (or a local `--out` write failure), `5` no valid verdict — `inconclusive`, a null/unrecognized result, a run status of failed/cancelled/timed-out, or a wait that hit its deadline. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`.
 
-Retry guidance: `4` and `5` mean infrastructure, or an absence of observation — nothing here says the server is wrong, so retrying the CI job is reasonable. But a bare re-run is not automatically safe: `eval run --suite` only dedupes against an in-flight or already-completed launch when you pass a **stable** `--idempotency-key`, and exit `5` can mean the run is still running (a wait that hit its deadline) — without that key, a retry can start a second paid run alongside the first rather than resuming it. Pass `--idempotency-key` (or poll/resume the run id already in the receipt) before retrying on `4` or `5`. `3` means fix the credential first; it poisons every other observation in the same launch. Never retry blindly on `1` — that code is reserved for a run the platform actually graded as failed.
+Retry guidance: `4` and `5` mean infrastructure, or an absence of observation — nothing here says the server is wrong, so retrying the CI job is reasonable. But a bare re-run is not automatically safe: `eval run --suite` only dedupes against an in-flight or already-completed launch when you pass a **stable** `--idempotency-key`, and exit `5` can mean the run is still running (a wait that hit its deadline) — without that key, a retry can start a second paid run alongside the first rather than resuming it. Pass `--idempotency-key` (or poll/resume the run id already in the receipt) before retrying on `4` or `5`. For `eval run --file`, the CLI prints the key before launch (`Eval idempotency key: <key>` on stderr); capture it and pass it with `--idempotency-key` to retry the same run rather than starting a new one. `3` means fix the credential first; it poisons every other observation in the same launch. Never retry blindly on `1` — that code is reserved for a run the platform actually graded as failed.
 
 Either `eval run --wait` or `eval gate` already fails the job on its own — the `eval gate` step above adds a configurable pass/fail *policy* (thresholds, per-scorer gates) and baseline comparison on top of the same verdict, so keep it when you want more than "did this run's own verdict pass".
 </Warning>
 
 <Note>
+**Two different clocks, and they are easy to confuse.** `--timeout` is a deadline for the whole operation — not per request — and defaults to 120s for hosted eval commands; `--wait-timeout` bounds how long `--wait` waits for the RUN to finish. A slow sync is the first; a long-running suite is the second. Syncing a suite file is several round trips under that one deadline — it resolves the project, validates every tool reference against the live server, writes the cases and launches — so on a cold runner it is the one that can bind. (The message it raises says "Request timed out", which understates what it covers.)
+
 `eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
@@ -671,3 +674,34 @@ See [LLM Providers](/sdk/reference/llm-providers) for which models are hosted an
 The SDK automatically attaches available CI metadata on GitHub Actions, GitLab CI, CircleCI, Buildkite, Jenkins, Vercel, and Netlify. You do not need to pass `mcpjam.ci`; an explicit object still replaces detection, and `mcpjam: { ci: {} }` disables it. This SDK behavior is separate from the hosted CLI launch detector, which supports GitHub Actions only.
 
 See [Save Results to MCPJam](/sdk/concepts/saving-results) for auto-save, the manual reporting APIs, CI metadata (branch, commit SHA, run URL), and artifact upload (JUnit XML, Jest/Vitest JSON).
+
+#### Report them on the pull request
+
+Uploading puts the results in the dashboard; it does not put them in front of a reviewer. Hand the same command to the evals action instead of running it yourself, and each pull request gets one comment that is updated in place on every push, plus a checks summary and the reports as artifacts:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
+  - uses: actions/checkout@v4
+  - run: npm ci
+  - name: Start the MCP server
+    run: |
+      npm run serve &
+      npx wait-on http://localhost:3000
+  - uses: MCPJam/inspector/actions/evals@evals-v1
+    with:
+      api-key: ${{ secrets.MCPJAM_API_KEY }}
+      command: npm run eval
+      comment: true
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+`command` replaces `project` and `suite`: the action runs your tests, then reports the runs they uploaded. It finds each run through a receipt the SDK writes, so `@mcpjam/sdk` must be **8.8.0 or newer** — an older SDK uploads normally but writes no receipt, and the step reports that it found no run.
+
+The comment carries the client/model table, the failed cases, and links into MCPJam. The checks summary carries the full report. Without `pull-requests: write` the action warns and leaves the eval verdict alone.
+
+Runs uploaded together — `runWithClient` given several clients — read as one report: one row per client and model in the same table, with a link to each client's run.

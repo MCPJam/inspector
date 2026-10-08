@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   groupProjectRuns,
   projectRunRollup,
+  suiteRollupRows,
 } from "../project-run-suite-groups";
 import type { ProjectRunRow } from "../project-runs-table";
 import type { ProjectRunHistoryDetail } from "../use-project-run-history";
@@ -69,5 +70,26 @@ describe("project suite grouping", () => {
     expect(projectRunRollup(rows, details)).toBeNull();
     details.set("large", detail("large", 0, 0));
     expect(projectRunRollup([rows[1]], details)?.passRate).toBeNull();
+  });
+
+  it("leaves a subset rerun out of the suite roll-up but keeps it listed", () => {
+    const rows = [row("full", "a", 1), row("rerun", "a", 2)];
+    const rerun = detail("rerun", 1, 1);
+    rerun.run.rerunOfRunId = "full";
+    rerun.run.rerunScope = "failed_cases";
+    const details = new Map([
+      ["full", detail("full", 4, 2)],
+      ["rerun", rerun],
+    ]);
+    // Counting the rerun would make the failed case pass on its second try.
+    expect(projectRunRollup(rows, details)?.passRate).toBe(60);
+    expect(
+      projectRunRollup(suiteRollupRows(rows, details), details)?.passRate,
+    ).toBe(50);
+    expect(groupProjectRuns(rows, details)[0].rows).toHaveLength(2);
+    // A row whose detail has not loaded is kept, so the roll-up waits for it.
+    expect(
+      suiteRollupRows(rows, new Map([["full", detail("full", 4, 2)]])),
+    ).toHaveLength(2);
   });
 });

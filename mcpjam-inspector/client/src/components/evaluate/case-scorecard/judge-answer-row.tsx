@@ -209,7 +209,10 @@ export function judgeAnswerState(input: {
 }): JudgeAnswerState {
   // Fails closed and FIRST: a label recorded as blind beside a visible
   // verdict is not calibration data, and calibration gates other builds.
-  if (input.hidden) return { kind: "withheld" };
+  // Only a verdict is withheld: every later state reads `judgeCase` alone,
+  // and without one there is nothing to leak and no label control to lift
+  // the mask, so "hidden until you label" would never clear.
+  if (input.hidden && input.judgeCase) return { kind: "withheld" };
   if (input.skippedForCase) return { kind: "skipped" };
   if (!input.judgeEnabledOnSuite) return { kind: "suiteOff" };
   if (input.isQuickRun) return { kind: "quickRun" };

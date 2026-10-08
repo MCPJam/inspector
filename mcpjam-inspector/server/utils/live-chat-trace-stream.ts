@@ -1,3 +1,4 @@
+import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type {
   UIMessageChunk,
   ToolSet,
@@ -32,9 +33,47 @@ export function generateLiveTraceTurnId(): string {
 
 export function cloneTraceValue<T>(value: T): T {
   if (typeof structuredClone === "function") {
-    return structuredClone(value);
+    try {
+      return structuredClone(value);
+    } catch {
+      // A value structuredClone refuses (a `URL` in a file part, a function)
+      // must never fail the turn the trace describes.
+      return structuredClone(toTraceCloneable(value)) as T;
+    }
   }
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** Copy with every `URL` as its string and functions dropped. */
+function toTraceCloneable(
+  value: unknown,
+  seen = new WeakMap<object, unknown>(),
+): unknown {
+  if (value instanceof URL) return value.href;
+  if (typeof value === "function" || typeof value === "symbol")
+    return undefined;
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    ArrayBuffer.isView(value) ||
+    value instanceof ArrayBuffer ||
+    value instanceof Date
+  )
+    return value;
+  if (seen.has(value)) return seen.get(value);
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    seen.set(value, copy);
+    for (const item of value) copy.push(toTraceCloneable(item, seen));
+    return copy;
+  }
+  const copy: Record<string, unknown> = {};
+  seen.set(value, copy);
+  for (const [key, item] of Object.entries(value)) {
+    const next = toTraceCloneable(item, seen);
+    if (next !== undefined) copy[key] = next;
+  }
+  return copy;
 }
 
 export function getPromptIndex(messageHistory: ModelMessage[]): number {
@@ -229,4 +268,62 @@ export function setToolSpanMessageRangesFromResults(
       span.messageEndIndex = toolMessageIndex;
     }
   }
+}
+
+export const MAX_PERSISTED_REQUEST_PAYLOAD_BYTES = 2 * 1024 * 1024;
+
+/** Clone before compacting: live events and the provider request stay untouched. */
+export function capRequestPayloadsForPersist(
+  entries: LiveChatTraceRequestPayloadEntry[],
+): PersistedRequestPayloadEntry[] {
+  const result: PersistedRequestPayloadEntry[] = JSON.parse(
+    JSON.stringify(entries),
+  );
+  let previous: LiveChatTraceRequestPayloadEntry | undefined;
+  for (let i = 0; i < result.length; i++) {
+    const entry = result[i];
+    const source = entries[i];
+    if (previous?.turnId === entry.turnId) {
+      for (const field of ["system", "tools"] as const) {
+        if (
+          JSON.stringify(source.payload[field]) ===
+          JSON.stringify(previous.payload[field])
+        ) {
+          entry.inherits = { ...entry.inherits, [field]: true };
+          delete entry.payload[field];
+        }
+      }
+    }
+    previous = source;
+  }
+  const bytes = () => Buffer.byteLength(JSON.stringify(result), "utf8");
+  if (bytes() <= MAX_PERSISTED_REQUEST_PAYLOAD_BYTES) return result;
+  // Mark every surviving entry so selecting the latest request still discloses loss.
+  for (const entry of result) entry.truncated = true;
+  for (const entry of result) {
+    entry.messageCount ??= entry.payload.messages?.length ?? 0;
+    delete entry.payload.messages;
+    if (bytes() <= MAX_PERSISTED_REQUEST_PAYLOAD_BYTES) return result;
+  }
+  // A single tool catalog/system prompt can itself exceed the hard cap.
+  // Clear all inheritance before dropping these fields; never invent a parent.
+  for (const entry of result) {
+    delete entry.payload.system;
+    delete entry.payload.tools;
+    delete entry.inherits;
+    if (bytes() <= MAX_PERSISTED_REQUEST_PAYLOAD_BYTES) return result;
+  }
+  while (result.length > 1 && bytes() > MAX_PERSISTED_REQUEST_PAYLOAD_BYTES)
+    result.shift();
+  if (bytes() > MAX_PERSISTED_REQUEST_PAYLOAD_BYTES)
+    return [
+      {
+        turnId: "truncated",
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {},
+        truncated: true,
+      },
+    ];
+  return result;
 }

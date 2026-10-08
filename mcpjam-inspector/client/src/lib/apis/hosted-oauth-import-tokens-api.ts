@@ -1,3 +1,6 @@
+import { observeDesktopOperation } from "@/lib/desktop-diagnostics";
+import type { ConnectionIntent } from "@/shared/oauth-connections";
+import { captureHostedOAuthConnection } from "./web/oauth-connections";
 import { webPost, WebApiError } from "@/lib/apis/web/base";
 
 export interface ImportHostedOAuthTokensTokens {
@@ -47,6 +50,7 @@ export function normalizeImportHostedOAuthTokens(
 }
 
 export interface ImportHostedOAuthTokensRequest {
+  connectionIntent?: ConnectionIntent;
   projectId: string;
   serverId: string;
   serverUrl: string;
@@ -65,11 +69,13 @@ export interface ImportHostedOAuthTokensRequest {
 }
 
 export interface ImportHostedOAuthTokensResult {
+  credentialId?: string;
+  vaultObjectId?: string;
   expiresAt: number | null;
   kind: "generic" | "registry";
 }
 
-export async function importHostedOAuthTokens(
+async function importHostedOAuthTokensInternal(
   request: ImportHostedOAuthTokensRequest,
 ): Promise<ImportHostedOAuthTokensResult> {
   const body = await webPost<ImportHostedOAuthTokensRequest, unknown>(
@@ -86,9 +92,34 @@ export async function importHostedOAuthTokens(
     );
   }
 
+  if (
+    typeof result.credentialId === "string" &&
+    typeof result.vaultObjectId === "string"
+  ) {
+    void captureHostedOAuthConnection(
+      request.projectId,
+      request.serverId,
+      result.credentialId,
+      result.vaultObjectId,
+    ).catch(() => undefined);
+  }
   const kind = result.kind === "registry" ? "registry" : "generic";
   return {
+    ...(typeof result.credentialId === "string"
+      ? { credentialId: result.credentialId }
+      : {}),
+    ...(typeof result.vaultObjectId === "string"
+      ? { vaultObjectId: result.vaultObjectId }
+      : {}),
     expiresAt: typeof result.expiresAt === "number" ? result.expiresAt : null,
     kind,
   };
+}
+
+export function importHostedOAuthTokens(
+  request: ImportHostedOAuthTokensRequest,
+): Promise<ImportHostedOAuthTokensResult> {
+  return observeDesktopOperation("token_import", () =>
+    importHostedOAuthTokensInternal(request),
+  );
 }

@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "./types";
 import { Fragment, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { TableCell, TableRow } from "@mcpjam/design-system/table";
@@ -17,8 +18,10 @@ import {
   type RunGitMetadataValue,
 } from "./run-git-metadata";
 import { resolveRunOrigin } from "@/lib/evals/run-origin";
+import { isSubsetRerunRun } from "./helpers";
 import {
   buildSuiteRunHistoryAggregates,
+  buildSuiteRunHistoryAggregatesFromMetrics,
   formatRunHistoryDate,
   formatRunHistoryDateRange,
   formatRunHistoryMetric,
@@ -28,7 +31,7 @@ import {
 
 export function groupProjectRuns(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
 ) {
   const suites = new Map<string, ProjectRunRow[]>();
   for (const row of [...rows].sort(
@@ -41,7 +44,8 @@ export function groupProjectRuns(
   return [...suites].map(([suiteId, suiteRows]) => {
     const launches = new Map<string, ProjectRunRow[]>();
     for (const row of suiteRows) {
-      const groupId = details.get(row._id)?.run.runGroupId;
+      const groupId =
+        row.runSummary?.runGroupId ?? details.get(row._id)?.run.runGroupId;
       const key = groupId ? `group:${groupId}` : `run:${row._id}`;
       const launch = launches.get(key) ?? [];
       launch.push(row);
@@ -56,11 +60,27 @@ export function groupProjectRuns(
 }
 
 /** Withhold incomplete roll-ups, and weight pass rates by iterations, not runs. */
+/**
+ * The rows a SUITE's roll-up counts: every run but a subset rerun, which
+ * re-ran only the cases that failed and so would count them twice. The rerun
+ * is still listed among the suite's runs. A row whose detail has not loaded is
+ * kept, so the roll-up still waits for it.
+ */
+export function suiteRollupRows(
+  rows: ProjectRunRow[],
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
+): ProjectRunRow[] {
+  return rows.filter((row) => !isSubsetRerunRun(details.get(row._id)?.run));
+}
+
 export function projectRunRollup(
   rows: ProjectRunRow[],
-  details: Map<string, ProjectRunHistoryDetail>,
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
 ) {
   if (rows.some((row) => !details.has(row._id))) return null;
+  if (rows.some((row) => details.get(row._id)!.metrics !== undefined)) {
+    return projectRunRollupFromMetrics(rows, details);
+  }
   const runs = rows.map((row) => details.get(row._id)!.run);
   const iterations = rows.flatMap((row) => details.get(row._id)!.iterations);
   let total = 0;
@@ -88,9 +108,45 @@ export function projectRunRollup(
   };
 }
 
+/** `projectRunRollup` for details that carry per-run metrics, not iterations. */
+function projectRunRollupFromMetrics(
+  rows: ProjectRunRow[],
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>,
+) {
+  const entries = rows.map((row) => details.get(row._id)!);
+  if (entries.some((entry) => !entry.metrics)) return null;
+  const runs = entries.map((entry) => entry.run);
+  const metricsByRun = new Map(
+    entries.map((entry) => [entry.run._id, entry.metrics!]),
+  );
+  let total = 0;
+  let passed = 0;
+  let toolCalls: number | null = null;
+  for (const { run, metrics } of entries) {
+    if (metrics!.iterationCount > 0) {
+      total += metrics!.iterationCount;
+      passed += metrics!.results.passed;
+    } else {
+      const stats = computeRunEffectiveStats(run, []);
+      total += stats.effectiveTotal;
+      passed += stats.effectivePassed;
+    }
+    if (metrics!.toolCallsTotal !== undefined) {
+      toolCalls = (toolCalls ?? 0) + metrics!.toolCallsTotal;
+    }
+  }
+  return {
+    ...buildSuiteRunHistoryAggregatesFromMetrics(runs, metricsByRun),
+    total,
+    passed,
+    passRate: total > 0 ? Math.round((passed / total) * 100) : null,
+    toolCalls,
+  };
+}
+
 type Group = ReturnType<typeof groupProjectRuns>[number];
 type SharedProps = {
-  details: Map<string, ProjectRunHistoryDetail>;
+  details: Map<string, ProjectRunHistoryDetail<EvalSuiteRunListItem>>;
   historyRows: Map<string, SuiteRunHistoryRow>;
   showGitContext: boolean;
 };
@@ -118,8 +174,14 @@ export function ProjectRunSuiteGroup({
     ...new Set(
       group.rows.flatMap(
         (row) =>
-          shared.details.get(row._id)?.run.configSnapshot?.environment
-            ?.servers ?? [],
+          ("environment" in
+          (shared.details.get(row._id)?.run.configSnapshot ?? {})
+            ? (
+                shared.details.get(row._id)?.run.configSnapshot as {
+                  environment?: { servers?: string[] };
+                }
+              )?.environment?.servers
+            : []) ?? [],
       ),
     ),
   ];
@@ -237,7 +299,10 @@ export function GroupSummaryRow({
   runCount?: number;
   suite?: boolean;
 }) {
-  const rollup = projectRunRollup(rows, details);
+  const rollup = projectRunRollup(
+    suite ? suiteRollupRows(rows, details) : rows,
+    details,
+  );
   const active = rows.filter((row) =>
     ["pending", "running", "grading"].includes(row.status),
   ).length;

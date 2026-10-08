@@ -3,9 +3,13 @@ import * as receipts from "../src/eval-reporting-receipt.js";
 import { EvalSuite } from "../src/EvalSuite.js";
 import { EvalTest } from "../src/EvalTest.js";
 import { PlatformApiClient } from "../src/platform/client.js";
-import { createSavedClientRunner } from "../src/saved-client-runner.js";
+import {
+  createSavedClientRunner,
+  UnsupportedModelSelectionError,
+} from "../src/saved-client-runner.js";
 import {
   buildReportingBody,
+  normalizeReportingConfig,
   snapshotReportingInput,
 } from "../src/eval-reporting-config.js";
 import type { MCPClientManager } from "../src/mcp-client-manager/MCPClientManager.js";
@@ -36,7 +40,7 @@ const manager = () =>
     getConnectionStatus: vi.fn(() => "connected"),
     getToolsForAiSdk: vi.fn(async () => ({})),
     getServerReplayConfigs: () => [],
-  }) as unknown as MCPClientManager;
+  } as unknown as MCPClientManager);
 const input = () => ({
   client: "My client",
   projectId: "project1",
@@ -110,7 +114,7 @@ describe("latest saved client SDK runs", () => {
     });
   });
 
-  it("applies the saved empty prompt and tool visibility policy", async () => {
+  it("falls back from a saved empty prompt, and applies tool visibility policy", async () => {
     const saved = detail();
     saved.config.systemPrompt = "";
     saved.config.respectToolVisibility = false;
@@ -120,7 +124,9 @@ describe("latest saved client SDK runs", () => {
       options,
       new AbortController().signal
     );
-    expect(executor.getSystemPrompt()).toBe("");
+    // Anthropic refuses an empty system block with a 400, so a client saved
+    // without a system prompt has to run on the default one.
+    expect(executor.getSystemPrompt()).toBe("You are a helpful assistant.");
     expect(options.manager.getToolsForAiSdk).toHaveBeenCalledWith(
       ["local-server"],
       expect.objectContaining({ includeAppOnly: true })
@@ -352,5 +358,485 @@ describe("latest saved client SDK runs", () => {
       })
     ).rejects.toThrow("cancelled");
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("runWithClient with several saved clients", () => {
+  const clientNamed = (name: string, id: string) => ({
+    ...detail(),
+    id,
+    name,
+    configId: `${id}-config`,
+    versionId: `${id}-v1`,
+  });
+  const byName = () =>
+    vi
+      .spyOn(PlatformApiClient.prototype, "getClient")
+      .mockImplementation(async ({ client }) =>
+        client === "Claude"
+          ? clientNamed("Claude", "claude")
+          : clientNamed("Astra", "astra")
+      );
+  const reportSpy = () =>
+    vi
+      .spyOn(receipts, "captureEvalReporting")
+      .mockImplementation(async (input) => ({
+        receipt: {
+          schemaVersion: 1,
+          state: "persisted",
+          acceptedIterations: input.results.length,
+          acknowledgedIterations: input.results.length,
+          pendingIterations: 0,
+        },
+      }));
+  const suiteWithCase = (
+    config: ConstructorParameters<typeof EvalSuite>[0] = {}
+  ) => {
+    const suite = new EvalSuite({ defaults: { iterations: 1 }, ...config });
+    suite.add(
+      new EvalTest({ id: "client_case", name: "case", test: async () => true })
+    );
+    return suite;
+  };
+
+  it("uploads one run per client, all in one run group", async () => {
+    const fetch = byName();
+    const report = reportSpy();
+    const result = await suiteWithCase().runWithClient({
+      ...input(),
+      client: ["Claude", "Astra"],
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenCalledTimes(2);
+    const bodies = report.mock.calls.map(([body]) => body);
+    const groupIds = new Set(bodies.map((body) => body.runGroupId));
+    expect(groupIds.size).toBe(1);
+    expect(result.runGroupId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    );
+    expect(bodies.map((body) => body.selectedClient?.name).sort()).toEqual([
+      "Astra",
+      "Claude",
+    ]);
+    expect(Object.keys(result.clients).sort()).toEqual(["Astra", "Claude"]);
+    expect(result.clients.Claude.client.name).toBe("Claude");
+    expect(result.clients.Claude.receipt.state).toBe("persisted");
+    expect(result.failures).toEqual({});
+    // The top level aggregates both clients.
+    expect(result.aggregate.iterations).toBe(2);
+    expect([...result.tests.keys()].sort()).toEqual([
+      "Astra / case",
+      "Claude / case",
+    ]);
+  });
+
+  it("derives each client's run id from a caller's externalRunId", async () => {
+    byName();
+    const report = reportSpy();
+    await suiteWithCase({ mcpjam: { externalRunId: "ci-42" } }).runWithClient({
+      ...input(),
+      client: ["Claude", "Astra"],
+    });
+    expect(
+      report.mock.calls.map(([body]) => body.externalRunId).sort()
+    ).toEqual(["ci-42:Astra", "ci-42:Claude"]);
+  });
+
+  it("keeps a caller-supplied run group id", async () => {
+    byName();
+    const report = reportSpy();
+    const result = await suiteWithCase({
+      mcpjam: { runGroupId: "launch-7" },
+    }).runWithClient({ ...input(), client: ["Claude", "Astra"] });
+    expect(result.runGroupId).toBe("launch-7");
+    for (const [body] of report.mock.calls)
+      expect(body.runGroupId).toBe("launch-7");
+  });
+
+  it("runs the clients in parallel", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const started: string[] = [];
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockImplementation(
+      async ({ client }) => {
+        started.push(client);
+        await gate;
+        return clientNamed(client, client.toLowerCase());
+      }
+    );
+    reportSpy();
+    const run = suiteWithCase().runWithClient({
+      ...input(),
+      client: ["Claude", "Astra"],
+    });
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    release();
+    await run;
+  });
+
+  it("does not let one client's failure cancel the others", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockImplementation(
+      async ({ client }) => {
+        if (client === "Missing") throw new Error("client not found");
+        return clientNamed(client, client.toLowerCase());
+      }
+    );
+    const report = reportSpy();
+    const result = await suiteWithCase().runWithClient({
+      ...input(),
+      client: ["Claude", "Missing"],
+    });
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(Object.keys(result.clients)).toEqual(["Claude"]);
+    expect(result.failures.Missing.client).toBe("Missing");
+    expect(String(result.failures.Missing.error)).toContain("client not found");
+  });
+
+  it("throws when every client fails", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockRejectedValue(
+      new Error("client not found")
+    );
+    const suite = suiteWithCase();
+    await expect(
+      suite.runWithClient({ ...input(), client: ["A", "B"] })
+    ).rejects.toThrow("client not found");
+    // The lock is released, so the suite can run again.
+    byName();
+    reportSpy();
+    await expect(
+      suite.runWithClient({ ...input(), client: ["Claude"] })
+    ).resolves.toMatchObject({ clients: { Claude: expect.anything() } });
+  });
+
+  it("throws an AggregateError under strict when any client fails", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockImplementation(
+      async ({ client }) => {
+        if (client === "Missing") throw new Error("client not found");
+        return clientNamed(client, client.toLowerCase());
+      }
+    );
+    reportSpy();
+    const suite = suiteWithCase({ mcpjam: { strict: true } });
+    await expect(
+      suite.runWithClient({ ...input(), client: ["Claude", "Missing"] })
+    ).rejects.toBeInstanceOf(AggregateError);
+    // The partial result is still readable.
+    expect(suite.getResults()).toMatchObject({
+      clients: { Claude: expect.anything() },
+    });
+  });
+
+  it("combines the per-client receipts", async () => {
+    byName();
+    reportSpy();
+    const suite = suiteWithCase();
+    await suite.runWithClient({ ...input(), client: ["Claude", "Astra"] });
+    expect(suite.getReportingReceipt()).toMatchObject({
+      state: "persisted",
+      acceptedIterations: 2,
+      acknowledgedIterations: 2,
+      pendingIterations: 0,
+    });
+  });
+
+  it("gives each client its own copy of the cases", async () => {
+    byName();
+    reportSpy();
+    const suite = suiteWithCase();
+    await suite.runWithClient({ ...input(), client: ["Claude", "Astra"] });
+    // The suite's own case never ran; each client ran a clone.
+    expect(suite.get("case")!.getResults()).toBeNull();
+  });
+
+  it("leaves a single client exactly as before", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      detail()
+    );
+    const report = reportSpy();
+    const result = await suiteWithCase().runWithClient(input());
+    expect(report.mock.calls[0][0]).not.toHaveProperty("runGroupId");
+    expect(result).not.toHaveProperty("clients");
+    expect(result).not.toHaveProperty("runGroupId");
+  });
+
+  it.each([
+    [[], /at least one/],
+    [["Claude", "Claude"], /Duplicate client/],
+    [["Claude", " "], /non-empty/],
+    [Array.from({ length: 11 }, (_, i) => `c${i}`), /at most 10/],
+  ])("rejects a bad client list before fetching %#", async (clients, error) => {
+    const fetch = vi.spyOn(PlatformApiClient.prototype, "getClient");
+    await expect(
+      suiteWithCase().runWithClient({ ...input(), client: clients })
+    ).rejects.toThrow(error);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("aborts every client on the run timeout and frees the suite", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockImplementation(
+      () => new Promise(() => {})
+    );
+    const suite = suiteWithCase();
+    await expect(
+      suite.runWithClient(
+        { ...input(), client: ["Claude", "Astra"] },
+        { runTimeoutMs: 20 }
+      )
+    ).rejects.toThrow("Suite deadline exceeded");
+    byName();
+    reportSpy();
+    await expect(
+      suite.runWithClient({ ...input(), client: ["Claude"] })
+    ).resolves.toBeDefined();
+  });
+});
+
+describe("runGroupId on the reporting wire", () => {
+  it("sends it in the reporting body", () => {
+    expect(buildReportingBody({ runGroupId: "launch-7" })).toMatchObject({
+      runGroupId: "launch-7",
+    });
+  });
+
+  it.each(["", "  ", "x".repeat(129)])(
+    "rejects a malformed id %#",
+    (runGroupId) => {
+      expect(() => normalizeReportingConfig({ runGroupId }, {})).toThrow(
+        /runGroupId/
+      );
+    }
+  );
+});
+
+describe("saved client model selection", () => {
+  const modelId = "anthropic/claude-haiku-4.5";
+  const withSelection = (modelSelection: unknown) => {
+    const saved = detail();
+    return {
+      ...saved,
+      config: { ...saved.config, modelSelection },
+    };
+  };
+  const run = async () =>
+    createSavedClientRunner(input(), new AbortController().signal);
+
+  it("refuses an org selection with a typed error instead of running it as a bare id", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "k17abc" },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const selected = input();
+    const error = await createSavedClientRunner(
+      selected,
+      new AbortController().signal
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnsupportedModelSelectionError);
+    expect(error).toMatchObject({ source: "org", modelId });
+    expect(String((error as Error).message)).toContain('source "org"');
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
+  });
+
+  it("refuses a local selection with a typed error", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "local",
+        connectionRef: { kind: "localProvider", providerKey: "anthropic" },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    await expect(run()).rejects.toMatchObject({
+      name: "UnsupportedModelSelectionError",
+      source: "local",
+    });
+  });
+
+  it("refuses a STORED legacy selection: it means own key only, never the MCPJam key", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({ source: "legacy", modelId })
+    );
+    const selected = input();
+    const error = await createSavedClientRunner(
+      selected,
+      new AbortController().signal
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnsupportedModelSelectionError);
+    expect(error).toMatchObject({ source: "legacy", modelId });
+    expect(String((error as Error).message)).toContain("own provider key");
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
+  });
+
+  it("applies a backfilled hosted selection and drops its origin marker", async () => {
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelSelection: {
+          modelId,
+          source: "hosted",
+          settings: { temperature: 0.3 },
+          fallback: { provider: "none", model: "none" },
+        },
+        modelSelectionOrigin: "backfill",
+      },
+    });
+    const { executor } = await run();
+    expect(executor.getTemperature()).toBe(0.3);
+    expect(JSON.stringify(executor.getHostSnapshot())).not.toContain(
+      "modelSelectionOrigin"
+    );
+  });
+
+  it("reads the model from the selection when the response omits modelId", async () => {
+    const saved = detail();
+    const { modelId: _omitted, ...configWithoutModelId } = saved.config as {
+      modelId?: string;
+    } & Record<string, unknown>;
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...configWithoutModelId,
+        modelSelection: {
+          modelId,
+          source: "hosted",
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    } as typeof saved);
+    const snapshot = (await run()).executor.getHostSnapshot();
+    expect(snapshot).toMatchObject({ model: `mcpjam/${modelId}` });
+  });
+
+  it("refuses the whole run through runWithClient too", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "k17abc" },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    await expect(
+      new EvalSuite({
+        defaults: { iterations: 1 },
+        mcpjam: { enabled: false },
+      }).runWithClient(input())
+    ).rejects.toThrow(/source "org"/);
+  });
+
+  it("refuses a malformed selection rather than ignoring it", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({ modelId, source: "org" })
+    );
+    await expect(run()).rejects.toThrow(/hostConfigV2: modelSelection/);
+  });
+
+  it("refuses a hosted selection that names a different model than modelId", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId: "openai/gpt-5",
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const selected = input();
+    await expect(
+      createSavedClientRunner(selected, new AbortController().signal)
+    ).rejects.toThrow(
+      `hostConfigV2: modelSelection.modelId ("openai/gpt-5") must equal modelId ("${modelId}")`
+    );
+    expect(selected.manager.getToolsForAiSdk).not.toHaveBeenCalled();
+  });
+
+  it("runs a hosted selection exactly like no selection", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      detail()
+    );
+    const bare = (await run()).executor.getHostSnapshot();
+    vi.restoreAllMocks();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "hosted",
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const hosted = (await run()).executor.getHostSnapshot();
+    expect(hosted).toEqual(bare);
+    expect(hosted).toMatchObject({ model: `mcpjam/${modelId}` });
+    expect(JSON.stringify(hosted)).not.toContain("modelSelection");
+  });
+
+  it("applies a hosted selection's reasoning effort instead of deleting it with the selection", async () => {
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelId: "anthropic/claude-opus-4.7",
+        modelSelection: {
+          modelId: "anthropic/claude-opus-4.7",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    });
+    const { executor } = await run();
+    // The runner applies it (and so drops the temperature it would replace).
+    expect(
+      (executor as unknown as { getReasoningEffort(): string }).getReasoningEffort()
+    ).toBe("high");
+  });
+
+  it("a saved effort on a model with no effort control refuses before any spend", async () => {
+    // The mcpjam-hosted runner only serves Claude and GPT-5, both of which take
+    // an effort; an unsupported one must be an error, never a silent default.
+    const saved = detail();
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+      ...saved,
+      config: {
+        ...saved.config,
+        modelId: "anthropic/claude-3-5-haiku-20241022",
+        modelSelection: {
+          modelId: "anthropic/claude-3-5-haiku-20241022",
+          source: "hosted",
+          settings: { reasoningEffort: "high" },
+          fallback: { provider: "none", model: "none" },
+        },
+      },
+    });
+    await expect(run()).rejects.toThrow(/not supported/);
+  });
+
+  it("a saved selection temperature beats the host default", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      withSelection({
+        modelId,
+        source: "hosted",
+        settings: { temperature: 0.1 },
+        fallback: { provider: "none", model: "none" },
+      })
+    );
+    const { executor } = await run();
+    expect(executor.getTemperature()).toBe(0.1);
+  });
+
+  it("leaves a client without a selection unchanged", async () => {
+    vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
+      detail()
+    );
+    const snapshot = (await run()).executor.getHostSnapshot();
+    expect(snapshot).toMatchObject({
+      model: `mcpjam/${modelId}`,
+      systemPrompt: "original prompt",
+      temperature: 0.4,
+    });
   });
 });

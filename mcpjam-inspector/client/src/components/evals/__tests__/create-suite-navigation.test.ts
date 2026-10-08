@@ -64,7 +64,7 @@ describe("createPlaygroundSuiteNavigation", () => {
       iteration: "iter-1",
     });
     expect(navigateSpy).toHaveBeenCalledWith(
-      "/evals/suite/suite-1/test/case-1/edit?compare=1&iteration=iter-1",
+      "/evaluate/suite/suite-1/test/case-1/edit?compare=1&iteration=iter-1",
       { replace: undefined },
     );
   });

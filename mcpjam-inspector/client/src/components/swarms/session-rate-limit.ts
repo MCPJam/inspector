@@ -8,8 +8,22 @@
  * difference between a guess and an answer. The slug and severity stay the
  * catalog's so the card renders amber like every other quota failure.
  */
-import { describeAsSlug, type NormalizedError } from "@mcpjam/sdk/browser";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+  isHeldCreditsRefusal,
+} from "@/shared/swarm-attempt-error";
+import {
+  describeError,
+  mcpjamLimitSlugForMessage,
+  describeAsSlug,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import {
+  describeProviderNotAllowlisted,
+  isProviderNotAllowlistedCode,
+} from "@/lib/provider-not-allowlisted";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 
 /** Used whenever the model id does not name a provider outright. */
@@ -73,5 +87,110 @@ export function describeProviderRateLimit(
       "Raise the rate limit on your provider's own plan.",
     ],
     rawMessage: oneLine,
+  };
+}
+
+/**
+ * The card shown on a session that stopped while other requests held the last
+ * credits (`holds_committed`).
+ *
+ * It is deliberately not the catalog's `provider/mcpjam_limit` copy: that entry
+ * is titled "Out of MCPJam credits" and sends the user to upgrade or buy
+ * credits, and a hold is neither an empty balance nor something a purchase
+ * lifts. The slug and severity stay the catalog's so the card renders amber
+ * like every other MCPJam limit. The backend's own sentence stays as the body:
+ * it carries how many requests were holding credits.
+ *
+ * Two things in that entry are about buying credits and would contradict the
+ * title, so both are replaced: its "Learn more" link (the buy-credits section;
+ * a hold has its own note), and the backend's closing "Top up to add more
+ * credits." which it appends to a hold's details for an organization that can
+ * top up.
+ */
+export function describeHeldCredits(message: string): NormalizedError {
+  const base = describeAsSlug("provider/mcpjam_limit");
+  return {
+    ...base,
+    docsAnchor: base.docsAnchor.replace(/#.*$/, "#credits-temporarily-held"),
+    title: "Credits temporarily held",
+    oneLine: message.replace(/\s*Top up to add more credits\.?/i, "").trim(),
+    likelyCauses: [
+      "Other requests from your organization were in flight and held the remaining credits until they finished.",
+    ],
+    nextSteps: [
+      "Run the session again once your other sessions have finished.",
+      "Start fewer sessions at once if this keeps happening.",
+    ],
+    rawMessage: message,
+  };
+}
+
+/** Use the producer's humanized meaning, while retaining raw diagnostics. */
+export function describeSwarmAttemptFailure(
+  rawMessage: string | null | undefined,
+  errorCode: string | null | undefined,
+  providerLabel: string,
+): NormalizedError {
+  const info = humanizeSwarmAttemptError(rawMessage, errorCode);
+  const code = errorCode ?? info.code;
+  // The hosted gateway refused the host's model provider. Checked before the
+  // status-driven paths below: read as a 401/403 it would card as a provider
+  // credential failure and send the user to fix a key that was never used.
+  if (
+    isProviderNotAllowlistedCode(errorCode) ||
+    isProviderNotAllowlistedCode(info.code)
+  ) {
+    return {
+      ...describeProviderNotAllowlisted(info.message),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
+  // A hold is a wait, not an empty balance, and the limit branch below would
+  // card the same sentence as "Out of MCPJam credits".
+  if (isHeldCreditsRefusal(code, info.refusalReason, info.message)) {
+    return {
+      ...describeHeldCredits(info.message),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
+  const limitSlug = mcpjamLimitSlugForMessage(info.message);
+  if (
+    isAccountLimit(info.message, code) &&
+    (limitSlug ||
+      ["user_rate_limit", "org_rate_limit", "billing_limit_reached"].includes(
+        code ?? "",
+      ))
+  ) {
+    return {
+      ...describeAsSlug(limitSlug ?? "provider/mcpjam_limit"),
+      oneLine: info.message,
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
+  const base = describeError(info.message);
+  if (
+    base.slug === "provider/quota" &&
+    !isAccountLimit(info.message, errorCode ?? info.code)
+  ) {
+    return {
+      ...describeProviderRateLimit(providerLabel),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: errorCode ?? info.code,
+    };
+  }
+  return {
+    ...base,
+    slug: "swarm/attempt_failed",
+    title: info.rerunnable ? "Session needs another run" : "Session failed",
+    oneLine: info.message,
+    severity: info.rerunnable ? "info" : base.severity,
+    nextSteps: info.rerunnable
+      ? ["Run the session again to continue."]
+      : base.nextSteps,
+    rawMessage: rawMessage ?? info.message,
+    rawCode: errorCode ?? info.code,
   };
 }

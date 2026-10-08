@@ -1,3 +1,17 @@
+import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
+import { hostConfigNeedsAccount } from "@/lib/host-config-computer";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
+import { HOSTED_MODE } from "@/lib/config";
+import {
+  asLocalHarnessClientId,
+  ensureLocalHarnessReady,
+  fetchLocalHarnessAvailability,
+  LOCAL_HARNESS_CLIENT_NAMES,
+  type LocalHarnessClientId,
+} from "@/lib/local-harness-consent";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -14,7 +28,20 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
+import {
+  useCreateProjectSecret,
+  useProjectSecrets,
+  useUpdateProjectSecret,
+} from "@/hooks/useProjectSecrets";
+import {
+  externalAccountCredentialFor,
+  externalKeySetupFor,
+} from "@/shared/external-credential-selection";
 import { useProjectServers } from "@/hooks/useViews";
+import {
+  PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
+  useCanManageProjectClients,
+} from "@/hooks/useProjects";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
@@ -58,8 +85,37 @@ export function CreateHostDialog({
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
+  // Creating a client is project-admin only (`hosts.ts` `requireAdminAccess`).
+  const { canManage: canManageClients, isLoading: roleLoading } =
+    useCanManageProjectClients({ isAuthenticated, projectId });
+  const adminOnly = !roleLoading && !canManageClients;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
+  // Each local harness is its own rollout and its own runtime, so setup is
+  // offered per harness: only where its flag is on AND this Inspector can set
+  // it up here.
+  const claudeCodeLocalFlag = useLocalHarnessEnabled();
+  const codexLocalFlag = useFeatureFlagEnabled(LOCAL_CODEX_FEATURE_FLAG) === true;
+  const [localSetupAvailable, setLocalSetupAvailable] = useState<
+    Readonly<Record<LocalHarnessClientId, boolean>>
+  >({ "claude-code": false, codex: false });
+  useEffect(() => {
+    let cancelled = false;
+    setLocalSetupAvailable({ "claude-code": false, codex: false });
+    if (HOSTED_MODE) return;
+    for (const [harnessId, flag] of [
+      ["claude-code", claudeCodeLocalFlag],
+      ["codex", codexLocalFlag],
+    ] as const) {
+      if (!flag) continue;
+      void fetchLocalHarnessAvailability(undefined, harnessId).then(result => {
+        if (cancelled) return;
+        const available = result.ok && result.availability.setupAvailable === true;
+        setLocalSetupAvailable(current => ({ ...current, [harnessId]: available }));
+      });
+    }
+    return () => { cancelled = true; };
+  }, [claudeCodeLocalFlag, codexLocalFlag]);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
@@ -94,10 +150,42 @@ export function CreateHostDialog({
     initialTemplateId ?? DEFAULT_CATALOG_HOST_ID
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const selectedTemplateInput =
     catalogState.status === "live"
       ? getCatalogTemplate(catalogState.catalog, selectedTemplateId)
       : undefined;
+  // The local harness the selected template would set up here, when its
+  // setup is available on this Inspector for this member.
+  const selectedLocalHarnessCandidate = asLocalHarnessClientId(
+    selectedTemplateInput?.harness,
+  );
+  const selectedLocalHarness =
+    selectedLocalHarnessCandidate &&
+    localSetupAvailable[selectedLocalHarnessCandidate]
+      ? selectedLocalHarnessCandidate
+      : null;
+  // A client whose harness authenticates on the customer's own account (Cursor)
+  // cannot run without its key. When the project has no usable one, the dialog
+  // takes it here, so creating the client is the whole setup.
+  const externalCredential = externalAccountCredentialFor(
+    selectedTemplateInput?.harness,
+  );
+  const projectSecrets = useProjectSecrets(projectId || null);
+  const createProjectSecret = useCreateProjectSecret();
+  const updateProjectSecret = useUpdateProjectSecret();
+  const [externalKey, setExternalKey] = useState("");
+  // Waits for the secrets rather than skipping the key step on a guess, and
+  // updates the creator's own row of that name (mis-bound or materialized)
+  // instead of creating a second one, which the per-owner name rule refuses.
+  const externalKeySetup = useMemo(
+    () =>
+      selectedTemplateInput
+        ? externalKeySetupFor(selectedTemplateInput.harness, projectSecrets)
+        : ({ state: "none" } as const),
+    [projectSecrets, selectedTemplateInput],
+  );
+  const needsExternalKey = externalKeySetup.state === "needed";
   const selectedTemplateLabel =
     (catalogState.status === "live"
       ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
@@ -110,11 +198,19 @@ export function CreateHostDialog({
       : !selectedTemplateInput
       ? "Selected client template is unavailable."
       : null;
+  // Claude Code, Codex and Cursor clients run on a computer tied to an account,
+  // so a guest is asked to sign in rather than shown a save the backend refuses.
+  const isMemberActor = useIsMemberActor();
+  const needsSignIn =
+    isMemberActor === false && hostConfigNeedsAccount(selectedTemplateInput);
   const canCreate =
+    !needsSignIn &&
+    canManageClients &&
     Boolean(name.trim()) &&
     !isSaving &&
     catalogState.status === "live" &&
-    Boolean(selectedTemplateInput);
+    Boolean(selectedTemplateInput) &&
+    externalKeySetup.state !== "loading";
 
   useEffect(() => {
     if (!isOpen) return;
@@ -131,6 +227,7 @@ export function CreateHostDialog({
   }, [isOpen, selectedTemplateId, selectedTemplateLabel]);
 
   const handleClose = () => {
+    setSetupError(null);
     setName("");
     userEditedNameRef.current = false;
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
@@ -138,6 +235,7 @@ export function CreateHostDialog({
   };
 
   const handleCreate = async () => {
+    if (!canManageClients) return;
     const trimmed = name.trim();
     if (!trimmed || !selectedTemplateInput || catalogState.status !== "live") {
       if (trimmed && catalogState.status !== "loading") {
@@ -145,6 +243,7 @@ export function CreateHostDialog({
       }
       return;
     }
+    setSetupError(null);
     setIsSaving(true);
     try {
       // New hosts start with no seeded servers: keeps creation deliberate.
@@ -156,6 +255,37 @@ export function CreateHostDialog({
       // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
+      if (
+        externalKeySetup.state === "needed" &&
+        externalCredential &&
+        externalKey.trim()
+      ) {
+        // Personal and brokered: the value reaches the egress proxy, never a
+        // box. Your own existing row of that name is fixed in place.
+        const binding = {
+          delivery: "brokered" as const,
+          brokerHosts: [...externalCredential.binding.hosts],
+          brokerHeader: externalCredential.binding.header,
+          brokerTemplate: externalCredential.binding.template,
+        };
+        if (externalKeySetup.replaceSecretId) {
+          await updateProjectSecret({
+            projectId,
+            secretId: externalKeySetup.replaceSecretId,
+            value: externalKey.trim(),
+            ...binding,
+          });
+        } else {
+          await createProjectSecret({
+            projectId,
+            name: externalCredential.env,
+            value: externalKey.trim(),
+            ...binding,
+            sharing: "user",
+          });
+        }
+        setExternalKey("");
+      }
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -168,6 +298,14 @@ export function CreateHostDialog({
         // scenario-minting path.
         ...(owner ? { owner } : {}),
       });
+      const localHarness = asLocalHarnessClientId(seed.harness);
+      if (!HOSTED_MODE && localHarness && localSetupAvailable[localHarness]) {
+        const harnessName = LOCAL_HARNESS_CLIENT_NAMES[localHarness];
+        const setupToast = toast.loading(`Installing ${harnessName}…`);
+        void ensureLocalHarnessReady(projectId, true, undefined, message => toast.loading(message, { id: setupToast }), localHarness)
+          .then(() => toast.success(`${harnessName} is ready`, { id: setupToast }))
+          .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : `${harnessName} setup needs a retry.`}`, { id: setupToast }));
+      }
       toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
@@ -186,7 +324,9 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create client");
+      const message = err instanceof Error ? err.message : "Failed to create client";
+      setSetupError(message);
+      toast.error(message);
     } finally {
       setIsSaving(false);
     }
@@ -235,7 +375,11 @@ export function CreateHostDialog({
                 );
               })}
             </div>
-            {templatesUnavailableMessage && (
+            {adminOnly ? (
+              <p className="text-xs text-muted-foreground">
+                {PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE}
+              </p>
+            ) : templatesUnavailableMessage && (
               <p className="text-xs text-muted-foreground">
                 {templatesUnavailableMessage}
               </p>
@@ -259,13 +403,48 @@ export function CreateHostDialog({
             />
           </div>
         </div>
+        {needsExternalKey && externalCredential && (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="external-credential-key">
+              {externalCredential.label}
+            </Label>
+            <Input
+              id="external-credential-key"
+              type="password"
+              autoComplete="off"
+              placeholder="Paste your key"
+              value={externalKey}
+              onChange={(e) => setExternalKey(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Stored as your personal secret and delivered to your runs by the
+              egress proxy, so it never enters a computer. Keep it personal: a
+              key shared with the project can't be used here, and each
+              teammate who runs this client adds their own.
+            </p>
+          </div>
+        )}
+        {externalCredential && externalKeySetup.state === "loading" && (
+          <p className="text-xs text-muted-foreground">
+            Checking for your {externalCredential.label}…
+          </p>
+        )}
+        {!HOSTED_MODE && selectedLocalHarness === "claude-code" && <p className="text-sm text-muted-foreground">Claude Code runs in a private project workspace on this computer. Creating this client installs its runtime and allows local commands with your full OS-user permissions. Evals and swarms run commands without asking for approval.</p>}
+        {needsSignIn && (
+          <GuestSignInMessage
+            compact
+            location="create_client_dialog"
+            message={`Sign in to use ${selectedTemplateLabel || "this client"}. It runs on a cloud computer tied to your account, so it's off for guests.`}
+          />
+        )}
+        {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isSaving}>
+          <Button variant="outline" onClick={handleClose}>
             Cancel
           </Button>
           <Button onClick={handleCreate} disabled={!canCreate}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create
+            {isSaving && !HOSTED_MODE && selectedLocalHarness ? `Setting up ${LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]}…` : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

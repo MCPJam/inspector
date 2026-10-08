@@ -23,7 +23,7 @@ import { type CspMode, type CspSubtypePolicy } from "./widget-host";
 // The package owns lifecycle + bridge; the inspector injects modal CHROME
 // (its design-system <Dialog>) + the widget-content fetch via the WidgetHost.
 import { useWidgetHost } from "./widget-host-context";
-import { useAppToolsRegistry } from "./app-tools-registry";
+import { useAppToolsRegistryApi } from "./app-tools-registry";
 
 export interface McpAppsModalProps {
   open: boolean;
@@ -61,6 +61,7 @@ export interface McpAppsModalProps {
   widgetAllowFeatures: Record<string, string> | undefined;
   widgetCspDirectives: Record<string, string[]> | undefined;
   widgetCspSubtypePolicy: CspSubtypePolicy | undefined;
+  widgetClientContext?: import("./widget-host").CspClientContext;
   /**
    * Host policy for the tool result the modal widget is born with. The
    * modal's `oncalltool` path already inherits this via the renderer's
@@ -124,6 +125,7 @@ export interface McpAppsModalProps {
     message: unknown;
   }) => void;
   onCspViolation: (event: MessageEvent) => void;
+  onCspApplied: (event: MessageEvent) => void;
 }
 
 export function McpAppsModal({
@@ -141,6 +143,7 @@ export function McpAppsModal({
   widgetAllowFeatures,
   widgetCspDirectives,
   widgetCspSubtypePolicy,
+  widgetClientContext,
   widgetToolResult,
   widgetBrowserStorage,
   hostContextRef,
@@ -158,8 +161,10 @@ export function McpAppsModal({
   themeModeRef,
   addUiLog,
   onCspViolation,
+  onCspApplied,
 }: McpAppsModalProps) {
   const host = useWidgetHost();
+  const appToolsRegistry = useAppToolsRegistryApi();
   const Modal = host.components?.Modal;
   const [modalHtml, setModalHtml] = useState<string | null>(null);
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
@@ -188,7 +193,7 @@ export function McpAppsModal({
       // the next chat POST snapshot omits its aliases and the registry's
       // active-bridge fallback restores any coexisting inline surface.
       if (modalAppToolsBridgeIdRef.current) {
-        useAppToolsRegistry
+        appToolsRegistry
           .getState()
           .unregisterInstance(modalAppToolsBridgeIdRef.current);
         modalAppToolsBridgeIdRef.current = null;
@@ -222,6 +227,7 @@ export function McpAppsModal({
 
     fetchModalHtml();
   }, [
+    appToolsRegistry,
     open,
     template,
     params,
@@ -412,11 +418,12 @@ export function McpAppsModal({
       if (modalAppToolsBridgeIdRef.current) {
         const bridgeId = modalAppToolsBridgeIdRef.current;
         modalAppToolsBridgeIdRef.current = null;
-        useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+        appToolsRegistry.getState().unregisterInstance(bridgeId);
       }
       bridge.close().catch(() => {});
     };
   }, [
+    appToolsRegistry,
     modalHtml,
     open,
     addUiLog,
@@ -434,12 +441,31 @@ export function McpAppsModal({
     effectiveHostCapabilities,
   ]);
 
+  const modalCspMountRef = useRef<string | number | undefined>(undefined);
+  const clearCspMount = host.debug?.clearCspMount;
+  useEffect(
+    () => () => {
+      if (modalCspMountRef.current !== undefined) {
+        clearCspMount?.(toolCallId, modalCspMountRef.current);
+        modalCspMountRef.current = undefined;
+      }
+    },
+    [open, modalHtml, toolCallId, clearCspMount]
+  );
+
   const handleModalMessage = (event: MessageEvent) => {
     const data = event.data;
     if (!data) return;
 
-    // Forward CSP violations to parent handler
-    if (data.type === "mcp-apps:csp-violation") {
+    if (
+      data.type === "mcpjam:csp-applied" &&
+      (typeof data.mountId === "string" || typeof data.mountId === "number")
+    ) {
+      modalCspMountRef.current = data.mountId;
+    }
+    if (data.type === "mcpjam:csp-applied") {
+      onCspApplied(event);
+    } else if (data.type === "mcp-apps:csp-violation") {
       onCspViolation(event);
     }
     // `mcpjam:view-mode` also arrives here (the modal mounts its own view).
@@ -467,6 +493,11 @@ export function McpAppsModal({
             allowFeatures={widgetAllowFeatures}
             cspDirectives={widgetCspDirectives}
             cspSubtypePolicy={widgetCspSubtypePolicy}
+            clientContext={
+              widgetClientContext
+                ? { ...widgetClientContext, surface: "modal" }
+                : undefined
+            }
             browserStorage={widgetBrowserStorage}
             colorScheme={modalColorScheme}
             onMessage={handleModalMessage}

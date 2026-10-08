@@ -2,7 +2,10 @@
  * HostRunner - Runs LLM prompts with tool calling for evals
  */
 
-import type { McpjamModelLeaseScope } from "./mcpjam-model-lease.js";
+import type {
+  McpjamAuthContext,
+  McpjamModelLeaseScope,
+} from "./mcpjam-model-lease.js";
 import {
   generateText,
   asSchema,
@@ -21,6 +24,7 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
 
 /**
  * The registered custom-provider names, as `parseLLMString` wants them.
@@ -43,6 +47,11 @@ function customProviderNameSet(
 }
 import type { CreateModelOptions } from "./model-factory.js";
 import { modelRejectsTemperature } from "./model-sampling-support.js";
+import type { ModelReasoningEffort } from "./host-config/model-selection.js";
+import {
+  reasoningEffortProviderOptions,
+  type ReasoningEffortProviderOptions,
+} from "./host-config/reasoning-effort.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
@@ -87,6 +96,28 @@ interface HostRunnerBaseConfig {
   /** @internal Lease ownership inherited by iteration clones. */
   mcpjamLeaseScope?: McpjamModelLeaseScope;
   mcpjamProject?: string;
+  /**
+   * For `mcpjam/…` models: mint as a caller whose credential refreshes (a CLI
+   * login) instead of with a fixed `sk_` `apiKey` — leave `apiKey` empty.
+   * Inherited by every clone. See `CreateModelOptions.mcpjamAuth`.
+   */
+  mcpjamAuth?: McpjamAuthContext;
+  /**
+   * @internal Build the language model for each run instead of
+   * `createModelFromString`. The local suite-file runner uses it to observe
+   * a provider's own refusals (a rejected key is not a task failure) and, in
+   * tests, to substitute a deterministic model. Never a public mock switch.
+   */
+  createLanguageModel?: (
+    model: string,
+    options: CreateModelOptions
+  ) => ReturnType<typeof createModelFromString>;
+  /**
+   * @internal The ids of calls a tool-policy gate refused, read after each
+   * run. Refused calls never reached a server, so they are left out of the
+   * result's tool calls — the same projection hosted grading uses.
+   */
+  policyBlockedToolCallIds?: () => ReadonlySet<string>;
   baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
@@ -96,6 +127,18 @@ interface HostRunnerBaseConfig {
   systemPrompt?: string;
   /** Temperature for LLM responses (0-2). Overrides the host-derived value. Some models (e.g., reasoning models) don't support temperature. */
   temperature?: number;
+  /**
+   * Reasoning effort for the model, applied through the AI SDK provider's own
+   * option (`providerOptions`) — the same mapping the hosted runner uses. An
+   * effort REPLACES the sampling temperature: `temperature` is not sent while
+   * one is set. A model or provider with no effort control the installed AI
+   * SDK provider exposes REFUSES it (the constructor throws, before any spend)
+   * rather than running without it.
+   *
+   * A `host` snapshot carries no model selection, so a saved client's effort
+   * is passed here explicitly (`runWithClient` does this).
+   */
+  reasoningEffort?: ModelReasoningEffort;
   /** Maximum number of agentic steps/tool calls (default: 10) */
   maxSteps?: number;
   /** Custom providers registry for non-standard LLM providers */
@@ -244,10 +287,12 @@ type StartedToolCall = {
  * only `description`, never name, schema or execute.
  */
 function applyToolDescriptionOverridesToRecord<
-  T extends Record<string, { description?: string }>,
+  // `unknown`, not `string`: an AI SDK 7 tool's description may also be a
+  // function of the call context. An override always replaces it with a string.
+  T extends Record<string, { description?: unknown }>,
 >(tools: T, overrides: Readonly<Record<string, string>> | undefined): T {
   if (!overrides || Object.keys(overrides).length === 0) return tools;
-  const next: Record<string, { description?: string }> = { ...tools };
+  const next: Record<string, { description?: unknown }> = { ...tools };
   for (const [name, description] of Object.entries(overrides)) {
     // Own properties only: `next` is a plain object, so an override named
     // `toString` or `constructor` would otherwise find Object.prototype's
@@ -274,9 +319,16 @@ export class HostRunner implements HostExecutor {
   private readonly apiKey: string;
   private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
   private readonly mcpjamProject?: string;
+  private readonly mcpjamAuth?: McpjamAuthContext;
+  private readonly createLanguageModel?: HostRunnerBaseConfig["createLanguageModel"];
+  private readonly policyBlockedToolCallIds?: HostRunnerBaseConfig["policyBlockedToolCallIds"];
   private readonly baseUrls?: CreateModelOptions["baseUrls"];
   private systemPrompt: string;
   private temperature: number | undefined;
+  private readonly reasoningEffort: ModelReasoningEffort | undefined;
+  private readonly reasoningProviderOptions:
+    | ReasoningEffortProviderOptions
+    | undefined;
   private readonly maxSteps: number;
   private readonly customProviders?:
     | Map<string, CustomProvider>
@@ -395,13 +447,40 @@ export class HostRunner implements HostExecutor {
     this.apiKey = config.apiKey;
     this.mcpjamLeaseScope = config.mcpjamLeaseScope;
     this.mcpjamProject = config.mcpjamProject;
+    this.mcpjamAuth = config.mcpjamAuth;
+    this.createLanguageModel = config.createLanguageModel;
+    this.policyBlockedToolCallIds = config.policyBlockedToolCallIds;
     this.baseUrls = config.baseUrls;
+    // An EMPTY system prompt is treated as "none given", the same as the
+    // snapshot branch below already does. Anthropic refuses an empty system
+    // block outright ("system: text content blocks must be non-empty"), so a
+    // caller that passes `""` — a saved client with no system prompt, read by
+    // `runWithClient` — would otherwise 400 on every generation.
     this.systemPrompt =
-      config.systemPrompt ??
+      (config.systemPrompt ? config.systemPrompt : undefined) ??
       (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
         ? this.hostSnapshot.systemPrompt
         : "You are a helpful assistant.");
     this.temperature = config.temperature ?? this.hostSnapshot?.temperature;
+    const canonicalModel = resolvedModel.replace(/^mcpjam\//, "");
+    this.reasoningEffort = config.reasoningEffort;
+    if (this.reasoningEffort !== undefined) {
+      // Refuse now, not on the first prompt: a model with no effort control
+      // would otherwise run at its default and be reported as the requested
+      // configuration.
+      const providerKey = canonicalModel.split("/")[0] ?? "";
+      const options = reasoningEffortProviderOptions({
+        providerKey,
+        modelId: canonicalModel,
+        effort: this.reasoningEffort,
+      });
+      if (!options) {
+        throw new Error(
+          `HostRunner: reasoning effort "${this.reasoningEffort}" is not supported for "${resolvedModel}" (capability_missing). The model has no effort control this runner can apply; remove the effort or pick a model that supports it.`
+        );
+      }
+      this.reasoningProviderOptions = options;
+    }
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
     this.mcpClientManager = config.mcpClientManager;
@@ -628,6 +707,9 @@ export class HostRunner implements HostExecutor {
               }
 
               const result = await originalExecute(args, options);
+              // A policy refusal never reached the server, so there is no
+              // widget it could have rendered.
+              if (isToolPolicyBlockResult(result)) return result;
               await this.captureMcpAppSnapshot({
                 toolName: name,
                 tool,
@@ -766,7 +848,9 @@ export class HostRunner implements HostExecutor {
       toolDefinitions,
       systemPrompt: this.systemPrompt,
       model: this.model,
-      temperature: this.temperature,
+      // What was SENT: an effort replaces the temperature.
+      temperature:
+        this.reasoningEffort === undefined ? this.temperature : undefined,
       ...(unavailable.length ? { unavailable } : {}),
     };
     let totalMcpMs = 0;
@@ -776,7 +860,9 @@ export class HostRunner implements HostExecutor {
     const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
     const completedToolCalls: PromptToolCall[] = [];
     const pendingStepToolCalls: StartedToolCall[] = [];
-    let lastCompletedStepMessages: ModelMessage[] = [];
+    // Every completed step's response messages, in order. AI SDK 7's
+    // `step.response.messages` holds only that step's, so they accumulate here.
+    const completedStepMessages: ModelMessage[] = [];
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
     let lastCompletedStepText = "";
@@ -817,10 +903,14 @@ export class HostRunner implements HostExecutor {
         apiKey: this.apiKey,
         mcpjamLeaseScope: this.mcpjamLeaseScope,
         mcpjamProject: this.mcpjamProject,
+        ...(this.mcpjamAuth ? { mcpjamAuth: this.mcpjamAuth } : {}),
         baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
-      const model = createModelFromString(this.model, modelOptions);
+      const model = (this.createLanguageModel ?? createModelFromString)(
+        this.model,
+        modelOptions
+      );
       const stopAfterToolCallNames = this.normalizeStopAfterToolCall(
         options?.stopAfterToolCall
       );
@@ -852,10 +942,16 @@ export class HostRunner implements HostExecutor {
         // Only include temperature if explicitly set (some models like reasoning
         // models don't support it), and never for a model that 400s on the field
         // being present at all — the key has to be absent, not undefined.
+        // An effort replaces the temperature: providers that take an effort
+        // reject (or ignore) a sampling temperature beside it.
         ...(this.temperature !== undefined &&
+          this.reasoningEffort === undefined &&
           !modelRejectsTemperature(this.model) && {
             temperature: this.temperature,
           }),
+        ...(this.reasoningProviderOptions !== undefined && {
+          providerOptions: this.reasoningProviderOptions,
+        }),
         ...(options?.abortSignal !== undefined && {
           abortSignal: options.abortSignal,
         }),
@@ -884,19 +980,18 @@ export class HostRunner implements HostExecutor {
             return;
           }
 
-          const stepMessages = stepResult.response?.messages
-            ? [...stepResult.response.messages]
-            : [];
-
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          lastCompletedStepMessages = stepMessages;
+          completedStepMessages.push(...(stepResult.response?.messages ?? []));
+          const blocked = this.policyBlockedToolCallIds?.();
           completedToolCalls.push(
-            ...stepResult.toolCalls.map((toolCall) => ({
-              toolName: toolCall.toolName,
-              arguments: (toolCall.input ?? {}) as Record<string, unknown>,
-            }))
+            ...stepResult.toolCalls
+              .filter((toolCall) => !blocked?.has(toolCall.toolCallId))
+              .map((toolCall) => ({
+                toolName: toolCall.toolName,
+                arguments: (toolCall.input ?? {}) as Record<string, unknown>,
+              }))
           );
           pendingStepToolCalls.length = 0;
         },
@@ -905,7 +1000,11 @@ export class HostRunner implements HostExecutor {
       const result = await generateText(generateTextOptions);
 
       const e2eMs = Date.now() - startTime;
-      const toolCalls = extractToolCalls(result);
+      const blockedToolCallIds = this.policyBlockedToolCallIds?.();
+      const toolCalls = extractToolCalls(
+        result,
+        blockedToolCallIds ? { excludeToolCallIds: blockedToolCallIds } : {}
+      );
       const usage = result.totalUsage ?? result.usage;
       const inputTokens = usage?.inputTokens ?? 0;
       const outputTokens = usage?.outputTokens ?? 0;
@@ -913,10 +1012,10 @@ export class HostRunner implements HostExecutor {
       const messages: ModelMessage[] = [];
       messages.push(userMessage);
 
-      // Add response messages (assistant + tool messages from agentic loop)
-      if (result.response?.messages) {
-        messages.push(...result.response.messages);
-      }
+      // Add response messages (assistant + tool messages from agentic loop).
+      // `responseMessages` spans every step; in AI SDK 7 `response` is only
+      // the final step's.
+      messages.push(...(result.responseMessages ?? []));
 
       const recordedSpans = spanIntegration.getSpans();
       patchEvalSpansMessageRangesFromSteps(
@@ -963,15 +1062,18 @@ export class HostRunner implements HostExecutor {
       spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },
-        ...lastCompletedStepMessages,
+        ...completedStepMessages,
         ...this.buildPartialAssistantMessages(pendingStepToolCalls),
       ];
+      const blockedAtFailure = this.policyBlockedToolCallIds?.();
       const partialToolCalls = [
         ...completedToolCalls,
-        ...pendingStepToolCalls.map((toolCall) => ({
-          toolName: toolCall.toolName,
-          arguments: toolCall.arguments,
-        })),
+        ...pendingStepToolCalls
+          .filter((toolCall) => !blockedAtFailure?.has(toolCall.toolCallId))
+          .map((toolCall) => ({
+            toolName: toolCall.toolName,
+            arguments: toolCall.arguments,
+          })),
       ];
       const totalTokens = partialInputTokens + partialOutputTokens;
 
@@ -1066,12 +1168,21 @@ export class HostRunner implements HostExecutor {
       apiKey: options.apiKey ?? this.apiKey,
       mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
       mcpjamProject: options.mcpjamProject ?? this.mcpjamProject,
+      mcpjamAuth: options.mcpjamAuth ?? this.mcpjamAuth,
+      createLanguageModel:
+        options.createLanguageModel ?? this.createLanguageModel,
+      policyBlockedToolCallIds:
+        options.policyBlockedToolCallIds ?? this.policyBlockedToolCallIds,
       baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
       systemPrompt: nextSystemPrompt,
       temperature: nextTemperature,
+      // Carried with the model. A clone that changes the MODEL revalidates it
+      // against the new model (and refuses), rather than dropping it.
+      reasoningEffort:
+        options.reasoningEffort ?? (carryParent ? this.reasoningEffort : undefined),
       injectOpenAiCompat: nextInjectOpenAiCompat,
       toolDescriptionOverrides:
         options.toolDescriptionOverrides ?? this.toolDescriptionOverrides,
@@ -1133,6 +1244,14 @@ export class HostRunner implements HostExecutor {
    */
   getTemperature(): number | undefined {
     return this.temperature;
+  }
+
+  /**
+   * The reasoning effort this runner applies (undefined means none). While one
+   * is set the temperature is not sent.
+   */
+  getReasoningEffort(): ModelReasoningEffort | undefined {
+    return this.reasoningEffort;
   }
 
   /**

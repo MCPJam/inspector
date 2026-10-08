@@ -53,7 +53,7 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
   >("../../utils/mcp-app-browser-harness");
   return {
     ...actual,
-    McpAppBrowserHarness: vi.fn().mockImplementation(() => {
+    McpAppBrowserHarness: vi.fn().mockImplementation(function () {
       const instance = {
         getMountedWidgetId: vi.fn().mockReturnValue(null),
         dismissWidget: vi.fn().mockResolvedValue(undefined),

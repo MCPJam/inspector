@@ -68,6 +68,9 @@ vi.mock("../../../utils/harness/registry.js", () => ({
     // model-facing MCP tools itself instead of consuming `tools`.
     mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
+    // The dispatch reads the evidence-table verdict; this mock's model is one
+    // the (mocked) runtime runs.
+    modelSupport: vi.fn(() => ({ status: "supported", reason: "test" })),
     createHarness: vi.fn(() => ({ harnessId: "codex" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),

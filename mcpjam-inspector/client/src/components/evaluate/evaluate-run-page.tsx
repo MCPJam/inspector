@@ -17,11 +17,13 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import type { RunVerdictHeroView } from "./run-verdict-hero-model";
 import { launchRuns } from "./run-results-matrix-model";
-import { runClientIdentity } from "../evals/helpers";
+import { cancellableRunIds, runClientIdentity } from "../evals/helpers";
 import {
   ArrowUpRight,
   Copy,
+  Loader2,
   Play,
+  Square,
   Download,
   MoreHorizontal,
   TrendingUp,
@@ -35,7 +37,11 @@ import {
   DropdownMenuItem,
 } from "@mcpjam/design-system/dropdown-menu";
 import { formatRunId } from "../evals/helpers";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
@@ -104,6 +110,8 @@ export function EvaluateRunPage({
   defaultCompareRunId,
   onCompareWithRun,
   onOpenComparison,
+  onCancelRun,
+  cancellingRunId = null,
   onExport,
   iterations,
   launchReview,
@@ -112,11 +120,18 @@ export function EvaluateRunPage({
 }: {
   run: EvalSuiteRun;
   hostNamesById: Map<string, string | null>;
-  otherRuns: readonly EvalSuiteRun[];
-  relatedRuns?: readonly EvalSuiteRun[];
+  otherRuns: readonly EvalSuiteRunListItem[];
+  relatedRuns?: readonly EvalSuiteRunListItem[];
   defaultCompareRunId: string | null;
   onCompareWithRun: (baseRunId: string) => void;
   onOpenComparison?: () => void;
+  /**
+   * Stops the run. Takes every cancellable id of the launch, not just
+   * `run._id`: this page is titled by the launch and shows all its pairings, so
+   * cancelling one would leave its siblings running under a cancelled heading.
+   */
+  onCancelRun?: (runIds: readonly string[]) => void;
+  cancellingRunId?: string | null;
   onExport?: () => void;
   /** Used to recover the model when the list projection omitted effectiveModelId. */
   iterations?: readonly EvalIteration[];
@@ -130,8 +145,17 @@ export function EvaluateRunPage({
   useEffect(() => {
     setReviewing(false);
   }, [run._id]);
-  const targets = launchRuns(run, relatedRuns ?? otherRuns);
+  const targets = launchRuns<EvalSuiteRunListItem>(
+    run,
+    relatedRuns ?? otherRuns,
+  );
   const scope = runScopeSummary(targets, iterations);
+  const cancellableIds = cancellableRunIds(targets);
+  const canCancel = Boolean(onCancelRun) && cancellableIds.length > 0;
+  // Spinner only. The DISABLED state is the wider `cancellingRunId !== null`:
+  // the shared handler refuses a second cancel while one is in flight, so a
+  // sibling row left enabled is a button that quietly does nothing.
+  const isCancelling = cancellableIds.some((id) => id === cancellingRunId);
   const [headerActions, setHeaderActions] =
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
@@ -183,19 +207,6 @@ export function EvaluateRunPage({
                   Export report
                 </Button>
               )}
-              {launchReview && (
-                <Button
-                  type="button"
-                  variant="default"
-                  size="sm"
-                  disabled={Boolean(launchReview.disabledReason)}
-                  title={launchReview.disabledReason ?? undefined}
-                  onClick={() => setReviewing(true)}
-                >
-                  <Play className="size-3.5" aria-hidden />
-                  Run again
-                </Button>
-              )}
               <Button
                 type="button"
                 variant="ghost"
@@ -212,6 +223,40 @@ export function EvaluateRunPage({
                 <TrendingUp className="size-3.5" aria-hidden />
                 Compare runs
               </Button>
+              {canCancel ? (
+                // The primary slot, not a button beside it: while the run is
+                // going, stopping it is the only action of that weight — and
+                // "Run again" next to a run that is still going reads as an
+                // invitation to launch a second one.
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="evaluate-run-page-cancel"
+                  aria-label="Cancel run"
+                  disabled={cancellingRunId !== null}
+                  onClick={() => onCancelRun!(cancellableIds)}
+                >
+                  {isCancelling ? (
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <Square className="size-3.5" aria-hidden />
+                  )}
+                  Cancel run
+                </Button>
+              ) : launchReview ? (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  disabled={Boolean(launchReview.disabledReason)}
+                  title={launchReview.disabledReason ?? undefined}
+                  onClick={() => setReviewing(true)}
+                >
+                  <Play className="size-3.5" aria-hidden />
+                  Run again
+                </Button>
+              ) : null}
               {(headerActions?.onImprove ||
                 headerActions?.onOpenFailingTrace) && (
                 <DropdownMenu>
@@ -278,7 +323,7 @@ export function EvaluateRunPage({
 }
 
 function pairingClientName(
-  target: EvalSuiteRun,
+  target: EvalSuiteRunListItem,
   hostNamesById: Map<string, string | null>,
 ): string {
   return runClientIdentity(target, hostNamesById).name;
@@ -298,7 +343,7 @@ export type PairingDecision = {
  * the same result the page already settled for that pairing — and never
  * invents Hold/Ship while the run is still in flight.
  */
-export function pairingDecision(run: EvalSuiteRun): PairingDecision {
+export function pairingDecision(run: EvalSuiteRunListItem): PairingDecision {
   const outcome = IN_FLIGHT_STATUSES.has(run.status)
     ? run.status
     : run.result && run.result !== "pending"
@@ -338,7 +383,7 @@ type PairingMark = {
 };
 
 function pairingModel(
-  target: EvalSuiteRun,
+  target: EvalSuiteRunListItem,
   iterations: readonly EvalIteration[] | undefined,
 ): string {
   const recovered = modelsFromRun(
@@ -351,7 +396,7 @@ function pairingModel(
 }
 
 function groupPairingsByDecision(
-  targets: readonly EvalSuiteRun[],
+  targets: readonly EvalSuiteRunListItem[],
   hostNamesById: Map<string, string | null>,
   iterations?: readonly EvalIteration[],
 ): Array<{
@@ -401,7 +446,7 @@ function plural(count: number, noun: string): string {
  * arrived, because a run that has recorded nothing has not recorded zero.
  */
 export function runScopeSummary(
-  targets: readonly EvalSuiteRun[],
+  targets: readonly EvalSuiteRunListItem[],
   iterations: readonly EvalIteration[] | undefined,
 ): string | null {
   const targetIds = new Set(targets.map((target) => target._id));
@@ -428,7 +473,7 @@ function RunPairingDecisions({
   hostNamesById,
   iterations,
 }: {
-  targets: readonly EvalSuiteRun[];
+  targets: readonly EvalSuiteRunListItem[];
   hostNamesById: Map<string, string | null>;
   iterations?: readonly EvalIteration[];
 }) {

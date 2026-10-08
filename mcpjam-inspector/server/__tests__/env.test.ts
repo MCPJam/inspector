@@ -9,6 +9,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  getConfiguredConvexOrigins,
   getInspectorClientRuntimeConfig,
   getInspectorClientRuntimeConfigScript,
   getInspectorEnvFileNames,
@@ -116,6 +117,47 @@ describe("env loader", () => {
     }
   });
 
+  it("reads NO file under a launcher-resolved runtime, even for values the profile left out", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "mcpjam-env-resolved-"));
+    const originalCwd = process.cwd();
+    const serverDir = join(tempRoot, "server", "dist");
+    mkdirSync(serverDir, { recursive: true });
+    writeFileSync(
+      join(tempRoot, ".env.local"),
+      [
+        "CONVEX_HTTP_URL=https://other-target.convex.site",
+        "MCPJAM_ENV_PRIORITY_TEST=from-another-file",
+      ].join("\n"),
+    );
+    const originalMarker = process.env.MCPJAM_RESOLVED_RUNTIME;
+    process.env.MCPJAM_RESOLVED_RUNTIME = "1";
+    process.env.CONVEX_HTTP_URL = "https://selected-profile.convex.site";
+    delete process.env.MCPJAM_ENV_PRIORITY_TEST;
+    try {
+      process.chdir(tempRoot);
+      const loadedEnv = loadInspectorEnv(serverDir);
+      expect(loadedEnv.loadedFiles).toEqual([]);
+      expect(process.env.CONVEX_HTTP_URL).toBe(
+        "https://selected-profile.convex.site",
+      );
+      expect(process.env.MCPJAM_ENV_PRIORITY_TEST).toBeUndefined();
+
+      delete process.env.CONVEX_HTTP_URL;
+      expect(() => loadInspectorEnv(serverDir)).toThrow(
+        /launcher-resolved configuration does not set it/,
+      );
+      expect(process.env.CONVEX_HTTP_URL).toBeUndefined();
+    } finally {
+      process.chdir(originalCwd);
+      if (originalMarker === undefined) {
+        delete process.env.MCPJAM_RESOLVED_RUNTIME;
+      } else {
+        process.env.MCPJAM_RESOLVED_RUNTIME = originalMarker;
+      }
+      rmSync(tempRoot, { force: true, recursive: true });
+    }
+  });
+
   it("derives hosted client runtime config from CONVEX_HTTP_URL", () => {
     process.env.CONVEX_HTTP_URL = "https://demo-deployment.convex.site";
 
@@ -178,5 +220,40 @@ describe("env loader", () => {
 
   it("emits no script when nothing is configured", () => {
     expect(getInspectorClientRuntimeConfigScript()).toBeNull();
+  });
+});
+
+describe("getConfiguredConvexOrigins", () => {
+  const ORIGINAL_CONVEX_URL = process.env.CONVEX_URL;
+  beforeEach(() => {
+    delete process.env.CONVEX_URL;
+  });
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_URL === undefined) delete process.env.CONVEX_URL;
+    else process.env.CONVEX_URL = ORIGINAL_CONVEX_URL;
+  });
+
+  it("uses custom domains exactly as configured", () => {
+    process.env.CONVEX_URL = "https://rt.example.com/";
+    process.env.VITE_CONVEX_URL = "https://rt.example.com";
+    process.env.CONVEX_HTTP_URL = "https://rt-http.example.com";
+
+    expect(getConfiguredConvexOrigins()).toEqual({
+      api: ["https://rt.example.com"],
+      http: ["https://rt-http.example.com"],
+    });
+  });
+
+  it("derives the other half of a default-host deployment", () => {
+    process.env.CONVEX_HTTP_URL = "https://happy-otter-123.convex.site";
+
+    expect(getConfiguredConvexOrigins()).toEqual({
+      api: ["https://happy-otter-123.convex.cloud"],
+      http: ["https://happy-otter-123.convex.site"],
+    });
+  });
+
+  it("is empty when no backend is configured", () => {
+    expect(getConfiguredConvexOrigins()).toEqual({ api: [], http: [] });
   });
 });

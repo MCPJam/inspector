@@ -24,6 +24,7 @@ import {
 // drifting between call sites is how a timeout starts being reported as
 // whatever status the headers happened to carry.
 import { isAbortError } from "@/shared/abort-errors";
+import { backendFailureText } from "../utils/backend-failure-text.js";
 
 const BASE_PATH = "/internal/v1/server-connections";
 
@@ -123,7 +124,12 @@ async function callBackend<T>(
       // backend adds reaches the route without a second edit here.
       const { ok: _ok, error: _error, code: _code, ...details } = payload ?? {};
       throw new ServerConnectionBackendError(
-        payload?.error ?? `Backend call failed (${response.status})`,
+        backendFailureText({
+          source: "server-connections",
+          status: response.status,
+          detail: payload?.error,
+          fallback: `Backend call failed (${response.status})`,
+        }),
         response.status,
         payload?.code,
         Object.keys(details).length > 0 ? details : undefined

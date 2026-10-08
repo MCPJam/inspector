@@ -14,8 +14,11 @@
  */
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import type { ModelSelection } from "@mcpjam/sdk";
 import { isAbortError } from "@/shared/abort-errors";
 import { logger } from "./logger.js";
+import { backendFailureText } from "./backend-failure-text.js";
+import { getFetchErrorCause } from "./fetch-error-cause.js";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
 
 export type HostRuntimeConfig = RuntimeExecutionFields & {
@@ -34,6 +37,10 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
   // that predates the endpoint returns omitted → emulated path. Omitted by the
   // backend for guest actors.
   harness?: Harness;
+  // The host's saved model selection, with its saved `settings` (reasoning
+  // effort). Optional so a backend that does not project it yet reads as "no
+  // saved effort". Only meaningful for the model it names.
+  modelSelection?: ModelSelection;
   // Personal-computer attachment (resource only; capabilities ride
   // builtInToolIds). `toolset` is a tolerated legacy key. Omitted for guests.
   computer?: {
@@ -51,7 +58,17 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
 
 export type HostRuntimeConfigResult =
   | { ok: true; config: HostRuntimeConfig }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /**
+       * undici's code for a transport failure (`ENOTFOUND`, `ECONNRESET`, …).
+       * The only record of WHY the call failed: desktop server logs never
+       * leave the user's machine.
+       */
+      networkCode?: string;
+    };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -212,10 +229,12 @@ export async function fetchHostRuntimeConfig(args: {
       response = await fetch(url, requestInit);
     } catch (retryError) {
       logger.error("[host-runtime-config] network error after retry", retryError);
+      const networkCode = getFetchErrorCause(retryError);
       return {
         ok: false,
         status: 502,
         error: "Failed to reach host runtime-config endpoint",
+        ...(networkCode ? { networkCode } : {}),
       };
     }
   }
@@ -235,10 +254,12 @@ export async function fetchHostRuntimeConfig(args: {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Host runtime-config failed (${response.status})`,
+      error: backendFailureText({
+        source: "host-runtime-config",
+        status: response.ok ? 502 : response.status,
+        detail: payload?.error,
+        fallback: `Host runtime-config failed (${response.status})`,
+      }),
     };
   }
 

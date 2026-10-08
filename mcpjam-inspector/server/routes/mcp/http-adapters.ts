@@ -1,3 +1,4 @@
+import { listBaseServers } from "../../utils/mcp-connections.js";
 import { Hono } from "hono";
 import "../../types/hono";
 import {
@@ -6,9 +7,9 @@ import {
   BridgeMode,
 } from "../../services/mcp-http-bridge";
 import {
-  getServerIdForTunnelDomain,
-  isActiveTunnelDomain,
-} from "../../services/tunnel-registry";
+  isCrossServerToolCall,
+  pinMcpManagerToServer,
+} from "../../services/mcp-tool-call-target.js";
 import { recordTunnelRequest } from "../../services/tunnel-request-log";
 import { getRequestLogger } from "../../utils/request-logger";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
@@ -22,6 +23,8 @@ import {
 
 // In-memory SSE session store per serverId:sessionId
 type Session = {
+  callerKind: "local" | "tunnel";
+  serverId: string;
   send: (event: string, data: string) => void;
   close: () => void;
   scopeStepUpCorrelationId?: string;
@@ -107,38 +110,12 @@ function ensureNotificationRelay(clientManager: any, serverId: string): void {
 
 // ── Tunnel awareness ────────────────────────────────────────────────────────
 
-function forwardedTunnelHost(c: any): string | undefined {
-  const xfHost = c.req.header("x-forwarded-host");
-  if (!xfHost || !isActiveTunnelDomain(xfHost)) {
-    return undefined;
-  }
-  return String(xfHost).toLowerCase().split(":")[0];
-}
-
-/**
- * Per-server isolation guard (defense-in-depth behind the relay edge
- * Policy path rule): a request that arrived through a per-server tunnel may
- * only address the serverId that tunnel was provisioned for.
- */
-function tunnelScopeViolation(c: any, requestedServerId: string): boolean {
-  const tunnelHost = forwardedTunnelHost(c);
-  if (!tunnelHost) {
-    return false;
-  }
-  const boundServerId = getServerIdForTunnelDomain(tunnelHost);
-  if (!boundServerId) {
-    // Legacy shared tunnel — no per-server binding to enforce.
-    return false;
-  }
-  return boundServerId.toLowerCase() !== requestedServerId.toLowerCase();
-}
-
 function logTunnelRequest(
   c: any,
   serverId: string,
   rpcMethod: string | undefined
 ): void {
-  if (!forwardedTunnelHost(c)) {
+  if (c.get("bridgeCaller") !== "tunnel") {
     return;
   }
   recordTunnelRequest(serverId, { method: rpcMethod, path: c.req.path });
@@ -152,8 +129,7 @@ function logTunnelRequest(
 }
 
 function normalizeServerId(clientManager: any, serverId: string): string {
-  const availableServers = clientManager
-    .listServers()
+  const availableServers = listBaseServers(clientManager)
     // `getClient()` is legacy-only. Use `getManagedClient()` so stateless
     // preview connections show up in the available-servers list.
     .filter((id: string) => Boolean(clientManager.getManagedClient(id)));
@@ -206,9 +182,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     const serverId = c.req.param("serverId");
     const method = c.req.method;
 
-    // A per-server tunnel must not reach any other server's adapter.
-    if (tunnelScopeViolation(c, serverId)) {
-      return c.json({ error: "Not found" }, 404);
+    const callerKind = c.get("bridgeCaller");
+    if (callerKind !== "local" && callerKind !== "tunnel") {
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     // Harness proxy token: when supplied it MUST be valid + scoped to this
@@ -255,15 +231,25 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       // Propagate the tunnel bearer secret into the advertised endpoint:
       // SSE clients POST to this URL verbatim, and without ?k= the relay
       // edge policy would 401 their messages.
-      const incomingSecret = incomingUrl.searchParams.get("k");
-      if (incomingSecret && !/[?&]k=/.test(endpointBase)) {
+      const credentialName = callerKind === "tunnel" ? "k" : "_token";
+      const incomingSecret =
+        callerKind === "tunnel" || !c.req.header("X-MCP-Session-Auth")
+          ? incomingUrl.searchParams.get(credentialName)
+          : null;
+      if (
+        incomingSecret &&
+        !new URL(endpointBase).searchParams.has(credentialName)
+      ) {
         const sep = endpointBase.includes("?") ? "&" : "?";
-        endpointBase = `${endpointBase}${sep}k=${encodeURIComponent(
+        endpointBase = `${endpointBase}${sep}${credentialName}=${encodeURIComponent(
           incomingSecret
         )}`;
       }
       const sessionId = crypto.randomUUID();
-      const relayServerId = normalizeServerId(c.mcpClientManager, serverId);
+      const relayServerId =
+        callerKind === "tunnel"
+          ? serverId
+          : normalizeServerId(c.mcpClientManager, serverId);
       let relayPush: ((payload: string) => void) | undefined;
       let timer: any;
       const stream = new ReadableStream({
@@ -281,11 +267,13 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           // Register session
           const scopeStepUpCorrelationId = readScopeStepUpCorrelationId(c);
           sessions.set(`${serverId}:${sessionId}`, {
+            callerKind,
+            serverId,
             send,
             close,
             ...(scopeStepUpCorrelationId ? { scopeStepUpCorrelationId } : {}),
           });
-          latestSessionByServer.set(serverId, sessionId);
+          latestSessionByServer.set(`${callerKind}:${serverId}`, sessionId);
 
           // Relay real server notifications down this SSE stream.
           relayPush = (payload: string) => send("message", payload);
@@ -324,8 +312,10 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           } catch {}
           sessions.delete(`${serverId}:${sessionId}`);
           // If this session was the latest for this server, clear pointer
-          if (latestSessionByServer.get(serverId) === sessionId) {
-            latestSessionByServer.delete(serverId);
+          if (
+            latestSessionByServer.get(`${callerKind}:${serverId}`) === sessionId
+          ) {
+            latestSessionByServer.delete(`${callerKind}:${serverId}`);
           }
           // Drop this stream from the notification relay set
           if (relayPush) {
@@ -360,10 +350,26 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     }
     const body = validation.body;
 
-    const clientManager = c.mcpClientManager;
+    if (
+      callerKind === "tunnel" &&
+      isCrossServerToolCall(c.mcpClientManager, serverId, body)
+    ) {
+      return c.json({
+        jsonrpc: "2.0",
+        id: body.id ?? null,
+        error: { code: -32602, message: "Tool is outside this server's scope" },
+      });
+    }
+    const clientManager =
+      callerKind === "tunnel"
+        ? pinMcpManagerToServer(c.mcpClientManager, serverId)
+        : c.mcpClientManager;
 
     // Normalize serverId - try to find a case-insensitive match if exact match fails
-    const normalizedServerId = normalizeServerId(clientManager, serverId);
+    const normalizedServerId =
+      callerKind === "tunnel"
+        ? serverId
+        : normalizeServerId(clientManager, serverId);
 
     logTunnelRequest(c, normalizedServerId, body?.method);
 
@@ -395,9 +401,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   router.post("/:serverId/messages", async (c) => {
     const serverId = c.req.param("serverId");
 
-    // A per-server tunnel must not reach any other server's adapter.
-    if (tunnelScopeViolation(c, serverId)) {
-      return c.json({ error: "Not found" }, 404);
+    const callerKind = c.get("bridgeCaller");
+    if (callerKind !== "local" && callerKind !== "tunnel") {
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
     const proxyTok = readProxyToken(c);
@@ -410,12 +416,12 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     const key = `${serverId}:${sessionId}`;
     let sess = sessions.get(key);
     if (!sess) {
-      const fallbackId = latestSessionByServer.get(serverId);
+      const fallbackId = latestSessionByServer.get(`${callerKind}:${serverId}`);
       if (fallbackId) {
         sess = sessions.get(`${serverId}:${fallbackId}`);
       }
     }
-    if (!sess) {
+    if (!sess || sess.callerKind !== callerKind || sess.serverId !== serverId) {
       return c.json({ error: "Invalid session" }, 400);
     }
     let body: any;
@@ -434,28 +440,45 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     const params = body?.params ?? {};
 
     // Normalize serverId - try to find a case-insensitive match if exact match fails
-    const normalizedServerId = normalizeServerId(c.mcpClientManager, serverId);
+    const normalizedServerId =
+      callerKind === "tunnel"
+        ? serverId
+        : normalizeServerId(c.mcpClientManager, serverId);
 
     logTunnelRequest(c, normalizedServerId, method);
 
     // Reuse the JSON-RPC handling via bridge
     try {
-      const responseMessage = await handleJsonRpc(
-        normalizedServerId,
-        { id, method, params },
-        c.mcpClientManager,
-        mode,
-        {
-          onToolCallError: (context) =>
-            publishHarnessScopeStepUpFromToolError(
-              readScopeStepUpCorrelationId(c) ?? sess.scopeStepUpCorrelationId,
-              context,
-            ),
-          // Doubly invisible on this transport: the JSON-RPC error goes out
-          // over the SSE session while HTTP answers 202 Accepted.
-          failureReporter: createRequestStreamFailureReporter(c, "mcp-bridge"),
-        },
-      );
+      const outsideScope =
+        callerKind === "tunnel" &&
+        isCrossServerToolCall(c.mcpClientManager, serverId, { method, params });
+      const responseMessage = outsideScope
+        ? {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: "Tool is outside this server's scope",
+            },
+          }
+        : await handleJsonRpc(
+            normalizedServerId,
+            { id, method, params },
+            callerKind === "tunnel"
+              ? pinMcpManagerToServer(c.mcpClientManager, serverId)
+              : c.mcpClientManager,
+            mode,
+            {
+              onToolCallError: (context) =>
+                publishHarnessScopeStepUpFromToolError(
+                  readScopeStepUpCorrelationId(c) ?? sess.scopeStepUpCorrelationId,
+                  context,
+                ),
+              // Doubly invisible on this transport: the JSON-RPC error goes out
+              // over the SSE session while HTTP answers 202 Accepted.
+              failureReporter: createRequestStreamFailureReporter(c, "mcp-bridge"),
+            },
+          );
       // If there is a JSON-RPC response, emit it over SSE to the client
       if (responseMessage) {
         try {

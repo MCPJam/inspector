@@ -48,7 +48,12 @@ export {
 export { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
 export {
   useWidgetSurfaceStore,
+  useWidgetSurfaceStoreApi,
+  useWidgetSurfaceAdmissionError,
+  createWidgetSurfaceStore,
+  type WidgetSurfaceStore,
   getRenderableSurfaceEntries,
+  type WidgetSurfaceAdmissionError,
   type WidgetSurfaceId,
   type WidgetSurfaceRecord,
 } from "./widget-surface-store";
@@ -94,6 +99,8 @@ export type {
   WidgetMount,
   CspMountId,
   CspApplicationIntent,
+  CspClientContext,
+  CspSubtypePolicy,
   CspViolation,
   UiLogEvent,
   // chrome injection
@@ -101,3 +108,15 @@ export type {
   WidgetCheckoutProps,
   WidgetHostComponents,
 } from "./widget-host";
+
+export {
+  WidgetWorkspaceProvider,
+  WidgetWorkspaceSurfaceHost,
+  useWidgetWorkspace,
+  useOptionalWidgetWorkspace,
+  closeWorkspaceSurface,
+} from "./widget-workspace";
+export {
+  WidgetFullscreenPlacementContext,
+  type WidgetFullscreenPlacement,
+} from "./widget-fullscreen-placement";

@@ -55,11 +55,13 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
   lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
 }));
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 vi.mock("../../../services/readiness/worker.js", () => ({
   executeHostedReadinessRun: executeHostedReadinessRunMock,
@@ -181,7 +183,7 @@ describe("v1 directory readiness", () => {
     it("rejects a request with no bearer token", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { token: null },
       );
       expect(res.status).toBe(401);
@@ -195,7 +197,7 @@ describe("v1 directory readiness", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { token: "guest-jwt" },
       );
       expect(res.status).toBe(401);
@@ -207,7 +209,7 @@ describe("v1 directory readiness", () => {
     it("answers 202 and detaches execution against the SAVED server's URL", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: {} },
       );
       expect(res.status).toBe(202);
@@ -222,7 +224,7 @@ describe("v1 directory readiness", () => {
       expect(convexMutationMock).toHaveBeenCalledWith(
         "claudeReadinessRuns:requestReadinessRun",
         expect.objectContaining({
-          projectId: "p1",
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           serverId: "s1",
           serverUrl: "https://connector.example.com/mcp",
           readinessKind: "claude",
@@ -242,7 +244,7 @@ describe("v1 directory readiness", () => {
       // should find out.
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: { serverUrl: "https://evil.example.com/mcp" } },
       );
       expect(res.status).toBe(400);
@@ -252,7 +254,7 @@ describe("v1 directory readiness", () => {
     it("refuses a body that tries to name a payer", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: { organizationId: "org_other" } },
       );
       expect(res.status).toBe(400);
@@ -262,7 +264,7 @@ describe("v1 directory readiness", () => {
     it("forwards the paid opt-in verbatim when the caller asks for it", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: { includeLlmObservations: true } },
       );
       expect(res.status).toBe(202);
@@ -282,7 +284,7 @@ describe("v1 directory readiness", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: {} },
       );
       expect(res.status).toBe(400);
@@ -300,7 +302,7 @@ describe("v1 directory readiness", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: { idempotencyKey: "k1" } },
       );
       expect(res.status).toBe(202);
@@ -320,7 +322,7 @@ describe("v1 directory readiness", () => {
       convexQueryMock.mockResolvedValue({ id: "run_1", status: "completed" });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: { idempotencyKey: "k1" } },
       );
       expect(res.status).toBe(202);
@@ -340,7 +342,7 @@ describe("v1 directory readiness", () => {
       convexQueryMock.mockRejectedValue(new Error("convex is down"));
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/claude",
         { body: { idempotencyKey: "k1" } },
       );
       expect(res.status).toBe(202);
@@ -354,7 +356,7 @@ describe("v1 directory readiness", () => {
     it("requires a declared submission mode", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/openai",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/openai",
         { body: {} },
       );
       expect(res.status).toBe(400);
@@ -366,7 +368,7 @@ describe("v1 directory readiness", () => {
       async (submissionMode) => {
         const res = await request(
           "POST",
-          "/api/v1/projects/p1/servers/s1/readiness-runs/openai",
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/openai",
           { body: { submissionMode } },
         );
         expect(res.status).toBe(400);
@@ -377,7 +379,7 @@ describe("v1 directory readiness", () => {
     it("forwards the declared shape to the run and the worker", async () => {
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/servers/s1/readiness-runs/openai",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/readiness-runs/openai",
         { body: { submissionMode: "mcp-imported-skills" } },
       );
       expect(res.status).toBe(202);
@@ -398,7 +400,7 @@ describe("v1 directory readiness", () => {
   describe("reading a run", () => {
     it("renders the DTO with the observation axis beside the verdict", async () => {
       convexQueryMock.mockResolvedValue(RUN_ROW);
-      const res = await request("GET", "/api/v1/projects/p1/readiness-runs/run_1");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs/run_1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, any>;
       // Completed AND billing-blocked at once: the two axes are independent,
@@ -412,7 +414,7 @@ describe("v1 directory readiness", () => {
 
     it("404s a run the caller cannot see", async () => {
       convexQueryMock.mockResolvedValue(null);
-      const res = await request("GET", "/api/v1/projects/p1/readiness-runs/run_x");
+      const res = await request("GET", "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs/run_x");
       expect(res.status).toBe(404);
     });
 
@@ -420,19 +422,19 @@ describe("v1 directory readiness", () => {
       convexQueryMock.mockResolvedValue([RUN_ROW]);
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/readiness-runs?readinessKind=openai&limit=5",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs?readinessKind=openai&limit=5",
       );
       expect(res.status).toBe(200);
       expect(convexQueryMock).toHaveBeenCalledWith(
         "claudeReadinessRuns:listReadinessRuns",
-        { projectId: "p1", readinessKind: "openai", limit: 5 },
+        { projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", readinessKind: "openai", limit: 5 },
       );
     });
 
     it("refuses a publisher outside the two vocabulary words", async () => {
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/readiness-runs?readinessKind=gemini",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs?readinessKind=gemini",
       );
       expect(res.status).toBe(400);
       expect(convexQueryMock).not.toHaveBeenCalled();
@@ -444,7 +446,7 @@ describe("v1 directory readiness", () => {
       convexMutationMock.mockResolvedValue(null);
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/readiness-runs/run_1/cancel",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs/run_1/cancel",
       );
       expect(res.status).toBe(200);
       expect(convexMutationMock).toHaveBeenCalledWith(
@@ -462,7 +464,7 @@ describe("v1 directory readiness", () => {
       convexQueryMock.mockResolvedValue(null);
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/readiness-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs/run_1/report",
       );
       expect(res.status).toBe(404);
     });
@@ -482,7 +484,7 @@ describe("v1 directory readiness", () => {
 
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/readiness-runs/run_1/report",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/readiness-runs/run_1/report",
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ findings: [] });

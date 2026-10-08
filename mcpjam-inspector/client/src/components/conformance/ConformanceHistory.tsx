@@ -31,6 +31,7 @@ import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
 import { buildConformanceSharePath } from "@/lib/app-navigation";
+import { fetchArtifact, useArtifactQuery } from "@/lib/artifact-urls";
 
 export type ConformanceRunListItem = {
   _id: string;
@@ -267,6 +268,9 @@ export function ConformanceHistory({
         <EmptyState
           icon={FlaskConical}
           title="No conformance runs yet"
+          // The default viewport height would fill the page and push the
+          // suites below (in a shrink-0 container) out of view.
+          className="h-auto"
           description={
             scope === "current"
               ? "Run the suites below to record history for this server, or switch to All runs."
@@ -354,10 +358,8 @@ export function ConformanceRunDetailPage({
   projectId?: string | null;
 }) {
   const navigate = useAppNavigate();
-  const detail = useQuery(
-    "conformanceRuns:getRun" as any,
-    runId ? ({ runId } as any) : "skip"
-  ) as
+  // Each report carries a short-lived artifact link.
+  const detail = useArtifactQuery<
     | (ConformanceRunListItem & {
         reports: Array<{
           suiteKind: string;
@@ -374,8 +376,8 @@ export function ConformanceRunDetailPage({
         previous: ConformanceRunListItem | null;
         shareVersion: number;
       })
-    | undefined
-    | null;
+    | null
+  >("conformanceRuns:getRun", runId ? { runId } : "skip");
   const setSharing = useAction("conformanceRuns:setSharing" as any);
   const unifiedShare = useFeatureFlagEnabled("unified-share-conformance") === true;
   const [openSuites, setOpenSuites] = useState<Record<string, boolean>>({});
@@ -600,8 +602,13 @@ function SuiteReportBody({
       return;
     }
     let cancelled = false;
-    fetch(reportUrl)
-      .then((response) => response.json())
+    fetchArtifact(reportUrl)
+      .then((response) => {
+        // An expired link answers with an error body; never show that as the
+        // report. `fetchArtifact` renews the link and retries once.
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
       .then((json) => {
         if (!cancelled) setBody(json);
       })

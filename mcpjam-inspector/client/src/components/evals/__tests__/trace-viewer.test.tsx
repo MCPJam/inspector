@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Profiler, type ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   act,
@@ -10,6 +10,20 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
+import { adaptTraceToUiMessages } from "../trace-viewer-adapter";
+import {
+  ScenarioHostStyleProvider,
+  useScenarioHostStyle,
+} from "@/contexts/scenario-client-style-context";
+import {
+  ActiveHostCapsResolverProvider,
+  useActiveHostCapsResolver,
+} from "@/contexts/active-host-client-capabilities-context";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => ({ catalog: null }),
+}));
 
 vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
@@ -114,6 +128,8 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
     return (
       <div
         data-testid="message-view"
+        data-host-style={useScenarioHostStyle() ?? "ambient-null"}
+        data-host-caps={JSON.stringify(useActiveHostCapsResolver()())}
         data-message-id={message.id}
         data-role={message.role}
       >
@@ -398,7 +414,7 @@ class ControlledResizeObserver {
             borderBoxSize: [],
             contentBoxSize: [],
             devicePixelContentBoxSize: [],
-          }) as ResizeObserverEntry,
+          } as ResizeObserverEntry),
       ),
       this as unknown as ResizeObserver,
     );
@@ -533,6 +549,17 @@ describe("TraceViewer", () => {
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
 
+  it.each(["inset", "none"] as const)("keeps static replay unclipped with frame %s", (frame) => {
+    render(<TraceViewer trace={simpleTextTrace} forcedViewMode="chat"
+      hostSnapshot={{ hostStyle: "claude" }} frame={frame} hideToolbar />);
+    const chat = screen.getByTestId("trace-viewer-chat");
+    expect(chat.classList.contains("border")).toBe(frame === "inset");
+    expect(chat).not.toHaveClass("overflow-hidden");
+    expect(chat.closest(".scenario-host-shell")).not.toHaveClass("overflow-hidden");
+    expect(screen.queryByTestId("stick-to-bottom")).not.toBeInTheDocument();
+    expect(chat.querySelector(".max-w-4xl")).toHaveClass("px-4", "pt-8", "pb-8");
+  });
+
   it("uses the shared stick-to-bottom shell in chat mode", () => {
     render(
       <TraceViewer trace={simpleTextTrace} forcedViewMode="chat" fillContent />,
@@ -551,7 +578,7 @@ describe("TraceViewer", () => {
     );
 
     fireEvent.click(
-      within(screen.getByTestId("stick-to-bottom")).getByRole("button"),
+      within(screen.getByTestId("stick-to-bottom")).getByRole("button", { name: "Scroll to bottom" }),
     );
 
     expect(mockScrollToBottom).toHaveBeenCalledWith({
@@ -614,8 +641,12 @@ describe("TraceViewer", () => {
         isLoading
       />,
     );
-    expect(screen.getByTestId("trace-viewer-tools-compare")).toBeInTheDocument();
-    expect(screen.getByTestId("trace-viewer-actual-loading")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("trace-viewer-tools-compare"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("trace-viewer-actual-loading"),
+    ).toBeInTheDocument();
   });
 
   it("toggles between diff and JSON layouts in tools compare view", async () => {
@@ -632,14 +663,18 @@ describe("TraceViewer", () => {
     expect(
       screen.getByTestId("trace-viewer-tools-layout-diff"),
     ).toBeInTheDocument();
-    expect(screen.getByText("All 1 expected tool call matched.")).toBeInTheDocument();
+    expect(
+      screen.getByText("All 1 expected tool call matched."),
+    ).toBeInTheDocument();
     expect(screen.queryAllByTestId("json-editor")).toHaveLength(0);
 
     fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-json"));
     expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
 
     fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-diff"));
-    expect(screen.getByText("All 1 expected tool call matched.")).toBeInTheDocument();
+    expect(
+      screen.getByText("All 1 expected tool call matched."),
+    ).toBeInTheDocument();
     expect(screen.queryAllByTestId("json-editor")).toHaveLength(0);
   });
 
@@ -813,6 +848,208 @@ describe("TraceViewer", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
     expect(screen.getAllByText(/User: "Need docs"/).length).toBeGreaterThan(0);
+  });
+
+  describe("while a reply streams", () => {
+    // The live envelope is rebuilt on every streamed token: new span objects
+    // with the same ids, the open step and LLM spans ending a little later.
+    const traceAtToken = (token: number) => ({
+      ...waterfallTrace,
+      spans: waterfallTrace.spans.map((span) =>
+        span.id === "p1-step0" || span.id === "p1-llm0"
+          ? { ...span, endMs: span.endMs + token * 3 }
+          : { ...span },
+      ),
+    });
+
+    // Resetting the timeline from an effect committed a second render after
+    // every token. A fast stream stacks enough of those to trip React's
+    // "Maximum update depth exceeded" (same failure as INSPECTOR-CLIENT-2HP).
+    // Those effects run in every view, so this counts in the default chat
+    // view. That keeps out the Radix ScrollArea around the timeline, which
+    // re-attaches its ref and commits once more on every render but settles
+    // in one step.
+    it("commits once per token, with no follow-up state update", async () => {
+      let commits = 0;
+      const viewer = (token: number) => (
+        <Profiler
+          id="trace-viewer"
+          onRender={() => {
+            commits += 1;
+          }}
+        >
+          <TraceViewer trace={traceAtToken(token)} />
+        </Profiler>
+      );
+      const { rerender } = render(viewer(0));
+      await screen.findByTestId("trace-viewer-chat");
+
+      const committedBeforeStreaming = commits;
+      for (let token = 1; token <= 50; token++) {
+        rerender(viewer(token));
+      }
+      expect(commits - committedBeforeStreaming).toBe(50);
+    });
+
+    it("keeps the chosen filter when the trace is rebuilt with the same spans", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<TraceViewer trace={traceAtToken(0)} />);
+      openTraceTab();
+      await user.click(
+        await screen.findByRole("button", { name: /Filter timeline rows/ }),
+      );
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "Tool" }),
+      );
+      expect(
+        screen.getByRole("button", { name: "Filter timeline rows: Tool" }),
+      ).toBeInTheDocument();
+
+      rerender(<TraceViewer trace={traceAtToken(0)} />);
+      expect(
+        screen.getByRole("button", { name: "Filter timeline rows: Tool" }),
+      ).toBeInTheDocument();
+    });
+
+    it("resets the filter when the spans change", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<TraceViewer trace={traceAtToken(0)} />);
+      openTraceTab();
+      await user.click(
+        await screen.findByRole("button", { name: /Filter timeline rows/ }),
+      );
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "Tool" }),
+      );
+
+      rerender(<TraceViewer trace={traceAtToken(1)} />);
+      expect(
+        screen.getByRole("button", { name: "Filter timeline rows: All" }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps a closed row closed while bars grow and rows are added", async () => {
+      const { rerender } = render(<TraceViewer trace={traceAtToken(0)} />);
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      for (let token = 1; token <= 3; token++) {
+        rerender(<TraceViewer trace={traceAtToken(token)} />);
+      }
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+
+      // A new prompt still opens by default.
+      const withNextPrompt = traceAtToken(4);
+      rerender(
+        <TraceViewer
+          trace={{
+            ...withNextPrompt,
+            messages: [
+              ...withNextPrompt.messages,
+              { role: "user", content: "Thanks" },
+            ],
+            spans: [
+              ...withNextPrompt.spans,
+              {
+                id: "p2-step0",
+                name: "Step 1",
+                category: "step" as const,
+                startMs: 300,
+                endMs: 360,
+                promptIndex: 2,
+                stepIndex: 0,
+                status: "ok" as const,
+              },
+              {
+                id: "p2-llm0",
+                parentId: "p2-step0",
+                name: "LLM",
+                category: "llm" as const,
+                startMs: 300,
+                endMs: 360,
+                promptIndex: 2,
+                stepIndex: 0,
+                status: "ok" as const,
+              },
+            ],
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Collapse Prompt 3" }),
+      ).toBeInTheDocument();
+    });
+
+    // Live preview spans carry `pv-` ids until the recorded spans replace them.
+    const previewTrace = (idPrefix: string) => ({
+      ...waterfallTrace,
+      spans: waterfallTrace.spans.map((span) => ({
+        ...span,
+        id: `${idPrefix}${span.id}`,
+        parentId: span.parentId ? `${idPrefix}${span.parentId}` : undefined,
+      })),
+    });
+
+    it("keeps a closed row closed when the preview rows give way to the recorded ones", async () => {
+      const { rerender } = render(
+        <TraceViewer trace={previewTrace("pv-")} />,
+      );
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      rerender(<TraceViewer trace={waterfallTrace} />);
+      expect(
+        screen.getByRole("button", { name: "Expand Prompt 1" }),
+      ).toBeInTheDocument();
+    });
+
+    it("opens every row again when another preview replaces this one", async () => {
+      const { rerender } = render(
+        <TraceViewer trace={previewTrace("pv-a-")} />,
+      );
+      openTraceTab();
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+      );
+      rerender(<TraceViewer trace={previewTrace("pv-b-")} />);
+      expect(
+        screen.getByRole("button", { name: "Collapse Prompt 1" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("opens every timeline row again for a different trace", async () => {
+    const { rerender } = render(<TraceViewer trace={waterfallTrace} />);
+    openTraceTab();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+    );
+    rerender(
+      <TraceViewer
+        trace={{
+          ...waterfallTrace,
+          spans: waterfallTrace.spans.map((span) => ({
+            ...span,
+            id: `other-${span.id}`,
+            parentId: span.parentId ? `other-${span.parentId}` : undefined,
+          })),
+        }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Collapse Prompt 1" }),
+    ).toBeInTheDocument();
   });
 
   it("does not render a reset button in the recorded trace toolbar", async () => {
@@ -1141,11 +1378,25 @@ describe("TraceViewer", () => {
       await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
     ).toBeInTheDocument();
     openChatTab();
-    expect(screen.getByText("No messages in trace")).toBeInTheDocument();
+    expect(screen.getByText("No transcript recorded")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("json-editor").textContent ?? "").toContain(
       "spans",
     );
+  });
+
+  it("passes prepared session messages and review policy through the real Thread", () => {
+    const adaptedTrace = adaptTraceToUiMessages({ trace: widgetSnapshotTrace, toolResultDisplay: "attached-to-tool" });
+    const footer = vi.fn(() => null);
+    render(<TraceViewer trace={widgetSnapshotTrace} adaptedTrace={adaptedTrace}
+      hostSnapshot={{ hostStyle: "claude" }} forcedViewMode="chat" hideToolbar
+      frame="none" interactive={false} widgetPolicy="placeholder"
+      reasoningDisplayMode="collapsible" renderAssistantTurnFooter={footer} />);
+    expect(mockMessageView).toHaveBeenCalledWith(expect.objectContaining({
+      message: adaptedTrace.messages.find(message => message.role === "assistant"),
+      widgetPolicy: "placeholder", interactive: false,
+      reasoningDisplayMode: "collapsible", renderAssistantTurnFooter: footer,
+    }));
   });
 
   // --- Widget snapshot replay ---
@@ -1439,9 +1690,7 @@ describe("TraceViewer", () => {
   });
 
   it("keeps trace chat read-only when only onFullscreenChange is provided", () => {
-    render(
-      <TraceViewer trace={toolTrace} onFullscreenChange={vi.fn()} />,
-    );
+    render(<TraceViewer trace={toolTrace} onFullscreenChange={vi.fn()} />);
     openChatTab();
 
     const lastCall = mockMessageView.mock.calls[0][0];
@@ -1506,3 +1755,102 @@ describe("TraceViewer — Replay tab gate", () => {
     expect(screen.getByTestId("browser-replay-video")).toBeTruthy();
   });
 });
+
+describe("TraceViewer host shell", () => {
+  it("inherits ambient style and edited capabilities when no snapshot is supplied", () => {
+    const caps = { extensions: { "test/outer": {} } };
+    const { container } = render(
+      <ScenarioHostStyleProvider value="claude">
+        <ActiveHostCapsResolverProvider value={() => caps}>
+          <TraceViewer trace={simpleTextTrace} />
+        </ActiveHostCapsResolverProvider>
+      </ScenarioHostStyleProvider>,
+    );
+    expect(container.querySelector(".scenario-host-shell")).toBeNull();
+    for (const message of screen.getAllByTestId("message-view")) {
+      expect(message).toHaveAttribute("data-host-style", "claude");
+      expect(message).toHaveAttribute("data-host-caps", JSON.stringify(caps));
+    }
+  });
+
+  it("shadows ambient presentation with the snapshot without replacing explicit saved capabilities", () => {
+    const caps = { extensions: { "test/saved": {} } };
+    const { container } = render(
+      <ScenarioHostStyleProvider value="claude">
+        <TraceViewer
+          trace={simpleTextTrace}
+          hostSnapshot={{ hostStyle: "chatgpt" }}
+          activeHost={{ clientCapabilities: caps } as HostConfigDtoV2}
+        />
+      </ScenarioHostStyleProvider>,
+    );
+    const shell = container.querySelector(".scenario-host-shell")!;
+    expect(shell).toHaveAttribute("data-host-style", "chatgpt");
+    expect(shell).not.toHaveClass("overflow-hidden");
+    for (const message of screen.getAllByTestId("message-view")) {
+      expect(message).toHaveAttribute("data-host-style", "chatgpt");
+      expect(message).toHaveAttribute("data-host-caps", JSON.stringify(caps));
+    }
+  });
+
+  it("keeps the explicit shell in the flex chain for a bounded live pane", () => {
+    const { container } = render(
+      <TraceViewer
+        trace={simpleTextTrace}
+        hostSnapshot={{ hostStyle: "claude" }}
+        fillContent
+      />,
+    );
+    expect(container.querySelector(".scenario-host-shell")).toHaveClass(
+      "flex",
+      "min-h-0",
+      "flex-1",
+      "flex-col",
+    );
+  });
+});
+
+it.each(["array", "json"])(
+  "derives Raw from persisted %s requests and expands inherited fields",
+  async (format) => {
+    const entries = [
+      {
+        turnId: "turn",
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {
+          system: "historic system",
+          tools: {
+            search: { name: "search", inputSchema: { $ref: "#/schema" } },
+          },
+          messages: [],
+        },
+      },
+      {
+        turnId: "turn",
+        promptIndex: 0,
+        stepIndex: 1,
+        payload: { messages: [{ role: "user", content: "step two" }] },
+        inherits: { system: true, tools: true },
+      },
+    ];
+    const trace = {
+      messages: [],
+      ...(format === "json"
+        ? { requestPayloadsJson: JSON.stringify(entries) }
+        : { requestPayloads: entries }),
+    };
+    render(<TraceViewer trace={trace as any} forcedViewMode="raw" />);
+    await waitFor(() =>
+      expect(mockJsonEditor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          value: {
+            system: "historic system",
+            tools: entries[0].payload.tools,
+            messages: entries[1].payload.messages,
+          },
+        }),
+      ),
+    );
+  },
+);

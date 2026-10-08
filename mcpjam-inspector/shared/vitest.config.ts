@@ -23,6 +23,12 @@ const sdkAssertionsEntry = path.resolve(
 // `@mcpjam/sdk` entry below: a string `find` matches by prefix, so without it
 // `@mcpjam/sdk/contract` would rewrite to `<sdk index>.ts/contract`.
 const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
+// `shared/harness-model-support.ts` keys its pinned versions by the SDK's
+// harness ids. Same prefix-match reason as the contract entry above.
+const sdkHostConfigInternalEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-config/internal.ts",
+);
 
 export default defineConfig({
   define: {
@@ -60,6 +66,17 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: "@mcpjam/sdk/host-compat",
+        replacement: path.resolve(rootDir, "../sdk/src/host-compat/index.ts"),
+      },
+      {
+        find: "@mcpjam/sdk/widget-runtime",
+        replacement: path.resolve(
+          rootDir,
+          "../sdk/src/widget-runtime/index.ts",
+        ),
+      },
+      {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
       },
@@ -69,7 +86,17 @@ export default defineConfig({
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
       { find: "@mcpjam/sdk/assertions", replacement: sdkAssertionsEntry },
       { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
+      {
+        find: "@mcpjam/sdk/host-config/internal",
+        replacement: sdkHostConfigInternalEntry,
+      },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
+      // A history test reads the client's transcript conversion, which imports
+      // chat-ui; its published entry points at dist, so resolve from source.
+      {
+        find: /^@mcpjam\/chat-ui$/,
+        replacement: path.resolve(rootDir, "../chat-ui/src/index.ts"),
+      },
       { find: "@/shared", replacement: path.resolve(__dirname, "./") },
     ],
   },

@@ -33,6 +33,12 @@
 export function classifyTurnFailure(
   message: string,
 ): "rate_limited" | "failed" {
+  // A step that came back empty was answered in full, so nothing throttled
+  // it. Its explanation talks about the output-token "budget", and the prose
+  // match below read that as an org spend cap: a Gemini model that spent its
+  // tokens reasoning was reported to the user as "Google AI rate-limited this
+  // key". The code is structural, so it decides before any wording does.
+  if (/\bprovider_empty_response\b/.test(message)) return "failed";
   return /rate.?limit|too many requests|(?:^|[^\w.:])429\b|\bspend\b|spend_budget_reached|\bquota\b|\bbudget\b|\bcap\b/i.test(
     message,
   )

@@ -152,6 +152,21 @@ describe("MetricStrip sparkline hover", () => {
     expect(screen.getByText("1/2 passed")).toBeInTheDocument();
   });
 
+  it("draws line trends in the same primary as Suite Health bars", () => {
+    render(<MetricStrip data={sampleData} testId="metric-strip" />);
+    expect(
+      screen.getByTestId("metric-sparkline-tokens").querySelector("svg"),
+    ).toHaveClass("text-primary");
+    expect(
+      screen.getByTestId("metric-sparkline-tokens").querySelector("polygon"),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByTestId("metric-sparkline-latency")
+        .querySelector("polyline.stroke-primary"),
+    ).toBeTruthy();
+  });
+
   it("renders card sparkline tooltips below the chart", () => {
     render(<MetricStrip data={sampleData} testId="metric-strip" />);
     const sparkline = screen.getByTestId("metric-sparkline-latency");

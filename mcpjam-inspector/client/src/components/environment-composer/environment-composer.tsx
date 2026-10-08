@@ -43,7 +43,8 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
+import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
@@ -51,7 +52,12 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
 
 export type ComposerSlot =
-  "environments" | "clients" | "servers" | "skills" | "computers" | "models";
+  | "environments"
+  | "clients"
+  | "servers"
+  | "skills"
+  | "computers"
+  | "models";
 
 /** Default strip: no models slot. Evals opt in via `slots`. */
 export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
@@ -63,6 +69,11 @@ export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
 ];
 
 export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
+  ...DEFAULT_COMPOSER_SLOTS,
+  "models",
+];
+
+export const SWARM_COMPOSER_SLOTS: ComposerSlot[] = [
   ...DEFAULT_COMPOSER_SLOTS,
   "models",
 ];
@@ -96,8 +107,8 @@ export function EnvironmentComposer({
   disabled?: boolean;
   /**
    * Which pills to offer. `models` stays out of the default and is opted
-   * into by evals. Swarm / User Testing omit it so a model-bearing env
-   * cannot silently shed its override.
+   * into by Evals and Swarms. Surfaces without it lock model-bearing stacks
+   * so they cannot silently shed their override.
    */
   slots?: readonly ComposerSlot[];
   /**
@@ -151,7 +162,9 @@ export function EnvironmentComposer({
   className?: string;
 }) {
   const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
+  // The "computers" slot is the sandbox-image pill: it rides the
+  // `sandbox-images-enabled` flag, not the personal-computer one.
+  const sandboxImagesEnabled = useSandboxImagesEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const { isAuthenticated } = useConvexAuth();
   const modelsOptedIn = slots.includes("models");
@@ -163,6 +176,16 @@ export function EnvironmentComposer({
     isAuthenticated,
     projectId: modelsEnabled ? projectId : null,
   });
+  // The harness each selected client runs, so the models slot can disable the
+  // models none of them can run (with the reason) instead of offering a pair
+  // the run admission will refuse.
+  const harnessByHost = useHostHarnessTargets(
+    modelsEnabled ? value.stack.hostIds : [],
+  );
+  const harnessTargets = useMemo(
+    () => value.stack.hostIds.map((hostId) => harnessByHost[hostId]),
+    [harnessByHost, value.stack.hostIds],
+  );
   // `slots` NARROWS, never widens: a slot must be both asked for by the caller
   // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
   // every existing surface renders exactly the strip it rendered before.
@@ -171,7 +194,8 @@ export function EnvironmentComposer({
   const showClientsSlot = slots.includes("clients");
   const showServersSlot = slots.includes("servers");
   const showSkillsSlot = slots.includes("skills") && skillsEnabled;
-  const showComputersSlot = slots.includes("computers") && computersEnabled;
+  const showComputersSlot =
+    slots.includes("computers") && sandboxImagesEnabled;
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
@@ -202,15 +226,15 @@ export function EnvironmentComposer({
     if (!modelsEnabled && environmentsCarryModels(selected)) return "models";
     return environmentsExceedOneStack(selected, {
       skillsEnabled,
-      computersEnabled,
+      computersEnabled: sandboxImagesEnabled,
       modelsEnabled,
     })
       ? "collapse"
       : null;
   }, [
-    computersEnabled,
     liveEnvironments,
     modelsEnabled,
+    sandboxImagesEnabled,
     skillsEnabled,
     value.customized,
     value.environmentIds,
@@ -319,7 +343,7 @@ export function EnvironmentComposer({
             selected.length > 0
               ? composerStateFromEnvironments(selected, {
                   skillsEnabled,
-                  computersEnabled,
+                  computersEnabled: sandboxImagesEnabled,
                   modelsEnabled,
                 }).stack
               : value.stack,
@@ -338,7 +362,7 @@ export function EnvironmentComposer({
             remaining.length > 0
               ? composerStateFromEnvironments(remaining, {
                   skillsEnabled,
-                  computersEnabled,
+                  computersEnabled: sandboxImagesEnabled,
                   modelsEnabled,
                 }).stack
               : emptyEnvironmentStack(),
@@ -369,11 +393,11 @@ export function EnvironmentComposer({
       });
     },
     [
-      computersEnabled,
       liveEnvironments,
       maxTargets,
       modelsEnabled,
       onChange,
+      sandboxImagesEnabled,
       skillsEnabled,
       value.environmentIds,
       value.customized,
@@ -394,7 +418,7 @@ export function EnvironmentComposer({
                 projectId={projectId}
                 value={
                   maxTargets === 1
-                    ? (value.environmentIds[0] ?? null)
+                    ? value.environmentIds[0] ?? null
                     : value.environmentIds
                 }
                 onChange={(next: string | string[] | null) =>
@@ -411,8 +435,8 @@ export function EnvironmentComposer({
                       ? "Select a client"
                       : "No clients · pick some"
                     : maxTargets === 1
-                      ? "Select an environment"
-                      : "No environments · pick some"
+                    ? "Select an environment"
+                    : "No environments · pick some"
                 }
                 headingLabel={
                   environmentsVocabulary === "client"
@@ -469,6 +493,7 @@ export function EnvironmentComposer({
             inModal={inModal}
             budget={budget}
             clientDefaultLabel={inheritedClientDefaultLabel}
+            harnessTargets={harnessTargets}
           />
         ) : null}
         {showServersSlot
@@ -529,8 +554,8 @@ export function EnvironmentComposer({
           {stackEditBlock === "pins"
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
             : stackEditBlock === "models"
-              ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
-              : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
+            ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
+            : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
       {modelsEnabled &&
@@ -541,7 +566,8 @@ export function EnvironmentComposer({
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}
         >
-          {targetCount} of {maxTargets} targets
+          {targetCount}
+          {Number.isFinite(maxTargets) ? ` of ${maxTargets}` : ""} targets
         </p>
       ) : null}
     </div>

@@ -40,9 +40,16 @@ const MOVED_CLOUD_GROUPS = [
   "environments",
   "capabilities",
   "personas",
+  // Both spellings, for the same reason `hosts` sits beside `clients`.
+  "goals",
   "journeys",
-  "scenarios",
   "swarms",
+  // The merged group, and both spellings it still answers to. `scenarios` and
+  // `user-testing` sit here beside `studies` for the same reason `hosts` sits
+  // beside `clients`: the alias is live, so documentation naming it is not
+  // stale documentation.
+  "studies",
+  "scenarios",
   "user-testing",
   "images",
   "tunnel",
@@ -54,7 +61,6 @@ const EXTRA_DOC_PATHS = [
   "cli/README.md",
   "docs/reference/openapi.json",
   "docs/inspector/evals.mdx",
-  "docs/inspector/computer.mdx",
   "docs/inspector/projects.mdx",
   "docs/getting-started.mdx",
   "docs/contributing/evals-architecture.mdx",

@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { getClientIp } from "../client-ip.js";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import {
+  getClientIp,
+  getAttestedClientIp,
+  getSpendClientIp,
+  ipRateLimitKey,
+} from "../client-ip.js";
 import { canonicalizeClientIp } from "../guest-spend-ip.js";
 
 function makeCtx(headers: Record<string, string>) {
@@ -114,4 +119,76 @@ describe("canonicalizeClientIp", () => {
   it("trims whitespace before canonicalization", () => {
     expect(canonicalizeClientIp("  1.2.3.4  ")).toBe("1.2.3.4");
   });
+});
+
+
+describe("ipRateLimitKey", () => {
+  it("keys IPv4 as it is", () => {
+    expect(ipRateLimitKey("203.0.113.10")).toBe("203.0.113.10");
+    expect(ipRateLimitKey("  203.0.113.10 ")).toBe("203.0.113.10");
+  });
+
+  it("keys IPv6 by its /64 prefix", () => {
+    const key = ipRateLimitKey("2001:db8:1:2::1");
+    expect(key).toBe("2001:db8:1:2::/64");
+    for (const address of [
+      "2001:db8:1:2:ffff:ffff:ffff:ffff",
+      "2001:0DB8:0001:0002:0000:0000:0000:0009",
+      "2001:db8:1:2:a:b:c:d",
+      "2001:db8:1:2:a:b:1.2.3.4",
+      "2001:db8:1:2::1%eth0",
+    ]) {
+      expect(ipRateLimitKey(address)).toBe(key);
+    }
+  });
+
+  it("gives different /64s different keys", () => {
+    expect(ipRateLimitKey("2001:db8:1:3::1")).toBe("2001:db8:1:3::/64");
+    expect(ipRateLimitKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(ipRateLimitKey("::1")).toBe("0:0:0:0::/64");
+    expect(ipRateLimitKey("::")).toBe("0:0:0:0::/64");
+    expect(ipRateLimitKey("fe80::1")).toBe("fe80:0:0:0::/64");
+  });
+
+  it("keys an IPv4-mapped IPv6 address as its IPv4 address", () => {
+    expect(ipRateLimitKey("::ffff:203.0.113.10")).toBe("203.0.113.10");
+    expect(ipRateLimitKey("::FFFF:203.0.113.10")).toBe("203.0.113.10");
+    expect(ipRateLimitKey("::ffff:cb00:710a")).toBe("203.0.113.10");
+    expect(ipRateLimitKey("0:0:0:0:0:ffff:cb00:710a")).toBe("203.0.113.10");
+  });
+
+  it("does not treat other embedded-IPv4 forms as IPv4", () => {
+    expect(ipRateLimitKey("64:ff9b::203.0.113.10")).toBe("64:ff9b:0:0::/64");
+    expect(ipRateLimitKey("::ffff:0:203.0.113.10")).toBe("0:0:0:0::/64");
+  });
+
+  it("returns anything that is not an IP address as it is", () => {
+    expect(ipRateLimitKey("not-an-ip")).toBe("not-an-ip");
+    expect(ipRateLimitKey("[::1]")).toBe("[::1]");
+    expect(ipRateLimitKey("")).toBe("");
+  });
+});
+
+describe("hosted IP attestation", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("pools forged Cloudflare headers, accepts the edge secret, and supports rotation", () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("MCPJAM_EDGE_SECRET", "current-secret");
+    vi.stubEnv("MCPJAM_EDGE_SECRET_PREVIOUS", "previous-secret");
+    expect(getAttestedClientIp(makeCtx({ "cf-connecting-ip": "1.2.3.4" }))).toBeNull();
+    for (const secret of ["current-secret", "previous-secret"]) {
+      expect(getAttestedClientIp(makeCtx({ "cf-connecting-ip": "1.2.3.4", "x-mcpjam-edge-secret": secret }))).toBe("1.2.3.4");
+    }
+    expect(getAttestedClientIp(makeCtx({ "cf-connecting-ip": "1.2.3.4", "x-mcpjam-edge-secret": "forged" }))).toBeNull();
+  });
+});
+
+
+it("keeps legacy spend IP behavior until attestation is configured", () => {
+  vi.stubEnv("MCPJAM_EDGE_SECRET", "");
+  vi.stubEnv("MCPJAM_EDGE_SECRET_PREVIOUS", "");
+  expect(getSpendClientIp(makeCtx({ "x-real-ip": "203.0.113.10" }))).toBe("203.0.113.10");
+  vi.stubEnv("MCPJAM_EDGE_SECRET", "configured");
+  expect(getSpendClientIp(makeCtx({ "x-real-ip": "203.0.113.10" }))).toBeNull();
+  vi.unstubAllEnvs();
 });

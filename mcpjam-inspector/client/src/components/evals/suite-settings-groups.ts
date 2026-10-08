@@ -64,11 +64,11 @@ export const NESTED_SETTING_KEYS: Record<
   // only the condition that never needed a baseline.
   qualityGate: ["qualityGateNoGatingScoreErrors"],
   passOrFail: [
-    "assertionBacktest",
     "matchOptions",
     "judge",
     "judgeRubric",
     "judgeGroundedness",
+    "judgeRubricChecks",
     "checks",
   ],
   environments: ["computerEnvironment"],

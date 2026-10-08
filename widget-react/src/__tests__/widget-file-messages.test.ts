@@ -102,7 +102,7 @@ describe("widget-file-messages", () => {
     expect(sendResponse).toHaveBeenCalledWith({
       type: "openai:uploadFile:response",
       callId: 6,
-      error: "File upload is not supported in hosted mode",
+      error: "File upload isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
     });
   });
 

@@ -402,7 +402,7 @@ export async function respondToTaskElicitation(
   action: "accept" | "decline" | "cancel",
   content?: Record<string, unknown>,
 ): Promise<{ ok: boolean }> {
-  ensureLocalMode("Elicitation is not supported in hosted mode");
+  ensureLocalMode("Responding to server input requests isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.");
 
   const res = await authFetch("/api/mcp/elicitation/respond", {
     method: "POST",

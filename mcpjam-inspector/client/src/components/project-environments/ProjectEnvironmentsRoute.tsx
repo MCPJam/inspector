@@ -612,19 +612,19 @@ function EnvironmentDetail({
       ? "Checking references…"
       : (() => {
           const suitePart = `${suiteCount} suite${suiteCount === 1 ? "" : "s"}`;
-          const journeyPart = `${journeyCount} journey${
+          const goalPart = `${journeyCount} goal${
             journeyCount === 1 ? "" : "s"
           }`;
-          // The published scenario is called out separately: unlike suites and
-          // journeys (which fail at their next launch), a scenario share link
+          // The published study is called out separately: unlike suites and
+          // goals (which fail at their next launch), a study share link
           // is live for outsiders and starts failing the moment this archives.
-          const scenarioPart =
+          const studyPart =
             scenarioCount > 0
               ? " Its published tester link stops working immediately."
               : "";
           return suiteCount + journeyCount > 0
-            ? `${suitePart} and ${journeyPart} reference it (count may be incomplete).${scenarioPart}`
-            : `No referencing suites or journeys found (count may be incomplete).${scenarioPart}`;
+            ? `${suitePart} and ${goalPart} reference it (count may be incomplete).${studyPart}`
+            : `No referencing suites or goals found (count may be incomplete).${studyPart}`;
         })();
 
   const onArchive = async () => {
@@ -693,7 +693,7 @@ function EnvironmentDetail({
                   className="flex items-center gap-1.5 text-xs text-primary hover:underline"
                 >
                   <Users className="size-3.5" />
-                  Published as the User Testing scenario “
+                  Published as the User Testing study “
                   {publishedScenario.name}”
                 </Link>
               ) : null}

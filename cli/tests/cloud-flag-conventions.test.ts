@@ -24,12 +24,13 @@ const CLOUD_COMMAND_FILES = [
   "environments.ts",
   "clients.ts",
   "eval.ts",
+  "feedback.ts",
+  "goals.ts",
   "images.ts",
-  "journeys.ts",
   "organizations.ts",
   "projects.ts",
   "registry.ts",
-  "scenarios.ts",
+  "studies.ts",
   "secrets.ts",
   "sessions.ts",
   "sessions-browser.ts",
@@ -37,7 +38,6 @@ const CLOUD_COMMAND_FILES = [
   "swarms.ts",
   "trace-destinations.ts",
   "tunnel.ts",
-  "user-testing.ts",
 ] as const;
 
 test("Cloud command sources follow flag and placeholder conventions", () => {
@@ -71,6 +71,11 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
         "subscriptions.ts",
         "tasks.ts",
         "telemetry.ts",
+        // Local, like `server.ts`: `mcpjam test` runs a suite file against
+        // servers on THIS machine and never uploads. Its `--api-key`,
+        // `--api-url` and `--project` exist only to reach MCPJam-hosted
+        // inference, resolved lazily when a case needs it.
+        "test.ts",
         "tools.ts",
         "xaa.ts",
       ].includes(file)

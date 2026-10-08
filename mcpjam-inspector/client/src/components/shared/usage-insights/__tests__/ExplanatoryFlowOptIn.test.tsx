@@ -43,9 +43,11 @@ describe("nothing is read until somebody says yes", () => {
     expect(screen.getByText("Analyze these traces")).toBeInTheDocument();
   });
 
-  it("names the cost before asking, and says what it cannot affect", () => {
+  it("says it is included before asking, and says what it cannot affect", () => {
     render(<ExplanatoryFlowOptIn scope={BENCHMARK_SCOPE} />);
-    expect(screen.getByText(/costs credits/)).toBeInTheDocument();
+    // Platform-paid: the panel must not tell the reader this bills them.
+    expect(screen.getByText(/no credits are consumed/)).toBeInTheDocument();
+    expect(screen.queryByText(/costs credits/)).toBeNull();
     expect(
       screen.getByText(/Nothing it produces feeds a score/),
     ).toBeInTheDocument();

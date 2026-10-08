@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "@/components/evals/types";
 import {
   dependentFilterOptions,
   selectedFilter,
@@ -28,6 +29,7 @@ import {
 import { useProjectRunHistory } from "../evals/use-project-run-history";
 import type { EvalSuiteRun, EvalIteration } from "../evals/types";
 import { buildRunResultsMatrix, cellResult } from "./run-results-matrix-model";
+import { targetKeyLabel } from "@/lib/eval-target-key";
 import { RunResultsMatrix } from "./run-results-matrix";
 import {
   buildRunVerdictHero,
@@ -40,11 +42,14 @@ import {
   previousHeroIterations,
   previousLaunchRuns,
 } from "./run-verdict-hero-deltas";
-import { RunVerdictHero } from "./run-verdict-hero";
+import { HeroExplanation, RunVerdictHero } from "./run-verdict-hero";
 import { UnifiedFindingsSection } from "./unified-findings-section";
+import { useRunErrorBreakdownToast } from "./run-error-breakdown";
+import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
 
 type MemberReport = {
+  pending: boolean;
   view: RunVerdictHeroView;
   diagnostics: readonly EvalRunDecisionDiagnostic[];
   chains: ReadonlyMap<string, EvalRunDecisionChain>;
@@ -70,7 +75,7 @@ export function CombinedRunContent({
   onEditCase,
   onEditEvaluator,
   onOpenIteration,
-}: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRun[] }) {
+}: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRunListItem[] }) {
   const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
   const history = useProjectRunHistory(
     projectId ?? "",
@@ -87,14 +92,17 @@ export function CombinedRunContent({
   const record = useCallback((id: string, report: MemberReport) => {
     setReports((previous) => new Map(previous).set(id, report));
   }, []);
-  const hydratedRuns = runs.map(
-    (run) => history.details.get(run._id)?.run ?? run,
-  );
+  const hydratedRuns = runs.flatMap((run) => {
+    const full =
+      history.details.get(run._id)?.run ??
+      (run._id === routeRun._id ? routeRun : undefined);
+    return full ? [full] : [];
+  });
   const iterations = [...history.details.values()].flatMap(
     (detail) => detail.iterations,
   );
   const matrix = buildRunResultsMatrix({
-    run: hydratedRuns[0],
+    run: routeRun,
     runs: hydratedRuns,
     iterations,
     hostNamesById,
@@ -102,7 +110,7 @@ export function CombinedRunContent({
   const targets = matrix.targets.filter(
     (target) =>
       (client === ALL_EVAL_FILTER_VALUES || target.client === client) &&
-      (model === ALL_EVAL_FILTER_VALUES || target.modelId === model),
+      (model === ALL_EVAL_FILTER_VALUES || target.targetKey === model),
   );
   const selectedRunIds = new Set(targets.map((target) => target.run._id));
   const selectedRuns = hydratedRuns.filter((run) =>
@@ -151,6 +159,7 @@ export function CombinedRunContent({
       selectedReports.map((report) => report.view),
       isFiltered,
       previousIterations,
+      isFiltered ? selectedRuns.length : runs.length,
     ),
     pairings,
   };
@@ -160,10 +169,41 @@ export function CombinedRunContent({
     hydratedRuns.flatMap((run) => reports.get(run._id)?.view ?? []),
     false,
     previousIterations,
+    runs.length,
   ).verdict;
   const diagnostics = selectedReports.flatMap((report) => report.diagnostics);
   const chains = new Map(
     selectedReports.flatMap((report) => [...report.chains]),
+  );
+  // The toast always covers the entire launch, independently of table filters.
+  const launchRuns = [
+    ...new Map(
+      matrix.targets.map((target) => [target.run._id, target.run]),
+    ).values(),
+  ];
+  const launchReports = launchRuns.flatMap((run) => reports.get(run._id) ?? []);
+  const errorBreakdown =
+    !history.loading &&
+    history.errorCount === 0 &&
+    launchRuns.length > 0 &&
+    runs.every((run) => history.details.has(run._id)) &&
+    launchRuns.every(
+      (run) =>
+        history.details.has(run._id) && isTerminalEvalRunStatus(run.status),
+    ) &&
+    launchReports.length === launchRuns.length &&
+    launchReports.every((report) => !report.pending)
+      ? buildRunErrorBreakdown({
+          iterations: matrix.targets.flatMap((target) => target.iterations),
+          diagnostics: launchReports.flatMap((report) => report.diagnostics),
+          chains: new Map(
+            launchReports.flatMap((report) => [...report.chains]),
+          ),
+        })
+      : null;
+  useRunErrorBreakdownToast(
+    String(routeRun.runGroupId ?? routeRun._id),
+    errorBreakdown,
   );
   const clearPairingFilters = () => {
     setClient(ALL_EVAL_FILTER_VALUES);
@@ -190,14 +230,20 @@ export function CombinedRunContent({
     },
     model: {
       selected: selectedFilter(model),
-      values: (target) => [target.modelId],
+      values: (target) => [target.targetKey],
     },
   });
+  // Model options are TARGETS; a default target reads as its model id exactly
+  // as before, two efforts of one model read "model · Low" / "model · High".
+  const allTargetKeys = matrix.targets.map((target) => target.targetKey);
+  const formatModelOption = (key: string) =>
+    targetKeyLabel(key, allTargetKeys, (modelId) => modelId);
   const pairingFilterProps = {
     client,
     model,
     clientOptions: options.client,
     modelOptions: options.model,
+    formatModelOption,
     isFiltered,
     onClientChange: setClient,
     onModelChange: setModel,
@@ -277,6 +323,7 @@ export function CombinedRunContent({
                 }
                 key={findingsRun._id}
                 run={findingsRun}
+                view={reports.get(findingsRun._id)?.view}
                 iterations={
                   history.details.get(findingsRun._id)?.iterations ?? []
                 }
@@ -311,11 +358,13 @@ export function CombinedRunContent({
 function SelectedRunFindings({
   scopeControl,
   run,
+  view,
   iterations,
   onOpenIteration,
 }: {
   scopeControl?: React.ReactNode;
   run: EvalSuiteRun;
+  view?: RunVerdictHeroView;
   iterations: readonly EvalIteration[];
   onOpenIteration: Parameters<typeof SingleRunContent>[0]["onOpenIteration"];
 }) {
@@ -333,6 +382,14 @@ function SelectedRunFindings({
       scopeControl={scopeControl}
       suiteRunId={run._id}
       iterations={iterations}
+      // Before the Findings panel, these columns came directly from the
+      // run's diagnostics. Keep them available without requesting AI, scoped
+      // to the selected run. With no diagnosis, retain the panel's empty state.
+      fallback={
+        view?.sentence.kind === "brokeAt" ? (
+          <HeroExplanation view={view} />
+        ) : undefined
+      }
       generation={{
         pending: generation.pending,
         failedGeneration: generation.failedGeneration,
@@ -351,6 +408,7 @@ function PairingFilters({
   model,
   clientOptions,
   modelOptions,
+  formatModelOption,
   isFiltered,
   onClientChange,
   onModelChange,
@@ -361,6 +419,7 @@ function PairingFilters({
   model: string;
   clientOptions: string[];
   modelOptions: string[];
+  formatModelOption?: (option: string) => string;
   isFiltered: boolean;
   onClientChange: (value: string) => void;
   onModelChange: (value: string) => void;
@@ -381,6 +440,7 @@ function PairingFilters({
         className="w-40"
         value={model}
         options={modelOptions}
+        formatOption={formatModelOption}
         onChange={onModelChange}
       />
       {showClear && isFiltered ? (
@@ -410,7 +470,8 @@ function MemberDecision({
   enabled: boolean;
   onReport: (id: string, report: MemberReport) => void;
 }) {
-  const active = enabled && isTerminalEvalRunStatus(run.status);
+  const active =
+    Boolean(projectId) && enabled && isTerminalEvalRunStatus(run.status);
   const detail = useEvalRunDecisionDetail({
     projectId,
     runId: run._id,
@@ -420,6 +481,10 @@ function MemberDecision({
   const chains = useEvalRunIterationChains({ projectId, run, enabled: active });
   const report = useMemo(
     () => ({
+      pending:
+        active &&
+        (["disabled", "loading"].includes(detail.status) ||
+          ["disabled", "loading"].includes(chains.status)),
       view: buildRunVerdictHero({ run, iterations, decision: detail }),
       diagnostics: detail.diagnostics,
       chains: chains.chains,
@@ -427,16 +492,19 @@ function MemberDecision({
     [
       run,
       iterations,
+      active,
       detail.status,
       detail.summary,
       detail.diagnostics,
       chains.chains,
+      chains.status,
     ],
   );
   // Decision hooks can return fresh empty arrays while loading. Publish only
   // a changed reading, not a new array identity from the parent's own render.
   const fingerprint = JSON.stringify([
     report.view,
+    report.pending,
     report.diagnostics,
     [...report.chains],
   ]);
@@ -453,6 +521,7 @@ export function combinedReportView(
   views: RunVerdictHeroView[],
   filtered: boolean,
   previousIterations?: EvalIteration[] | null,
+  expectedMembers = runs.length,
 ): RunVerdictHeroView {
   const fallback = buildRunVerdictHero({
     run: runs[0] ?? ({ status: "pending" } as EvalSuiteRun),
@@ -460,7 +529,7 @@ export function combinedReportView(
     decision: { status: "disabled", summary: null, diagnostics: [] },
   });
   const pending =
-    views.length < runs.length || views.some((view) => view.pending);
+    views.length < expectedMembers || views.some((view) => view.pending);
   const words = new Set(views.map((view) => view.verdict.word));
   const iterationIds = new Set(iterations.map((iteration) => iteration._id));
   const focusView =

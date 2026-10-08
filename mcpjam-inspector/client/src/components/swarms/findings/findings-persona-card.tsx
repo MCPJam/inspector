@@ -13,6 +13,7 @@ import { FindingsGoalInspect } from "./findings-goal-inspect";
 import type { FindingsSessionScope } from "./findings-goal-sessions";
 import type { JourneyStageId } from "./journey-stages";
 import type { PersonaFindingsModel } from "./findings-derivation";
+import { FindingText } from "@/components/shared/actionable-insights/finding-text";
 
 export function FindingsPersonaCard({
   persona,
@@ -69,7 +70,7 @@ export function FindingsPersonaCard({
           className="mt-[18px] border-t border-border pt-4 text-[15px] leading-snug text-foreground"
           data-testid="findings-persona-issue"
         >
-          {persona.issue}
+          <FindingText text={persona.issue} />
         </p>
       </aside>
 
@@ -102,7 +103,7 @@ export function FindingsPersonaCard({
                   <ChevronDown
                     className={cn(
                       "size-4 text-muted-foreground transition-transform",
-                      expanded && "rotate-180"
+                      expanded && "rotate-180",
                     )}
                   />
                 </span>

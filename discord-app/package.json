@@ -13,10 +13,10 @@
 	"dependencies": {
 		"@mcpjam/surface-core": "*",
 		"discord.js": "^14.25.1",
-		"dotenv": "~17.4.2"
+		"dotenv": "~18.0.5"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.11",
+		"@biomejs/biome": "^2.5.14",
 		"typescript": "^7.0.2"
 	}
 }

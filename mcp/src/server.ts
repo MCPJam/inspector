@@ -26,6 +26,7 @@ import {
 } from "./tools/skillsSurface.js";
 import { registerShowServersTool } from "./tools/showServers.js";
 import { DEFAULT_MCPJAM_APP_ORIGIN } from "@mcpjam/sdk/platform";
+import { GUEST_ISSUER } from "./auth.js";
 
 const SERVER_INFO = {
   name: "MCPJam MCP",
@@ -33,19 +34,20 @@ const SERVER_INFO = {
 } as const;
 
 /**
- * What a model must do with the links these tools return.
+ * What the links these tools return are, said as facts about the results.
  *
- * ONE rule, because it is the one this worker cannot enforce from the
- * outside. Tool results carry a `permalinks` array and a matching text line;
- * a model that instead assembles `app.mcpjam.com/<something>` from an id
- * produces a URL with no project in it, which opens whichever project the
- * READER last selected — a link that looks right, resolves, and shows the
- * wrong data.
+ * Tool results carry a `permalinks` array and a matching text line; a URL
+ * assembled from an id instead has no project in it, which opens whichever
+ * project the READER last selected — a link that looks right, resolves, and
+ * shows the wrong data. Stated as a property of the results rather than as
+ * orders: Claude's directory review rejects server text that tells the model
+ * how to behave, and nothing here may nudge it toward a tool the user did not
+ * ask for (the `send_feedback` line that used to close this list did).
  */
 const SERVER_INSTRUCTIONS = [
   "Tool results may include a `permalinks` array; the text output repeats each one as a `Label: https://…` line.",
-  "Hand those URLs to the user EXACTLY as written. Never invent, shorten, or rewrite an MCPJam app URL, and never build one from an id — a hand-made link opens whichever project the reader last selected, not the one you are describing.",
-  "When a result has no permalink, give the id and say which MCPJam screen it lives on.",
+  "Those URLs carry the project they belong to. An MCPJam app URL built from an id alone has no project in it, so it opens whichever project the reader last selected rather than the one described.",
+  "Results without a permalink identify resources by id; the resource type names the MCPJam screen it lives on.",
 ].join("\n");
 
 /**
@@ -77,6 +79,17 @@ export interface PlatformToolContext {
    * authorization input, and the platform caps it before storing it.
    */
   callerUserAgent?: string;
+  /**
+   * Whether this request runs as an ANONYMOUS guest: no bearer at all (a guest
+   * is minted on first use), or a verified guest-issuer token.
+   *
+   * Read by the error text only, to keep it from suggesting `send_feedback`,
+   * which refuses guests. Keyed on the token's ISSUER rather than on whether a
+   * token was verified, because guest tokens are verified too. Optional so a
+   * context built anywhere else reads as signed in, the state in which the
+   * suggestion is merely unhelpful rather than wrong.
+   */
+  isGuestSession?: boolean;
 }
 
 // Re-mint a minted guest token this far before its expiry. A guest token is
@@ -195,6 +208,8 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
   // one), so an absent header simply leaves the launcher unnamed rather than
   // guessing.
   const callerUserAgent = ctx.requestInfo?.headers.get("user-agent") ?? undefined;
+  const claims = ctx.authInfo?.extra?.claims as { iss?: unknown } | undefined;
+  const isGuestSession = !ctx.authInfo || claims?.iss === GUEST_ISSUER;
 
   const toolContext: PlatformToolContext = {
     getBearerToken: () => getBearerToken(env, verifiedToken, clientIp),
@@ -203,6 +218,7 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
       MCPJAM_APP_ORIGIN: resolveAppOrigin(env),
     },
     ...(callerUserAgent ? { callerUserAgent } : {}),
+    isGuestSession,
   };
 
   const registrar = createSessionToolRegistrar(server);

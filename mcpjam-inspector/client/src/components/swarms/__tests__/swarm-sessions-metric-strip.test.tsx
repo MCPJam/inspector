@@ -102,6 +102,49 @@ describe("SwarmSessionsMetricStrip", () => {
     });
   });
 
+  it("scopes the cohort to the run ids the panel is showing", () => {
+    metricsFixture = fullMetrics();
+    render(
+      <SwarmSessionsMetricStrip
+        projectId="proj-1"
+        personaRefId={null}
+        journeyRunIds={["run-1", "run-2"]}
+      />,
+    );
+    expect(metricsCall()!.args).toEqual({
+      projectId: "proj-1",
+      journeyRunIds: ["run-1", "run-2"],
+    });
+  });
+
+  it("composes the run scope with an active persona filter", () => {
+    metricsFixture = fullMetrics();
+    render(
+      <SwarmSessionsMetricStrip
+        projectId="proj-1"
+        personaRefId="persona-9"
+        journeyRunIds={["run-1"]}
+      />,
+    );
+    expect(metricsCall()!.args).toEqual({
+      projectId: "proj-1",
+      personaRefId: "persona-9",
+      journeyRunIds: ["run-1"],
+    });
+  });
+
+  it("omits the arg entirely when there is no run scope", () => {
+    metricsFixture = fullMetrics();
+    render(
+      <SwarmSessionsMetricStrip
+        projectId="proj-1"
+        personaRefId={null}
+        journeyRunIds={[]}
+      />,
+    );
+    expect(metricsCall()!.args).toEqual({ projectId: "proj-1" });
+  });
+
   it("renders all four metric tiles including both latency percentiles", () => {
     metricsFixture = fullMetrics();
     render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);

@@ -216,6 +216,13 @@ const serverOverrideChanges: SettingDetector = (saved, draft) => {
 const CLIENT_SETTING_DETECTORS = {
   hostStyle: one("client.profile", (config) => config.hostStyle),
   modelId: one("model", (config) => config.modelId),
+  // Same setting as `modelId`, reported once: a different connection for the
+  // same model id is still a model change, but a new id already reported it.
+  modelSelection: (saved, draft) =>
+    saved.modelId === draft.modelId &&
+    !equal(saved.modelSelection, draft.modelSelection)
+      ? (["model"] as const)
+      : [],
   systemPrompt: one("system_prompt", (config) => config.systemPrompt),
   temperature: one("temperature", (config) => config.temperature),
   requireToolApproval: one(

@@ -1,4 +1,7 @@
-import type { ShareAccessOption, ShareMode } from "@/components/sharing/share-types";
+import type {
+  ShareAccessOption,
+  ShareMode,
+} from "@/components/sharing/share-types";
 import type { ScenarioMode } from "@/hooks/useScenarios";
 import {
   isShareModeAboveCeiling,
@@ -6,14 +9,11 @@ import {
 } from "@/lib/share-mode-ceiling";
 
 /** UI preset for scenario access (maps to `mode` + `allowGuestAccess`). */
-export type ScenarioAccessPreset =
-  | "project"
-  | "invited_only"
-  | "link_guests";
+export type ScenarioAccessPreset = "project" | "invited_only" | "link_guests";
 
 export function scenarioAccessPresetFromSettings(
   mode: ScenarioMode,
-  allowGuestAccess: boolean,
+  _allowGuestAccess: boolean,
 ): ScenarioAccessPreset {
   if (mode === "invited_only") {
     return "invited_only";
@@ -21,7 +21,7 @@ export function scenarioAccessPresetFromSettings(
   if (mode === "project_members") {
     return "project";
   }
-  return allowGuestAccess ? "link_guests" : "project";
+  return "link_guests";
 }
 
 /**
@@ -37,13 +37,13 @@ export const SCENARIO_ACCESS_OPTIONS: ReadonlyArray<{
   {
     value: "invited_only",
     label: "Invited users only",
-    description: "Only people you invite by email can open this scenario.",
+    description: "Only people you invite by email can open this study.",
   },
   {
     value: "link_guests",
-    label: "Anyone with the link",
+    label: "Anyone with the link who is signed in",
     description:
-      "Anyone with the link can open it, including guests without an account. Guest usage runs on your organization's credits.",
+      "Testers must sign in or create an account to preview and test this study.",
   },
   {
     value: "project",
@@ -85,7 +85,9 @@ export function applyShareCeilingToScenarioOptions(
     if (option.value === "project") {
       return { ...option, disabled: undefined, disabledReason: undefined };
     }
-    const mode = shareModeForScenarioPreset(option.value as ScenarioAccessPreset);
+    const mode = shareModeForScenarioPreset(
+      option.value as ScenarioAccessPreset,
+    );
     if (!isShareModeAboveCeiling(mode, ceiling)) {
       return { ...option, disabled: undefined, disabledReason: undefined };
     }

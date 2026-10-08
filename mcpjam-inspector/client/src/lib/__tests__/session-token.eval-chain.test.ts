@@ -67,6 +67,10 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
     // What changed since the previous run.
     "/api/v1/projects/proj_1/eval-runs/run_1/compare",
+    // Stopping a run — the one WRITE in this list. Without the grant the
+    // cancel ships no bearer and the user watches a run they stopped keep
+    // spending.
+    "/api/v1/projects/proj_1/eval-runs/run_1/cancel",
     "/api/v1/projects/proj_1/eval-description-experiments/exp_1",
     "/api/v1/projects/proj_1/eval-runs/run_1/description-experiments",
     "/api/v1/projects/proj_1/eval-description-experiments/exp_1/start",
@@ -117,6 +121,8 @@ describe("authFetch bearer on the eval chain routes", () => {
     // Same narrowness for the compare read: the literal segment only.
     "/api/v1/projects/proj_1/eval-runs/run_1/compare-export",
     "/api/v1/projects/proj_1/eval-runs/run_1/compare/cases",
+    // And for cancel: one segment, nothing beneath it.
+    "/api/v1/projects/proj_1/eval-runs/run_1/cancel/all",
     // The suite's revision history is an AGENT read. The app reads the same
     // history through Convex (`testSuites:listSuiteRevisions`), so allowlisting
     // this route would widen the UI bearer's reach for nothing the app uses.

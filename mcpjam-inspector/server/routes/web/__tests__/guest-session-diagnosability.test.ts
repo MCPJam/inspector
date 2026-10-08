@@ -1,6 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { Hono } from "hono";
 import guestSession from "../guest-session.js";
+import { resetGuestAuthorityForTests } from "../../../utils/guest-authority.js";
 
 /**
  * A 5xx from this route must carry its cause into `webErrorMeta`, which is
@@ -31,6 +40,7 @@ describe("guest-session 5xx diagnosability", () => {
       "test-guest-session-secret";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    resetGuestAuthorityForTests();
     // The upstream is down: this is the shape that produced the 07-22 rows.
     global.fetch = vi
       .fn()
@@ -42,6 +52,7 @@ describe("guest-session 5xx diagnosability", () => {
     process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = ORIGINAL_SHARED_SECRET;
+    resetGuestAuthorityForTests();
   });
 
   it("stashes the failure cause in webErrorMeta", async () => {
@@ -81,5 +92,88 @@ describe("guest-session 5xx diagnosability", () => {
     expect(res.status).toBe(503);
     expect(body.code).toBe("INTERNAL_ERROR");
     expect(typeof body.message).toBe("string");
+  });
+
+  // A self-hosted install makes this 503 on the user's machine, so the body is
+  // the only way the cause reaches the browser's error report — and on hosted
+  // that body goes to any browser, so only closed values may be in it.
+  describe("failure details on the 503", () => {
+    async function postGuestSession(ip: string) {
+      const app = new Hono();
+      app.route("/guest-session", guestSession);
+      const res = await app.request("/guest-session", {
+        method: "POST",
+        headers: { "x-forwarded-for": ip },
+      });
+      return { res, body: (await res.json()) as Record<string, unknown> };
+    }
+
+    it("names an upstream non-ok status and keeps the message", async () => {
+      const { res, body } = await postGuestSession("203.0.113.203");
+
+      expect(res.status).toBe(503);
+      expect(body.message).toBe(
+        "Unable to obtain a guest session right now. Please try again.",
+      );
+      expect(body.details).toEqual({
+        reason: "upstream_status",
+        upstreamStatus: 500,
+      });
+    });
+
+    it("names a relay network failure without leaking the host", async () => {
+      // The standard OSS profile carries no backend secret, so its guest
+      // authority is the hosted Inspector rather than its Convex deployment.
+      process.env.NODE_ENV = "production";
+      delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+      const savedOrigin = process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+      delete process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN;
+      onTestFinished(() => {
+        if (savedOrigin !== undefined) {
+          process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN = savedOrigin;
+        }
+      });
+      resetGuestAuthorityForTests();
+      global.fetch = vi.fn().mockRejectedValue(
+        new TypeError("fetch failed", {
+          cause: Object.assign(
+            new Error("getaddrinfo ENOTFOUND app.mcpjam.com"),
+            { code: "ENOTFOUND" },
+          ),
+        }),
+      );
+
+      const { res, body } = await postGuestSession("203.0.113.204");
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://app.mcpjam.com/api/web/guest-session",
+        expect.anything(),
+      );
+      expect(res.status).toBe(503);
+      expect(body.details).toEqual({
+        reason: "network",
+        networkCode: "ENOTFOUND",
+      });
+      const raw = JSON.stringify(body);
+      expect(raw).not.toContain("app.mcpjam.com");
+      expect(raw).not.toContain("getaddrinfo");
+    });
+
+    it("names a relay timeout", async () => {
+      process.env.NODE_ENV = "production";
+      global.fetch = vi
+        .fn()
+        .mockRejectedValue(
+          new DOMException(
+            "The operation was aborted due to timeout",
+            "TimeoutError",
+          ),
+        );
+
+      const { res, body } = await postGuestSession("203.0.113.205");
+
+      expect(res.status).toBe(503);
+      expect(body.details).toEqual({ reason: "timeout" });
+    });
   });
 });

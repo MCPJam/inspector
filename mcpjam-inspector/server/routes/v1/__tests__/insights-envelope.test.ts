@@ -37,9 +37,10 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 
 import evals from "../evals.js";
-import journeys from "../journeys.js";
+import goals from "../goals.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
+import swarmFindingsWire from "../../../../../sdk/tests/fixtures/swarm-findings-wire.json";
 
 // Id-SHAPED, like `RUN` below, and for the same reason the run/suite fixtures
 // were reshaped: `proj_a` is a value production cannot produce, and fixtures
@@ -278,13 +279,21 @@ describe("journey-run detail — insights embed", () => {
         ...ENVELOPE,
         scope: { kind: "swarm_wave", id: "wave_1", runId: RUN },
         runHealth: { targets: [] },
+        journeyFindings: swarmFindingsWire,
+        journeyFindingsJob: { status: "completed", updatedAt: 0 },
       },
     });
-    const res = await makeApp(journeys).request(
+    const res = await makeApp(goals).request(
       `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
+    expect((body.insights as Record<string, unknown>).journeyFindings).toEqual(
+      swarmFindingsWire,
+    );
+    expect(
+      (body.insights as Record<string, unknown>).journeyFindingsJob,
+    ).toEqual({ status: "completed", updatedAt: 0 });
     expect((body.insights as Record<string, unknown>).runHealth).toEqual({
       targets: [],
     });
@@ -308,7 +317,7 @@ describe("journey-run detail — envelope failure degrades", () => {
       }
       return Promise.reject(new Error("Server Error"));
     });
-    const res = await makeApp(journeys).request(
+    const res = await makeApp(goals).request(
       `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
     );
     expect(res.status).toBe(200);
@@ -675,6 +684,84 @@ describe("eval-run judge request", () => {
         },
       },
     );
+  });
+
+  // CONVEX-33X: a per-run judge in the documented `mcpjam/` spelling is sent as
+  // the catalog id, and a blank one is refused rather than forwarded.
+  it.each([
+    ["mcpjam/openai/gpt-5.4-mini", "openai/gpt-5.4-mini"],
+    ["openai/gpt-5.4-mini ", "openai/gpt-5.4-mini"],
+  ])("forwards a per-run judge model %j as %j", async (sent, forwarded) => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: sent }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      { suiteRunId: RUN, runOverride: { judgeModel: forwarded } },
+    );
+  });
+
+  it("refuses a blank per-run judge model", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "   " }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards the judge's selection (effort included) and refuses a mismatched pair", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const selection = {
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      settings: { reasoningEffort: "low" },
+      fallback: { provider: "none", model: "none" },
+    };
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ modelSelection: selection }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      { suiteRunId: RUN, runOverride: { judgeSelection: selection } },
+    );
+
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const mismatch = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "openai/gpt-5-mini", modelSelection: selection }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(mismatch.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 
   it("sends NO override when the caller stated none", async () => {

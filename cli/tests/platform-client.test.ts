@@ -8,11 +8,13 @@ import {
   type StoredPlatformAuth,
 } from "../src/lib/auth-store.js";
 import { CliError } from "../src/lib/output.js";
+import { PlatformApiError } from "@mcpjam/sdk/platform";
 import {
   buildPlatformClient,
   inspectApiUrl,
   resolvePlatformBaseUrl,
   resolvePlatformOrigin,
+  toCliError,
 } from "../src/lib/platform-client.js";
 
 const NOW = 1_750_000_000_000;
@@ -194,4 +196,148 @@ test("a stored login without apiUrl still defaults to prod", async () => {
   await client.getMe();
 
   assert.ok(requested[0].startsWith("https://app.mcpjam.com/api/v1/"));
+});
+
+test("a usage-limit refusal keeps its code and exit, and carries when to retry", () => {
+  const error = toCliError(
+    new PlatformApiError("Daily generation quota reached.", "RATE_LIMITED", {
+      status: 429,
+      retryAfter: 120,
+      details: {
+        code: "generation_rate_limited",
+        gatedBy: "organization",
+        canTopUp: false,
+      },
+    }),
+  );
+  // Not an auth or credit failure: same wire code, same exit code.
+  assert.equal(error.code, "RATE_LIMITED");
+  assert.equal(error.exitCode, 1);
+  assert.equal(
+    error.message,
+    "Daily generation quota reached. Retry after 120s, not sooner. This is a usage limit: topping up credits does not lift it.",
+  );
+  assert.deepEqual((error.details as Record<string, unknown>).refusal, {
+    status: 429,
+    code: "RATE_LIMITED",
+    reason: "generation_rate_limited",
+    gatedBy: "organization",
+    canTopUp: false,
+    retryAfterSeconds: 120,
+  });
+});
+
+test("a failing request's id rides in details, beside the server's own", () => {
+  const error = toCliError(
+    new PlatformApiError("Something broke.", "INTERNAL_ERROR", {
+      status: 500,
+      details: { reason: "upstream" },
+      requestId: "req_0123456789abcdef",
+    }),
+  );
+  assert.equal(error.code, "INTERNAL_ERROR");
+  // Prefix only: a platform fault with a request id also earns the report
+  // hint, pinned in full below.
+  assert.match(error.message, /^Something broke\./);
+  assert.deepEqual(error.details, {
+    reason: "upstream",
+    requestId: "req_0123456789abcdef",
+  });
+});
+
+test("a request id with no server details still lands in details", () => {
+  const error = toCliError(
+    new PlatformApiError("Not found.", "NOT_FOUND", {
+      status: 404,
+      requestId: "req_0123456789abcdef",
+    }),
+  );
+  assert.deepEqual(error.details, { requestId: "req_0123456789abcdef" });
+});
+
+test("a refusal carries its request id next to the retry guidance", () => {
+  const error = toCliError(
+    new PlatformApiError("Slow down.", "RATE_LIMITED", {
+      status: 429,
+      retryAfter: 30,
+      requestId: "req_0123456789abcdef",
+    }),
+  );
+  const details = error.details as Record<string, unknown>;
+  assert.equal(details.requestId, "req_0123456789abcdef");
+  assert.deepEqual(details.refusal, {
+    status: 429,
+    code: "RATE_LIMITED",
+    retryAfterSeconds: 30,
+  });
+});
+
+test("an error without a request id keeps its details untouched", () => {
+  // Client-side failures never reached the API; nothing is invented.
+  const error = toCliError(
+    new PlatformApiError("Failed to reach the MCPJam API.", "NETWORK_ERROR", {
+      status: 0,
+    }),
+  );
+  assert.equal(error.details, undefined);
+});
+
+test("a platform fault with a request id says how to report it", () => {
+  const error = toCliError(
+    new PlatformApiError("Something broke.", "INTERNAL_ERROR", {
+      status: 500,
+      requestId: "req_0123456789abcdef",
+    }),
+    { command: "cloud eval run" },
+  );
+  assert.equal(
+    error.message,
+    'Something broke. Report it: `mcpjam cloud feedback --kind bug --request-id req_0123456789abcdef --summary "…"`',
+  );
+});
+
+test("a missing capability suggests the missing_capability kind", () => {
+  const error = toCliError(
+    new PlatformApiError(
+      "This server does not support tasks.",
+      "FEATURE_NOT_SUPPORTED",
+      { status: 422, requestId: "req_0123456789abcdef" },
+    ),
+  );
+  assert.match(error.message, /--kind missing_capability --request-id/);
+});
+
+test("no report hint on a gateway failure, a client error, or without a request id", () => {
+  for (const [status, code] of [
+    [502, "INTERNAL_ERROR"],
+    [503, "INTERNAL_ERROR"],
+    [504, "INTERNAL_ERROR"],
+    [404, "NOT_FOUND"],
+    [400, "VALIDATION_ERROR"],
+  ] as const) {
+    const error = toCliError(
+      new PlatformApiError("Nope.", code, {
+        status,
+        requestId: "req_0123456789abcdef",
+      }),
+    );
+    assert.equal(error.message, "Nope.", `${status} ${code}`);
+  }
+  const withoutId = toCliError(
+    new PlatformApiError("Something broke.", "INTERNAL_ERROR", {
+      status: 500,
+    }),
+  );
+  assert.equal(withoutId.message, "Something broke.");
+});
+
+test("no report hint on the command that files reports", () => {
+  const error = toCliError(
+    new PlatformApiError("Something broke.", "INTERNAL_ERROR", {
+      status: 500,
+      requestId: "req_0123456789abcdef",
+    }),
+    { command: "cloud feedback" },
+  );
+  assert.equal(error.message, "Something broke.");
 });

@@ -1,3 +1,10 @@
+import { wrapModelToolsets, type ModelToolExecutor } from "./model-tool-executor.js";
+import {
+  mergeConnectionToolsets,
+  type ConnectionsByServerId,
+  type McpToolConnection,
+} from "@mcpjam/sdk";
+import { getManagerConnections } from "./mcp-connections.js";
 /**
  * Shared chat-v2 tool preparation and message scrubbing.
  *
@@ -20,8 +27,10 @@ import {
   type MintedDeclaredTool,
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
   MCPClientManager,
@@ -643,7 +652,8 @@ export function buildWidgetInteractionContextSystemPrompt(
 
   const sections = calls.map((call) => {
     const result = call.result as
-      { content?: Array<Record<string, unknown>> } | undefined;
+      | { content?: Array<Record<string, unknown>> }
+      | undefined;
     const content = result?.content ?? [];
     const lines = [
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
@@ -665,6 +675,8 @@ export function buildWidgetInteractionContextSystemPrompt(
 }
 
 export interface PrepareChatV2Options {
+  modelToolExecutor?: ModelToolExecutor;
+  connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
   /**
@@ -688,9 +700,27 @@ export interface PrepareChatV2Options {
    * before the model sees the catalog.
    */
   toolDescriptionOverrides?: Readonly<Record<string, string>>;
+  /**
+   * Upper bound, in ms, on connecting to the selected servers and listing
+   * their tools. On expiry the turn fails with a `MCP server "<name>" timed
+   * out` error, marked as the user's hop like any other dead server.
+   *
+   * Opt-in: absent means no deadline, which keeps local, eval and agent turns
+   * unchanged. The hosted web turn sets it because nothing else bounds this
+   * await before the first byte, and the edge gives up long before the
+   * manager's own per-request timeout and retries do.
+   */
+  toolListingTimeoutMs?: number;
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn runs at. Under an effort the resolved
+   * temperature is omitted (a default temperature is not a request, and
+   * reasoning providers reject or ignore one); an EXPLICIT temperature is
+   * refused by the direct routes before it gets here.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
   /**
    * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering.
@@ -1237,6 +1267,13 @@ export function applySkillToolApproval(
 }
 
 export interface PrepareChatV2Result {
+  connectionsAtTurn?: Array<{
+    serverId: string;
+    connectionId: string;
+    label: string;
+    profileId?: string;
+  }>;
+  toolConnections?: Map<string, McpToolConnection>;
   allTools: ToolSet;
   enhancedSystemPrompt: string;
   resolvedTemperature: number | undefined;
@@ -1270,6 +1307,37 @@ export interface PrepareChatV2Result {
 }
 
 /**
+ * `"a", "b"` — the selected servers still not connected when the budget ran
+ * out, by their host label. Falls back to every listed server when all of
+ * them report connected (the listing itself is what hung).
+ *
+ * Only servers the listing actually reached count: a stale selected id the
+ * manager never registered reads as "disconnected" and would otherwise be
+ * blamed for a server that did hang.
+ */
+function describeUnconnectedServers(
+  mcpClientManager: InstanceType<typeof MCPClientManager>,
+  serverIds: readonly string[],
+  groups: ConnectionsByServerId | undefined,
+  serverLabels: Record<string, string> | undefined,
+): string {
+  const keysOf = (id: string) =>
+    (groups?.[id]?.map((c) => c.key) ?? [id]).filter((key) =>
+      mcpClientManager.hasServer(key),
+    );
+  const reached = serverIds.filter((id) => keysOf(id).length > 0);
+  const listed = reached.length ? reached : serverIds;
+  const unconnected = listed.filter((id) =>
+    keysOf(id).some(
+      (key) => mcpClientManager.getConnectionStatus(key) !== "connected",
+    ),
+  );
+  return (unconnected.length ? unconnected : listed)
+    .map((id) => `"${serverLabels?.[id] ?? id}"`)
+    .join(", ");
+}
+
+/**
  * Prepare tools, system prompt, temperature, and message scrubber for chat-v2.
  *
  * Throws if Anthropic tool name validation fails.
@@ -1283,6 +1351,7 @@ export async function prepareChatV2(
     modelDefinition,
     systemPrompt,
     temperature,
+    reasoningEffort,
     requireToolApproval,
     respectToolVisibility,
     excludeMcpToolNames,
@@ -1299,14 +1368,30 @@ export async function prepareChatV2(
     serverLabels,
     toolCallCancellation,
     toolDescriptionOverrides,
+    toolListingTimeoutMs,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
   // a stale id baked into a scenario config). Passing them through reaches
   // ensureConnected and throws "Unknown MCP server", 500-ing the whole chat.
-  const knownSelectedServers = selectedServers?.filter((id) =>
-    mcpClientManager.hasServer(id),
+  const groups =
+    options.connectionsByServerId ?? getManagerConnections(mcpClientManager);
+  const selectedGroups = groups
+    ? Object.fromEntries(
+        Object.entries(groups).filter(
+          ([id]) => !selectedServers || selectedServers.includes(id),
+        ),
+      )
+    : undefined;
+  const snapshot = new Map(
+    Object.values(selectedGroups ?? {})
+      .flat()
+      .map((c) => [c.connectionId, c.key]),
   );
+  const toolConnections = new Map<string, McpToolConnection>();
+  const knownSelectedServers = selectedServers
+    ?.flatMap((id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id])
+    .filter((id) => mcpClientManager.hasServer(id));
 
   // `undefined` for every default turn, which is what keeps those turns on the
   // pre-existing no-options overload. See `mcpToolOptionsFor`.
@@ -1322,12 +1407,44 @@ export async function prepareChatV2(
   });
 
   // 1. Get MCP + skill tools
+  const listToolsWithinBudget = <T>(listing: Promise<T>): Promise<T> =>
+    withinToolListingBudget(listing, toolListingTimeoutMs, () =>
+      describeUnconnectedServers(
+        mcpClientManager,
+        selectedServers ?? mcpClientManager.listServers(),
+        selectedGroups,
+        serverLabels,
+      ),
+    );
   let mcpTools;
   try {
-    mcpTools = await mcpClientManager.getToolsForAiSdk(
-      knownSelectedServers,
-      toolOptions,
-    );
+    mcpTools =
+      selectedGroups && Object.keys(selectedGroups).length
+        ? mergeConnectionToolsets(
+            await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(
+                knownSelectedServers,
+                toolOptions,
+              ).then((groups) => wrapModelToolsets(groups, options.modelToolExecutor)),
+            ),
+            selectedGroups,
+            {
+              snapshot,
+              onRoute: (id, connection) => {
+                toolConnections.set(id, connection);
+              },
+            },
+          )
+        : options.modelToolExecutor
+          ? Object.assign({}, ...Object.values(wrapModelToolsets(await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(knownSelectedServers, toolOptions)
+            ), options.modelToolExecutor)))
+          : await listToolsWithinBudget(
+            mcpClientManager.getToolsForAiSdk(
+              knownSelectedServers,
+              toolOptions,
+            ),
+          );
   } catch (error) {
     // The ONE hop in this function that leaves MCPJam: listing tools reaches
     // into the user's own MCP servers, so a dead or slow server lands here.
@@ -1380,7 +1497,13 @@ export async function prepareChatV2(
   // removed for both rather than leaving whichever one won the flatten.
   if (excludeMcpToolNames?.length) {
     for (const name of excludeMcpToolNames) {
-      delete (mcpTools as Record<string, unknown>)[name];
+      for (const [key, tool] of Object.entries(mcpTools)) {
+        if (
+          key === name ||
+          (tool as { _mcpToolName?: string })._mcpToolName === name
+        )
+          delete mcpTools[key];
+      }
     }
   }
   // ONE skill source per turn, stated by the caller. Where a skill comes FROM —
@@ -1811,6 +1934,9 @@ export async function prepareChatV2(
   // "there is anything to name".
   const enhancedSystemPrompt = [
     systemPrompt,
+    snapshot.size > 1
+      ? "When the account is ambiguous, ask which connected account to use before creating or modifying data."
+      : "",
     `${skillsPromptSection ?? ""}${serverSkillsPromptSection}`,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
     buildDeclaredToolsSystemPrompt(
@@ -1834,11 +1960,11 @@ export async function prepareChatV2(
   //
   // The persisted `hostConfig.temperature` is unaffected and stays numeric:
   // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
-  const resolvedTemperature = modelDefinitionSupportsTemperature(
-    modelDefinition,
-  )
-    ? temperature
-    : undefined;
+  const resolvedTemperature =
+    reasoningEffort === undefined &&
+    modelDefinitionSupportsTemperature(modelDefinition)
+      ? temperature
+      : undefined;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>
@@ -1859,6 +1985,19 @@ export async function prepareChatV2(
     );
 
   return {
+    ...(selectedGroups
+      ? {
+          toolConnections,
+          connectionsAtTurn: Object.values(selectedGroups)
+            .flat()
+            .map((c) => ({
+              serverId: c.serverId,
+              connectionId: c.connectionId,
+              label: c.label,
+              ...(c.profile ? { profileId: c.profile.id } : {}),
+            })),
+        }
+      : {}),
     allTools,
     enhancedSystemPrompt,
     resolvedTemperature,

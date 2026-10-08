@@ -339,3 +339,159 @@ describe("harness execution options reach the engine", () => {
     expect(options.extraHeaders).toBeUndefined();
   });
 });
+
+it("carries hosted request payloads into the authored eval turn", async () => {
+  const params = baseParams({ promptIndex: 3 });
+  const entry = { turnId: "engine-turn", promptIndex: 0, stepIndex: 0, payload: { system: "original", tools: {}, messages: [] } };
+  runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [], requestPayloads: [entry] } }) as never);
+  await driveHostedEvalTurn(params);
+  expect(params.acc.requestPayloads).toEqual([{ ...entry, promptIndex: 3 }]);
+});
+
+it("adds the turn's reasoning and cached-input tokens onto the iteration usage", async () => {
+  const params = baseParams();
+  params.acc.accumulatedUsage = {
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15,
+    reasoningTokens: 2,
+  };
+  runAssistantTurnMock.mockImplementationOnce(
+    async () =>
+      ({
+        messages: [],
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          reasoningTokens: 30,
+          cachedInputTokens: 40,
+        },
+        turnTrace: { spans: [] },
+      }) as never,
+  );
+  await driveHostedEvalTurn(params);
+  expect(params.acc.accumulatedUsage).toEqual({
+    inputTokens: 110,
+    outputTokens: 55,
+    totalTokens: 165,
+    reasoningTokens: 32,
+    cachedInputTokens: 40,
+  });
+});
+
+it("leaves the breakdown absent when no turn reported one", async () => {
+  const params = baseParams();
+  runAssistantTurnMock.mockImplementationOnce(
+    async () =>
+      ({
+        messages: [],
+        usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+        turnTrace: { spans: [] },
+      }) as never,
+  );
+  await driveHostedEvalTurn(params);
+  expect(params.acc.accumulatedUsage).toEqual({
+    inputTokens: 3,
+    outputTokens: 2,
+    totalTokens: 5,
+  });
+});
+
+describe("infra evidence reaches the turn outcome untouched", () => {
+  beforeEach(() => {
+    runAssistantTurnMock.mockReset();
+  });
+
+  it("passes the engine event's typed evidence through a failed turn", async () => {
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: "The AI provider is temporarily unavailable.",
+        code: "provider_error",
+        httpStatus: 503,
+        rawText: "{}",
+        promptIndex: 0,
+        stepIndex: 0,
+        phase: "stream",
+        infra: {
+          source: "backend_model",
+          code: "provider_error",
+          httpStatus: 503,
+        },
+      });
+      // The non-OK path: the engine finishes with no new content.
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      errorCode: "provider_error",
+      errorHttpStatus: 503,
+      errorInfra: {
+        source: "backend_model",
+        code: "provider_error",
+        httpStatus: 503,
+      },
+    });
+  });
+
+  it("an engine error with no typed evidence leaves errorInfra unset", async () => {
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: "tool blew up",
+        rawText: "tool blew up",
+        promptIndex: 0,
+        phase: "stream",
+      });
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+    const outcome = await driveHostedEvalTurn(baseParams());
+    expect(outcome.kind).toBe("failed");
+    expect(outcome).not.toHaveProperty("errorInfra");
+  });
+
+  it("a typed setup throw carries its evidence; an untyped one does not", async () => {
+    const { HarnessInfraSetupError } = await import(
+      "../../../utils/harness/harness-provider-error"
+    );
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw new HarnessInfraSetupError("box gone", {
+        source: "sandbox_setup",
+        code: "harness_sandbox_unavailable",
+        httpStatus: 503,
+      });
+    });
+    expect(await driveHostedEvalTurn(baseParams())).toMatchObject({
+      kind: "failed",
+      errorInfra: {
+        source: "sandbox_setup",
+        code: "harness_sandbox_unavailable",
+        httpStatus: 503,
+      },
+    });
+
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("upstream said 503"), { statusCode: 503 });
+    });
+    const untyped = await driveHostedEvalTurn(baseParams());
+    expect(untyped.kind).toBe("failed");
+    expect(untyped).not.toHaveProperty("errorInfra");
+  });
+});
+
+it("uses current run-owned App state for the next turn without persisting it", async () => {
+  const params = baseParams();
+  let closed = false;
+  params.browser.getModelContext = vi.fn(() => closed ? undefined : ({ role: "user" as const, content: [{ type: "text" as const, text: "Selected bolt", providerOptions: { mcpjam: { ephemeralPluginContext: true } } }] }));
+  vi.mocked(params.browser.dismissCarriedWidget).mockImplementation(async () => { closed = true; });
+  runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [] } }) as never);
+  await driveHostedEvalTurn(params);
+  expect(JSON.stringify(runAssistantTurnMock.mock.calls[0])).toContain("Selected bolt");
+  expect(JSON.stringify(params.acc.messageHistory)).not.toContain("Selected bolt");
+});

@@ -113,6 +113,7 @@ export const ToolInvokePane = forwardRef<ToolInvokeHandle, ToolInvokePaneProps>(
               </p>
             }
             inputSchema={tool.inputSchema}
+            annotations={tool.annotations}
             openSections={openSections}
             onOpenSectionsChange={setOpenSections}
             parameters={

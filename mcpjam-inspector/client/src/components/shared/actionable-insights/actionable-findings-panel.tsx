@@ -309,12 +309,15 @@ export function ActionableFindingsPanel({
   envelope,
   context,
   onOpenSession,
+  hideEmpty = false,
 }: {
   /** `undefined` while the query is in flight; `null` when the surface has
    * no envelope (an older backend, or a resource that never had one). */
   envelope: InsightsEnvelope | null | undefined;
   context?: FindingPromptContext;
   onOpenSession?: (sessionId: string) => void;
+  /** The containing surface already reports outcomes and analysis coverage. */
+  hideEmpty?: boolean;
 }) {
   const [showAll, setShowAll] = useState(false);
   const sorted = useMemo(
@@ -349,6 +352,7 @@ export function ActionableFindingsPanel({
   }
 
   if (sorted.length === 0) {
+    if (hideEmpty) return null;
     return (
       <p
         className="px-3 py-2 text-xs text-muted-foreground"

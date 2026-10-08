@@ -104,7 +104,7 @@ export function ScorecardRowView({
 
         {row.stepId ? <StatusDot status={overlayStatus(overlay, row.stepId)} /> : null}
 
-        {canRole && onChangePredicate ? (
+        {row.provenance === "builtin" ? null : canRole && onChangePredicate ? (
           <RoleSegmentGroup
             value={row.role}
             // An observation is a heuristic, so it is offered as Advisory

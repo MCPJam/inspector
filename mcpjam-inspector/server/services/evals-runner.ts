@@ -1,3 +1,17 @@
+import { projectWorkspaceTranscript, workspacePresentationHostConfig } from "../../shared/unattended-workspace";
+import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
+import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
+import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
+import { ConvexError } from "convex/values";
+import {
+  assertOrgModelAllowed,
+  buildOrgModelFromResolvedConfig,
+} from "@mcpjam/sdk/model-factory";
+import { modelWorkloadFor } from "../utils/model-workload.js";
+import { listBaseServers } from "../utils/mcp-connections.js";
+import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
 import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
@@ -14,6 +28,7 @@ import {
   mergeToolCalls,
 } from "../../shared/eval-tool-call-projection";
 import {
+  copyUsageTotals,
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -31,8 +46,18 @@ import {
 } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
-import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
+import {
+  needsEphemeralEvalSandbox,
+  singleCaseHarnessBoxRefusal,
+} from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
+import { classifyEvalInfraError } from "./evals/infra-error-classification";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
+import {
+  byokEndpointOwnership,
+  type InfraFailureEvidence,
+  type ModelEndpointOwnership,
+} from "../utils/infra-failure-evidence.js";
 import {
   buildLocalStepHandlers,
   buildHostedStepHandlers,
@@ -74,10 +99,14 @@ import {
   EVAL_BASH_TOOL_NAME,
 } from "../utils/built-in-tools/sandbox-bash.js";
 import {
-  isComputersDataPlaneConfigured,
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import {
+  acquireHarnessBox,
+  harnessBoxUnavailableReason,
+  type HarnessBox,
+} from "../utils/harness/harness-box.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import {
   collectHostedRecordingThenRelease,
@@ -97,6 +126,7 @@ import {
   withDeadline,
 } from "../utils/run-supervisor/deadline.js";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
+import { evalSnapshotUploadTarget } from "../utils/snapshot-upload-target";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
   deriveOrgProviderKey,
@@ -111,7 +141,26 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import { isHostedModelDefinition } from "./hosted-model-catalog.js";
+import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import {
+  decideTurnRail,
+  routingSelectionForModel,
+  withSelectionRouting,
+} from "../utils/selection-rail.js";
+import {
+  backendModelSelection,
+  ModelResolutionRefusalError,
+  resolveLocalModelSelection,
+} from "../utils/model-resolution-local.js";
+import {
+  resolveEffectiveModelSettings,
+  type DirectProviderOptions,
+  type EffectiveModelSettings,
+  type ModelSettingsRoute,
+} from "../utils/model-selection-settings.js";
+import { buildLocalExecutionRecord } from "../utils/local-execution-record.js";
+import { postLocalUsage } from "../utils/org-model-stream-handler.js";
+import type { LocalModelCallSettled } from "./evals/drive-local-eval-turn.js";
 import {
   hasSkillTools,
   mergeToolCallsByPromptIndex,
@@ -147,7 +196,7 @@ import {
   isPinnedOnly,
   isPinnedTurn,
   turnsNeedModel,
-  resolvePromptTurns,
+  resolveCasePromptTurns,
   resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
   type PinnedToolCall,
@@ -156,7 +205,6 @@ import {
 import {
   normalizeSteps,
   promptTurnsToSteps,
-  stepsToPromptTurns,
   type TestStep,
 } from "@/shared/steps";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
@@ -171,6 +219,7 @@ import type {
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
+import { failCommittedQuickRun } from "./evals/quick-run-environment.js";
 import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import {
   buildIterationFinishParams,
@@ -199,6 +248,7 @@ import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
+import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -352,6 +402,25 @@ export type EvalTestCase = {
   passThreshold?: number;
   model: string;
   provider: string;
+  /**
+   * The saved selection behind `model` (the case's `models[].selection`), when
+   * the case was saved with one. Present ⇒ it decides the rail: an explicit
+   * `org` / `local` selection never matches the hosted catalog first, and a
+   * connection that cannot be reached refuses the case (`credential_missing`)
+   * instead of running on another credential. Absent ⇒ legacy: `model` is
+   * read hosted-first, exactly as before. Always validated before it gets
+   * here (`readStoredModelSelection`).
+   */
+  selection?: ModelSelection;
+  /**
+   * A STORED legacy selection behind `model` (`{ source: "legacy" }`, written
+   * by a save of a bare id outside the hosted catalog, or by the backfill):
+   * "own key only". Read only when `selection` is absent. The case runs on the
+   * own-key path (org BYOK, else the request's keys) and NEVER on MCPJam
+   * credits, however the id looks. Absent with `selection` absent ⇒ an
+   * unlabelled row: today's hosted-first read, unchanged.
+   */
+  legacySelection?: LegacyModelSelection;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -559,6 +628,14 @@ export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
   /**
+   * An ENVIRONMENT quick run's committed iteration ids, one per attempt, in
+   * attempt order. The backend reserved, inserted and pinned every one of
+   * them before this runner was called; the runner executes exactly these
+   * rows and never creates one of its own. Quick runs only (`runId` null,
+   * one test).
+   */
+  committedQuickRunIterationIds?: string[];
+  /**
    * The run's FROZEN grading-engine position, read from
    * `configSnapshot.gradingEngine` at run start and threaded to every
    * iteration's finalization.
@@ -657,6 +734,7 @@ export type RunEvalSuiteOptions = {
    * to read `advancedConfig.system` only and ignore the suite default.
    */
   suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
   /**
    * The skill delivery this run's PINS resolved to, decided once at the
    * boundary (`prepareEvalRun`) and forwarded verbatim by every iteration
@@ -716,7 +794,39 @@ export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
   policyBlockCount?: number;
+  creditsExhausted?: boolean;
+  /**
+   * OUR infrastructure failed this trial. The run summary leaves it out of
+   * `total`/`passed`/`failed`, as the backend's legacy header does.
+   */
+  infraError?: EvalInfraError;
 };
+
+/**
+ * Did OUR infrastructure fail this iteration? Classifies the failed turn's
+ * structured evidence (`evals/infra-error-classification.ts`), stamping a
+ * model-call failure with who owns the endpoint this iteration called. Never
+ * for a timeout: a budget is the user's ceiling.
+ */
+export function resolveIterationInfraError(
+  result: {
+    iterationError?: string;
+    timeout?: unknown;
+    errorInfra?: InfraFailureEvidence;
+  },
+  modelEndpoint: ModelEndpointOwnership,
+): EvalInfraError | undefined {
+  if (!result.iterationError || result.timeout) return undefined;
+  const evidence = result.errorInfra;
+  return classifyEvalInfraError(
+    evidence &&
+      !evidence.endpoint &&
+      (evidence.source === "backend_model" ||
+        evidence.source === "provider_call")
+      ? { ...evidence, endpoint: modelEndpoint }
+      : evidence,
+  );
+}
 
 /**
  * D7: narrow a turn's full tool registry down to the subset the model was
@@ -838,6 +948,42 @@ function isIterationBudgetAbort(
     deadlineClockOf(error) === "iteration" ||
     deadlineClockOf(signal?.reason) === "iteration"
   );
+}
+
+/**
+ * Is this unwind a STOP rather than a failure or an expired clock?
+ *
+ * A user cancel, a torn-down socket and an iteration timeout all arrive as a
+ * throw on the same signal. The iteration clock is the one case that must NOT
+ * be recorded as cancelled — `markIterationTimedOut` already owns it, and
+ * calling a timeout a cancellation hides the timeout from the run.
+ */
+function isCancelUnwind(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  if (isIterationBudgetAbort(error, signal)) return false;
+  return signal?.aborted === true;
+}
+
+/**
+ * Did the backend say this run (or its suite) was deleted?
+ *
+ * Two shapes: the structured refusal (`reason: "eval_parent_deleted"`), which
+ * survives production's error masking, and the legacy "not found" /
+ * "unauthorized" text, which only a dev deployment shows. A masked
+ * "Server Error" matches neither, on purpose: an outage must not cancel runs.
+ */
+export function isRunDeletedError(error: unknown): boolean {
+  if (
+    error instanceof ConvexError &&
+    (error.data as { reason?: unknown } | undefined)?.reason ===
+      "eval_parent_deleted"
+  ) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("not found") || message.includes("unauthorized");
 }
 
 const RUN_CANCELLED_ERROR = new EvalRunStoppedError({
@@ -1371,6 +1517,40 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   return flattened;
 }
 
+/**
+ * Refuses a launch whose tool snapshot could not list a server. Creating the
+ * run reserves iterations and charges `eval_step`, and the runner would then
+ * fail the same server in `getEvalToolsForAiSdkOrThrow` — so the caller gets
+ * that same setup error here, before anything is charged, not a failed run.
+ */
+export function throwIfEvalToolSnapshotFailed(args: {
+  toolSnapshot: ServerToolSnapshot;
+  mcpClientManager: MCPClientManager;
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+}): void {
+  const failures = args.toolSnapshot.servers.flatMap((server) => {
+    if (server.captureError === undefined) return [];
+    const connected =
+      args.mcpClientManager.getConnectionStatus(server.serverId) ===
+      "connected";
+    const phase: SetupPhase =
+      !connected || isMissingRuntimeServerError(server.captureError)
+        ? "connection"
+        : "discovery";
+    return [{ serverId: server.serverId, phase, error: server.captureError }];
+  });
+  // Same precedence as the runner: a connection failure is the one to report.
+  const chosen =
+    failures.find((failure) => failure.phase === "connection") ?? failures[0];
+  if (!chosen) return;
+  throwSetupPhaseError({
+    serverId: chosen.serverId,
+    phase: chosen.phase,
+    error: new Error(chosen.error),
+    environment: args.environment,
+  });
+}
+
 export function resolveConfiguredServerIds(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   mcpClientManager: MCPClientManager;
@@ -1380,7 +1560,7 @@ export function resolveConfiguredServerIds(args: {
     return [];
   }
 
-  const availableServerIds = args.mcpClientManager.listServers();
+  const availableServerIds = listBaseServers(args.mcpClientManager);
   if (availableServerIds.length === 0) {
     return configuredServerRefs;
   }
@@ -1422,7 +1602,7 @@ export function resolveConfiguredServerIds(args: {
 
     const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
       ? trimmedServerRef
-      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
             trimmedServerRef.toLowerCase(),
@@ -1450,7 +1630,7 @@ export function resolveConfiguredServerIds(args: {
 
           return undefined;
         })() ??
-        trimmedServerRef;
+        trimmedServerRef);
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -1470,15 +1650,32 @@ type ResolvedEvalTestCase = {
   advancedConfig?: Record<string, unknown>;
 };
 
+/**
+ * `advancedConfig.reasoningEffort` was a claim nothing ever applied (the runner
+ * reads only `temperature`), and the v1 API no longer accepts it. A value still
+ * stored on an older case is REFUSED rather than run as if it had been applied:
+ * the effort a case runs at is `models[].selection.settings.reasoningEffort`.
+ */
+export function assertNoStoredAdvancedReasoningEffort(
+  advancedConfig: Record<string, unknown> | undefined,
+): void {
+  if (advancedConfig?.reasoningEffort === undefined) return;
+  throw new ModelResolutionRefusalError([
+    {
+      code: "capability_missing",
+      reason:
+        "advancedConfig.reasoningEffort is not applied by the runner. Save the effort on the case's model instead (models[].selection.settings.reasoningEffort).",
+      evidence: { setting: "reasoningEffort", source: "advancedConfig" },
+    },
+  ]);
+}
+
 function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
   // Backend + route now emit `steps` (no promptTurns). The legacy per-turn
   // execution loops still consume `PromptTurn[]`, so bridge steps → turns here
   // (the single resolver every loop reads). Falls back to the legacy
   // promptTurns/probe path when a case carries no steps.
-  const promptTurns =
-    Array.isArray(test.steps) && test.steps.length > 0
-      ? stepsToPromptTurns(normalizeSteps(test.steps))
-      : resolvePromptTurns(test);
+  const promptTurns = resolveCasePromptTurns(test);
   const legacy = deriveLegacyPromptFields(promptTurns);
   return {
     promptTurns,
@@ -1700,10 +1897,43 @@ function snapshotWithStepsForConvex(
   return resolvedSteps ? { ...rest, steps: resolvedSteps } : rest;
 }
 
+/**
+ * The case snapshot an ENVIRONMENT quick run commits for its attempts — the
+ * same fields the legacy path writes when it pre-creates rows, in the Convex
+ * wire shape. The backend replaces the model/provider attribution with the
+ * environment's; everything else is the case content that runs.
+ */
+export function buildQuickRunCommitSnapshot(
+  test: EvalTestCase,
+): Record<string, unknown> {
+  const resolvedTest = resolveEvalTestCase(test);
+  return sanitizeForConvexTransport(
+    snapshotWithStepsForConvex({
+      title: test.title,
+      query: resolvedTest.query,
+      provider: test.provider,
+      model: test.model,
+      runs: test.runs,
+      expectedToolCalls: resolvedTest.expectedToolCalls,
+      isNegativeTest: test.isNegativeTest,
+      expectedOutput: resolvedTest.expectedOutput,
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
+      steps: resolveSteps(test),
+      advancedConfig: resolvedTest.advancedConfig,
+      matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
+    }),
+  ) as Record<string, unknown>;
+}
+
 // Helper to create iteration directly (for quick runs without a recorder)
 async function createIterationDirectly(
   convexClient: ConvexHttpClient,
   params: {
+    namedHostId?: string;
+    runtimeVenue?: "hosted" | "local";
+    /** The harness this quick run executes locally, when it does. */
+    localHarnessId?: string | null;
     testCaseId?: string;
     testCaseSnapshot: {
       title: string;
@@ -1725,12 +1955,36 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
+    /**
+     * A hosted HARNESS iteration keys its disposable computer to this row, and
+     * a harness with no box falls back to the member's personal computer. So a
+     * failed record refuses the run, carrying the backend's reason, instead of
+     * being swallowed.
+     */
+    requireRecord?: boolean;
   },
 ): Promise<string | undefined> {
+  let iterationId: string | undefined;
   try {
-    const result = await convexClient.mutation(
-      "testSuites:recordIterationStartWithoutRun" as any,
+    // ACTION, not the mutation — same starter-pool contention as the suite
+    // path above, retried server-side.
+    const result = await convexClient.action(
+      "testSuites:startQuickRunIteration" as any,
       {
+        ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
+        ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
+        // A local quick run declares the one harness it runs here, so the
+        // backend stamps it local exactly when this runner executes it locally
+        // (quick runs declared nothing before, which the backend reads as a
+        // runner for which "local" means Claude Code alone).
+        ...(params.runtimeVenue === "local" && params.localHarnessId
+          ? {
+              runnerCapabilities: [
+                ...runnerCapabilities(),
+                ...localHarnessCapabilities([params.localHarnessId]),
+              ],
+            }
+          : {}),
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
           snapshotWithStepsForConvex(params.testCaseSnapshot),
@@ -1740,12 +1994,38 @@ async function createIterationDirectly(
       },
     );
 
-    return result?.iterationId as string | undefined;
+    iterationId = result?.iterationId as string | undefined;
   } catch (error) {
     logger.error("[evals] Failed to create iteration:", error);
+    if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
+    if (params.requireRecord) {
+      throw new HarnessIterationRecordError(
+        `${HARNESS_ITERATION_RECORD_REQUIRED}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
     return undefined;
   }
+  if (!iterationId && params.requireRecord) {
+    throw new HarnessIterationRecordError(
+      `${HARNESS_ITERATION_RECORD_REQUIRED}: the backend returned no iteration id`,
+    );
+  }
+  return iterationId;
 }
+
+const HARNESS_ITERATION_RECORD_REQUIRED =
+  "Could not record this eval iteration, which a hosted harness run needs " +
+  "to provision its own computer, so the run was refused";
+
+/**
+ * Typed so the quick-run settle loop rethrows it: a run refused before it took
+ * a row has nothing of its own to answer with, and the route would otherwise
+ * report the case's latest iteration, another run's, as this one's result.
+ */
+class HarnessIterationRecordError extends Error {}
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -1790,6 +2070,7 @@ async function persistSetupFailedIteration(args: {
     resultSource: "reported" as const,
     metadata: {
       ...args.iterationMetadataBase,
+      evalExecutionFailure: { phase: "setup", reason: "setup_failed" },
       ...buildStageMetadata({
         ...(args.stageCase ? { stageCase: args.stageCase } : {}),
         // No real spans/prompts/messages: the analyzer reads that as
@@ -1808,6 +2089,66 @@ async function persistSetupFailedIteration(args: {
     convexClient: args.convexClient,
     finishParams: failParams,
   });
+}
+
+/**
+ * The error an iteration row carries when its case's model selection was
+ * refused before execution: the refusal code(s) and reason, in the words the
+ * resolver gave (`credential_missing: the saved org connection …`).
+ */
+export function describeModelRefusalForIteration(
+  refusal: ModelResolutionRefusalError,
+): string {
+  return `Model selection refused — ${refusal.message}`;
+}
+
+/**
+ * Record a case's model refusal on its pre-created rows. The case never
+ * reached a model, so each row finalizes `setup_failed` (the verdict is
+ * withheld, never a server failure) with the refusal as its error. Only the
+ * refused case's PENDING rows are touched; a row another worker already
+ * claimed is left alone.
+ */
+async function persistCaseRefusal(args: {
+  runId: string;
+  convexClient: ConvexHttpClient;
+  recorder: SuiteRunRecorder | null;
+  test: EvalTestCase;
+  refusal: ModelResolutionRefusalError;
+  runStartedAt: number;
+}): Promise<void> {
+  if (!args.test.testCaseId) return;
+  const details = (await args.convexClient.query(
+    "testSuites:getTestSuiteRunDetails" as any,
+    { runId: args.runId },
+  )) as { iterations?: Array<Record<string, unknown>> } | null;
+  const pending = (details?.iterations ?? []).filter(
+    (row) =>
+      row.status === "pending" && row.testCaseId === args.test.testCaseId,
+  );
+  const errorMessage = describeModelRefusalForIteration(args.refusal);
+  await Promise.allSettled(
+    pending.map((row) =>
+      persistSetupFailedIteration({
+        iterationId:
+          typeof row._id === "string"
+            ? row._id
+            : typeof row.iterationId === "string"
+              ? row.iterationId
+              : undefined,
+        runStartedAt: args.runStartedAt,
+        errorMessage,
+        iterationMetadataBase: {},
+        stageCase: buildStageAuthoredCase({
+          test: args.test,
+          turns: args.test.promptTurns,
+          caseNeedsModel: true,
+        }),
+        recorder: args.recorder,
+        convexClient: args.convexClient,
+      }),
+    ),
+  );
 }
 
 /**
@@ -1861,15 +2202,14 @@ async function persistRunSetupFailure(args: {
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-            ? row.iterationId
-            : undefined;
+              ? row.iterationId
+              : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId,
         );
         const snapshot = row.testCaseSnapshot as
-          | { query?: string; expectedToolCalls?: unknown[] }
-          | undefined;
+          { query?: string; expectedToolCalls?: unknown[] } | undefined;
         await persistSetupFailedIteration({
           iterationId,
           runStartedAt: args.runStartedAt,
@@ -1942,6 +2282,8 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
+  /** The bearer `convexClient` writes with; the evidence uploads use it too. */
+  convexAuthToken: string;
   finishParams: Omit<
     EvalIterationFinishParams,
     "videoBytes" | "videoMime" | "videoMeta"
@@ -1975,7 +2317,10 @@ async function finalizeIterationWithBrowserArtifacts(args: {
       kind: "eval",
       recorder: args.recorder,
       convexClient: args.convexClient,
-      finishParams: args.finishParams,
+      finishParams: {
+        ...args.finishParams,
+        convexAuthToken: args.convexAuthToken,
+      },
     },
   });
 }
@@ -2000,6 +2345,13 @@ type RunIterationBaseParams = {
   tools: ToolSet;
   /** Server ids the iteration runner hands to `prepareChatV2`. */
   selectedServers: string[];
+  /**
+   * The settings a case with a saved selection runs with, resolved ONCE per
+   * case by `resolveEffectiveModelSettings` (per-run override > saved
+   * selection > host defaults). Replaces the runner's own host/advancedConfig
+   * temperature when present; absent (legacy case) ⇒ unchanged behaviour.
+   */
+  effectiveSettings?: EvalEffectiveSettings;
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   testCaseId?: string;
@@ -2020,6 +2372,17 @@ type RunIterationBaseParams = {
    * #1 finishes.
    */
   precreatedIterationId?: string;
+  /**
+   * Fired as soon as the iteration's row id is known.
+   *
+   * The supervisor needs it to write a terminal row when it stops WAITING on
+   * this iteration — a user cancel resolves `runIterationUnderBudget`'s abort
+   * arm and abandons the iteration promise, so whatever the runner would have
+   * returned never arrives. Without this, a stopped trial whose row was
+   * created inside the runner (a quick run of a single iteration — nothing
+   * pre-creates those) stays `running` forever.
+   */
+  onIterationStarted?: (iterationId: string) => void;
   /**
    * Suite-level resolved compat-runtime flag — propagated from
    * `RunEvalSuiteOptions.suiteInjectOpenAiCompat`. When true, widget
@@ -2062,6 +2425,7 @@ type RunIterationBaseParams = {
    * use overrides as-is."
    */
   suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
   /**
    * Run environment snapshot (servers + serverBindings). Consulted to resolve
    * a pinned-tool-call turn's server reference (id first, display-name
@@ -2119,9 +2483,25 @@ type RunIterationBaseParams = {
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
   modelDefinition: ModelDefinition;
+  /**
+   * A local-runtime org connection's writeback context: after every model
+   * turn the iteration posts `/stream/org/local-usage` (the backend never saw
+   * the call), carrying the saved `org` selection and the execution record
+   * when there is one. Absent on every other rail.
+   */
+  orgLocalUsage?: EvalOrgLocalUsageContext;
+};
+
+/** See {@link RunIterationAiSdkParams.orgLocalUsage}. */
+type EvalOrgLocalUsageContext = {
+  projectId: string;
+  providerKey: string;
+  /** The saved `org` selection the case runs under, when it has one. */
+  modelSelection?: ModelSelection;
 };
 
 type RunIterationBackendParams = RunIterationBaseParams & {
+  harnessExecutionTarget?: LocalHarnessExecutionTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
@@ -2225,6 +2605,162 @@ function resolveOrgTargetForEval(
   return undefined;
 }
 
+/**
+ * Resolve a case's saved selection to a rail with the local adapter
+ * (`model-resolution-local.ts`), or throw its refusal. Pure apart from the
+ * throw; the org path's own resolution (and the backend's admission of hosted
+ * and org-cloud requests) happens where it always did.
+ */
+export function resolveEvalSelectionRoute(args: {
+  test: EvalTestCase;
+  selection: ModelSelection;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
+}): {
+  rail: "hosted" | "org" | "local";
+  wireModelId: string;
+  modelDefinition: ModelDefinition;
+} {
+  const { selection } = args;
+  const wireModelId = selection.nativeModelId ?? selection.modelId;
+  const base = buildModelDefinition({ ...args.test, model: wireModelId });
+  const selectionModel: ModelDefinition = {
+    ...base,
+    id: wireModelId,
+    hosted: selection.source === "hosted",
+  };
+  const providerKey =
+    selection.source === "org" ? deriveOrgProviderKey(selectionModel) : null;
+  const result = resolveLocalModelSelection({
+    selection,
+    purpose: "evalTarget",
+    ...(providerKey?.ok ? { orgProviderKey: providerKey.key } : {}),
+    hasOrgTarget:
+      !isCredentialFreeGithubExecution() &&
+      resolveOrgTargetForEval(args.test, args.orgModelConfigTarget) !==
+        undefined,
+    ...(args.orgModelConfig
+      ? { orgProviders: args.orgModelConfig.providers }
+      : {}),
+    hasLocalKey: (key) => Boolean(lookupProviderApiKey(args.modelApiKeys, key)),
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError(result.refusals);
+  return {
+    rail: result.plan.rail,
+    wireModelId: result.plan.wireModelId,
+    modelDefinition: selectionModel,
+  };
+}
+
+/** A case's resolved settings plus the provider options they need on a direct call. */
+type EvalEffectiveSettings = EffectiveModelSettings & {
+  providerOptions?: DirectProviderOptions;
+};
+
+/**
+ * The settings a case with a saved selection runs with, resolved ONCE for
+ * all of its iterations, on the route it takes. Precedence, highest first:
+ * the case's own `advancedConfig` temperature (per-run override) > the saved
+ * selection's `settings` > the suite host's defaults. `advancedConfig` carries
+ * no effort: a stored `advancedConfig.reasoningEffort` is refused, and the
+ * effort is only ever the selection's `settings.reasoningEffort`. A setting the route cannot honour
+ * throws the refusal (the case fails with that reason) instead of running a
+ * different configuration.
+ */
+export function resolveEvalCaseSettings(args: {
+  test: EvalTestCase;
+  selection: ModelSelection;
+  modelDefinition: ModelDefinition;
+  route: ModelSettingsRoute;
+  suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
+}): EvalEffectiveSettings {
+  const { advancedConfig } = resolveEvalTestCase(args.test);
+  assertNoStoredAdvancedReasoningEffort(advancedConfig);
+  const host = resolveExecutionContext({
+    hostConfig: args.suiteHostConfig ?? null,
+    precedence: "override-wins",
+  });
+  const result = resolveEffectiveModelSettings({
+    route: args.route,
+    modelDefinition: args.modelDefinition,
+    override: {
+      ...(typeof advancedConfig?.temperature === "number"
+        ? { temperature: advancedConfig.temperature }
+        : {}),
+    },
+    selection: args.selection,
+    host: {
+      ...(host.temperature !== undefined
+        ? { temperature: host.temperature }
+        : {}),
+    },
+  });
+  if (!result.ok) throw new ModelResolutionRefusalError([result.refusal]);
+  return {
+    ...result.settings,
+    ...(result.providerOptions
+      ? { providerOptions: result.providerOptions }
+      : {}),
+  };
+}
+
+/**
+ * `/stream/org/local-usage` for one model turn of an eval iteration on a
+ * local-runtime org connection: the backend never saw the call, so this is
+ * its usage row, and, under a saved `org` selection, the execution record it
+ * merges onto the iteration (`evalIterationId`). Fire-and-forget, like the
+ * chat and swarm writebacks; an aborted call is not written back (the same
+ * rule those follow: an aborted turn is not billed as completed usage).
+ */
+function postEvalOrgLocalUsage(args: {
+  context: EvalOrgLocalUsageContext;
+  event: LocalModelCallSettled;
+  modelId: string;
+  effectiveSettings: EffectiveModelSettings;
+  iterationId: string | undefined;
+  runId: string | null;
+  convexAuthToken: string | undefined;
+  selectedServers: string[];
+}): void {
+  const { context, event } = args;
+  if (event.outcome === "aborted") return;
+  const execution = buildLocalExecutionRecord({
+    selection: context.modelSelection,
+    providerKey: context.providerKey,
+    wireModelId: args.modelId,
+    effectiveSettings: args.effectiveSettings,
+    outcome:
+      event.outcome === "ok"
+        ? { kind: "ok" }
+        : { kind: "error", ...(event.code ? { code: event.code } : {}) },
+    at: event.at,
+    ...(event.upstreamModel ? { upstreamModel: event.upstreamModel } : {}),
+  });
+  void postLocalUsage({
+    projectId: context.projectId,
+    providerKey: context.providerKey,
+    model: args.modelId,
+    ...(event.usage ? { usage: event.usage } : {}),
+    ...(event.finishReason ? { finishReason: event.finishReason } : {}),
+    sourceType: "eval",
+    ...(args.convexAuthToken
+      ? { authHeader: `Bearer ${args.convexAuthToken}` }
+      : {}),
+    ...(args.selectedServers.length ? { serverIds: args.selectedServers } : {}),
+    ...(args.iterationId ? { evalIterationId: String(args.iterationId) } : {}),
+    ...(args.runId ? { evalRunId: String(args.runId) } : {}),
+    ...(context.modelSelection && execution
+      ? { modelSelection: context.modelSelection, execution }
+      : {}),
+  }).catch((error) => {
+    logger.warn("[evals] Failed to post local usage", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
 async function resolveOrgByokEvalRuntime(args: {
   test: EvalTestCase;
   modelDefinition: ModelDefinition;
@@ -2232,6 +2768,16 @@ async function resolveOrgByokEvalRuntime(args: {
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexAuthToken: string;
+  /**
+   * An explicit `org` selection: the org connection is the choice, so keys the
+   * request happens to carry do not divert it onto the local path.
+   */
+  ignoreExplicitModelApiKeys?: boolean;
+  /**
+   * The saved `org` selection, forwarded to `/stream/org/resolve` so the
+   * backend re-checks its connection before handing back any key.
+   */
+  modelSelection?: ModelSelection;
 }): Promise<
   | {
       kind: "cloud";
@@ -2241,11 +2787,18 @@ async function resolveOrgByokEvalRuntime(args: {
   | {
       kind: "local";
       orgModelConfig: ResolvedOrgModelConfig;
+      /** For the `/stream/org/local-usage` writeback. */
+      providerKey: string;
+      projectId: string;
     }
   | undefined
 > {
   if (isCredentialFreeGithubExecution()) return undefined;
-  if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
+  if (
+    !args.ignoreExplicitModelApiKeys &&
+    hasExplicitModelApiKeys(args.modelApiKeys)
+  )
+    return undefined;
 
   const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
   if (!providerKeyResult.ok) return undefined;
@@ -2267,6 +2820,7 @@ async function resolveOrgByokEvalRuntime(args: {
     providerKey,
     String(args.modelDefinition.id),
     { bearerToken: args.convexAuthToken },
+    args.modelSelection ? { modelSelection: args.modelSelection } : undefined,
   );
   if (runtime.runtimeLocation === "cloud") {
     return { kind: "cloud", providerKey: runtime.providerKey, target };
@@ -2275,6 +2829,8 @@ async function resolveOrgByokEvalRuntime(args: {
   return {
     kind: "local",
     orgModelConfig: { providers: [runtime.provider] },
+    providerKey: runtime.provider.providerKey,
+    projectId: target.projectId,
   };
 }
 
@@ -2300,6 +2856,20 @@ const runHostedIteration = async (
       : {}),
   });
   try {
+    const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
+    if (params.harnessRuntimeVenue === "local") {
+      if (!project || !("projectId" in project)) throw new Error("Local harness evals require a project");
+      // The run is prepared for the harness the suite's host selects: each
+      // local harness has its own runtime, authorization and grant, and a
+      // target minted for one is never valid for another.
+      const resources = await prepareLocalHarnessRun({
+        bearer: params.convexAuthToken,
+        projectId: project.projectId,
+        harnessId: localHarnessIdOf(harnessOfHostConfig(params.suiteHostConfig)) ?? "claude-code",
+      });
+      try { return await runHostedIterationWithBrowser({ ...params, harnessExecutionTarget: resources.target }, browser); }
+      finally { await resources.cleanup(); }
+    }
     return await runHostedIterationWithBrowser(params, browser);
   } finally {
     await browser.dispose();
@@ -2416,6 +2986,76 @@ async function markIterationTimedOut(args: {
   } catch (error) {
     logger.warn("[evals] Failed to mark timed-out iteration", {
       iterationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Record a stopped iteration in its own terminal word instead of leaving the
+ * row behind.
+ *
+ * The pre-created `testIteration` row is claimed before the first turn, so an
+ * abort that writes nothing leaves it `running` forever: the test case history
+ * shows a trial that never ends, and nothing says why it stopped. Mirrors
+ * {@link markIterationTimedOut} — same action, same shape. Never throws: the
+ * caller is already unwinding a stopped run.
+ *
+ * WHICH word comes off the abort reason, not from the call site. `abortRun`
+ * aborts with the `EvalRunStoppedError` precisely so this can be told apart —
+ * a run that blew its own clock reaches the same `isCancelUnwind` path as a
+ * person pressing stop, and hardcoding `cancelled` / `user_cancelled` filed
+ * every run timeout as a user cancellation. That is the one distinction the
+ * row is there to record: "we stopped it" and "you stopped it" are different
+ * stories, and only one of them is a bug worth chasing.
+ *
+ * The iteration clock never arrives here — `isCancelUnwind` sends it to
+ * `markIterationTimedOut`, which owns the `iteration_timeout` reason and its
+ * `timeout.clock` detail.
+ *
+ * Idempotent against `cancelTestSuiteRun`, which may have flipped the same row
+ * a moment earlier: `internalUpdateTestIteration` ignores writes to a row that
+ * is already `cancelled` or `timed_out`.
+ */
+async function markIterationStopped(args: {
+  convexClient: ConvexHttpClient;
+  iterationId: string | undefined;
+  abortSignal?: AbortSignal;
+}): Promise<void> {
+  if (!args.iterationId) return;
+
+  const reason = args.abortSignal?.reason;
+  const stop = isEvalRunStoppedError(reason) ? reason : undefined;
+  const terminal = stop?.terminalStatus ?? "cancelled";
+  const stopReason = stop?.stopReason ?? "user_cancelled";
+  const message =
+    reason instanceof Error && reason.message
+      ? reason.message
+      : "Iteration cancelled";
+  try {
+    await args.convexClient.action("testSuites:updateTestIteration" as any, {
+      iterationId: args.iterationId,
+      status: terminal,
+      result: terminal,
+      actualToolCalls: [],
+      tokensUsed: 0,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      messages: [{ role: "assistant", content: message }],
+      error: message,
+      resultSource: "derived",
+      metadata: {
+        stopReason,
+        // Same `timeout.clock` contract `markIterationTimedOut` writes, so a
+        // reader does not have to know which function recorded the row to
+        // learn which clock ended it.
+        ...(stopReason === "run_timeout"
+          ? { timeout: { clock: "run" as const } }
+          : {}),
+      },
+    });
+  } catch (error) {
+    logger.warn("[evals] Failed to mark stopped iteration", {
+      iterationId: args.iterationId,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -2543,7 +3183,21 @@ const executeTestCase = async (params: {
   abortSignal?: AbortSignal;
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
+  creditStop?: { exhausted: boolean };
   compareRunId?: string;
+  /**
+   * See {@link RunEvalSuiteOptions.committedQuickRunIterationIds}. When set,
+   * attempt `i` runs on `committedIterationIds[i]`; the count must equal the
+   * case's attempts, and no row is ever created here — a mismatch fails the
+   * case before any model or tool call instead of creating an unpinned row.
+   */
+  committedIterationIds?: string[];
+  /**
+   * Told the attempt index each time an attempt takes ownership of its
+   * committed row (see `executeCommittedTestCase`). An entered attempt
+   * finalizes its own row; the rest are settled by the wrapper.
+   */
+  onCommittedAttemptEntered?: (runIndex: number) => void;
   /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
   toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /** Present ⇒ streaming mode: SSE events flow here and iterations run on the
@@ -2564,6 +3218,7 @@ const executeTestCase = async (params: {
   setupAudit?: Record<string, unknown>;
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
+  harnessRuntimeVenue?: "local" | "hosted";
   /**
    * Run environment snapshot (servers + serverBindings). Consulted to resolve
    * pinned (`toolCall`) server references to a manager key — by the model-free
@@ -2609,6 +3264,8 @@ const executeTestCase = async (params: {
     abortSignal,
     abortRun,
     compareRunId,
+    committedIterationIds,
+    onCommittedAttemptEntered,
     toolDescriptionOverride,
     emit,
     injectOpenAiCompat,
@@ -2620,6 +3277,7 @@ const executeTestCase = async (params: {
     setupSpans,
     setupAudit,
     suiteHostConfig,
+    harnessRuntimeVenue,
     environment,
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
@@ -2634,6 +3292,18 @@ const executeTestCase = async (params: {
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
+  /**
+   * An ENVIRONMENT quick run's committed rows are checked against the attempt
+   * count before anything runs: more attempts than committed rows would need a
+   * row nobody reserved or pinned, fewer would leave committed rows unrun.
+   */
+  const assertCommittedAttempts = (attempts: number) => {
+    if (committedIterationIds && committedIterationIds.length !== attempts) {
+      throw new Error(
+        `This quick run committed ${committedIterationIds.length} attempt(s) but the case asks for ${attempts}; it was not executed.`,
+      );
+    }
+  };
 
   // Normalize legacy `widget_probe` rows into a single model-free pinned turn
   // so the unified engine sees one shape. No-op for already-pinned / prompt
@@ -2643,8 +3313,13 @@ const executeTestCase = async (params: {
   // Run a single iteration under the per-iteration timeout + run-abort guards.
   // Bails immediately if the run was already stopped; on timeout it aborts the
   // whole run (via `abortRun`) and marks the row `timed_out`.
+  const creditStop = params.creditStop ?? { exhausted: false };
   const runSingleIteration = async <T extends EvalIterationOutcome>(
-    runner: (iterationSignal: AbortSignal, deadlineAt: number) => Promise<T>,
+    runner: (
+      iterationSignal: AbortSignal,
+      deadlineAt: number,
+      onIterationStarted: (iterationId: string) => void,
+    ) => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
     timeoutTest: EvalTestCase = normalizedTest,
@@ -2654,17 +3329,83 @@ const executeTestCase = async (params: {
       throw reason instanceof Error ? reason : RUN_CANCELLED_ERROR;
     }
 
+    /**
+     * The row this iteration claimed, as soon as it exists.
+     *
+     * `runIterationUnderBudget` stops WAITING on a cancelled iteration and
+     * abandons its promise, so the runner's own cancel handling may never
+     * produce a value here. Holding the id lets the stop be recorded anyway.
+     */
+    let startedIterationId = precreatedIterationId;
+    const noteIterationStarted = (iterationId: string) => {
+      startedIterationId = iterationId;
+    };
+    /** Persist the stop, once, on the way out. */
+    const recordCancelledIteration = async () =>
+      await markIterationStopped({
+        convexClient,
+        iterationId: startedIterationId,
+        abortSignal,
+      });
+
+    const runAndCheckCredits = async (
+      signal: AbortSignal,
+      deadline: number,
+    ) => {
+      const outcome = await runner(signal, deadline, noteIterationStarted);
+      if (outcome.creditsExhausted && !creditStop.exhausted) {
+        creditStop.exhausted = true;
+        logger.info("[evals] credits exhausted; remaining iterations skipped", {
+          event: "evals.credits_exhausted",
+          iterationId: startedIterationId,
+        });
+      }
+      return outcome;
+    };
     if (!isolatedIterationTimeoutEnabled()) {
       // Kill-switch path: the pre-isolation behaviour, kept verbatim for one
       // release. An iteration timeout aborts the WHOLE run and rejects, which
       // is the contract `evals-runner.test.ts` pinned before this change.
+      try {
+        return await runIterationUnderBudget({
+          run: runAndCheckCredits,
+          runSignal: abortSignal,
+          unitTimeoutMs: budgets.unitTimeoutMs,
+          graceMs: EVAL_ABORT_GRACE_MS,
+          onTimeout: async () => {
+            abortRun?.(iterationTimeoutError(budgets.unitTimeoutMs));
+            await markIterationTimedOut({
+              convexClient,
+              runId,
+              precreatedIterationId,
+              test: timeoutTest,
+              runIndex,
+              budgetMs: budgets.unitTimeoutMs,
+            });
+          },
+          timedOutOutcome: () => {
+            throw iterationTimeoutError(budgets.unitTimeoutMs);
+          },
+        });
+      } catch (error) {
+        if (isCancelUnwind(error, abortSignal)) {
+          await recordCancelledIteration();
+        }
+        throw error;
+      }
+    }
+
+    try {
       return await runIterationUnderBudget({
-        run: runner,
+        run: runAndCheckCredits,
         runSignal: abortSignal,
         unitTimeoutMs: budgets.unitTimeoutMs,
         graceMs: EVAL_ABORT_GRACE_MS,
-        onTimeout: async () => {
-          abortRun?.(iterationTimeoutError(budgets.unitTimeoutMs));
+        onTimeout: async (elapsedMs) => {
+          // NOTE: no `abortRun`. That is the change — one slow trial used to
+          // kill every sibling trial in the run, discarding evidence that had
+          // already been produced and turning an infrastructure event into a
+          // run-level verdict of `timed_out`.
           await markIterationTimedOut({
             convexClient,
             runId,
@@ -2672,45 +3413,26 @@ const executeTestCase = async (params: {
             test: timeoutTest,
             runIndex,
             budgetMs: budgets.unitTimeoutMs,
+            elapsedMs,
           });
         },
-        timedOutOutcome: () => {
-          throw iterationTimeoutError(budgets.unitTimeoutMs);
-        },
+        // Resolve, never reject: the caller's `for (runIndex…)` loop has no
+        // try/catch, so rejecting here strands this case's remaining iterations
+        // as `pending` and blocks the run's terminal transition.
+        timedOutOutcome: () =>
+          ({
+            evaluation: { passed: false },
+            ...(precreatedIterationId
+              ? { iterationId: precreatedIterationId }
+              : {}),
+          }) as unknown as T,
       });
+    } catch (error) {
+      if (isCancelUnwind(error, abortSignal)) {
+        await recordCancelledIteration();
+      }
+      throw error;
     }
-
-    return await runIterationUnderBudget({
-      run: runner,
-      runSignal: abortSignal,
-      unitTimeoutMs: budgets.unitTimeoutMs,
-      graceMs: EVAL_ABORT_GRACE_MS,
-      onTimeout: async (elapsedMs) => {
-        // NOTE: no `abortRun`. That is the change — one slow trial used to
-        // kill every sibling trial in the run, discarding evidence that had
-        // already been produced and turning an infrastructure event into a
-        // run-level verdict of `timed_out`.
-        await markIterationTimedOut({
-          convexClient,
-          runId,
-          precreatedIterationId,
-          test: timeoutTest,
-          runIndex,
-          budgetMs: budgets.unitTimeoutMs,
-          elapsedMs,
-        });
-      },
-      // Resolve, never reject: the caller's `for (runIndex…)` loop has no
-      // try/catch, so rejecting here strands this case's remaining iterations
-      // as `pending` and blocks the run's terminal transition.
-      timedOutOutcome: () =>
-        ({
-          evaluation: { passed: false },
-          ...(precreatedIterationId
-            ? { iterationId: precreatedIterationId }
-            : {}),
-        }) as unknown as T,
-    });
   };
 
   // Pinned-only case (today's render check): no model turns at all. Run it
@@ -2726,11 +3448,17 @@ const executeTestCase = async (params: {
   ) {
     const outcomes: EvalIterationOutcome[] = [];
     const pinnedRuns = Math.max(1, Math.floor(normalizedTest.runs || 1));
+    assertCommittedAttempts(pinnedRuns);
     for (let runIndex = 0; runIndex < pinnedRuns; runIndex++) {
       if (abortSignal?.aborted) break;
+      const committedIterationId = committedIterationIds?.[runIndex];
+      onCommittedAttemptEntered?.(runIndex);
       const modelFreeParams = {
         test: normalizedTest,
         runIndex,
+        ...(committedIterationId
+          ? { precreatedIterationId: committedIterationId }
+          : {}),
         budgets,
         tools,
         selectedServers,
@@ -2761,6 +3489,7 @@ const executeTestCase = async (params: {
         setupSpans,
         setupAudit,
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
@@ -2771,7 +3500,7 @@ const executeTestCase = async (params: {
       };
       outcomes.push(
         await runSingleIteration(
-          (iterationSignal, iterationDeadlineAt) =>
+          (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
             runLocalIteration({
               ...modelFreeParams,
               // The ITERATION's signal, not the run's: this is what makes the
@@ -2779,9 +3508,10 @@ const executeTestCase = async (params: {
               // the wait for it.
               abortSignal: iterationSignal,
               iterationDeadlineAt,
+              onIterationStarted,
               ...(streaming ? { emit: emit! } : {}),
             }),
-          undefined,
+          committedIterationId,
           runIndex,
           normalizedTest,
         ),
@@ -2789,6 +3519,8 @@ const executeTestCase = async (params: {
     }
     return outcomes;
   }
+
+  assertCommittedAttempts(test.runs);
 
   // THE HOST'S MODEL WINS on an external-account harness, exactly as it does on
   // the chat rails. Resolved here rather than at either iteration runner so
@@ -2802,29 +3534,123 @@ const executeTestCase = async (params: {
   // a non-sentinel on an external-account harness and refused a run it had
   // already admitted. A per-case model is normal in evals, so that refusal hit
   // legitimate Cursor suites.
-  const modelDefinition = resolveEvalCaseModelDefinition({
+  const caseModel = buildModelDefinition(test);
+  const promotedModel = resolveEvalCaseModelDefinition({
     hostConfig: suiteHostConfig,
-    caseModel: buildModelDefinition(test),
+    caseModel,
   });
-  const resolvedModelId = getCanonicalModelId(
-    String(modelDefinition.id),
-    modelDefinition.provider,
-  );
-  const isJamModel = isHostedModelDefinition({
-    id: resolvedModelId,
-    provider: modelDefinition.provider,
-    hosted: modelDefinition.hosted,
-  });
-  const orgByokRuntime = isJamModel
-    ? undefined
-    : await resolveOrgByokEvalRuntime({
-        test,
-        modelDefinition,
-        modelApiKeys,
-        orgModelConfig,
-        orgModelConfigTarget,
-        convexAuthToken,
-      });
+  // The case's saved selection decides the rail — unless the host promoted
+  // its own runtime-chosen model, in which case the case's model (and so its
+  // selection) describes nothing that runs.
+  const selectionRoute =
+    test.selection && promotedModel === caseModel
+      ? resolveEvalSelectionRoute({
+          test,
+          selection: test.selection,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+        })
+      : undefined;
+  // The same selection, sent to the backend as `modelSelection` so its
+  // resolver re-checks it and records it as the requested selection (not
+  // `legacy`): hosted on `/stream` (carrying its `fallback`), org on
+  // `/stream/org` and `/stream/org/resolve` (carrying its `connectionRef`, which
+  // the backend re-resolves before any key is decrypted). A `local` selection
+  // is never sent. The backends that predate selections read request fields by
+  // name and ignore this one, so it is sent unconditionally.
+  const forwardedSelection = selectionRoute
+    ? backendModelSelection(test.selection)
+    : undefined;
+  const hostedSelection =
+    forwardedSelection?.source === "hosted" ? forwardedSelection : undefined;
+  const orgSelection =
+    forwardedSelection?.source === "org" ? forwardedSelection : undefined;
+  // A stored legacy selection (own key only) for the model that runs. Same
+  // gate as `selectionRoute`: a promoted host model is not the case's.
+  const legacySelection =
+    !selectionRoute && promotedModel === caseModel
+      ? routingSelectionForModel(test.legacySelection, caseModel)
+      : undefined;
+  // `hosted: false` on a legacy one, so every check downstream (harness
+  // admission included) agrees it is not MCPJam-paid.
+  const modelDefinition =
+    selectionRoute?.modelDefinition ??
+    withSelectionRouting(promotedModel, legacySelection);
+  const resolvedModelId = selectionRoute
+    ? selectionRoute.wireModelId
+    : getCanonicalModelId(String(modelDefinition.id), modelDefinition.provider);
+  // Who pays: the saved selection's rail; a legacy one is never `hosted`;
+  // without either, today's hosted-list check on the canonical id
+  // (`decideTurnRail` with no selection IS that check).
+  const isJamModel = selectionRoute
+    ? selectionRoute.rail === "hosted"
+    : decideTurnRail({
+        selection: legacySelection,
+        model: {
+          id: resolvedModelId,
+          provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
+        },
+      }) === "hosted";
+  const orgByokRuntime =
+    isJamModel || selectionRoute?.rail === "local"
+      ? undefined
+      : await resolveOrgByokEvalRuntime({
+          test,
+          modelDefinition,
+          modelApiKeys,
+          orgModelConfig,
+          orgModelConfigTarget,
+          convexAuthToken,
+          ...(selectionRoute?.rail === "org"
+            ? { ignoreExplicitModelApiKeys: true }
+            : {}),
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        });
+  if (selectionRoute?.rail === "org" && !orgByokRuntime) {
+    // Every reason the org path can be unavailable was refused above; this is
+    // the belt to that brace — an org selection never falls through to the
+    // local keys.
+    throw new ModelResolutionRefusalError([
+      {
+        code: "credential_missing",
+        reason: "the saved org connection cannot be resolved for this run",
+      },
+    ]);
+  }
+  // The case's settings, resolved ONCE for every iteration below on the
+  // route it takes (per-run override > saved selection > host defaults).
+  // Legacy cases (no selection) keep the runners' own host/override rule.
+  const effectiveSettings =
+    selectionRoute && test.selection
+      ? resolveEvalCaseSettings({
+          test,
+          selection: test.selection,
+          modelDefinition,
+          route: isJamModel
+            ? "hosted"
+            : orgByokRuntime?.kind === "cloud"
+              ? "orgCloud"
+              : "direct",
+          suiteHostConfig,
+          harnessRuntimeVenue,
+        })
+      : undefined;
+  // A local-runtime org connection: the iteration writes its usage (and,
+  // under a saved org selection, its execution record) back itself.
+  const orgLocalUsage: EvalOrgLocalUsageContext | undefined =
+    orgByokRuntime?.kind === "local"
+      ? {
+          projectId: orgByokRuntime.projectId,
+          providerKey: orgByokRuntime.providerKey,
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
+        }
+      : undefined;
+  // A `local` selection runs on this request's own keys only — never on the
+  // org's resolved config.
+  const localOrgModelConfig =
+    selectionRoute?.rail === "local" ? undefined : orgModelConfig;
   // MCPJam-paid models bill an org wallet; backend `/stream` rejects the
   // request without a projectId. Same target the org-BYOK path threads.
   const jamBillingTarget = isJamModel
@@ -2837,7 +3663,11 @@ const executeTestCase = async (params: {
   // quick-run paths with runs > 1 so the iteration history shows every row
   // immediately, not one-at-a-time as the loop progresses.
   const shouldPrecreateIterations =
-    recorder == null && runId == null && test.runs > 1;
+    recorder == null &&
+    runId == null &&
+    test.runs > 1 &&
+    // An environment quick run's rows are already committed.
+    !committedIterationIds;
   const precreatedIterationIds: (string | undefined)[] = [];
   if (shouldPrecreateIterations) {
     const resolvedTestForPrecreate = resolveEvalTestCase(test);
@@ -2846,7 +3676,11 @@ const executeTestCase = async (params: {
     for (let runIndex = 0; runIndex < test.runs; runIndex++) {
       try {
         const iterationParams = {
-          testCaseId: test.testCaseId ?? testCaseId,
+          namedHostId: hostPolicy?.namedHostId,
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
+    testCaseId: test.testCaseId ?? testCaseId,
           testCaseSnapshot: {
             title: test.title,
             query: resolvedTestForPrecreate.query,
@@ -2881,9 +3715,38 @@ const executeTestCase = async (params: {
   }
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
-    const precreatedIterationId = shouldPrecreateIterations
-      ? precreatedIterationIds[runIndex]
-      : undefined;
+    // A stopped run leaves this and every later committed attempt unentered;
+    // `executeCommittedTestCase` settles their rows.
+    if (committedIterationIds && abortSignal?.aborted) break;
+    onCommittedAttemptEntered?.(runIndex);
+    if (creditStop.exhausted) {
+      // Only untouched rows are skipped. Completed evidence remains intact.
+      const iterationId = await findIterationIdForTimeout({
+        convexClient,
+        runId,
+        test,
+        runIndex,
+        precreatedIterationId:
+          committedIterationIds?.[runIndex] ?? precreatedIterationIds[runIndex],
+      });
+      if (iterationId) {
+        await convexClient.action("testSuites:updateTestIteration" as any, {
+          iterationId,
+          status: "skipped",
+          result: "failed",
+          actualToolCalls: [],
+          tokensUsed: 0,
+          error:
+            "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+        });
+      }
+      continue;
+    }
+    const precreatedIterationId = committedIterationIds
+      ? committedIterationIds[runIndex]
+      : shouldPrecreateIterations
+        ? precreatedIterationIds[runIndex]
+        : undefined;
     if (isJamModel) {
       const backendParams = {
         test,
@@ -2891,6 +3754,7 @@ const executeTestCase = async (params: {
         budgets,
         tools,
         selectedServers,
+        ...(effectiveSettings ? { effectiveSettings } : {}),
         mcpClientManager,
         recorder,
         testCaseId,
@@ -2899,7 +3763,13 @@ const executeTestCase = async (params: {
         convexAuthToken,
         modelId: resolvedModelId,
         modelDefinition,
-        extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
+        extraBodyFields:
+          jamBillingTarget || hostedSelection
+            ? {
+                ...(jamBillingTarget ?? {}),
+                ...(hostedSelection ? { modelSelection: hostedSelection } : {}),
+              }
+            : undefined,
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
@@ -2918,6 +3788,7 @@ const executeTestCase = async (params: {
         setupSpans,
         setupAudit,
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment,
         // A `projectEnvironments` doc id, not the servers snapshot above and
         // not a sandbox image — see `RunIterationBaseParams`.
@@ -2937,11 +3808,12 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal, iterationDeadlineAt) =>
+        (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
             iterationDeadlineAt,
+            onIterationStarted,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -2959,6 +3831,7 @@ const executeTestCase = async (params: {
         budgets,
         tools,
         selectedServers,
+        ...(effectiveSettings ? { effectiveSettings } : {}),
         mcpClientManager,
         recorder,
         testCaseId,
@@ -2971,6 +3844,7 @@ const executeTestCase = async (params: {
         extraBodyFields: {
           providerKey: orgByokRuntime.providerKey,
           ...orgByokRuntime.target,
+          ...(orgSelection ? { modelSelection: orgSelection } : {}),
         },
         ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
@@ -2990,6 +3864,7 @@ const executeTestCase = async (params: {
         setupSpans,
         setupAudit,
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment,
         // A `projectEnvironments` doc id, not the servers snapshot above and
         // not a sandbox image — see `RunIterationBaseParams`.
@@ -3009,11 +3884,12 @@ const executeTestCase = async (params: {
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
-        (iterationSignal, iterationDeadlineAt) =>
+        (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
           runHostedIteration({
             ...backendParams,
             abortSignal: iterationSignal,
             iterationDeadlineAt,
+            onIterationStarted,
             ...(streaming ? { emit: emit! } : {}),
           }),
         precreatedIterationId,
@@ -3030,6 +3906,8 @@ const executeTestCase = async (params: {
       budgets,
       tools,
       selectedServers,
+      ...(effectiveSettings ? { effectiveSettings } : {}),
+      ...(orgLocalUsage ? { orgLocalUsage } : {}),
       mcpClientManager,
       recorder,
       testCaseId,
@@ -3039,7 +3917,7 @@ const executeTestCase = async (params: {
       orgModelConfig:
         orgByokRuntime?.kind === "local"
           ? orgByokRuntime.orgModelConfig
-          : orgModelConfig,
+          : localOrgModelConfig,
       orgModelConfigTarget,
       convexClient,
       runId,
@@ -3055,6 +3933,7 @@ const executeTestCase = async (params: {
       setupSpans,
       setupAudit,
       suiteHostConfig,
+      harnessRuntimeVenue,
       // `environment` resolves a pinned turn's server (local hybrids); harmless
       // for prompt-only cases.
       environment,
@@ -3067,11 +3946,12 @@ const executeTestCase = async (params: {
       ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     };
     const iterationOutcome = await runSingleIteration(
-      (iterationSignal, iterationDeadlineAt) =>
+      (iterationSignal, iterationDeadlineAt, onIterationStarted) =>
         runLocalIteration({
           ...localParams,
           abortSignal: iterationSignal,
           iterationDeadlineAt,
+          onIterationStarted,
           ...(streaming ? { emit: emit! } : {}),
         }),
       precreatedIterationId,
@@ -3084,17 +3964,67 @@ const executeTestCase = async (params: {
   return outcomes;
 };
 
+/**
+ * `executeTestCase` for an ENVIRONMENT quick run's committed rows: every
+ * committed row whose attempt never took ownership of it is finalized, so
+ * none is left running. A run that was stopped first finalizes it as stopped;
+ * a setup failure (the model setup threw, the attempt count did not match)
+ * finalizes it `setup_failed` with the error, never as a user cancel. An
+ * attempt that DID take its row finalizes it itself (outcome, timeout or
+ * cancel), and is never touched here, so this cannot race a legitimate
+ * finalize.
+ */
+async function executeCommittedTestCase(
+  params: Parameters<typeof executeTestCase>[0],
+): ReturnType<typeof executeTestCase> {
+  const committed = params.committedIterationIds;
+  if (!committed) return executeTestCase(params);
+  const entered = new Set<number>();
+  let failure: { error: unknown } | undefined;
+  try {
+    return await executeTestCase({
+      ...params,
+      onCommittedAttemptEntered: (runIndex) => entered.add(runIndex),
+    });
+  } catch (error) {
+    failure = { error };
+    throw error;
+  } finally {
+    const unentered = committed.filter((_, index) => !entered.has(index));
+    if (failure && !params.abortSignal?.aborted) {
+      await failCommittedQuickRun(
+        params.convexClient,
+        unentered,
+        failure.error instanceof Error
+          ? failure.error.message
+          : String(failure.error),
+      );
+    } else {
+      for (const iterationId of unentered) {
+        await markIterationStopped({
+          convexClient: params.convexClient,
+          iterationId,
+          abortSignal: params.abortSignal,
+        });
+      }
+    }
+  }
+}
+
 // Thin batch wrapper (no `emit`) — preserves the call site in
 // `runEvalSuiteWithAiSdk` and tests with zero churn.
 const runTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit">,
-) => executeTestCase(params);
+) => params.harnessRuntimeVenue === "local"
+  ? withLocalHarnessSlot(() => executeCommittedTestCase(params), params.abortSignal)
+  : executeCommittedTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
   gradingMode,
   executionBudgets,
   suiteId,
   runId,
+  committedQuickRunIterationIds,
   config,
   modelApiKeys,
   orgModelConfig,
@@ -3110,6 +4040,7 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
+  harnessRuntimeVenue: requestedHarnessRuntimeVenue,
   projectEnvironmentId,
   projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
@@ -3118,6 +4049,10 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
+    (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
+      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -3143,6 +4078,13 @@ export const runEvalSuiteWithAiSdk = async ({
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
   }
+  if (committedQuickRunIterationIds && (runId !== null || tests.length !== 1)) {
+    // Committed rows belong to ONE quick-run case; anything else is a caller
+    // bug, refused before a single attempt runs.
+    throw new Error(
+      "Committed quick-run iterations apply to a single-case quick run only",
+    );
+  }
 
   if (
     toolPolicy?.mode === "readOnly" &&
@@ -3160,12 +4102,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : providedRecorder ??
+      : (providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        });
+        }));
 
   const summary = {
     total: 0,
@@ -3386,14 +4328,12 @@ export const runEvalSuiteWithAiSdk = async ({
         caseCount: tests.length,
         // Cases may configure different repeat counts. This is the total
         // number of iteration rows expected for the whole attempt.
-        repetitionCount: tests.reduce(
-          (sum, test) => sum + (test.runs || 1),
-          0,
-        ),
+        repetitionCount: tests.reduce((sum, test) => sum + (test.runs || 1), 0),
         renderConcurrencyLimit: MAX_CONCURRENT_RENDER_CHECKS,
         modelIdentifiers,
       });
     }
+    const creditStop = { exhausted: false };
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -3410,11 +4350,15 @@ export const runEvalSuiteWithAiSdk = async ({
         convexClient,
         testCaseId,
         compareRunId,
+        ...(committedQuickRunIterationIds
+          ? { committedIterationIds: committedQuickRunIterationIds }
+          : {}),
         ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         suiteId,
         runId,
         abortSignal: abortController.signal,
         abortRun,
+        creditStop,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         ...(gradingMode ? { gradingMode } : {}),
@@ -3425,6 +4369,7 @@ export const runEvalSuiteWithAiSdk = async ({
           : {}),
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
+        harnessRuntimeVenue,
         environment: config.environment,
         // The run's PROJECT ENVIRONMENT id — unrelated to `config.environment`
         // above (a servers snapshot) despite the shared word.
@@ -3470,36 +4415,60 @@ export const runEvalSuiteWithAiSdk = async ({
     const createCancellationChecker = async () => {
       if (runId === null) return; // Quick runs can't be cancelled
 
+      const stopForRunState = (currentRun: any) => {
+        if (currentRun?.status === "cancelled") {
+          abortRun(RUN_CANCELLED_ERROR);
+          throw RUN_CANCELLED_ERROR;
+        }
+        if (currentRun?.status === "timed_out") {
+          const stop = runTimeoutError(budgets.runTimeoutMs);
+          abortRun(stop);
+          throw stop;
+        }
+      };
+      const stopIfDeleted = (error: unknown) => {
+        if (isRunDeletedError(error)) {
+          abortRun(RUN_CANCELLED_ERROR);
+          throw RUN_CANCELLED_ERROR;
+        }
+      };
+
       while (!stopControls) {
         await delay(EVAL_CANCEL_POLL_MS);
         if (stopControls) return;
+        // An iteration write already learned the run or its suite is gone.
+        if (recorder?.isRunDeleted?.()) {
+          abortRun(RUN_CANCELLED_ERROR);
+          throw RUN_CANCELLED_ERROR;
+        }
         try {
-          const currentRun = await convexClient.query(
-            "testSuites:getTestSuiteRun" as any,
-            { runId },
+          stopForRunState(
+            await convexClient.query("testSuites:getTestSuiteRun" as any, {
+              runId,
+            }),
           );
-          if (currentRun?.status === "cancelled") {
-            abortRun(RUN_CANCELLED_ERROR);
-            throw RUN_CANCELLED_ERROR;
-          }
-          if (currentRun?.status === "timed_out") {
-            const stop = runTimeoutError(budgets.runTimeoutMs);
-            abortRun(stop);
-            throw stop;
-          }
         } catch (error) {
           if (isEvalRunStoppedError(error)) {
             throw error;
           }
-          // If run not found, it was deleted - treat as cancelled
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          if (
-            errorMessage.includes("not found") ||
-            errorMessage.includes("unauthorized")
-          ) {
-            abortRun(RUN_CANCELLED_ERROR);
-            throw RUN_CANCELLED_ERROR;
+          stopIfDeleted(error);
+          // Production masks a missing run as a bare "Server Error", which
+          // must never cancel a run on its own (an outage looks the same).
+          // Ask once more naming the suite: a backend that can tell a
+          // purged run from a stranger's answers that readably. An older
+          // backend rejects the extra argument; that failure is ignored.
+          try {
+            stopForRunState(
+              await convexClient.query("testSuites:getTestSuiteRun" as any, {
+                runId,
+                suiteId,
+              }),
+            );
+          } catch (retryError) {
+            if (isEvalRunStoppedError(retryError)) {
+              throw retryError;
+            }
+            stopIfDeleted(retryError);
           }
         }
       }
@@ -3612,10 +4581,13 @@ export const runEvalSuiteWithAiSdk = async ({
     const quickRunOutcomes: EvalIterationOutcome[] = [];
 
     // Aggregate results from all tests
-    for (const result of results) {
+    for (const [resultIndex, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const outcomes = result.value;
-        for (const { evaluation } of outcomes) {
+        for (const { evaluation, infraError } of outcomes) {
+          // An infra trial measured nothing about the server: in no count,
+          // matching the backend's legacy header.
+          if (infraError) continue;
           summary.total += 1;
           if (evaluation.passed) {
             summary.passed += 1;
@@ -3630,11 +4602,48 @@ export const runEvalSuiteWithAiSdk = async ({
           quickRunOutcomes.push(...outcomes);
         }
       } else {
+        if (
+          runId === null &&
+          result.reason instanceof HarnessIterationRecordError
+        ) {
+          throw result.reason;
+        }
         // Test failed entirely - log error but continue
         logger.error("[evals] Test case failed:", result.reason);
         // Count as one failed test
         summary.total += 1;
         summary.failed += 1;
+        // A refused model selection never started an iteration, so without
+        // this its pre-created rows would say nothing about why: the refusal
+        // code and reason go on each of that case's pending rows.
+        const refusedTest = tests[resultIndex];
+        if (
+          runId !== null &&
+          refusedTest &&
+          result.reason instanceof ModelResolutionRefusalError
+        ) {
+          try {
+            await persistCaseRefusal({
+              runId,
+              convexClient,
+              recorder,
+              test: refusedTest,
+              refusal: result.reason,
+              runStartedAt: runSetupStartedAt,
+            });
+          } catch (refusalPersistError) {
+            logger.warn(
+              "[evals] Failed to record a model refusal on its rows",
+              {
+                runId,
+                error:
+                  refusalPersistError instanceof Error
+                    ? refusalPersistError.message
+                    : String(refusalPersistError),
+              },
+            );
+          }
+        }
       }
     }
 
@@ -3643,7 +4652,13 @@ export const runEvalSuiteWithAiSdk = async ({
     // Only finalize if we have a recorder (suite runs, not quick runs)
     if (recorder) {
       await recorder.finalize({
-        status: "completed",
+        status: creditStop.exhausted ? "failed" : "completed",
+        ...(creditStop.exhausted
+          ? {
+              notes:
+                "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+            }
+          : {}),
         summary: {
           total: summary.total,
           passed: summary.passed,
@@ -3805,6 +4820,7 @@ const runLocalIteration = async ({
   compareRunId,
   toolDescriptionOverride,
   precreatedIterationId,
+  onIterationStarted,
   injectOpenAiCompat,
   hostPolicy,
   gradingMode,
@@ -3813,6 +4829,7 @@ const runLocalIteration = async ({
   setupSpans,
   setupAudit,
   suiteHostConfig,
+  harnessRuntimeVenue,
   environment,
   convexAuthToken,
   pinnedSkillSource,
@@ -3820,14 +4837,26 @@ const runLocalIteration = async ({
   toolAnnotations,
   toolPolicyWarnings,
   benchmarkWriteGuard,
+  effectiveSettings,
+  orgLocalUsage,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  // A stored effort matters only to a case that invokes a model: a pinned-only
+  // case never does, so a legacy value on it is inert, not refused.
+  if (
+    turnsNeedModel({
+      caseType: test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    })
+  ) {
+    assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
+  }
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...(testCaseId ?? test.testCaseId
+    ...((testCaseId ?? test.testCaseId)
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -3931,7 +4960,11 @@ const runLocalIteration = async ({
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
   );
-  const temperature = resolvedExecution.temperature;
+  // A case with a saved selection runs the settings resolved once for it
+  // (override > selection > host); a legacy case keeps host/override.
+  const temperature = effectiveSettings
+    ? effectiveSettings.temperature
+    : resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   // A case whose turns are ALL pinned tool calls is model-free: every
@@ -3987,6 +5020,10 @@ const runLocalIteration = async ({
     hostConfigOverride: test.hostConfigOverride,
   };
   const iterationParamsBase = {
+    namedHostId: hostPolicy?.namedHostId,
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -4017,6 +5054,7 @@ const runLocalIteration = async ({
           ...iterationParamsBase,
           testCaseSnapshot,
         });
+  if (iterationId) onIterationStarted?.(iterationId);
 
   // PR2: shared per-iteration accumulator (mirrors the batch runner). The
   // streaming runner threads it through `driveLocalEvalTurn` and reads it
@@ -4027,6 +5065,7 @@ const runLocalIteration = async ({
   const acc: LocalEvalTurnAcc = {
     conversationMessages: [],
     capturedSpans: [],
+    requestPayloads: [],
     accumulatedUsage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -4077,6 +5116,7 @@ const runLocalIteration = async ({
   // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
   const browser = await createBrowserSessionContext({
+    getWorkspacePresentation: () => projectWorkspaceTranscript(acc.conversationMessages, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)),
     // Model-free (pinned-only) iterations pass no model: no Computer Use, but
     // the harness still renders pinned widgets and records observations.
     ...(caseNeedsModel ? { model: test.model } : {}),
@@ -4130,6 +5170,7 @@ const runLocalIteration = async ({
         null,
       );
       prepared = await prepareChatV2({
+        connectionsByServerId: {},
         mcpClientManager,
         selectedServers,
         modelDefinition,
@@ -4220,11 +5261,10 @@ const runLocalIteration = async ({
         // and RELEASE needs a server-to-server credential — without them
         // releaseEvalSandbox silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
-        if (!isComputersDataPlaneConfigured()) {
-          throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-          );
-        }
+        const unavailable = harnessBoxUnavailableReason(
+          "This eval pins a reproducible computer environment",
+        );
+        if (unavailable) throw new Error(unavailable);
         const capacityBudgetMs = Math.min(
           EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
           Math.max(0, iterationDeadlineAt - Date.now()),
@@ -4302,24 +5342,28 @@ const runLocalIteration = async ({
       }
     }
 
-    // PR 5a abort helpers — mirror the non-stream runner's pattern so
-    // a cancellation between consume and check drops the iteration
-    // record without persisting cancelled state.
+    // PR 5a abort helpers — mirror the non-stream runner's pattern. The
+    // iteration row is persisted as `cancelled` before returning, so a stopped
+    // trial reads as stopped rather than sitting `running` forever, and the id
+    // is handed back so the stream route can resolve the terminal row.
     const localIsAborted = () => abortSignal?.aborted === true;
-    const returnLocalCancelled = () => ({
-      // Aborted mid-iteration — never score as passed (a pinned-only case would
-      // otherwise short-circuit to passed:true).
-      evaluation: {
-        ...evaluateMultiTurnResults(
-          promptTurns,
-          acc.toolsCalledByPrompt,
-          test.isNegativeTest,
-          test.matchOptions,
-        ),
-        passed: false,
-      },
-      iterationId: undefined,
-    });
+    const returnLocalCancelled = async () => {
+      await markIterationStopped({ convexClient, iterationId, abortSignal });
+      return {
+        // Aborted mid-iteration — never score as passed (a pinned-only case would
+        // otherwise short-circuit to passed:true).
+        evaluation: {
+          ...evaluateMultiTurnResults(
+            promptTurns,
+            acc.toolsCalledByPrompt,
+            test.isNegativeTest,
+            test.matchOptions,
+          ),
+          passed: false,
+        },
+        iterationId,
+      };
+    };
 
     // Streaming play-by-play, built once and consumed by the executeSteps handlers
     // (per turn). `undefined` in batch mode (no `emit`) → headless. The per-turn
@@ -4460,6 +5504,61 @@ const runLocalIteration = async ({
       testCaseId,
       abortSignal,
       toolChoice,
+      ...(effectiveSettings?.providerOptions
+        ? { providerOptions: effectiveSettings.providerOptions }
+        : {}),
+      ...(orgLocalUsage
+        ? {
+            beforeModelCall: async (workload: {
+              tools: ToolSet;
+              messages: ModelMessage[];
+            }) => {
+              const admitted = await resolveOrgProviderRuntimeForTarget(
+                { projectId: orgLocalUsage.projectId },
+                orgLocalUsage.providerKey,
+                String(modelDefinition.id),
+                { bearerToken: convexAuthToken },
+                {
+                  modelSelection: orgLocalUsage.modelSelection,
+                  modelWorkload: modelWorkloadFor({
+                    sourceType: "eval",
+                    ...workload,
+                  }),
+                },
+              );
+              if (admitted.runtimeLocation !== "local") {
+                throw new Error(
+                  "Organization runtime changed before the eval turn. Restart the run.",
+                );
+              }
+              // Execute the config this admission returned, including rotations
+              // and endpoint changes since the iteration's initial setup.
+              assertOrgModelAllowed(admitted.provider, String(modelDefinition.id));
+              return buildOrgModelFromResolvedConfig(admitted.provider, String(modelDefinition.id));
+            },
+            onModelCallSettled: (event: LocalModelCallSettled) =>
+              postEvalOrgLocalUsage({
+                context: orgLocalUsage,
+                event,
+                modelId: String(modelDefinition.id),
+                // What the call was sent: the chat pipeline's resolved value
+                // (it omits a temperature the model does not accept).
+                effectiveSettings: {
+                  ...(prepared?.resolvedTemperature != null
+                    ? { temperature: prepared.resolvedTemperature }
+                    : {}),
+                  ...(effectiveSettings?.providerOptions &&
+                  effectiveSettings.reasoningEffort
+                    ? { reasoningEffort: effectiveSettings.reasoningEffort }
+                    : {}),
+                },
+                iterationId,
+                runId,
+                convexAuthToken,
+                selectedServers,
+              }),
+          }
+        : {}),
       toolPolicyGate,
       extractToolCalls: (params) =>
         extractToolCallsExcludingPolicyBlocks(
@@ -4505,7 +5604,7 @@ const runLocalIteration = async ({
     }
     if (acc.timeout) iterationMetadataBase.timeout = acc.timeout;
     if (stepOutcome.cancelled || localIsAborted()) {
-      return returnLocalCancelled();
+      return await returnLocalCancelled();
     }
 
     // Widget→host tool calls (a tool a widget invoked, e.g. from an authored
@@ -4636,27 +5735,32 @@ const runLocalIteration = async ({
       evaluation,
       turnCheckResults,
     );
-    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
-    // the returned evaluation so totals built from `evaluation.passed` agree
-    // with the persisted iteration result.
-    evaluation.passed = passed;
-
-    const usageFinal: UsageTotals = {
-      inputTokens: acc.accumulatedUsage.inputTokens,
-      outputTokens: acc.accumulatedUsage.outputTokens,
-      totalTokens: acc.accumulatedUsage.totalTokens,
-    };
+    const usageFinal: UsageTotals = copyUsageTotals(acc.accumulatedUsage);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
       mcpClientManager,
-      convexClient,
+      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
     });
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix`
     // closure above still applies the prefix to LIVE SSE
     // `trace_snapshot` events for the test-runner UI (different
     // consumer than the stored transcript).
+    // OUR infrastructure (the model provider) failed the turn? Typed evidence
+    // only; a pinned setup failure is the server's, never infra.
+    const localInfraError = acc.pinnedSetupFailure
+      ? undefined
+      : resolveIterationInfraError(
+          {
+            iterationError: acc.iterationError,
+            timeout: acc.timeout,
+            errorInfra: acc.stepErrorEvidence,
+          },
+          // A direct call on the caller's own key: ours to exclude only when
+          // it reached a first-party hosted provider.
+          byokEndpointOwnership(modelDefinition.provider),
+        );
     const finishParams = buildIterationFinishParams({
       iterationId,
       // The layer that failed, when this driver could tell — the local twin of
@@ -4687,16 +5791,22 @@ const runLocalIteration = async ({
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
       spans: acc.capturedSpans,
+      requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
       ...(widgetSnapshots ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts from the streamed Computer Use path.
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
       // A model-free pinned setup failure (server not connected) records as
-      // `setup_failed` — it never reached the question; everything else
-      // completes (a failed verdict is still a completed run). Mirrors the
-      // former runIterationWithAiSdk.
-      status: acc.pinnedSetupFailure ? "setup_failed" : "completed",
+      // `setup_failed` — it never reached the question; an infra failure as
+      // `failed` + `infraError`; everything else completes (a failed verdict
+      // is still a completed run). Mirrors the former runIterationWithAiSdk.
+      status: acc.pinnedSetupFailure
+        ? "setup_failed"
+        : localInfraError
+          ? "failed"
+          : "completed",
+      ...(localInfraError ? { infraError: localInfraError } : {}),
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
       // via the failure-detection branch, surface it on the persisted
@@ -4758,8 +5868,8 @@ const runLocalIteration = async ({
     //
     // At `enforce` the iteration's result is the conjunction of the boolean
     // pipeline and the gating score rows, computed inside
-    // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
-    // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+    // `buildIterationFinishParams`. `evaluation.passed` still holds the
+    // matcher's answer, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
     // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
     // against — so a strictness catch would persist `failed` on the iteration
     // while the run counted it a pass, and the pass rate would be inflated by
@@ -4775,23 +5885,39 @@ const runLocalIteration = async ({
       browser,
       recorder,
       convexClient,
+      convexAuthToken,
       finishParams,
     });
 
     return {
+      creditsExhausted: isCreditExhaustion({
+        message: acc.iterationError,
+        details: acc.iterationErrorDetails,
+      }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(localInfraError ? { infraError: localInfraError } : {}),
     };
   } catch (error) {
     // Rethrown, not swallowed: this iteration ran out of its own budget, and
     // `runIterationUnderBudget` is what records that. See
     // `isIterationBudgetAbort`.
     if (isIterationBudgetAbort(error, abortSignal)) throw error;
-    if (error instanceof Error && error.name === "AbortError") {
+    // A stop can surface as a throw rather than a cooperative return: the
+    // consumer rethrows the signal's reason, which is whatever the canceller
+    // passed — an `AbortError` from the platform, or a plain `Error` from the
+    // stream route. Read the SIGNAL, not just the error's name: without that,
+    // a client stop fell through to the generic failure path below and was
+    // recorded as a failed trial, blaming the run for something a person did.
+    if (
+      abortSignal?.aborted === true ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
       logger.debug("[evals] streaming iteration aborted due to cancellation");
+      await markIterationStopped({ convexClient, iterationId, abortSignal });
       // Force passed:false (see the non-stream runner) so an all-pinned case
       // can't score a pass on abort.
       return {
@@ -4804,7 +5930,7 @@ const runLocalIteration = async ({
           ),
           passed: false,
         },
-        iterationId: undefined,
+        iterationId,
       };
     }
 
@@ -4883,7 +6009,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
-      convexClient,
+      uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
     });
 
     // PR6: SSE failure signal only in streaming mode (batch has no emit).
@@ -4900,11 +6026,7 @@ const runLocalIteration = async ({
           actualToolCalls: extractToolCallsFromConversation({
             messages: failMessages,
           }),
-          usage: {
-            inputTokens: acc.accumulatedUsage.inputTokens,
-            outputTokens: acc.accumulatedUsage.outputTokens,
-            totalTokens: acc.accumulatedUsage.totalTokens,
-          },
+          usage: copyUsageTotals(acc.accumulatedUsage),
           prompts: promptTraceSummaries,
         }),
       );
@@ -4915,6 +6037,26 @@ const runLocalIteration = async ({
       });
     }
 
+    const failStatus =
+      iterationMetadataBase.timeout &&
+      typeof iterationMetadataBase.timeout === "object" &&
+      "clock" in iterationMetadataBase.timeout &&
+      iterationMetadataBase.timeout.clock === "sandboxCapacity"
+        ? ("setup_failed" as const)
+        : ("failed" as const);
+    // The throw already records `failed`; a typed provider failure also
+    // carries `infraError`, which is what excludes and refunds it.
+    const failInfraError =
+      failStatus === "failed"
+        ? resolveIterationInfraError(
+            {
+              iterationError: errorMessage ?? acc.iterationError,
+              timeout: iterationMetadataBase.timeout,
+              errorInfra: acc.stepErrorEvidence,
+            },
+            byokEndpointOwnership(modelDefinition.provider),
+          )
+        : undefined;
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
     // success path.
@@ -4932,11 +6074,7 @@ const runLocalIteration = async ({
       ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
-      usage: {
-        inputTokens: acc.accumulatedUsage.inputTokens,
-        outputTokens: acc.accumulatedUsage.outputTokens,
-        totalTokens: acc.accumulatedUsage.totalTokens,
-      },
+      usage: copyUsageTotals(acc.accumulatedUsage),
       messages: failMessages,
       // Gated exactly as on the success path: a model-free case carries a
       // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be
@@ -4947,18 +6085,14 @@ const runLocalIteration = async ({
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
       spans: acc.capturedSpans,
+      requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
       ...(widgetSnapshots ? { widgetSnapshots } : {}),
       // PR 9: browser artifacts collected before the failure still persist.
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
-      status:
-        iterationMetadataBase.timeout &&
-        typeof iterationMetadataBase.timeout === "object" &&
-        "clock" in iterationMetadataBase.timeout &&
-        iterationMetadataBase.timeout.clock === "sandboxCapacity"
-          ? "setup_failed"
-          : "failed",
+      status: failStatus,
+      ...(failInfraError ? { infraError: failInfraError } : {}),
       startedAt: runStartedAt,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
@@ -5012,14 +6146,20 @@ const runLocalIteration = async ({
       browser,
       recorder,
       convexClient,
+      convexAuthToken,
       finishParams: failParams,
     });
     return {
+      creditsExhausted: isCreditExhaustion({
+        message: errorMessage,
+        details: errorDetails,
+      }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(failInfraError ? { infraError: failInfraError } : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -5051,6 +6191,7 @@ const runLocalIteration = async ({
 // runIterationViaBackendWithBrowser + streamIterationViaBackendWithBrowser pair.
 const runHostedIterationWithBrowser = async (
   {
+    harnessExecutionTarget,
     test,
     runIndex,
     budgets,
@@ -5082,6 +6223,7 @@ const runHostedIterationWithBrowser = async (
     compareRunId,
     toolDescriptionOverride,
     precreatedIterationId,
+    onIterationStarted,
     injectOpenAiCompat,
     hostPolicy,
     gradingMode,
@@ -5090,6 +6232,7 @@ const runHostedIterationWithBrowser = async (
     setupSpans,
     setupAudit,
     suiteHostConfig,
+    harnessRuntimeVenue,
     orgModelConfigTarget,
     // Pinned reproducible-env id lives on the run environment; drives per-
     // iteration eval-sandbox provisioning + the bash tool (hosted parity with
@@ -5104,16 +6247,18 @@ const runHostedIterationWithBrowser = async (
     toolAnnotations,
     toolPolicyWarnings,
     benchmarkWriteGuard,
+    effectiveSettings,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
   browser: BrowserSessionContext,
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-    ...(testCaseId ?? test.testCaseId
+    ...((testCaseId ?? test.testCaseId)
       ? { testCaseId: testCaseId ?? test.testCaseId }
       : {}),
     runIndex,
@@ -5206,10 +6351,17 @@ const runHostedIterationWithBrowser = async (
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
   );
-  const temperature = resolvedExecution.temperature;
+  // A case with a saved selection sends the settings resolved once for it:
+  // the top-level temperature the backend prefers is then the SAME value the
+  // forwarded selection resolves to, never a host default that contradicts
+  // it. A legacy case keeps host/override.
+  const temperature = effectiveSettings
+    ? effectiveSettings.temperature
+    : resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
+  browser.setWorkspacePresentation?.(() => projectWorkspaceTranscript(messageHistory, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)));
   /**
    * The TRACE transcript — `messageHistory`'s evidence-enriched twin (see the
    * acc contract on `DriveHostedEvalTurnParams`). Persisted and gate-read in
@@ -5230,6 +6382,10 @@ const runHostedIterationWithBrowser = async (
   const resolvedSteps = resolveSteps(test);
 
   const iterationParams = {
+    namedHostId: hostPolicy?.namedHostId,
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
@@ -5257,7 +6413,14 @@ const runHostedIterationWithBrowser = async (
     ? precreatedIterationId
     : recorder
       ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+      : await createIterationDirectly(convexClient, {
+          ...iterationParams,
+          // A hosted harness box is keyed to this row (see the param).
+          ...(resolvedExecution.harness && !harnessExecutionTarget
+            ? { requireRecord: true }
+            : {}),
+        });
+  if (iterationId) onIterationStarted?.(iterationId);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -5321,6 +6484,7 @@ const runHostedIterationWithBrowser = async (
     sandboxId: string;
     sandboxRowId: string;
     runtimeKind: "terminal" | "desktop-browser";
+    workdir?: string;
   }) => {
     // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
     // provisioned, never the project computer: an unattended run drives a
@@ -5362,7 +6526,9 @@ const runHostedIterationWithBrowser = async (
           ...(builtInTarget && "projectId" in builtInTarget
             ? { projectId: builtInTarget.projectId }
             : {}),
-          ...(projectEnvironmentId ? { environmentId: projectEnvironmentId } : {}),
+          ...(projectEnvironmentId
+            ? { environmentId: projectEnvironmentId }
+            : {}),
         })
       : [];
     return resolveHostTools(
@@ -5466,8 +6632,7 @@ const runHostedIterationWithBrowser = async (
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
-  let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
-    null;
+  let evalBox: HarnessBox | null = null;
   /**
    * The video the hosted browser recorded, if this iteration used one.
    *
@@ -5477,22 +6642,24 @@ const runHostedIterationWithBrowser = async (
    * fires first — after the release there is nothing left to read.
    */
   let hostedRecording: HostedRecording | null = null;
+  const releaseEvalBox = async (sandboxRowId: string): Promise<void> => {
+    // Collect BEFORE the release — after it there is nothing left to read —
+    // and release REGARDLESS of how the collect went. Both facts live in the
+    // helper, which is where they are tested: a collector that throws or
+    // hangs past its bound yields no video and the box is released on the
+    // same schedule, because a box that outlives its iteration costs money
+    // until the GC cron reaps it and no video is worth that.
+    const collected = await collectHostedRecordingThenRelease({
+      sandboxRowId,
+      release: () => releaseEvalSandbox({ sandboxRowId }),
+    });
+    hostedRecording = hostedRecording ?? collected;
+  };
   const releaseEvalSandboxIfAny = async (): Promise<void> => {
-    if (evalSandbox?.ok) {
-      const { sandboxRowId } = evalSandbox.value;
-      evalSandbox = null;
-      // Collect BEFORE the release — after it there is nothing left to read —
-      // and release REGARDLESS of how the collect went. Both facts live in the
-      // helper, which is where they are tested: a collector that throws or
-      // hangs past its bound yields no video and the box is released on the
-      // same schedule, because a box that outlives its iteration costs money
-      // until the GC cron reaps it and no video is worth that.
-      const collected = await collectHostedRecordingThenRelease({
-        sandboxRowId,
-        release: () => releaseEvalSandbox({ sandboxRowId }),
-      });
-      hostedRecording = hostedRecording ?? collected;
-    }
+    const box = evalBox;
+    evalBox = null;
+    // Stops the turn heartbeat, then runs `releaseEvalBox` above.
+    await box?.release();
   };
   let prepared: PrepareChatV2Result;
   try {
@@ -5524,36 +6691,97 @@ const runHostedIterationWithBrowser = async (
       hostedBrowserAvailable: hostedBrowserAdvertisable(),
       runId,
     });
-    if (sandboxNeed.needed) {
-      if (!isComputersDataPlaneConfigured()) {
-        throw new Error(
-          sandboxNeed.runtimeKind === "desktop-browser"
-            ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : pinnedEnvironmentId
-              ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-              : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-        );
+    if (harnessExecutionTarget) {
+      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
+      if (runId) {
+        const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
+        if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
+        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0), harnessId: resolvedExecution.harness });
+      }
+    }
+    if (sandboxNeed.needed && !harnessExecutionTarget) {
+      const unavailable = harnessBoxUnavailableReason(
+        sandboxNeed.runtimeKind === "desktop-browser"
+          ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration"
+          : pinnedEnvironmentId && runId
+            ? "This eval pins a reproducible computer environment"
+            : "This eval runs on a harness, which boots a disposable computer per iteration",
+      );
+      if (unavailable) throw new Error(unavailable);
+      if (!runId) {
+        // SINGLE-CASE: the box is keyed to the iteration row and is only ever
+        // a terminal, so refuse what it cannot carry before booting anything.
+        if (!iterationId) {
+          throw new Error(
+            "This single-case harness run has no iteration record to key its " +
+              "computer to, so it was refused rather than run on a personal " +
+              "computer.",
+          );
+        }
+        const singleCaseRefusal = singleCaseHarnessBoxRefusal({
+          builtInToolIds: resolvedExecution.builtInToolIds,
+          browserToolPolicy: resolvedExecution.browserToolPolicy,
+          hostedBrowserAvailable: hostedBrowserAdvertisable(),
+        });
+        if (singleCaseRefusal) throw new Error(singleCaseRefusal);
       }
       const capacityBudgetMs = Math.min(
         EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
         Math.max(0, iterationDeadlineAt - Date.now()),
       );
       const capacityStartedAt = Date.now();
-      evalSandbox = await provisionEvalSandbox({
-        timeoutMs: capacityBudgetMs,
-        bearer: convexAuthToken,
-        runId: String(runId),
-        ...(iterationId ? { iterationId: String(iterationId) } : {}),
-        // Absent for a terminal box, so every request that predates desktops
-        // is byte-identical on the wire.
-        ...(sandboxNeed.runtimeKind === "desktop-browser"
-          ? { runtimeKind: "desktop-browser" as const }
-          : {}),
+      // The shared box holder: it keeps the box's idle clock running while the
+      // iteration's turns do, so a long harness turn cannot outlive its box.
+      const acquired = await acquireHarnessBox({
+        // A single-case run has no suite run; its box is keyed to the
+        // iteration, which `needsEphemeralEvalSandbox` only books for a
+        // harness (so terminal).
+        surface: runId ? "eval" : "single-case",
+        provision: async () => {
+          const result = await provisionEvalSandbox({
+            timeoutMs: capacityBudgetMs,
+            bearer: convexAuthToken,
+            ...(runId
+              ? {
+                  runId: String(runId),
+                  ...(iterationId ? { iterationId: String(iterationId) } : {}),
+                  // Absent for a terminal box, so every request that predates
+                  // desktops is byte-identical on the wire.
+                  ...(sandboxNeed.runtimeKind === "desktop-browser"
+                    ? { runtimeKind: "desktop-browser" as const }
+                    : {}),
+                }
+              : { iterationId: String(iterationId) }),
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
+          return result.ok
+            ? {
+                ok: true as const,
+                box: {
+                  sandboxRowId: result.value.sandboxRowId,
+                  sandboxId: result.value.sandboxId,
+                  // What ACTUALLY booted, read off the response rather than
+                  // off the request: a reuse answers with the row's own kind.
+                  ...(result.value.runtimeKind
+                    ? { runtimeKind: result.value.runtimeKind }
+                    : {}),
+                  ...(result.value.workdir
+                    ? { workdir: result.value.workdir }
+                    : {}),
+                },
+              }
+            : { ok: false as const, refusal: result };
+        },
+        release: releaseEvalBox,
+        // The ITERATION signal. Past its budget grace the iteration is
+        // abandoned and may never reach a release; the abort still stops the
+        // heartbeat, so the box goes idle and the reaper takes it.
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
-      if (!evalSandbox.ok) {
-        const error = new Error(describeEvalSandboxRefusal(evalSandbox));
-        if (evalSandbox.status === 503 && evalSandbox.code === "at_capacity") {
+      if (!acquired.ok) {
+        const refusal = acquired.refusal;
+        const error = new Error(describeEvalSandboxRefusal(refusal));
+        if (refusal.status === 503 && refusal.code === "at_capacity") {
           iterationMetadataBase.timeout = {
             clock: "sandboxCapacity",
             budgetMs: capacityBudgetMs,
@@ -5566,15 +6794,30 @@ const runHostedIterationWithBrowser = async (
         }
         throw error;
       }
+      evalBox = acquired.box;
+    }
+    // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
+    // falls through to `resolveHarnessSandbox`, the acting member's computer.
+    // Every path above boots one or throws; this is the last check before the
+    // first turn, so a future gap fails here instead of running there.
+    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+      throw new Error(
+        "This eval runs on a harness but no disposable computer was " +
+          "provisioned for it, so it was refused rather than run on a " +
+          "personal computer.",
+      );
     }
     const sandboxBinding =
-      evalSandbox?.ok && sandboxNeed.needed
+      evalBox && sandboxNeed.needed
         ? {
-            sandboxId: evalSandbox.value.sandboxId,
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            // What ACTUALLY booted, read off the response rather than off the
-            // request: a reuse answers with the row's own kind.
-            runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
+            sandboxId: evalBox.binding.sandboxId,
+            sandboxRowId: evalBox.binding.sandboxRowId,
+            runtimeKind: evalBox.binding.runtimeKind,
+            // `bash` roots at the box's workdir exactly as the harness does;
+            // dropping it ran the two in different directories.
+            ...(evalBox.binding.workdir
+              ? { workdir: evalBox.binding.workdir }
+              : {}),
           }
         : undefined;
     // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
@@ -5598,6 +6841,7 @@ const runHostedIterationWithBrowser = async (
     builtInTools = await buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
+      connectionsByServerId: {},
       mcpClientManager,
       selectedServers,
       modelDefinition,
@@ -5654,6 +6898,9 @@ const runHostedIterationWithBrowser = async (
     // `sandboxBinding` does.
     if (
       sandboxBinding &&
+      // Attachments resolve through the RUN (`/evals/sandbox/attachments`); a
+      // single-case run has none to resolve them through.
+      runId &&
       evalBoxFilesystemIsReachable({
         runtimeKind: sandboxBinding.runtimeKind,
         harness: resolvedExecution.harness,
@@ -5746,6 +6993,7 @@ const runHostedIterationWithBrowser = async (
     );
     failedEvaluation.passed = false;
     return {
+      creditsExhausted: isCreditExhaustion(error),
       evaluation: failedEvaluation,
       iterationId,
       ...(toolPolicyGate?.blocks.length
@@ -5778,15 +7026,25 @@ const runHostedIterationWithBrowser = async (
   // authoritative cancellation signal, used at the top of each
   // iteration AND after every per-turn call (success or catch).
   const isAborted = () => abortSignal?.aborted === true;
-  const returnCancelled = () => ({
-    evaluation: evaluateMultiTurnResults(
-      promptTurns,
-      toolsCalledByPrompt,
-      test.isNegativeTest,
-      test.matchOptions,
-    ),
-    iterationId: undefined,
-  });
+  const returnCancelled = async () => {
+    await markIterationStopped({ convexClient, iterationId, abortSignal });
+    return {
+      // Aborted mid-iteration — never score as passed (a pinned-only case would
+      // otherwise short-circuit to passed:true). Same guard the local driver
+      // applies in `returnLocalCancelled`: a stopped trial has not met its
+      // assertions, it simply stopped being observed.
+      evaluation: {
+        ...evaluateMultiTurnResults(
+          promptTurns,
+          toolsCalledByPrompt,
+          test.isNegativeTest,
+          test.matchOptions,
+        ),
+        passed: false,
+      },
+      iterationId,
+    };
+  };
 
   let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
@@ -5801,6 +7059,7 @@ const runHostedIterationWithBrowser = async (
     | { source?: "model" | "setup"; code?: string; httpStatus?: number }
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  const requestPayloads: LiveChatTraceRequestPayloadEntry[] = [];
   /**
    * Wire results for the friction signals, keyed as the GRADED call array
    * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
@@ -5863,6 +7122,22 @@ const runHostedIterationWithBrowser = async (
         turnId: string;
       }
     | undefined;
+  // Eval attribution on every `/stream` and `/stream/org` call this iteration
+  // makes: the backend resolves a call that names an eval iteration or run for
+  // the `evalTarget` purpose (no implicit OpenRouter fallback), attaches its
+  // execution record to that iteration row, and stamps both ids on the usage
+  // record. Both are real Convex ids (`testIteration`, `testSuiteRun`); the
+  // usage writer validates them as such, so nothing else may ride here. A
+  // quick run has an iteration but no suite run (`runId === null`), so it
+  // sends the iteration alone.
+  const evalAttributedBodyFields: Record<string, unknown> | undefined =
+    iterationId || runId
+      ? {
+          ...(extraBodyFields ?? {}),
+          ...(iterationId ? { evalIterationId: String(iterationId) } : {}),
+          ...(runId ? { evalRunId: String(runId) } : {}),
+        }
+      : extraBodyFields;
   const hostedHandlers = buildHostedStepHandlers({
     // See the local path: one turn's slice of the run's frozen budget.
     turnTimeoutMs: budgets.turnTimeoutMs,
@@ -5874,7 +7149,7 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     evalAuthContext,
     endpointPath,
-    extraBodyFields,
+    extraBodyFields: evalAttributedBodyFields,
     ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
     toolPolicyGate,
@@ -5891,13 +7166,11 @@ const runHostedIterationWithBrowser = async (
     // harness as well: one box per iteration, never two. It rides the handler
     // options rather than the host config because the run's config snapshot is
     // member-readable, so a binding writable there would be forgeable.
-    ...(resolvedExecution.harness && evalSandbox?.ok
-      ? {
-          harnessSandboxBinding: {
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            sandboxId: evalSandbox.value.sandboxId,
-          },
-        }
+    //
+    // The whole binding, `workdir` included: dropping it rooted every eval
+    // harness Shell at whatever the turn fell back to instead of the box's.
+    ...(resolvedExecution.harness && evalBox
+      ? { harnessSandboxBinding: evalBox.binding }
       : {}),
     // How the sandbox reaches this inspector's MCP proxy. An eval run builds
     // an ephemeral authorized manager exactly as the hosted chat routes do, so
@@ -5905,6 +7178,7 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
     // The iteration this run's harness turns record evidence against. Sent
     // only on the harness path with a real iteration row: a quick run has no
     // run to attach evidence to, and the emulated engine records firsthand
@@ -6005,6 +7279,7 @@ const runHostedIterationWithBrowser = async (
       messageHistory,
       traceMessageHistory,
       capturedSpans,
+      requestPayloads,
       evidenceResults,
       evidenceHadHole,
       accumulatedUsage,
@@ -6066,7 +7341,7 @@ const runHostedIterationWithBrowser = async (
     throw abortSignal?.reason;
   }
   // The executor's own report first — see the local runner for why.
-  if (result.cancelled || isAborted()) return returnCancelled();
+  if (result.cancelled || isAborted()) return await returnCancelled();
   if (result.timeout) iterationMetadataBase.timeout = result.timeout;
   if (result.iterationError) {
     iterationError = result.iterationError;
@@ -6084,6 +7359,22 @@ const runHostedIterationWithBrowser = async (
   // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
   // below, mirroring the local runner.
   const pinnedSetupFailure = result.setupFailure;
+  // Did OUR infrastructure fail the turn? Structured evidence only; a setup
+  // failure of the server under test is never re-labelled as infra.
+  const infraError = pinnedSetupFailure
+    ? undefined
+    : resolveIterationInfraError(
+        result,
+        // `/stream` runs on MCPJam's own keys; `/stream/org` on the org's
+        // connection, ours to exclude only for a first-party hosted provider.
+        endpointPath === "/stream/org"
+          ? byokEndpointOwnership(
+              typeof extraBodyFields?.providerKey === "string"
+                ? extraBodyFields.providerKey
+                : undefined,
+            )
+          : "platform",
+      );
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
   hostedStepScriptedFailures = buildStepScriptedCheckFailures(stepState);
@@ -6181,10 +7472,10 @@ const runHostedIterationWithBrowser = async (
       toolSurface: {
         mcpTools: Object.keys(prepared?.allTools ?? {}).length,
         browserTools:
-        parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
-          source: "agent-activity",
-          quiet: true,
-        }) !== undefined,
+          parseBrowserToolPolicy(resolvedExecution.browserToolPolicy, {
+            source: "agent-activity",
+            quiet: true,
+          }) !== undefined,
       },
       toolCalls: toolsCalledByPromptWithWidgets.flat().length,
       modelInvocations: countModelInvocations({
@@ -6197,15 +7488,11 @@ const runHostedIterationWithBrowser = async (
     evaluation,
     turnCheckResults,
   );
-  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
-  // returned evaluation so totals built from `evaluation.passed` agree with the
-  // persisted iteration result.
-  evaluation.passed = passed;
   const widgetSnapshots = await captureMcpAppWidgetSnapshots({
     injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
-    convexClient,
+    uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
   });
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
@@ -6239,6 +7526,7 @@ const runHostedIterationWithBrowser = async (
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),
     spans: capturedSpans,
+    requestPayloads,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,
     // and the middle one is the reason this is threaded at all:
@@ -6274,9 +7562,15 @@ const runHostedIterationWithBrowser = async (
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
     // A model-free pinned setup failure (server not connected) records as
-    // `setup_failed` — it never reached the question; everything else completes
-    // (a failed verdict is still a completed run). Mirrors the local runner.
-    status: pinnedSetupFailure ? "setup_failed" : "completed",
+    // `setup_failed` — it never reached the question; an infra failure as
+    // `failed` + `infraError`; everything else completes (a failed verdict is
+    // still a completed run). Mirrors the local runner.
+    status: pinnedSetupFailure
+      ? "setup_failed"
+      : infraError
+        ? "failed"
+        : "completed",
+    ...(infraError ? { infraError } : {}),
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
@@ -6323,8 +7617,8 @@ const runHostedIterationWithBrowser = async (
   //
   // At `enforce` the iteration's result is the conjunction of the boolean
   // pipeline and the gating score rows, computed inside
-  // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
-  // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+  // `buildIterationFinishParams`. `evaluation.passed` still holds the
+  // matcher's answer, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
   // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
   // against — so a strictness catch would persist `failed` on the iteration
   // while the run counted it a pass, and the pass rate would be inflated by
@@ -6340,6 +7634,7 @@ const runHostedIterationWithBrowser = async (
     browser,
     recorder,
     convexClient,
+    convexAuthToken,
     finishParams,
     // Collected by `releaseEvalSandboxIfAny` before the box went away — the
     // file only ever existed there, so it had to come off ahead of the
@@ -6348,18 +7643,33 @@ const runHostedIterationWithBrowser = async (
   });
 
   return {
+    creditsExhausted: isCreditExhaustion({
+      message: iterationError,
+      details: iterationErrorDetails,
+    }),
     evaluation,
     iterationId: iterationId ?? undefined,
     ...(toolPolicyGate?.blocks.length
       ? { policyBlockCount: toolPolicyGate.blocks.length }
       : {}),
+    ...(infraError ? { infraError } : {}),
   };
 };
 
 // Thin streaming wrapper (`emit` required) — preserves the SSE call site in
 // `streamEvalTestCaseWithManager` and the streaming tests.
-export const streamTestCase = (
+export const streamTestCase = async (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit"> & {
     emit: StreamEmit;
   },
-) => executeTestCase(params);
+) => {
+  const target = params.orgModelConfigTarget;
+  const harnessRuntimeVenue = params.harnessRuntimeVenue ??
+    (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), params.convexAuthToken,
+      target && "projectId" in target ? target.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
+  const pinned = { ...params, harnessRuntimeVenue };
+  return harnessRuntimeVenue === "local"
+    ? withLocalHarnessSlot(() => executeCommittedTestCase(pinned), params.abortSignal)
+    : executeCommittedTestCase(pinned);
+};

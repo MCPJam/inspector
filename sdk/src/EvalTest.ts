@@ -89,6 +89,7 @@ import {
   iterationsToEvalResultInputs,
   iterationTraceFromPrompts,
   traceMessagesFromPrompts,
+  variantFromExecutor,
 } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
@@ -455,6 +456,12 @@ export interface EvalTestRunOptions {
   maxCapturedBytes?: number;
   /** @internal used by EvalSuite to prevent duplicate per-test uploads */
   __suppressMcpjamAutoSave?: boolean;
+  /**
+   * @internal used by the local suite-file runner, whose caller owns
+   * telemetry: the CLI honors `--no-telemetry` and a persisted opt-out,
+   * neither of which this module-level env check can see.
+   */
+  __suppressTelemetry?: boolean;
 }
 
 /**
@@ -949,14 +956,16 @@ export class EvalTest {
         // Internal alias kept short so the iteration loop reads cleanly; the
         // public-facing parameter name is `executor`.
         const agent = executor;
-        posthog.capture({
-          distinctId: "anonymous",
-          event: "eval_test_run_triggered",
-          properties: {
-            iterations: options.iterations,
-            concurrency: options.concurrency ?? 5,
-          },
-        });
+        if (!options.__suppressTelemetry) {
+          posthog.capture({
+            distinctId: "anonymous",
+            event: "eval_test_run_triggered",
+            properties: {
+              iterations: options.iterations,
+              concurrency: options.concurrency ?? 5,
+            },
+          });
+        }
         const concurrency = options.concurrency ?? 5;
         const retries = options.retries ?? 0;
         const timeoutMs = options.timeoutMs ?? 30000;
@@ -1399,7 +1408,8 @@ export class EvalTest {
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
       config,
-      hostExtras
+      hostExtras,
+      variantFromExecutor(executor)
     );
     if (runResult.runEvaluation) {
       results.forEach((result, index) => {
@@ -1790,7 +1800,8 @@ export class EvalTest {
   private buildEvalResultInputs(
     iterations: IterationResult[],
     reporting?: MCPJamReportingConfig,
-    hostExtras?: Record<string, string | number | boolean>
+    hostExtras?: Record<string, string | number | boolean>,
+    variant?: { provider?: string; model?: string }
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
@@ -1820,7 +1831,8 @@ export class EvalTest {
         ...(this.config.expectedOutput !== undefined
           ? { expectedOutput: this.config.expectedOutput }
           : {}),
-      }
+      },
+      variant
     );
   }
 

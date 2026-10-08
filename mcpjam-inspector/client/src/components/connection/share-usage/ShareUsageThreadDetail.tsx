@@ -1,4 +1,9 @@
 import {
+  requestPayloadEnvelopeFields,
+  useRequestPayloads,
+} from "@/hooks/use-request-payloads";
+import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
+import {
   useCallback,
   useEffect,
   useId,
@@ -11,14 +16,11 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { renderSessionJson } from "./session-json-view";
-import type { ModelDefinition, ModelProvider } from "@/shared/types";
+import { modelDefinitionForId } from "@/lib/model-definition-for-id";
+import { useHostSnapshotForSession } from "@/hooks/use-host-snapshot";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import {
-  hydrateMessageTimestamps,
-  ReadOnlyTranscript,
-  type ToolRenderOverride as ChatUiToolRenderOverride,
-} from "@mcpjam/chat-ui";
+import { hydrateMessageTimestamps } from "@mcpjam/chat-ui";
+import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
@@ -49,11 +51,16 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
 import { SessionClientModelChip } from "@/components/connection/share-usage/session-client-model";
+import { SessionAnalyzeNowButton } from "@/components/connection/share-usage/session-analyze-now";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
+import {
+  SwarmSessionNotRun,
+  threadNeverRan,
+} from "@/components/swarms/swarm-session-not-run";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
@@ -261,18 +268,6 @@ export function SwarmJudgeSection({
   );
 }
 
-/**
- * Bridge inspector ToolRenderOverrides — whose widget/CSP fields use the MCP
- * Apps SDK types — to chat-ui's placeholder types. The read-only transcript
- * never reads those widget-specific fields, so the cast is safe. Kept as a
- * named seam so future read-only consumers can reuse it.
- */
-function bridgeToolRenderOverrides(
-  overrides: Record<string, unknown> | undefined,
-): Record<string, ChatUiToolRenderOverride> | undefined {
-  return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
-}
-
 interface ShareUsageThreadDetailProps {
   threadId: string;
   /**
@@ -313,6 +308,11 @@ interface ShareUsageThreadDetailProps {
    * there to label.
    */
   fadeScrollEdges?: boolean;
+  /**
+   * Drop the identity / share header when a parent already supplies that
+   * chrome — the Evaluate inspect sheet is the one caller today.
+   */
+  hideHeader?: boolean;
 }
 
 /**
@@ -335,7 +335,7 @@ function warnMissingRunAttemptStatusOnce(): void {
   console.warn(
     "[share-usage] Swarm sessions carry no runAttemptStatus. The backend " +
       "predates the promote gate, so every swarm session will report an " +
-      "unknown run outcome and promotion is off until it is deployed."
+      "unknown run outcome and promotion is off until it is deployed.",
   );
 }
 
@@ -344,10 +344,16 @@ export function ShareUsageThreadDetail({
   sessionLink,
   promote,
   fadeScrollEdges = false,
+  hideHeader = false,
 }: ShareUsageThreadDetailProps) {
-  const { thread } = useSharedChatThread({ threadId });
+  const host = useHostSnapshotForSession(threadId);
+  const { thread } = useSharedChatThread({
+    threadId,
+    includeRecordedContext: true,
+  });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
+  const requestPayloads = useRequestPayloads(threadId, turnTraces);
   const { artifacts: browserArtifacts } = useSessionBrowserArtifacts({
     threadId,
   });
@@ -369,21 +375,31 @@ export function ShareUsageThreadDetail({
    */
   const [spanError, setSpanError] = useState<string | null>(null);
 
-  // Fetch messages from blob URL
+  // Fetch messages from blob URL. Links expire and are re-minted for the same
+  // transcript: a renewed link to the transcript already on screen is not new
+  // content and must not refetch it or swap the viewer for a spinner, while a
+  // renewed link after a FAILED load is exactly how that load gets retried.
+  const loadedMessagesKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!thread?.messagesBlobUrl) {
+    const messagesBlobUrl = thread?.messagesBlobUrl;
+    if (!messagesBlobUrl) {
+      loadedMessagesKeyRef.current = null;
       setMessages(null);
       return;
     }
+    const messagesKey = artifactStableKey(messagesBlobUrl);
+    if (loadedMessagesKeyRef.current === messagesKey) return;
+    // Names only what is on screen: from here the shown transcript is stale.
+    loadedMessagesKeyRef.current = null;
 
     let isActive = true;
     const controller = new AbortController();
 
-    async function fetchMessages() {
+    async function fetchMessages(url: string) {
       setIsLoadingMessages(true);
       setError(null);
       try {
-        const response = await fetch(thread!.messagesBlobUrl!, {
+        const response = await fetchArtifact(url, {
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -392,6 +408,7 @@ export function ShareUsageThreadDetail({
         const data = await response.json();
         if (isActive) {
           setMessages(data);
+          loadedMessagesKeyRef.current = messagesKey;
         }
       } catch (err) {
         if (!isActive) return;
@@ -407,7 +424,7 @@ export function ShareUsageThreadDetail({
       }
     }
 
-    void fetchMessages();
+    void fetchMessages(messagesBlobUrl);
     return () => {
       isActive = false;
       controller.abort();
@@ -507,9 +524,13 @@ export function ShareUsageThreadDetail({
   const traceEnvelope: TraceEnvelope | null = useMemo(() => {
     if (!messages) return null;
     return {
+      ...(thread?.recordedContext
+        ? { recordedContext: thread.recordedContext }
+        : {}),
       messages: messages as any,
       widgetSnapshots,
       spans: hydratedSpans,
+      ...requestPayloadEnvelopeFields(requestPayloads),
       ...(renderObservations.length > 0
         ? { widgetRenderObservations: renderObservations }
         : {}),
@@ -520,8 +541,10 @@ export function ShareUsageThreadDetail({
     };
   }, [
     messages,
+    thread?.recordedContext,
     widgetSnapshots,
     hydratedSpans,
+    requestPayloads,
     replayUrl,
     renderObservations,
     interactionSteps,
@@ -541,12 +564,8 @@ export function ShareUsageThreadDetail({
     };
   }, [messages, thread?.sourceType, turnTraces, widgetSnapshots]);
 
-  const resolvedModel: ModelDefinition = useMemo(
-    () => ({
-      id: thread?.modelId ?? "unknown",
-      name: thread?.modelId ?? "Unknown",
-      provider: "custom" as ModelProvider,
-    }),
+  const resolvedModel = useMemo(
+    () => modelDefinitionForId(thread?.modelId),
     [thread?.modelId],
   );
 
@@ -572,8 +591,8 @@ export function ShareUsageThreadDetail({
 
   const canPromoteThread = Boolean(
     promote?.canPromote &&
-    thread?.sourceType &&
-    PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
+      thread?.sourceType &&
+      PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
   );
 
   /**
@@ -662,7 +681,7 @@ export function ShareUsageThreadDetail({
   if (thread === undefined || isLoadingMessages) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <TranscriptEmptyState kind="loading" />
       </div>
     );
   }
@@ -689,13 +708,27 @@ export function ShareUsageThreadDetail({
     // the journey goal, not the transcript. Render a minimal shell with the
     // judge section instead of a dead-end "No messages" message.
     if (thread.sourceType === "swarm") {
+      // Unless its attempt ended without recording a single message (#5188):
+      // then there is nothing to judge or promote, and "may not have run" is a
+      // guess about something the attempt row already knows. Say it never
+      // ran, and why.
+      if (thread.runAttemptStatus && threadNeverRan(thread)) {
+        return (
+          <div className="flex h-full items-center justify-center px-6">
+            <SwarmSessionNotRun
+              status={thread.runAttemptStatus}
+              errorCode={thread.runAttemptErrorCode}
+              errorMessage={thread.runAttemptErrorMessage}
+              modelId={thread.modelId}
+            />
+          </div>
+        );
+      }
       return (
         <div className="flex h-full flex-col">
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
           <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              No messages in this session
-            </p>
+            <TranscriptEmptyState kind="unrecorded" execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"} />
             {/* This branch has no header, so the disabled promote button and
                 its hover reason never render here — and an empty transcript is
                 USUALLY a run that died before it said anything, which is the
@@ -715,7 +748,7 @@ export function ShareUsageThreadDetail({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">No messages in thread</p>
+        <TranscriptEmptyState kind="unrecorded" execution={(turnTraces?.length ?? 0) > 0 ? "observed" : "unknown"} />
       </div>
     );
   }
@@ -724,7 +757,8 @@ export function ShareUsageThreadDetail({
   const reasoningDisplayMode = isScenarioThread ? "collapsible" : "collapsed";
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
+      {hideHeader ? null : (
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-5">
         <div className="flex min-w-0 items-center gap-3">
           <p className="truncate text-sm font-semibold text-card-foreground">
@@ -735,6 +769,7 @@ export function ShareUsageThreadDetail({
           <SessionClientModelChip
             sessionId={thread._id}
             modelId={thread.modelId}
+            modelSelection={thread.modelSelection}
           />
           <SessionFeedbackMark thread={thread} variant="header" />
         </div>
@@ -805,6 +840,7 @@ export function ShareUsageThreadDetail({
               </Button>
             )
           ) : null}
+          <SessionAnalyzeNowButton thread={thread} />
           {/* Labeled, never icon-only: readers who wanted to send a session to
               a teammate did not recognize the copy icon as the way to do it.
               Same label on Swarm and User Testing. */}
@@ -826,6 +862,7 @@ export function ShareUsageThreadDetail({
           </Button>
         </div>
       </div>
+      )}
 
       {/* Swarm-only: render before the first score exists so deployments with
           automatic judging disabled still expose the on-demand entry point. */}
@@ -866,48 +903,51 @@ export function ShareUsageThreadDetail({
               fadeScrollEdges && "scroll-fade-y",
             )}
           >
-            {/* Ships dark: `sessionScores:listBySession` reaches production
-                only on the next release promotion, and `useQuery` against an
-                undeployed function throws. The fallback is the transcript
-                itself — losing the conversation to a missing ratings query
-                would be a far worse failure than losing the ratings. */}
-            <ErrorBoundary
-              // Keyed on the session so the boundary RETRIES. Without it a
-              // single throw during the pre-deployment window latches the
-              // fallback for the life of the mounted detail — every session a
-              // PM opened afterwards would show a transcript with no ratings
-              // even once the backend went live.
-              key={threadId}
-              fallback={
-                <ReadOnlyTranscript
-                  messages={adaptedTrace.messages}
+            {host.status === "ready" ? (
+              <ErrorBoundary
+                // Retrying for a new session must also retry its ratings query.
+                key={threadId}
+                fallback={
+                  <TraceViewer
+                    trace={traceEnvelope}
+                    adaptedTrace={adaptedTrace}
+                    model={resolvedModel}
+                    hostSnapshot={host.snapshot}
+                    chatSessionId={thread.chatSessionId}
+                    forcedViewMode="chat"
+                    hideToolbar
+                    frame="none"
+                    interactive={false}
+                    reasoningDisplayMode={reasoningDisplayMode}
+                    widgetPolicy="live"
+                  />
+                }
+              >
+                <SessionScoredTranscript
+                  threadId={threadId}
+                  trace={traceEnvelope}
+                  adaptedTrace={adaptedTrace}
                   model={resolvedModel}
-                  toolRenderOverrides={bridgeToolRenderOverrides(
-                    adaptedTrace.toolRenderOverrides,
-                  )}
+                  hostSnapshot={host.snapshot}
+                  chatSessionId={thread.chatSessionId}
+                  forcedViewMode="chat"
+                  hideToolbar
+                  frame="none"
+                  interactive={false}
                   reasoningDisplayMode={reasoningDisplayMode}
-                  widgetPolicy="placeholder"
-                  renderJson={renderSessionJson}
-                  className="mx-auto max-w-4xl px-4 py-4"
+                  widgetPolicy="live"
                 />
-              }
-            >
-              <SessionScoredTranscript
-                threadId={threadId}
-                messages={adaptedTrace.messages}
-                model={resolvedModel}
-                toolRenderOverrides={bridgeToolRenderOverrides(
-                  adaptedTrace.toolRenderOverrides,
-                )}
-                reasoningDisplayMode={reasoningDisplayMode}
-                widgetPolicy="placeholder"
-                // The Playground's own JSON tree, via the package's seam —
-                // see `session-json-view`. Passed to the fallback above too,
-                // so losing the ratings query does not also lose the viewer.
-                renderJson={renderSessionJson}
-                className="mx-auto max-w-4xl px-4 py-4"
-              />
-            </ErrorBoundary>
+              </ErrorBoundary>
+            ) : host.status === "loading" ? (
+              <div role="status" className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                Loading host configuration…
+              </div>
+            ) : (
+              <p role="alert" className="p-8 text-sm text-muted-foreground">
+                Could not load this session's host configuration.
+              </p>
+            )}
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

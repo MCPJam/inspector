@@ -6,6 +6,11 @@ import {
   navigateInputHistory,
   type InputHistoryNavigation,
 } from "../input-history";
+import {
+  applyWidgetStateUpdates,
+  buildSkillContextMessages,
+  buildToolRunContextMessage,
+} from "@/shared/user-context-message";
 
 const userMessage = (text: string) => ({
   role: "user",
@@ -74,6 +79,36 @@ describe("collectInputHistory", () => {
   it("survives a thread that has not loaded", () => {
     expect(collectInputHistory(undefined)).toEqual([]);
     expect(collectInputHistory(null)).toEqual([]);
+  });
+
+  it("skips the context the chat adds on the user's side", () => {
+    // A picked skill, a tool run by hand and a widget's state are user-role
+    // messages, but not something the user typed.
+    const [skill] = buildSkillContextMessages([
+      { name: "brand", content: "Use the brand colors." },
+    ]);
+    const toolRun = buildToolRunContextMessage({
+      toolCallId: "call_1",
+      toolName: "search_docs",
+      params: {},
+      result: "ok",
+    });
+    const [, , widgetState] = applyWidgetStateUpdates(
+      [
+        { id: "u0", role: "user", parts: [{ type: "text", text: "draw" }] },
+        { id: "a0", role: "assistant", parts: [] as unknown[] },
+      ],
+      [{ toolCallId: "call_2", state: { zoom: 2 } }],
+    );
+    expect(
+      collectInputHistory([
+        userMessage("typed first"),
+        skill,
+        toolRun,
+        widgetState,
+        userMessage("typed second"),
+      ]),
+    ).toEqual(["typed second", "typed first"]);
   });
 });
 

@@ -16,8 +16,16 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
+import { SWARM_DESCRIPTION_MAX_CHARS } from "@/shared/swarm-description";
 import { SwarmGenerateError } from "@/lib/swarm-api";
+import { WebApiError } from "@/lib/apis/web/base";
 
+// The harness × model picker locks read each host's config; these tests mock
+// convex/react without that query, so the reads answer "not known yet".
+vi.mock("@/hooks/use-host-harness-targets", () => ({
+  useHostHarnessTargets: () => ({}),
+  useHostHarnessLoader: () => async () => null,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
@@ -72,7 +80,9 @@ const { hostsRef, projectServersRef } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/hooks/useClients", () => ({
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHost: () => ({ host: null, isLoading: false }),
   useHostList: () => ({
     hosts: hostsRef.current,
     isLoading: false,
@@ -89,6 +99,11 @@ vi.mock("@/hooks/use-previewed-environment-id", () => ({
 
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-group-picker" />,
+}));
+
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -140,7 +155,19 @@ vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
     ...actual,
     useCreateProjectEnvironment: () => createEnvironmentMock,
     useEnsureAdhocEnvironments: () => ensureAdhocEnvironmentsMock,
-    useProjectEnvironments: () => environmentsRef.current,
+    // Honours `includeAdhoc` the way the real hook does: nameless rows are
+    // ad-hoc and hidden unless a caller opts in. Ignoring the option let a
+    // caller that NEEDS ad-hoc rows look correct in tests while getting none
+    // of them in the app.
+    useProjectEnvironments: (
+      _projectId: unknown,
+      options?: { includeAdhoc?: boolean },
+    ) =>
+      options?.includeAdhoc
+        ? environmentsRef.current
+        : environmentsRef.current.filter(
+            (row: { name?: string }) => (row.name ?? "").trim().length > 0,
+          ),
   };
 });
 
@@ -216,6 +243,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({ query: convexQueryMock }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -232,12 +260,15 @@ vi.mock("@/hooks/useViews", () => ({
 
 const generateSwarmPersonaBatchMock = vi.fn();
 const launchJourneyRunMock = vi.fn();
+const fundingPreviewMock = vi.fn();
 
 vi.mock("@/lib/swarm-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/swarm-api")>();
   return {
     ...actual,
     launchJourneyRun: (...args: unknown[]) => launchJourneyRunMock(...args),
+    fetchSwarmFundingPreview: (...args: unknown[]) =>
+      fundingPreviewMock(...args),
     generateSwarmPersonaBatch: (...args: unknown[]) =>
       generateSwarmPersonaBatchMock(...args),
   };
@@ -300,6 +331,9 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 }));
 
 const createSwarmMock = vi.fn();
+// The launch preflight (`projectEnvironments:resolveEnvironmentForLaunch`)
+// goes through `useConvex().query`; resolves a runnable target by default.
+const convexQueryMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 const updateJourneyMock = vi.fn();
@@ -323,6 +357,13 @@ function pickExistingPersona(name: RegExp) {
     fireEvent.click(screen.getByTestId("new-swarm-add-existing-personas"));
   }
   fireEvent.click(screen.getByRole("checkbox", { name }));
+}
+
+// jsdom's File has no `text()`; browsers do. Give the fixtures one.
+function textFile(content: string, name: string): File {
+  return Object.assign(new File([content], name), {
+    text: async () => content,
+  });
 }
 
 function openDescribe() {
@@ -349,6 +390,10 @@ function fillDescribe(text = "Support agents answering refunds") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  convexQueryMock.mockResolvedValue({
+    effectiveModelId: "anthropic/claude-haiku-4.5",
+    modelSource: "host",
+  });
   environmentsFlagRef.current = true;
   // The flow now mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
@@ -416,6 +461,14 @@ beforeEach(() => {
   launchJourneyRunMock.mockImplementation(async () => ({
     runId: `run-${Math.random().toString(36).slice(2, 8)}`,
   }));
+  // Sponsorship does not apply unless a case says so: every other case here is
+  // the launch exactly as it was before sponsored conversations existed.
+  fundingPreviewMock.mockReset().mockResolvedValue({
+    supported: false,
+    remaining: 0,
+    granted: 0,
+    runs: [],
+  });
   updateJourneyMock.mockResolvedValue(undefined);
   updatePersonaMock.mockResolvedValue(undefined);
   generateSwarmPersonaBatchMock.mockResolvedValue({
@@ -437,11 +490,15 @@ describe("SwarmsTab — New swarm create flow", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    // The empty state's own button, not the header's. This project has no
+    // personas, and since REEV-6 the header offers creation only once the list
+    // has something in it, so this is the button an empty project actually
+    // shows. The assertion is unchanged: whichever button you press, creation
+    // is a route, not an in-page state flip.
     fireEvent.click(
-      within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
-        "button",
-        { name: /^create new swarm$/i },
-      ),
+      within(screen.getByTestId("swarms-empty-hero")).getByRole("button", {
+        name: /^create new swarm$/i,
+      }),
     );
     expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
     // Still on the list: navigation is what swaps the view, not a state flip.
@@ -502,6 +559,107 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(submit).not.toBeDisabled();
     expect(submit).toHaveTextContent("Continue");
     expect(screen.getByText(/3 new personas on next step/i)).toBeVisible();
+  });
+
+  it("counts the description against its cap and blocks Continue past it", () => {
+    openDescribe();
+    const submit = screen.getByTestId("new-swarm-continue");
+    const input = screen.getByTestId("new-swarm-describe-input");
+    const count = screen.getByTestId("new-swarm-describe-count");
+    const cap = SWARM_DESCRIPTION_MAX_CHARS.toLocaleString();
+    expect(count).toHaveTextContent(`0 / ${cap}`);
+
+    // Well past the old 2,000 — the multi-persona research this is sized for.
+    fireEvent.change(input, {
+      target: { value: "x".repeat(SWARM_DESCRIPTION_MAX_CHARS) },
+    });
+    expect(count).toHaveTextContent(`${cap} / ${cap}`);
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(submit).not.toBeDisabled();
+
+    // One over, surrounding whitespace aside: trimmed like the route trims it.
+    fireEvent.change(input, {
+      target: { value: `  ${"x".repeat(SWARM_DESCRIPTION_MAX_CHARS + 1)}  ` },
+    });
+    expect(count).toHaveTextContent(
+      `${(SWARM_DESCRIPTION_MAX_CHARS + 1).toLocaleString()} / ${cap}`,
+    );
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(submit).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
+      `Shorten the description to ${cap} characters to continue.`,
+    );
+  });
+
+  it("attaches a .txt or .md file into the description, by picker or by drop", async () => {
+    openDescribe();
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Typed first." } });
+
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [textFile("Persona: Maya.", "research.md")] },
+    });
+    await waitFor(() =>
+      expect(input.value).toBe("Typed first.\n\nPersona: Maya."),
+    );
+
+    fireEvent.drop(input, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [textFile("Persona: Dev.", "more.txt")],
+      },
+    });
+    await waitFor(() =>
+      expect(input.value).toBe(
+        "Typed first.\n\nPersona: Maya.\n\nPersona: Dev.",
+      ),
+    );
+    expect(screen.queryByTestId("new-swarm-describe-attach-error")).toBeNull();
+  });
+
+  it("holds Continue until an attached file has been read", async () => {
+    openDescribe();
+    const submit = screen.getByTestId("new-swarm-continue");
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Typed first." } });
+    expect(submit).not.toBeDisabled();
+
+    let finishRead!: (text: string) => void;
+    const slowFile = Object.assign(new File(["x"], "slow.md"), {
+      text: () => new Promise<string>((resolve) => (finishRead = resolve)),
+    });
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [slowFile] },
+    });
+    await waitFor(() => expect(submit).toBeDisabled());
+    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
+      "Reading the attached file…",
+    );
+
+    finishRead("Persona: Maya.");
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    expect(input.value).toBe("Typed first.\n\nPersona: Maya.");
+  });
+
+  it("refuses an unsupported file with an inline error and keeps the draft", async () => {
+    openDescribe();
+    const input = screen.getByTestId(
+      "new-swarm-describe-input",
+    ) as HTMLTextAreaElement;
+    fireEvent.drop(input, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [textFile("binary", "research.docx")],
+      },
+    });
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent("Only .txt and .md files are supported.");
+    expect(input.value).toBe("");
   });
 
   it("auto-seeds the first named environment on open", () => {
@@ -1030,6 +1188,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
   });
 
+  it("refuses to generate or write goals when a target resolves to no model", async () => {
+    // The launch contract, checked before any generation or durable write:
+    // the environment inherits from a client that pins no model.
+    convexQueryMock.mockRejectedValue(
+      Object.assign(new Error("Server Error"), {
+        data: {
+          code: "ENV_MODEL_REQUIRED",
+          message: 'Environment "Claude" has no model to run.',
+          details: { hostId: "host-1" },
+        },
+      }),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      (await screen.findAllByText(/Claude has no model/)).length,
+    ).toBeGreaterThan(0);
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForLaunch",
+      { projectId: "proj-1", environmentId: "env-1" },
+    );
+    // Caught before the persona slate, so nothing costs credits or persists.
+    expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
+    expect(createSwarmMock).not.toHaveBeenCalled();
+    expect(createPersonaMock).not.toHaveBeenCalled();
+    expect(createJourneyMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Edit client" }),
+    ).toBeInTheDocument();
+  });
+
   it("writes nothing until Launch, then creates personas, journeys, and one run each", async () => {
     openDescribe();
     fillDescribe();
@@ -1045,6 +1236,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createSwarmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ setupWrites: true }),
+      }),
+    );
     expect(createPersonaMock).toHaveBeenCalledTimes(2);
     expect(createPersonaMock.mock.calls[0][0]).toMatchObject({
       projectId: "proj-1",
@@ -1060,9 +1256,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       name: "Refund a charge",
       goal: "Refund the charge",
       environmentIds: ["env-1"],
-      config: { sessionsPerTarget: 1, maxTurns: 6 },
+      config: { sessionsPerTarget: 1, maxTurns: 6, setupWrites: true },
     });
-    // Grading is opt-in: an untouched launch stamps no rubric and no judge.
+    // Untouched authoring omits overrides; the backend applies automatic grading defaults.
     expect(
       screen.queryByTestId("new-swarm-grading-toggle"),
     ).not.toBeInTheDocument();
@@ -1082,7 +1278,8 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getAllByLabelText(/Watch Refund Chaser/).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText(/Running: Refund a charge/)).toBeInTheDocument();
+    // No run/session has arrived in this fixture yet; pending is evidence-based.
+    expect(screen.getByText(/Pending: Refund a charge/)).toBeInTheDocument();
     const swarmRunGroupId = (launchJourneyRunMock.mock.calls[0]![0] as {
       swarmRunGroupId: string;
     }).swarmRunGroupId;
@@ -1286,6 +1483,69 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /out of credits/i,
     );
+    expect(
+      screen.queryByTestId("new-swarm-proposed-personas"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in when the refusal arrives as the OTHER error type", async () => {
+    // The proxy does not always raise `SwarmGenerateError`. `handleRoute`
+    // backfills `normalized` on every route error, and that path throws
+    // `WebApiError`. A consumer keyed on the class showed a guest the generic
+    // card; `signInRemedyMessage` asks the error instead, reading the envelope
+    // both classes carry, so both shapes land on the same remedy.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new WebApiError(
+        401,
+        "UNAUTHORIZED",
+        "Sign in to generate personas and journeys.",
+        undefined,
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in for a guest refusal instead of carding it", async () => {
+    // The backend refuses an anonymous caller at the door, and the proxy
+    // forwards that envelope as `details` under an HTTP-shaped `FORBIDDEN` —
+    // which is why the code is read from the envelope and not from the top
+    // level. An `ErrorCard` would state the problem and offer
+    // nothing; the remedy here is a control, so the surface renders
+    // `GuestSignInMessage` and no card.
+    generateSwarmPersonaBatchMock.mockRejectedValue(
+      new SwarmGenerateError(
+        403,
+        "Sign in to generate personas and journeys.",
+        false,
+        "FORBIDDEN",
+        { ok: false, code: "SIGN_IN_REQUIRED" },
+      ),
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    expect(
+      await screen.findByText("Sign in to generate personas and journeys."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Sign in$/i }),
+    ).toBeInTheDocument();
+    // The refusal gets ONE surface, not two saying the same thing.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("new-swarm-proposed-personas"),
     ).not.toBeInTheDocument();
@@ -1608,11 +1868,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toHaveTextContent(/1 conversation/i);
   });
 
-  it("prices a reused persona at its saved sessions, with no counter", async () => {
-    // SUTB-26: a counter sizes the goals this swarm creates, never one the
-    // user already saved. Launch does not rewrite a shared journey's config,
-    // so the card quotes what that journey will really run and offers no
-    // control that would imply otherwise.
+  it("seeds a reused persona's counter from its saved sessions", async () => {
+    // Supersedes SUTB-26, which had no counter here at all: launch does not
+    // rewrite a shared journey's config, so the card offered no control.
+    // It now sets the size for THIS run through an override, which leaves
+    // the shared definition alone — and the counter starts at what the
+    // goals already carry, so leaving it alone launches the size it
+    // always did.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1632,11 +1894,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       screen.getByTestId("new-swarm-launch-session-estimate"),
     ).toHaveTextContent(/3 conversations/i);
     expect(screen.getByTestId("new-swarm-persona-subtotal")).toHaveTextContent(
-      /1 goal at the iterations already saved = 3 conversations/i,
+      /1 goal × 3 iterations = 3 conversations/i,
     );
-    expect(
-      screen.queryByTestId("new-swarm-persona-iterations"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-persona-iterations")).toHaveValue(3);
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),
@@ -2014,6 +2274,58 @@ describe("SwarmsTab create flow — survives a remount", () => {
     expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
       "Support agents answering refunds",
     );
+  });
+
+  it("says an attachment read was interrupted instead of dropping the file silently", async () => {
+    // Like a generation, a file read dies with the unmounted component, so
+    // the restored Describe step must ask for the file again.
+    openDescribe();
+    fillDescribe();
+    const pending = Object.assign(new File(["x"], "research.md"), {
+      text: () => new Promise<string>(() => {}),
+    });
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [pending] },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toBeDisabled(),
+    );
+
+    remount();
+
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent(
+      "Reading research.md was interrupted when this view reloaded. Attach it again.",
+    );
+    expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+      "Support agents answering refunds",
+    );
+    // The dead read no longer holds Continue.
+    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+
+    // The file is still missing, so the notice survives a second remount...
+    remount();
+    expect(
+      await screen.findByTestId("new-swarm-describe-attach-error"),
+    ).toHaveTextContent("Reading research.md was interrupted");
+
+    // ...and goes away once a file is attached.
+    fireEvent.change(screen.getByTestId("new-swarm-describe-file-input"), {
+      target: { files: [textFile("Persona: Maya.", "research.md")] },
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("new-swarm-describe-attach-error"),
+      ).toBeNull(),
+    );
+    remount();
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
+        "Support agents answering refunds\n\nPersona: Maya.",
+      ),
+    );
+    expect(screen.queryByTestId("new-swarm-describe-attach-error")).toBeNull();
   });
 
   it("leaving the flow ends it — a later visit starts clean", async () => {
@@ -2752,5 +3064,1080 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     // A discard notice for a discard that didn't happen is just noise.
     expect(toast.info).not.toHaveBeenCalled();
     expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Where a REUSED goal will actually run, said out loud before launch.
+ *
+ * A persona carries no environment; its goals do. Adding an existing persona
+ * brings those goals, and the Describe step's pre-filled environment then wins
+ * over the one they were authored against. That override is deliberate and
+ * stays — what these tests pin is that Confirm now SAYS so, which is the part
+ * that let 15 goals written for one server run against a different one and
+ * still read as a clean wave.
+ */
+describe("SwarmsTab — Confirm discloses where reused goals run", () => {
+  function setEnvironments(rows: Array<Record<string, unknown>>) {
+    environmentsRef.current = rows as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+  }
+
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    return screen.findByTestId("new-swarm-reused-personas");
+  }
+
+  it("flags no move when reused goals already run on the selection", async () => {
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-1"],
+      },
+    ]);
+
+    // Nothing moves — the stored fan-out already IS the seeded selection.
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says which goals are being moved, and what they were written for", async () => {
+    // Stored on Amazon; the auto-seed picks Prod-like, so the launch re-stamps.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+      {
+        _id: "j-2",
+        name: "Chase refunds",
+        goal: "Chase",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("2 goals were authored against Amazon");
+    expect(moves).toHaveTextContent("will run here instead");
+  });
+
+  it("stays silent for a LEGACY goal that never had an environment", async () => {
+    // The launch still overrides this one — it has nothing else to run
+    // against — but there is no authored environment to move it off.
+    await reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+
+    expect(
+      screen.queryByTestId("new-swarm-confirm-env-moves"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cautions when the move crosses server groups", async () => {
+    // Same client on both rows, so the server-group caution is the only one
+    // that can fire and the assertion cannot pass by accident.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different server group.");
+    expect(moves).toHaveTextContent(
+      "These goals were written for another server",
+    );
+  });
+
+  it("cautions when the move crosses CLIENTS", async () => {
+    // The shape this takes on every project without the environments flag: the
+    // composer seeds the first client and the goals were set up on another.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Different client.");
+    expect(moves).not.toHaveTextContent("server group");
+  });
+
+  it("names the client a LEGACY goal was set up against", async () => {
+    // No environmentIds at all, but `hostIds` says where it ran. Treating that
+    // as unknowable hid a real move on the most common kind of stored goal.
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        hostIds: ["host-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
+  });
+
+  it("does not caution when the move keeps the same server group", async () => {
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "Amazon",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-shared",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    // The move is still disclosed; only the caution is withheld.
+    expect(moves).toHaveTextContent("authored against Amazon");
+    expect(moves).not.toHaveTextContent("Different server group");
+  });
+
+  it("tells two same-named environments apart, and keeps the suffix on Confirm", async () => {
+    // The real project has two live environments both called MCPJam. Without a
+    // suffix the Describe picker is a coin flip AND the move notice reads
+    // "authored against MCPJam — moved to MCPJam", which explains nothing.
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-1",
+        revision: 1,
+        serverAttachmentId: "att-excalidraw",
+      },
+      {
+        environmentId: "env-2",
+        projectId: "proj-1",
+        name: "MCPJam",
+        hostId: "host-2",
+        revision: 1,
+        serverAttachmentId: "att-terac",
+      },
+    ]);
+    await reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["env-2"],
+      },
+    ]);
+
+    expect(
+      await screen.findByTestId("new-swarm-confirm-env-moves"),
+    ).toHaveTextContent("authored against MCPJam #2");
+  });
+
+  it("re-seeds the target once hosts and environments land", async () => {
+    // The latch was set BEFORE the seed was checked, so a mount where both
+    // queries were momentarily empty latched forever: the composer stayed
+    // blank for the rest of the flow and the launch had no target.
+    hostsRef.current = [];
+    setEnvironments([]);
+    const view = render(
+      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />,
+    );
+    expect(
+      screen.getByTestId("new-swarm-environments-picker"),
+    ).toHaveTextContent("pick env");
+
+    hostsRef.current = [{ hostId: "host-1", name: "Claude" }];
+    setEnvironments([
+      {
+        environmentId: "env-1",
+        projectId: "proj-1",
+        name: "Prod-like",
+        hostId: "host-1",
+        revision: 1,
+      },
+    ]);
+    // Both queries land. In the app that re-renders the flow on its own; here
+    // the rerender is what delivers the same thing.
+    view.rerender(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-environments-picker"),
+      ).toHaveTextContent("1 env"),
+    );
+  });
+});
+
+/**
+ * Confirm with `project-environments-enabled` OFF.
+ *
+ * The live configuration for every project but one: the composer shows clients
+ * and models, the launch target is an ad-hoc row minted from them, and the
+ * environment ids do not exist until the flow resolves. Confirm used to reach
+ * the user with an empty selection and therefore say nothing at all: no target,
+ * no move, and a session quote that ignored the fan-out width.
+ */
+describe("SwarmsTab: Confirm with the environments flag off", () => {
+  function reuseAna(journeys: Array<Record<string, unknown>>) {
+    environmentsFlagRef.current = false;
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = journeys;
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+  }
+
+  it("says which reused goals are moving to a different client", async () => {
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-2"],
+      },
+    ]);
+    // The row that goal points at: ad-hoc, so it carries no name and every
+    // named-only list in the app hides it. The move notice is the one place
+    // that has to see it.
+    environmentsRef.current = [
+      {
+        environmentId: "adhoc-host-2",
+        projectId: "proj-1",
+        hostId: "host-2",
+        origin: "adhoc",
+        revision: 1,
+      },
+    ] as typeof environmentsRef.current;
+    environments = environmentsRef.current;
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    const moves = await screen.findByTestId("new-swarm-confirm-env-moves");
+    expect(moves).toHaveTextContent("Ana");
+    expect(moves).toHaveTextContent("Cursor");
+    expect(moves).toHaveTextContent("Different client.");
+  });
+
+  it("quotes the fan-out it will actually launch", async () => {
+    // It used to quote one conversation and then launch two targets, because
+    // the estimate multiplies by the environment count and the selection was
+    // still empty on this screen.
+    reuseAna([
+      {
+        _id: "j-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        environmentIds: ["adhoc-host-1"],
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("new-swarm-launch-session-estimate"),
+      ).toHaveTextContent("2 conversations"),
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalled());
+    // The quote and the launch agree.
+    expect(launchJourneyRunMock.mock.calls[0][0].environmentIds).toEqual([
+      "adhoc-host-1",
+      "adhoc-host-2",
+    ]);
+  });
+
+  it("still reaches Confirm when the target cannot be resolved", async () => {
+    // Resolving early must never strand a returning user: their goals carry
+    // their own target, and the launch is what reports a broken one.
+    ensureAdhocEnvironmentsMock.mockRejectedValue(new Error("resolve failed"));
+    reuseAna([{ _id: "j-1", name: "Reconcile payouts", goal: "Reconcile" }]);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await screen.findByTestId("new-swarm-reused-personas");
+  });
+});
+
+describe("SwarmsTab — sponsored conversations in the launch", () => {
+  const previewRun = (sponsored: number, credits: number) => ({
+    sponsored,
+    credits,
+    total: sponsored + credits,
+    targets: [] as Array<{
+      targetId: string;
+      eligible: boolean;
+      reason?: string;
+    }>,
+  });
+  const supported = (
+    runs: ReturnType<typeof previewRun>[],
+    extra: { remaining?: number } = {},
+  ) => ({
+    supported: true,
+    remaining: extra.remaining ?? 500,
+    granted: 500,
+    runs,
+  });
+
+  /** Ana, one saved goal, picked alone: reused-only, so every run has an id. */
+  async function openReusedConfirm(goals = 1) {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = Array.from({ length: goals }, (_, i) => ({
+      _id: `j-${i + 1}`,
+      name: `Goal ${i + 1}`,
+      goal: `Goal text ${i + 1}`,
+    }));
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+  }
+
+  const launchArgs = () =>
+    launchJourneyRunMock.mock.calls.map((call) => call[0]);
+  const funding409 = (expected: number, actual: number, total: number) =>
+    new LaunchJourneyRunError(
+      409,
+      "Sponsored conversations changed",
+      false,
+      "swarm_funding_changed",
+      {
+        code: "swarm_funding_changed",
+        expectedSponsored: expected,
+        actualSponsored: actual,
+        totalConversations: total,
+      },
+    );
+
+  it("shows how many conversations are sponsored and how many use org credits before launch", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 1)], { remaining: 1 }),
+    );
+    await openReusedConfirm();
+
+    expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
+      "1 sponsored conversation · 1 uses org credits",
+    );
+    // Why some use credits: the allowance ran short.
+    expect(
+      screen.getByTestId("new-swarm-funding-explanation"),
+    ).toHaveTextContent(/allowance covers 1 more conversation/i);
+    // The preview asked about exactly the run the launch will create, as the
+    // swarm the launch makes it (a one-conversation goal would otherwise preview
+    // as user testing, never sponsored, and launch sponsored).
+    expect(fundingPreviewMock.mock.calls[0]![0]).toBe("proj-1");
+    expect(fundingPreviewMock.mock.calls[0]![1]).toEqual([
+      expect.objectContaining({ journeyRefId: "j-1", kind: "swarm" }),
+    ]);
+    expect(screen.getByTestId("new-swarm-funding")).not.toHaveTextContent(
+      /free|guarantee/i,
+    );
+  });
+
+  it("explains a credit-funded target that cannot be sponsored", async () => {
+    fundingPreviewMock.mockResolvedValue({
+      supported: true,
+      remaining: 500,
+      granted: 500,
+      runs: [
+        {
+          sponsored: 0,
+          credits: 2,
+          total: 2,
+          targets: [
+            { targetId: "t1", eligible: false, reason: "harness_target" },
+          ],
+        },
+      ],
+    });
+    await openReusedConfirm();
+
+    expect(await screen.findByTestId("new-swarm-funding-split")).toHaveTextContent(
+      "0 sponsored conversations · 2 use org credits",
+    );
+    expect(
+      screen.getByTestId("new-swarm-funding-explanation"),
+    ).toHaveTextContent(
+      /can't use sponsored conversations \(it runs a coding-agent harness\)/i,
+    );
+  });
+
+  it("shows nothing when sponsorship does not apply, and launches without an expected count", async () => {
+    await openReusedConfirm();
+    expect(
+      screen.queryByTestId("new-swarm-funding"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(launchArgs()[0]).not.toHaveProperty("expectedSponsored");
+  });
+
+  it("launches each run with the sponsored count it was shown, one at a time", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(0, 1)]),
+    );
+    await openReusedConfirm(2);
+    await screen.findByTestId("new-swarm-funding-split");
+
+    let releaseFirst!: () => void;
+    launchJourneyRunMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseFirst = () => resolve({ runId: "run-a" });
+        }),
+    );
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    // Sequential: the second run does not start until the first is done, so
+    // each run's expected count is exactly what the backend will allocate it.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+
+    expect(launchArgs().map((a) => [a.journeyId, a.expectedSponsored])).toEqual(
+      [
+        ["j-1", 1],
+        ["j-2", 0],
+      ],
+    );
+  });
+
+  it("stops before launching when the split moved since it was shown, and asks for a new launch", async () => {
+    fundingPreviewMock.mockResolvedValueOnce(supported([previewRun(1, 0)]));
+    await openReusedConfirm();
+    await screen.findByTestId("new-swarm-funding-split");
+
+    // By the time the person launches, the allowance is gone.
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(0, 1)]));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /changed while you were reviewing[\s\S]*nothing was launched/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(
+      screen.queryByTestId("new-swarm-running-step"),
+    ).not.toBeInTheDocument();
+    // The new split is on screen, and launching again goes ahead with it.
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
+        "0 sponsored conversations · 1 uses org credits",
+      ),
+    );
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
+    expect(launchArgs()[0].expectedSponsored).toBe(0);
+  });
+
+  it("does not launch unchecked when the final split check fails after a sponsored split was shown", async () => {
+    fundingPreviewMock.mockResolvedValueOnce(supported([previewRun(1, 0)]));
+    await openReusedConfirm();
+    await screen.findByTestId("new-swarm-funding-split");
+
+    // The check at launch cannot be made, so the shown split cannot be enforced.
+    fundingPreviewMock.mockRejectedValue(new Error("network down"));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the 1 sponsored conversation[\s\S]*nothing was launched/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  it("does not launch unchecked when the final check says sponsorship no longer applies after a split was shown", async () => {
+    fundingPreviewMock.mockResolvedValueOnce(supported([previewRun(1, 0)]));
+    await openReusedConfirm();
+    await screen.findByTestId("new-swarm-funding-split");
+
+    fundingPreviewMock.mockResolvedValue({
+      supported: false,
+      remaining: 0,
+      granted: 0,
+      runs: [],
+    });
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /couldn't confirm the 1 sponsored conversation[\s\S]*nothing was launched/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  it("reveals the split of brand-new goals once they exist, before any run starts", async () => {
+    // New goals have no id until launch, so the split cannot be shown on
+    // Confirm. Once created, the split is read, and if any conversation would
+    // be sponsored the person sees it and launches again.
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(
+      screen.queryByTestId("new-swarm-funding-split"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /can use sponsored conversations: 2 sponsored conversations · 0 use org credits/i,
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    // The goals were created, exactly once, and stay created.
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-funding-split")).toHaveTextContent(
+        "2 sponsored conversations · 0 use org credits",
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    expect(launchArgs().map((a) => a.expectedSponsored)).toEqual([1, 1]);
+    await screen.findByTestId("new-swarm-running-step");
+  });
+
+  it("launches new goals straight away when none of their conversations would be sponsored", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(0, 1), previewRun(0, 1)]),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(launchArgs().map((a) => a.expectedSponsored)).toEqual([0, 0]);
+  });
+
+  it("on a 409 for the first run: launches nothing more, keeps the goals, refreshes the split and explains", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    await openReusedConfirm();
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock.mockRejectedValue(funding409(1, 0, 1));
+    const readsBefore = fundingPreviewMock.mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(await screen.findByTestId("new-swarm-funding-notice")).toHaveTextContent(
+      /nothing was launched and nothing was moved to org credits/i,
+    );
+    // Not retried into a paid path: one attempt, no second.
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByTestId("new-swarm-running-step"),
+    ).not.toBeInTheDocument();
+    // The split was re-read so the next launch is the one on screen.
+    await waitFor(() =>
+      expect(fundingPreviewMock.mock.calls.length).toBeGreaterThan(
+        readsBefore + 1,
+      ),
+    );
+    expect(screen.queryByText(/no runs were launched/i)).not.toBeInTheDocument();
+  });
+
+  it("on a 409 after some runs launched: keeps them, stops the rest, and says so", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openReusedConfirm(2);
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(2);
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /Launched 1 of 2 runs[\s\S]*remaining runs were not started[\s\S]*none were moved to org credits/i,
+      ),
+    );
+  });
+
+  /** Two generated goals, both brand new: the first launch creates them. */
+  async function openNewGoalsConfirm() {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+  }
+  const alertText = () =>
+    screen
+      .queryAllByRole("alert")
+      .map((node) => node.textContent ?? "")
+      .join(" ");
+
+  // The review stop returns before the launch's own summary, so a goal that
+  // failed to create used to vanish from the screen: it was simply missing from
+  // the launch, with no message.
+  it("a split-review stop still says a goal could not be created", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    createJourneyMock.mockReset();
+    createJourneyMock
+      .mockRejectedValueOnce(new Error("Goal service unavailable"))
+      .mockResolvedValueOnce({ _id: "journey-2" });
+    await openNewGoalsConfirm();
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/can use sponsored conversations/i);
+    await waitFor(() =>
+      expect(alertText()).toMatch(/Goal service unavailable/),
+    );
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  // Run N's expected count assumes every earlier run launched. When one failed
+  // without consuming anything and the allowance was the limit, run N is offered
+  // more than the preview said and is refused (409). That stop returned before
+  // `firstError` was read, so a deterministic failure looped forever on "review
+  // the split" without ever showing what was actually wrong.
+  it("a 409 does not hide the failure of an earlier run in the same pass", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openReusedConfirm(2);
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock
+      .mockRejectedValueOnce(new Error("Network down"))
+      .mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/changed before this launch started/i);
+    await waitFor(() => expect(alertText()).toMatch(/Network down/));
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the partial-launch explanation on the Running screen, with any earlier failure, until dismissed", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openReusedConfirm(3);
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(new Error("Network down"))
+      .mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    const notice = screen.getByTestId("new-swarm-running-launch-notice");
+    expect(notice).toHaveTextContent(
+      /Launched 1 of 3 runs[\s\S]*remaining runs were not started[\s\S]*none were moved to org credits/i,
+    );
+    expect(notice).toHaveTextContent(/Network down/);
+    fireEvent.click(within(notice).getByRole("button", { name: /dismiss/i }));
+    expect(
+      screen.queryByTestId("new-swarm-running-launch-notice"),
+    ).not.toBeInTheDocument();
+  });
+
+  // The goals are real after the first launch attempt, and Confirm stays
+  // editable. Lowering or raising a persona's iterations (the natural reaction
+  // to "review the split") changed the estimate on screen but neither the split
+  // that was previewed nor what launched, because both read the frozen targets.
+  it("applies iterations changed after the review stop to the preview and to the launch", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    // The split is asked about the run as it will now launch.
+    await waitFor(() =>
+      expect(
+        fundingPreviewMock.mock.calls.some(
+          (call) =>
+            (call[1] as Array<{ sessionsPerTarget?: number }>)[0]
+              ?.sessionsPerTarget === 2,
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    // The goals were created once and stay created.
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+    expect(launchArgs().map((a) => a.sessionsPerTarget)).toEqual([
+      2,
+      undefined,
+    ]);
+  });
+
+  it("sends no iterations override for a goal whose counter was never changed", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    for (const args of launchArgs()) {
+      expect(args).not.toHaveProperty("sessionsPerTarget");
+    }
+  });
+
+  // After the first launch attempt the goals exist, and a retry or the launch
+  // that follows a review stop runs THOSE goals. A persona removed here still
+  // launched (spending allowance, or credits once it ran out) while the list and
+  // the estimate said it was gone, and one added here was counted but never
+  // created. Who is in the swarm is settled once its goals are.
+  it("locks who is in the swarm once its goals exist, so the list, the estimate and the launch agree", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    // Before any goal exists the set is editable.
+    expect(
+      screen.getAllByRole("button", { name: /^remove persona/i }),
+    ).toHaveLength(2);
+    expect(screen.getByTestId("new-swarm-add-persona")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-confirm-locked"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+
+    expect(
+      screen.queryByRole("button", { name: /^remove persona/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-add-persona"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-confirm-add-existing"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-confirm-locked")).toHaveTextContent(
+      /goals are already set/i,
+    );
+    // The counters stay live: they reach the preview and the launch.
+    expect(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    ).toBeEnabled();
+
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    // What launched is what was shown: both goals, none created twice.
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(createJourneyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a created persona's goals readable but not editable", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /^view persona refund chaser/i }),
+    );
+
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+    expect(within(detail).getByLabelText("Persona name")).toHaveAttribute(
+      "readonly",
+    );
+    expect(
+      within(detail).queryByTestId("new-swarm-add-goal"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(detail).queryByRole("button", { name: /^remove goal/i }),
+    ).not.toBeInTheDocument();
+    // The goal reads as text, not as a field.
+    expect(within(detail).queryByLabelText("Goal")).not.toBeInTheDocument();
+  });
+
+  // The failure was said on the stop, then cleared by the next click: the launch
+  // that followed ran only what was created and ended in a plain success toast,
+  // so a goal that never existed vanished without a word.
+  it("still says a goal could not be created when the launch goes ahead after the review stop", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    createJourneyMock.mockReset();
+    createJourneyMock
+      .mockRejectedValueOnce(new Error("Goal service unavailable"))
+      .mockResolvedValueOnce({ _id: "journey-2" });
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(launchJourneyRunMock).toHaveBeenCalledTimes(1);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/Launched 1 run\.[\s\S]*Goal service unavailable/i),
+    );
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Goal service unavailable/);
+  });
+
+  // The toast for any other partial launch names no cause, and the Running
+  // screen then shows only the runs that did launch.
+  it("keeps the reason a launch stopped partway on the Running screen, not only in a toast", async () => {
+    await openReusedConfirm(2);
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(new Error("Network down"));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Launched 1 of 2 runs\.[\s\S]*Network down/);
+  });
+
+  // The dialog carries the cause, but it closes; the Running screen then shows
+  // only the runs that did launch.
+  it("keeps a usage-limit stop on the Running screen after its dialog closes", async () => {
+    await openReusedConfirm(2);
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(
+        new LaunchJourneyRunError(402, "Model limit reached.", true),
+      );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Launched 1 of 2 runs\.[\s\S]*usage limit was reached/);
+  });
+
+  it("names the goals a 409 left unstarted on the Running screen", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openReusedConfirm(2);
+    await screen.findByTestId("new-swarm-funding-split");
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    const notice = screen.getByTestId("new-swarm-running-launch-notice");
+    expect(notice).toHaveTextContent(/Not started: Ana · /);
+    expect(notice).toHaveTextContent(/launches every goal of a persona/i);
+  });
+
+  it("keeps a credit-limit stop on the Running screen as well", async () => {
+    await openReusedConfirm(2);
+    launchJourneyRunMock
+      .mockResolvedValueOnce({ runId: "run-1" })
+      .mockRejectedValueOnce(
+        new LaunchJourneyRunError(
+          402,
+          "Your organization's credit limit was reached.",
+        ),
+      );
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await screen.findByTestId("new-swarm-running-step");
+    expect(
+      screen.getByTestId("new-swarm-running-launch-notice"),
+    ).toHaveTextContent(/Launched 1 of 2 runs[\s\S]*credit limit was reached/);
+  });
+
+  // The notice quotes the split as it was when the launch stopped. Changing a
+  // counter refreshes the split above it, and a notice left behind would then
+  // contradict the numbers it sits under.
+  it("clears the stop notice when a counter changes, since the split it quoted is gone", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("new-swarm-funding-notice"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  // `shownSponsored` is null while the preview is not ready, so a click in that
+  // window sent null and the launch stopped again with the first-review wording.
+  it("holds Continue while the split is being re-read after a counter changed", async () => {
+    fundingPreviewMock.mockResolvedValue(
+      supported([previewRun(1, 0), previewRun(1, 0)]),
+    );
+    await openNewGoalsConfirm();
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await screen.findByTestId("new-swarm-funding-notice");
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+
+    let release!: () => void;
+    fundingPreviewMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve(supported([previewRun(2, 0), previewRun(1, 0)]));
+        }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /more iterations for refund chaser/i,
+      }),
+    );
+
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(false));
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+
+    release();
+    await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
+  });
+
+  it("locks a reused-only swarm the same way once its first launch attempt stopped", async () => {
+    fundingPreviewMock.mockResolvedValue(supported([previewRun(1, 0)]));
+    await openReusedConfirm(1);
+    await screen.findByTestId("new-swarm-funding-split");
+    expect(
+      screen.getByRole("button", { name: /remove ana from this swarm/i }),
+    ).toBeInTheDocument();
+    launchJourneyRunMock.mockRejectedValueOnce(funding409(1, 0, 1));
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    expect(
+      await screen.findByTestId("new-swarm-funding-notice"),
+    ).toHaveTextContent(/changed before this launch started/i);
+    expect(
+      screen.queryByRole("button", { name: /remove ana from this swarm/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-confirm-add-existing"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-confirm-locked")).toBeInTheDocument();
   });
 });

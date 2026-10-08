@@ -10,7 +10,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const setupTurnMock = vi.fn();
+const reportTargetGroundingMock = vi.fn();
 const reportAttemptMock = vi.fn();
+vi.mock("../swarm-setup-turn", async () => ({
+  ...(await vi.importActual<typeof import("../swarm-setup-turn")>(
+    "../swarm-setup-turn",
+  )),
+  runSwarmSetupTurn: (...args: unknown[]) => setupTurnMock(...args),
+}));
 const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const runSyntheticHostSessionMock = vi.fn();
@@ -21,10 +29,12 @@ const fetchPinnedSkillMock = vi.fn();
 
 vi.mock("../../swarm-agent.js", async () => {
   const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
-    "../../swarm-agent.js"
+    "../../swarm-agent.js",
   );
   return {
     ...actual,
+    reportTargetGrounding: (...args: unknown[]) =>
+      reportTargetGroundingMock(...args),
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
@@ -37,9 +47,8 @@ vi.mock("../../swarm-agent.js", async () => {
 });
 
 vi.mock("../runner.js", async () => {
-  const actual = await vi.importActual<typeof import("../runner.js")>(
-    "../runner.js"
-  );
+  const actual =
+    await vi.importActual<typeof import("../runner.js")>("../runner.js");
   return {
     ...actual,
     runSyntheticHostSession: (...args: unknown[]) =>
@@ -56,8 +65,10 @@ import {
   classifyRateLimit,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
 import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
+import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 
@@ -106,6 +117,8 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  setupTurnMock.mockReset();
+  reportTargetGroundingMock.mockReset().mockResolvedValue({});
   // Default: every attempt transition APPLIES (a fresh, uncontended claim/
   // terminal). Duplicate-launch tests override with `applied: false`.
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
@@ -153,8 +166,15 @@ describe("swarm single-host runner — attempt ordering", () => {
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     expect(adapter.chatSessionId).toBe("synth_run-1_host-1_0");
     expect(adapter.runtime.modelDefinition.id).toBe(
-      "anthropic/claude-haiku-4.5"
+      "anthropic/claude-haiku-4.5",
     );
+    // The swarm pins its own per-turn step cap instead of inheriting the
+    // engine's Playground default; a persona turn resends every tool result
+    // on every step, so this is what bounds turn time and tokens.
+    expect(adapter.runtime.maxSteps).toBe(10);
+    // …and its own output ceiling: the backend holds credits against it
+    // before every step, and the model-sized default overstated the hold.
+    expect(adapter.runtime.maxOutputTokens).toBe(16_384);
     expect(adapter.runtime.scenarioId).toBeUndefined();
     // A legacy host target pins no environment, so there is no grant boundary
     // to forward — and inventing one would let a harness turn believe a
@@ -201,7 +221,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     });
     expect(captureWidgetSnapshotsMock).toHaveBeenCalledTimes(2);
     expect(
-      captureWidgetSnapshotsMock.mock.calls[0]![0].capturedToolCallIds
+      captureWidgetSnapshotsMock.mock.calls[0]![0].capturedToolCallIds,
     ).toBe(captureWidgetSnapshotsMock.mock.calls[1]![0].capturedToolCallIds);
     // Persona driver routes through the swarm backend client, carrying the
     // full wire identity: the backend bills the turn against (target, session)
@@ -214,7 +234,7 @@ describe("swarm single-host runner — attempt ordering", () => {
         runId: "run-1",
         hostId: "host-1",
         sessionIdx: 0,
-      })
+      }),
     );
   });
 });
@@ -238,6 +258,24 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(failed.chatSessionId).toBe("synth_run-1_host-1_0");
     // Failure of session 0 did not abort the batch.
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("stores the engine's failure code as the errorCode, not in the message", async () => {
+    runSyntheticHostSessionMock.mockResolvedValueOnce({
+      outcome: "failed",
+      errorMessage:
+        "A tool on your MCP server has an input schema this model can't accept. (invalid_request)",
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const failed = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status === "failed")!;
+    expect(failed.errorCode).toBe("invalid_request");
+    expect(failed.errorMessage).toBe(
+      "A tool on your MCP server has an input schema this model can't accept.",
+    );
   });
 
   // A connect-time XAA failure is not a crashed session: the thrown route
@@ -278,6 +316,28 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(terminal.chatSessionId).toBe("synth_run-1_host-1_0");
   });
 
+  it("keeps MCPJam's denial code on a rate_limited terminal instead of the generic one", async () => {
+    // A bare `rate_limited` tells the run screen the user's PROVIDER throttled
+    // their key; the humanized message has already lost the code that says
+    // otherwise, so only the producer can keep it.
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "rate_limited",
+      errorMessage:
+        'swarm-agent https://example.convex.site/journey-execution/persona-next-turn failed (429): {"ok":false,"code":"user_rate_limit","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","details":"Try again in 621 minutes."}',
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal.status).toBe("rate_limited");
+    expect(terminal.errorCode).toBe("user_rate_limit");
+    expect(terminal.errorMessage).toBe(
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 621 minutes.",
+    );
+  });
+
   it("skips a session whose claim fails (can't run without the claim) and still claims the next", async () => {
     reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => {
       if (args.status === "running" && args.sessionIdx === 0) {
@@ -291,7 +351,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     // Session 0 never ran; session 1 claimed + ran.
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
     expect(
-      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId
+      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId,
     ).toBe("synth_run-1_host-1_1");
   });
 
@@ -313,7 +373,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     // Session 0 (applied:false) never executed; only session 1 (applied:true) ran.
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
     expect(
-      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId
+      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId,
     ).toBe("synth_run-1_host-1_1");
 
     // The lost claim reports NO terminal (only the winning runner does). The one
@@ -340,7 +400,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
 async function waitFor(
   predicate: () => boolean,
   label: string,
-  timeoutMs = 5_000
+  timeoutMs = 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -361,9 +421,9 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
         new Promise((_resolve, reject) => {
           personaSignal = args.signal;
           args.signal?.addEventListener("abort", () =>
-            reject(new Error("aborted"))
+            reject(new Error("aborted")),
           );
-        })
+        }),
     );
 
     const reportTimeline: string[] = [];
@@ -421,7 +481,7 @@ describe("swarm fan-out runner — shutdown unwinds via cancellable persona", ()
     // a session that is already running rather than one that never started.
     await waitFor(
       () => reportAttemptMock.mock.calls.length > 0,
-      "the attempt claim"
+      "the attempt claim",
     );
     await shutdownRunningJourneyRuns(1_000);
     await runPromise;
@@ -448,7 +508,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
 
   it("fans out sessionsPerTarget sessions per host across a 2-host journey (2/host = 4)", async () => {
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(4);
@@ -503,7 +563,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
     );
 
     expect(maxPerHost).toBe(1);
@@ -519,7 +579,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // Every session on both hosts ran — a failure isolates to its attempt.
@@ -545,7 +605,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // host-1: only session 0 EXECUTED; session 1 short-circuited (never ran).
@@ -576,7 +636,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
@@ -600,12 +660,12 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       });
 
       await startJourneyRun(
-        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
       );
 
       expect(
         finalizePendingAttemptsMock,
-        `"${capMessage}" should trip the whole-run spend-cap stop`
+        `"${capMessage}" should trip the whole-run spend-cap stop`,
       ).toHaveBeenCalledTimes(1);
       expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
         errorCode: "spend_cap_exceeded",
@@ -621,6 +681,8 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     // `*_rate_limit` codes carry wording `classifyTurnFailure` reads as a
     // rate-limit, so the billing codes land in `failed`.
     for (const { envelope, outcome } of [
+      { envelope: "Credits exhausted", outcome: "failed" },
+      { envelope: "Daily credit limit reached.", outcome: "failed" },
       {
         envelope: "Daily credit limit reached. (user_rate_limit, HTTP 429)",
         outcome: "rate_limited",
@@ -650,12 +712,12 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       });
 
       await startJourneyRun(
-        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
       );
 
       expect(
         finalizePendingAttemptsMock,
-        `"${envelope}" should trip the whole-run account-limit stop`
+        `"${envelope}" should trip the whole-run account-limit stop`,
       ).toHaveBeenCalledTimes(1);
       expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
         errorCode: "spend_cap_exceeded",
@@ -671,7 +733,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     for (const code of USER_OWNED_DENIAL_CODES) {
       expect(
         isAccountLimit(`Limit reached. (${code}, HTTP 403)`),
-        `${code} should stop the whole run`
+        `${code} should stop the whole run`,
       ).toBe(true);
     }
   });
@@ -681,13 +743,16 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     // hosts run on a different key, so the run must not halt.
     runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
       if (adapter.chatSessionId === "synth_run-1_host-1_0") {
-        return { outcome: "rate_limited", errorMessage: "429 Too Many Requests" };
+        return {
+          outcome: "rate_limited",
+          errorMessage: "429 Too Many Requests",
+        };
       }
       return { outcome: "succeeded" };
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     expect(executedForHost("host-2")).toHaveLength(2);
@@ -708,7 +773,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // No whole-run finalize — it stayed a per-host provider rate-limit.
@@ -730,7 +795,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
     );
 
     // The other host completed all its sessions — the pool was not aborted.
@@ -749,7 +814,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
         (a) =>
           a.hostId === "host-1" &&
           a.status === "failed" &&
-          a.errorCode === "host_worker_failed"
+          a.errorCode === "host_worker_failed",
       )
       .map((a) => a.sessionIdx)
       .sort();
@@ -768,6 +833,149 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     serverIds: ["server-3"],
   };
 
+  it("does not stop other targets when temporary admission retries are exhausted", async () => {
+    const message =
+      'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","error":"MCPJam model limit reached for the moment: 2 in-flight requests hold the remaining credits."}';
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? { outcome: "rate_limited", errorMessage: message }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(2);
+    expect(
+      terminals.find((t) => t.hostId === "host-1" && t.sessionIdx === 1),
+    ).toMatchObject({
+      errorCode: "user_rate_limit",
+      errorMessage: expect.stringContaining("in-flight"),
+    });
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+  // `user_rate_limit` is the credit denial. Stored beside a sentence that is not
+  // a hold it reads as an empty wallet, and the run opens the credits dialog
+  // and locks hosted models. A busy reservation stops the target the same way
+  // but is not about credits, so the sessions it stops keep its own code.
+  it("keeps a busy reservation's own code on the sessions it stops", async () => {
+    // "spend" in the sentence is what folds the turn into rate_limited.
+    const message =
+      'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam could not reserve spend capacity.","isRetryable":true}';
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? {
+            outcome: "rate_limited",
+            errorMessage: message,
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    // The session that tripped the stop carries the busy code too, so the run
+    // reads the whole stop the same way (a bare `rate_limited` reads as the
+    // user's provider throttling their key).
+    expect(
+      terminals.find((t) => t.hostId === "host-1" && t.sessionIdx === 0),
+    ).toMatchObject({
+      status: "rate_limited",
+      errorCode: "spending_reservation_busy",
+    });
+    const stopped = terminals.filter(
+      (t) => t.hostId === "host-1" && t.sessionIdx > 0,
+    );
+    expect(stopped.map((t) => t.sessionIdx).sort()).toEqual([1, 2]);
+    for (const row of stopped) {
+      expect(row).toMatchObject({
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+      });
+      // How the run reads the stored pair: not an empty wallet.
+      expect(
+        isCreditExhaustion({ code: row.errorCode, message: row.errorMessage }),
+      ).toBe(false);
+    }
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(3);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
+  // The core folds a failure into `rate_limited` by its WORDS (`spend`, `cap`,
+  // `quota`, ...). The backend's current sentence says "spending capacity", which
+  // has none of them, so the core returns `failed` and the stop was never
+  // reached for it: whether a busy reservation stopped its target depended on
+  // how the backend worded it. Its structured code decides instead, the way a
+  // hold's does.
+  it("stops the target's remaining sessions on a busy refusal worded as the backend words it today", async () => {
+    const message =
+      'swarm-agent https://example.test/turn failed (503): {"code":"spending_reservation_busy","isRetryable":true,"retryAfter":2000,"error":"MCPJam could not reserve spending capacity because this organization has many model calls starting at once. The model was not called for this request. Please retry."}';
+    // The premise: nothing in it is a word the core folds on.
+    expect(classifyTurnFailure(message)).toBe("failed");
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+      adapter.persist.hostId === "host-1"
+        ? {
+            outcome: "failed",
+            errorMessage: message,
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          }
+        : { outcome: "succeeded" },
+    );
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 3 }),
+    );
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    // The session that hit it waited on MCPJam, so it is not a failure of its
+    // own, and the rest of its target stops the same way.
+    const host1 = terminals.filter((t) => t.hostId === "host-1");
+    expect(host1.map((t) => t.sessionIdx).sort()).toEqual([0, 1, 2]);
+    for (const row of host1) {
+      expect(row).toMatchObject({
+        status: "rate_limited",
+        errorCode: "spending_reservation_busy",
+        errorMessage: expect.stringContaining("could not reserve"),
+      });
+    }
+    expect(
+      terminals.filter(
+        (t) => t.hostId === "host-2" && t.status === "succeeded",
+      ),
+    ).toHaveLength(3);
+    expect(
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ),
+    ).toBe(false);
+  });
   it("reports an in-flight session that the spend-cap abort cancelled as rate_limited/spend_cap_exceeded (NOT session_failed), while a genuinely-succeeded session keeps its outcome", async () => {
     // Concurrent barrier: host-1 trips the org spend cap while host-2 has a
     // session PARKED in-flight. The cap's `runStop.abort()` cancels host-2's
@@ -799,7 +1007,7 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
     });
 
     await startJourneyRun(
-      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerTarget: 1 }),
     );
 
     const terminals = reportAttemptMock.mock.calls
@@ -826,10 +1034,176 @@ describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)"
       errorCode: "spend_cap_exceeded",
     });
   });
+  // A busy reservation stops its target as a wait, but a session the run's own
+  // stop cancelled is an abort artifact whatever its last refusal was: the run
+  // is over because of the cap, not because MCPJam was busy.
+  it("keeps a session the spend-cap abort cancelled an abort artifact even when its last refusal was a busy reservation", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.hostId === "host-1") {
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      }
+      return await new Promise((resolve) => {
+        const finish = () =>
+          resolve({
+            outcome: "failed",
+            errorMessage:
+              'swarm-agent https://example.test/turn failed (503): {"code":"spending_reservation_busy","error":"MCPJam could not reserve spending capacity."}',
+            errorRefusal: {
+              code: "spending_reservation_busy",
+              httpStatus: 503,
+            },
+          });
+        if (adapter.abortSignal?.aborted) {
+          finish();
+          return;
+        }
+        adapter.abortSignal?.addEventListener("abort", finish, { once: true });
+      });
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 1 }),
+    );
+
+    const host2 = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.hostId === "host-2" && a.status !== "running")!;
+    expect(host2).toMatchObject({
+      status: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
+  });
 });
 
 describe("swarm single-host runner — heartbeat", () => {
-  it("fires the heartbeat on an independent 30s schedule (not gated on turn completion) and stops it on finally", async () => {
+  it("keeps only one heartbeat in flight when a poll is slow", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHeartbeat!: (status: string) => void;
+      heartbeatJourneyRunMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveHeartbeat = resolve;
+          }),
+      );
+      runSyntheticHostSessionMock.mockImplementation(
+        async (adapter: any) =>
+          new Promise((resolve) => {
+            adapter.abortSignal.addEventListener("abort", () =>
+              resolve({ outcome: "failed" }),
+            );
+          }),
+      );
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
+      resolveHeartbeat("failed");
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+      expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not execute a claim that resolves after the backend ends the run", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveClaim!: (claim: { ok: true; applied: boolean }) => void;
+      reportAttemptMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveClaim = resolve;
+          }),
+      );
+      heartbeatJourneyRunMock.mockResolvedValue("failed");
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+      resolveClaim({ ok: true, applied: true });
+      await done;
+
+      expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+      expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a delayed heartbeat response after local execution finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHeartbeat!: (status: string) => void;
+      let resolveSession!: (result: { outcome: string }) => void;
+      let sessionSignal: AbortSignal | undefined;
+      heartbeatJourneyRunMock.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveHeartbeat = resolve;
+          }),
+      );
+      runSyntheticHostSessionMock.mockImplementation((adapter: any) => {
+        sessionSignal = adapter.abortSignal;
+        return new Promise((resolve) => {
+          resolveSession = resolve;
+        });
+      });
+      const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      resolveSession({ outcome: "succeeded" });
+      await done;
+      resolveHeartbeat("completed");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(sessionSignal?.aborted).toBe(false);
+      expect(
+        reportAttemptMock.mock.calls.map((call) => call[2].status),
+      ).toEqual(["running", "succeeded"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["failed", "completed", "partial", "rate_limited", "missing"])(
+    "stops in-flight work and queued sessions when the backend reports %s",
+    async (status) => {
+      vi.useFakeTimers();
+      try {
+        heartbeatJourneyRunMock.mockResolvedValue(status);
+        let signal: AbortSignal | undefined;
+        runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+          signal = adapter.abortSignal;
+          await new Promise<void>((resolve) => {
+            signal!.addEventListener("abort", () => resolve(), { once: true });
+          });
+          return { outcome: "failed", errorMessage: "aborted" };
+        });
+        const done = startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+        await vi.advanceTimersByTimeAsync(5_000);
+        await done;
+
+        expect(signal?.aborted).toBe(true);
+        expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+        // Preserve Convex's terminal cause rather than replacing it with the
+        // local cancellation artifact or claiming the next queued session.
+        expect(
+          reportAttemptMock.mock.calls.map((call) => call[2].status),
+        ).toEqual(["running"]);
+        expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("fires the heartbeat on an independent 5s schedule (not gated on turn completion) and stops it on finally", async () => {
     vi.useFakeTimers();
     try {
       let resolveRun!: () => void;
@@ -837,16 +1211,16 @@ describe("swarm single-host runner — heartbeat", () => {
         () =>
           new Promise((resolve) => {
             resolveRun = () => resolve({ outcome: "succeeded" });
-          })
+          }),
       );
 
       const done = startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
       // Session is still running (its core promise is pending) — the heartbeat
       // must still fire purely on the interval.
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(heartbeatJourneyRunMock).toHaveBeenCalledTimes(2);
 
       // Finish the session; the runner's finally clears the interval.
@@ -899,6 +1273,40 @@ describe("swarm runner — live stream emit", () => {
     expect(getRunningJourneyStreamHub("run-1")).toBeUndefined();
   });
 
+  // The humanized message the live event carries has dropped the code, so the
+  // run screen could not tell a busy reservation (MCPJam's own wait) from the
+  // user's provider throttling their key until the attempt row arrived.
+  it("carries the code the attempt is stored under on the terminal attempt_status", async () => {
+    const events: any[] = [];
+    runSyntheticHostSessionMock.mockImplementation(async () => {
+      getRunningJourneyStreamHub("run-1")!.subscribe((e) => events.push(e));
+      return {
+        outcome: "rate_limited",
+        errorMessage:
+          'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam is temporarily busy. Please retry.","isRetryable":true}',
+        errorRefusal: { code: "spending_reservation_busy", httpStatus: 503 },
+      };
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = events.find(
+      (e) => e.type === "attempt_status" && e.status === "rate_limited",
+    );
+    expect(terminal).toMatchObject({
+      errorCode: "spending_reservation_busy",
+      errorMessage: "MCPJam is temporarily busy. Please retry.",
+    });
+    // The same pair the attempt row is written with.
+    const row = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status === "rate_limited");
+    expect(row).toMatchObject({
+      errorCode: terminal.errorCode,
+      errorMessage: terminal.errorMessage,
+    });
+  });
+
   it("wires emit on the adapter for every session", async () => {
     await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
@@ -945,7 +1353,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 }),
     );
 
     const sessionIds = runSyntheticHostSessionMock.mock.calls
@@ -985,14 +1393,14 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 }),
     );
 
     const bySession = new Map(
       runSyntheticHostSessionMock.mock.calls.map((c) => [
         (c[0] as any).chatSessionId,
         (c[0] as any).runtime.environmentId,
-      ])
+      ]),
     );
     expect(bySession.get("synth_run-1_env_envA_0")).toBe("envA");
     expect(bySession.get("synth_run-1_env_envB_0")).toBe("envB");
@@ -1002,14 +1410,14 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 }),
     );
 
     const adapters = runSyntheticHostSessionMock.mock.calls.map(
-      (c) => c[0] as any
+      (c) => c[0] as any,
     );
     const a = adapters.find(
-      (x) => x.chatSessionId === "synth_run-1_env_envA_0"
+      (x) => x.chatSessionId === "synth_run-1_env_envA_0",
     );
     expect(a.runtime.pinnedSkills).toHaveLength(1);
     expect(a.runtime.pinnedSkills[0]).toMatchObject({
@@ -1031,11 +1439,11 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         runId: "run-1",
         targetId: "target-a",
         contentHash: "hash-1",
-      })
+      }),
     );
 
     const b = adapters.find(
-      (x) => x.chatSessionId === "synth_run-1_env_envB_0"
+      (x) => x.chatSessionId === "synth_run-1_env_envB_0",
     );
     // Skill-less env target: authoritative EMPTY array — NEVER undefined
     // (undefined would fall back to the live pool).
@@ -1051,7 +1459,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     };
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerTarget: 1 }),
     );
 
     expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(1);
@@ -1061,16 +1469,16 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
 
   it("a persistent pinned-skill fetch failure finalizes THAT target's attempts failed — never a silent skill-less run — and does not stop the sibling target", async () => {
     fetchPinnedSkillMock.mockRejectedValue(
-      new SwarmAgentError(404, "", "not found")
+      new SwarmAgentError(404, "", "not found"),
     );
 
     await startJourneyRun(
-      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 })
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 2 }),
     );
 
     // Env A (the pinned target) never executed a session.
     const executed = runSyntheticHostSessionMock.mock.calls.map(
-      (c) => (c[0] as any).chatSessionId
+      (c) => (c[0] as any).chatSessionId,
     );
     expect(executed.some((id) => id.includes("env_envA"))).toBe(false);
     // Its attempts were finalized failed via the worker-catch sweep.
@@ -1080,7 +1488,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         (a) =>
           a.targetId === "target-a" &&
           a.status === "failed" &&
-          a.errorCode === "host_worker_failed"
+          a.errorCode === "host_worker_failed",
       )
       .map((a) => a.sessionIdx)
       .sort();
@@ -1105,7 +1513,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       // …but the pinned entries carry NO channel provenance (pre-P0.2).
     };
     await startJourneyRun(
-      baseOpts({ hosts: [preP02Target], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [preP02Target], sessionsPerTarget: 1 }),
     );
     // No session executed; attempts finalized failed.
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
@@ -1136,7 +1544,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [p02Target], sessionsPerTarget: 1 }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
   });
@@ -1159,7 +1567,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerTarget: 1 }),
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
     expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
@@ -1186,7 +1594,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       ],
     };
     await startJourneyRun(
-      baseOpts({ hosts: [partialTarget], sessionsPerTarget: 1 })
+      baseOpts({ hosts: [partialTarget], sessionsPerTarget: 1 }),
     );
     expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
   });
@@ -1241,11 +1649,11 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
         () =>
           new Promise((resolve) => {
             resolveRun = () => resolve({ outcome: "succeeded" });
-          })
+          }),
       );
 
       const done = startJourneyRun(
-        baseOpts({ sessionsPerTarget: 1, getBearer })
+        baseOpts({ sessionsPerTarget: 1, getBearer }),
       );
 
       // Let the run reach its first session, so the per-target and per-session
@@ -1257,11 +1665,11 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
       await vi.advanceTimersByTimeAsync(30_000);
       await vi.advanceTimersByTimeAsync(30_000);
       expect(heartbeatJourneyRunMock.mock.calls.length).toBeGreaterThanOrEqual(
-        2
+        2,
       );
 
       const beatTokens = heartbeatJourneyRunMock.mock.calls.map((call) =>
-        String(call[1])
+        String(call[1]),
       );
       // Every beat's token was minted AFTER the run's own startup mints — the
       // assertion a captured bearer cannot satisfy.
@@ -1281,6 +1689,55 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
 });
 
 describe("classifyRateLimit — a halt needs a real spend signal", () => {
+  it("treats spending reservation timeouts as temporary capacity", () => {
+    expect(
+      classifyRateLimit(
+        'Backend stream error: 503 {"code":"spending_reservation_busy","error":"MCPJam could not reserve spend capacity.","isRetryable":true}',
+      ),
+    ).toBe("transient_capacity");
+    expect(
+      classifyRateLimit("MCPJam could not reserve spend capacity.", {
+        code: "spending_reservation_busy",
+        httpStatus: 503,
+      }),
+    ).toBe("transient_capacity");
+  });
+
+  it("keeps transient holds scoped to one target", () => {
+    expect(
+      classifyRateLimit(
+        'swarm-agent https://example.test/turn failed (429): {"code":"user_rate_limit","refusalReason":"holds_committed","isRetryable":true,"error":"MCPJam model limit reached for the moment."}',
+      ),
+    ).toBe("transient_capacity");
+    expect(
+      classifyRateLimit("MCPJam model limit", {
+        code: "user_rate_limit",
+        refusalReason: "holds_committed",
+      }),
+    ).toBe("transient_capacity");
+    expect(
+      classifyRateLimit("user_rate_limit", {
+        code: "user_rate_limit",
+        refusalReason: "allowance_exhausted",
+      }),
+    ).toBe("org_spend_cap");
+  });
+
+  // What a stored row or a flattened error keeps: the backend's sentence, with
+  // no JSON, no structured reason and no hint. Blaming the user's provider for
+  // it (or halting the whole run as a spend cap) would both be wrong.
+  it("reads a hold from its sentence alone as temporary capacity", () => {
+    const held =
+      "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish.";
+    expect(classifyRateLimit(held)).toBe("transient_capacity");
+    expect(classifyRateLimit(`${held} (user_rate_limit, HTTP 429)`)).toBe(
+      "transient_capacity",
+    );
+    expect(classifyRateLimit(held, { code: "user_rate_limit" })).toBe(
+      "transient_capacity",
+    );
+  });
+
   // `cap`/`quota`/`budget` were word-anchored from the start so "capacity",
   // "recap" and "escape" could not escalate one host's rate limit into a
   // whole-run stop. `spend` was not, and "suspended" contains it.
@@ -1310,5 +1767,166 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
 
   it("defaults an absent message to the narrower per-host stop", () => {
     expect(classifyRateLimit(undefined)).toBe("provider_rate_limit");
+  });
+});
+
+describe("target setup before claims", () => {
+  const record = {
+    status: "completed",
+    readiness: "not_needed",
+    prefix: "swarm-test-",
+    createdEntities: [],
+    observedCreatedEntityCount: 0,
+    unsupportedClaims: 0,
+    missing: [],
+    toolCalls: [],
+    writeCallsDispatched: 0,
+    retried: false,
+    admittedWriteTools: [],
+    excludedToolCount: 0,
+    startedAt: 0,
+    durationMs: 0,
+    chatSessionId: "setup",
+  };
+  it("finishes setup before the first attempt claim", async () => {
+    const order: string[] = [];
+    setupTurnMock.mockImplementation(async () => {
+      order.push("setup");
+      return record;
+    });
+    reportAttemptMock.mockImplementation(async (_url, _bearer, args) => {
+      order.push(args.status);
+      return { ok: true, applied: true };
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [{ ...HOST, targetId: "t" }],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    expect(order).toEqual(["setup", "running", "succeeded"]);
+  });
+  it("finishes discovery and grounding for each same-host environment before its first claim", async () => {
+    const order = new Map<string, string[]>([
+      ["a", []],
+      ["b", []],
+    ]);
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      order.get(target.targetId)!.push("setup");
+      return record;
+    });
+    reportTargetGroundingMock.mockImplementation(
+      async (_url, _bearer, body) => {
+        if (body.probes) {
+          await Promise.resolve();
+          order.get(body.targetId)!.push("grounded");
+        }
+        return {};
+      },
+    );
+    reportAttemptMock.mockImplementation(async (_url, _bearer, body) => {
+      order.get(body.targetId)!.push(body.status);
+      return { ok: true, applied: true };
+    });
+    const managerFactory = async (target: { targetId: string }) => ({
+      connectedServerIds: ["s"],
+      dispose: async () => {},
+      manager: {
+        listTools: async () => ({
+          tools: [
+            {
+              name: "list_projects",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+            },
+          ],
+        }),
+        executeTool: async () => {
+          order.get(target.targetId)!.push("discovery");
+          return { structuredContent: { id: target.targetId } };
+        },
+      },
+    });
+    await startJourneyRun(
+      baseOpts({
+        setupWrites: true,
+        sessionsPerTarget: 1,
+        managerFactory,
+        hosts: ["a", "b"].map((id) => ({
+          ...HOST,
+          targetId: id,
+          environmentRef: { environmentId: id, name: id, revision: 1 },
+          pinnedSkills: [],
+        })),
+      }),
+    );
+    for (const events of order.values())
+      expect(events).toEqual([
+        "setup",
+        "discovery",
+        "grounded",
+        "running",
+        "succeeded",
+      ]);
+    expect(
+      reportTargetGroundingMock.mock.calls
+        .filter((c) => c[2].probes)
+        .map((c) => c[2].targetId)
+        .sort(),
+    ).toEqual(["a", "b"]);
+    expect(
+      new Set(
+        runSyntheticHostSessionMock.mock.calls.map((c) => c[0].chatSessionId),
+      ).size,
+    ).toBe(2);
+  });
+  it("fails only the unavailable target and leaves siblings runnable", async () => {
+    setupTurnMock.mockImplementation(async ({ target }) => ({
+      ...record,
+      ...(target.targetId === "bad"
+        ? { readiness: "unavailable", reason: "model_reported_missing" }
+        : {}),
+    }));
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    // The existing cleanup sweep claims then fails pending attempts; it never runs a session for the failed target.
+    expect(
+      reportAttemptMock.mock.calls
+        .filter((c) => c[2].targetId === "bad")
+        .map((c) => c[2].status),
+    ).toEqual(["running", "failed"]);
+    expect(reportAttemptMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        targetId: "bad",
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+      }),
+    );
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("swarm durable cancellation response", () => {
+  it("aborts the run on a refused canceled claim without executing or claiming another session", async () => {
+    reportAttemptMock.mockResolvedValueOnce({
+      ok: true,
+      applied: false,
+      canceled: true,
+    });
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 2 }));
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+    expect(reportAttemptMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
   });
 });

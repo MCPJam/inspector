@@ -7,22 +7,12 @@ on:
         description: "Release version label"
         required: true
         type: string
-      apply_release_patch:
-        description: "Apply the shared release patch artifact before building"
-        required: false
-        default: true
-        type: boolean
   workflow_dispatch:
     inputs:
       version:
         description: "Artifact version label"
         required: false
         type: string
-      apply_release_patch:
-        description: "Apply release patch artifact from the current run"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -35,22 +25,10 @@ jobs:
       ARTIFACT_VERSION: ${{ inputs.version != '' && inputs.version || github.sha }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download release patch
-        if: inputs.apply_release_patch == true
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        if: inputs.apply_release_patch == true
-        run: git apply --binary .release-plan/release.patch
-        shell: bash
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24.14.0
 
@@ -151,7 +129,7 @@ jobs:
         shell: powershell
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: inspector-windows-${{ env.ARTIFACT_VERSION }}
           path: |

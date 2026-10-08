@@ -7,7 +7,7 @@ import type {
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
-import { isLegacyTeamEntry } from "@/lib/pricing-catalog";
+import { canCheckoutPlanEntry, isLegacyTeamEntry } from "@/lib/pricing-catalog";
 
 function formatCurrency(
   amount: number,
@@ -241,10 +241,10 @@ export function OrganizationCurrentPlanPanel({
         currentEntry != null &&
         isLegacyTeamEntry(currentEntry)));
   const displayPlan = isTrial
-    ? billingStatus.trialPlan ?? billingStatus.effectivePlan
+    ? (billingStatus.trialPlan ?? billingStatus.effectivePlan)
     : isSimulation
-    ? billingStatus.effectivePlan
-    : currentPlan;
+      ? billingStatus.effectivePlan
+      : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = billingStatus.canManageBilling ?? false;
   const formattedPeriodEnd = formatBillingDate(
@@ -288,6 +288,14 @@ export function OrganizationCurrentPlanPanel({
     !isTrial &&
     (currentPlan === "team" || currentPlan === "pro") &&
     billingStatus.billingInterval != null &&
+    // The catalog only speaks for the bundle the org actually holds. When it
+    // describes that bundle and carries no price for the other cadence, the
+    // portal would open on a cadence it cannot sell. When the catalog is
+    // silent — a legacy bundle it no longer lists — the portal stays the
+    // escape hatch, as it is for the billing detail line.
+    (currentEntry == null ||
+      currentEntry.catalogPlanId !== billingStatus.catalogPlanId ||
+      canCheckoutPlanEntry(currentEntry, currentPlan, targetBillingInterval)) &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;
   const showCancelScheduledBillingChangeLink =
@@ -396,8 +404,8 @@ export function OrganizationCurrentPlanPanel({
               {isTrial
                 ? `${formatPlanName(displayPlan)} Trial`
                 : formatPlanName(displayPlan) === "current"
-                ? "Paid plan"
-                : formatPlanName(displayPlan)}
+                  ? "Paid plan"
+                  : formatPlanName(displayPlan)}
             </p>
             {displayPlan === "free" && !isTrial ? (
               <p className="text-sm text-muted-foreground">
@@ -452,7 +460,7 @@ export function OrganizationCurrentPlanPanel({
                 Loading...
               </>
             ) : (
-              <>Manage plan</>
+              <>Manage billing</>
             )}
           </Button>
         ) : null}

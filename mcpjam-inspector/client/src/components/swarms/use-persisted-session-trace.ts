@@ -1,3 +1,7 @@
+import {
+  requestPayloadEnvelopeFields,
+  useRequestPayloads,
+} from "@/hooks/use-request-payloads";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useSessionBrowserArtifacts,
@@ -16,6 +20,7 @@ import {
   turnTraceWallClockRange,
 } from "@/components/evals/turn-trace-spans";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
 
 /** One pinned plugin version recorded on a synthetic session's resume config. */
 export type SessionPluginVersion = {
@@ -64,8 +69,12 @@ export function usePersistedSessionTrace(threadId: string | null): {
    */
   pluginVersions: SessionPluginVersion[];
 } {
-  const { thread } = useSharedChatThread({ threadId });
+  const { thread } = useSharedChatThread({
+    threadId,
+    includeRecordedContext: true,
+  });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
+  const requestPayloads = useRequestPayloads(threadId, turnTraces);
   // MCP App widget snapshots captured by the swarm runner per turn. Joined
   // into the envelope (same as ShareUsageThreadDetail) so the Chat view
   // replays the actual widget instead of collapsing to a plain tool pill.
@@ -106,13 +115,25 @@ export function usePersistedSessionTrace(threadId: string | null): {
     setLoadingSpans(Boolean(threadId));
   }
 
+  // Links expire and are re-minted for the same transcript. A renewed link to
+  // the transcript already loaded is not new content and does not refetch it,
+  // and neither does an unrelated change to the session row; a renewed link
+  // after a FAILED load is exactly how that load gets retried.
+  const loadedMessagesKeyRef = useRef<string | null>(null);
+  const messagesBlobUrl = thread?.messagesBlobUrl;
+  const threadLoaded = thread !== undefined;
   useEffect(() => {
-    if (!threadId || !thread?.messagesBlobUrl) {
+    if (!threadId || !messagesBlobUrl) {
+      loadedMessagesKeyRef.current = null;
       setMessages(null);
-      setLoadingMessages(Boolean(threadId && thread === undefined));
+      setLoadingMessages(Boolean(threadId && !threadLoaded));
       setError(null);
       return;
     }
+    const messagesKey = `${threadId}|${artifactStableKey(messagesBlobUrl)}`;
+    if (loadedMessagesKeyRef.current === messagesKey) return;
+    // Names only what is on screen: from here the shown transcript is stale.
+    loadedMessagesKeyRef.current = null;
 
     let active = true;
     const controller = new AbortController();
@@ -121,7 +142,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
 
     void (async () => {
       try {
-        const response = await fetch(thread.messagesBlobUrl!, {
+        const response = await fetchArtifact(messagesBlobUrl, {
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -136,6 +157,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
           return;
         }
         setMessages(extracted);
+        loadedMessagesKeyRef.current = messagesKey;
       } catch (err) {
         if (!active) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -152,7 +174,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
       active = false;
       controller.abort();
     };
-  }, [threadId, thread?.messagesBlobUrl, thread]);
+  }, [threadId, messagesBlobUrl, threadLoaded]);
 
   useEffect(() => {
     if (!threadId) {
@@ -235,7 +257,11 @@ export function usePersistedSessionTrace(threadId: string | null): {
       ? null
       : {
           traceVersion: 1,
+          ...requestPayloadEnvelopeFields(requestPayloads),
           messages: messages as TraceEnvelope["messages"],
+          ...(thread?.recordedContext
+            ? { recordedContext: thread.recordedContext }
+            : {}),
           ...(spans.length > 0 ? { spans } : {}),
           ...(wallClock.startedAtMs !== null
             ? { traceStartedAtMs: wallClock.startedAtMs }

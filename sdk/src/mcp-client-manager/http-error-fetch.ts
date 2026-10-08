@@ -43,13 +43,21 @@ export function wrapFetchForHttpErrors(
       .filter(Boolean)
       .join(" ");
     const challenge = response.headers.get("www-authenticate");
+    // Keep the wire value (seconds or HTTP date) for the caller's cooldown
+    // policy. Do not retain unrelated headers or decide whether to replay here.
+    const retryAfter = response.headers.get("retry-after");
     const body = text === null ? "(unreadable body)" : text || "(empty body)";
     throw new SdkHttpError(
       SdkErrorCode.ClientHttpNotImplemented,
       `Error POSTing to endpoint (HTTP ${statusLine}): ${body}${
         challenge ? `\nWWW-Authenticate: ${challenge}` : ""
       }`,
-      { status: response.status, statusText: response.statusText, text }
+      {
+        status: response.status,
+        statusText: response.statusText,
+        text,
+        ...(retryAfter !== null ? { retryAfter } : {}),
+      }
     );
   }) as typeof fetch;
 }

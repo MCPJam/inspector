@@ -6,6 +6,8 @@ import {
 } from "@mcpjam/sdk";
 import { getClientIp } from "../../utils/client-ip.js";
 import { ErrorCode, WebRouteError, readJsonBody } from "./errors.js";
+import { backendFailureRouteError } from "./backend-error.js";
+import { getServiceCredential } from "../../services/service-credential.js";
 
 /**
  * score.mcpjam.com persistence relay.
@@ -190,7 +192,7 @@ const BACKEND_TIMEOUT_MS = 10_000;
 
 function backendConfig(): { convexUrl: string; serviceToken: string } {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const serviceToken = getServiceCredential();
   if (!convexUrl || !serviceToken) {
     throw new WebRouteError(
       503,
@@ -303,11 +305,13 @@ score.post("/runs", async (c) => {
     error?: string;
   } | null;
   if (!response.ok || body?.ok !== true || !body.token) {
-    throw new WebRouteError(
-      response.status >= 400 ? response.status : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      body?.error ?? "Failed to store score run"
-    );
+    throw backendFailureRouteError({
+      source: "score",
+      status: response.status,
+      body,
+      message: "Failed to store score run",
+      code: ErrorCode.SERVER_UNREACHABLE,
+    });
   }
 
   return c.json({ success: true, token: body.token });
@@ -373,11 +377,13 @@ score.get("/runs/:token", async (c) => {
     error?: string;
   } | null;
   if (!response.ok || body?.ok !== true || !body.run) {
-    throw new WebRouteError(
-      response.status >= 400 ? response.status : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      body?.error ?? "Failed to load score run"
-    );
+    throw backendFailureRouteError({
+      source: "score",
+      status: response.status,
+      body,
+      message: "Failed to load score run",
+      code: ErrorCode.SERVER_UNREACHABLE,
+    });
   }
 
   cacheResult(token, body.run);

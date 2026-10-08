@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RunComparisonPage } from "../run-comparison-page";
+import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
 // `RunContextChip` reads the kill-switch. Off is the legacy/host branch, which
@@ -94,7 +95,7 @@ function renderPage(onOpenRun = vi.fn()) {
     <RunComparisonPage
       currentRun={currentRun}
       runs={runs}
-      iterations={iterations}
+      metricsByRun={metricsByRunFromIterations(iterations)}
       suiteName="Checkout suite"
       hostNamesById={hostNamesById}
       passThreshold={0.8}
@@ -145,7 +146,7 @@ it("shows each run's movement against the previous run of its own lane", () => {
   );
   // #7 passed 9 of 10 where #6 passed 8 of 10 — measured against #6, not
   // against lane B's run that happened to land in the same launch.
-  expect(lane.getByText("+10 pts")).toBeVisible();
+  expect(lane.getByText("+10%")).toBeVisible();
 });
 
 it("opens the run a row names", async () => {
@@ -167,7 +168,7 @@ it("counts a single-run lane in the singular", () => {
     <RunComparisonPage
       currentRun={only}
       runs={[only]}
-      iterations={trials("solo", 10)}
+      metricsByRun={metricsByRunFromIterations(trials("solo", 10))}
       suiteName="Checkout suite"
       hostNamesById={hostNamesById}
       passThreshold={0.8}

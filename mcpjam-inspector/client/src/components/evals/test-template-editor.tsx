@@ -1,3 +1,5 @@
+import { useSelectedRun } from "./use-selected-run";
+import type { EvalSuiteRunListItem } from "./types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
   loadEvalToolMetadata,
@@ -21,11 +23,12 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { mintCaseId } from "@mcpjam/sdk/contract";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
   Circle,
   Code2,
@@ -103,10 +106,23 @@ import type { EditEvalCaseDraftInspectorCommand } from "@/shared/inspector-comma
 import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
+  prepareEnvironmentTestCaseRun,
   prepareSingleTestCaseRun,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
 } from "./single-test-case-runner";
+import {
+  attachedSuiteEnvironments,
+  defaultQuickRunServerGroup,
+  ensureLocalEnvironmentServers,
+  planQuickRunTargets,
+  quickRunClientIds,
+  quickRunEnvironmentSelection,
+  resolveQuickRunEnvironments,
+} from "./environment-quick-run";
+import { isHostedMode } from "@/lib/apis/mode-client";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import {
   resolvePromptTurnsWithLegacyProbe,
   stripPromptTurnsFromAdvancedConfig,
@@ -181,10 +197,15 @@ import {
 } from "./helpers";
 import { ImportClaimDetails } from "./import-claim-badge";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
-import { useHost } from "@/hooks/useClients";
+import { useHost, useHostList } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
 import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
 import { parseDraftTestCaseId } from "./draft-test-case";
+import {
+  caseModelEntry,
+  type CaseModelEntry,
+} from "@/components/chat-v2/shared/model-selection";
+import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
@@ -203,10 +224,17 @@ import {
   resolveIterationModelValue,
   resolveLatestCompareRunId,
   resolveModelOptionLabel,
+  caseModelEntriesForCompareValues,
+  caseModelEntriesUnchanged,
+  quickRunKey,
+  quickRunModelValue,
 } from "./compare-playground-helpers";
+import { modelTarget } from "@/lib/model-target";
+import { modelTargetLabel } from "@/lib/environment-label";
 import type {
   CompareRunRecord,
   EditorMode,
+  EvalCase,
   EvalIteration,
   EvalSuiteRun,
   RunColumnTab,
@@ -259,10 +287,12 @@ import {
   type CaseScorecardInput,
 } from "../evaluate/case-scorecard/case-scorecard-model";
 import { coverageDetailByStage } from "../evaluate/case-scorecard/case-coverage";
-import { NextQuestionLine } from "../evaluate/case-scorecard/next-question-line";
 import { groupCaseIterations } from "./runs/group-case-iterations";
 import { useSuggestedScorers } from "../evaluate/case-scorecard/suggested-from-run-section";
-import { CaseRunSetup } from "../evaluate/case-workspace/case-run-setup";
+import {
+  CaseRunSetup,
+  type CaseRunPick,
+} from "../evaluate/case-workspace/case-run-setup";
 import {
   caseHasOwnAssertion,
   initialToolsChoice,
@@ -297,6 +327,8 @@ import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import type { ToolCatalogStatus } from "../evaluate/case-scorecard/route-row";
+import { IterationReportScorecard } from "../evaluate/case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 
 interface TestTemplate {
@@ -320,6 +352,8 @@ interface TestTemplate {
 }
 
 interface TestTemplateEditorProps {
+  /** View a code-owned case without enabling authoring. */
+  readOnly?: boolean;
   suiteId: string;
   selectedTestCaseId: string;
   /**
@@ -364,7 +398,7 @@ interface TestTemplateEditorProps {
    * Suite runs for the current suite — used by the Runs tab to show which
    * host produced each batch (via `namedHostId` on suite runs).
    */
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: EvalSuiteRunListItem[];
   /**
    * Renders the case as a SPINE — numbered actions with their checks nested
    * under the action each one follows — instead of the form plus the Steps
@@ -973,6 +1007,7 @@ function CaseEditorTabs({
 }
 
 export function TestTemplateEditor({
+  readOnly = false,
   suiteId,
   selectedTestCaseId,
   onDeleteCase,
@@ -980,7 +1015,7 @@ export function TestTemplateEditor({
   projectId,
   availableModels,
   suiteIterations,
-  suiteRuns = [],
+  suiteRuns: listedSuiteRuns = [],
   onExportDraft,
   onContinueInChat,
   onSelectTab,
@@ -1036,7 +1071,13 @@ export function TestTemplateEditor({
       _meta?: Record<string, unknown>;
     }>
   >([]);
+  // Quick-run picks, keyed by `quickRunKey`: a model value, plus its effort
+  // when it runs at one (Sonnet·Low and Sonnet·High are two picks).
   const [selectedModelValues, setSelectedModelValues] = useState<string[]>([]);
+  // The selection behind each pick key that has one.
+  const [quickRunSelections, setQuickRunSelections] = useState<
+    Record<string, ModelSelection>
+  >({});
   const [compareRunRecords, setCompareRunRecords] = useState<
     Record<string, CompareRunRecord>
   >({});
@@ -1089,10 +1130,6 @@ export function TestTemplateEditor({
   // Left↔right Steps sync: the step hovered in either the left step list or the
   // right replay pane; highlights the matching card/row in both.
   const [syncedStepId, setSyncedStepId] = useState<string | null>(null);
-  const [trialTabRequest, setTrialTabRequest] = useState<{
-    iterationId: string;
-    mode: "steps";
-  } | null>(null);
   const [mobileVisibleModelValue, setMobileVisibleModelValue] = useState<
     string | null
   >(null);
@@ -1244,6 +1281,24 @@ export function TestTemplateEditor({
       .filter((iteration) => iteration.testCaseId === selectedTestCaseId)
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
+
+  const tracedRunId = [
+    replayIteration,
+    routeCompareAnchorIteration,
+    ...recentIterations,
+    lastSavedIteration,
+  ].find(
+    (iteration): iteration is EvalIteration =>
+      !!iteration && !!(iteration.blob || iteration.chatSessionId),
+  )?.suiteRunId;
+  const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
+  const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
+  const suiteRuns = useMemo(
+    () => detailRun
+      ? [detailRun, ...listedSuiteRuns.filter((run) => run._id !== detailRun._id)]
+      : listedSuiteRuns,
+    [detailRun, listedSuiteRuns],
+  );
 
   const suite = useQuery(
     "testSuites:getTestSuite" as any,
@@ -1402,13 +1457,63 @@ export function TestTemplateEditor({
     [suite],
   );
 
+  // ── Environment suites ──────────────────────────────────────────────────
+  // Run executes one of the suite's ENVIRONMENTS per picked model. The client
+  // and server-group dropdowns come from those environments — never from the
+  // suite's legacy host attachments or server list, which an environment suite
+  // does not read — and the environment itself owns the model, client and
+  // servers the run executes (the request names nothing else).
+  const { isAuthenticated } = useConvexAuth();
+  const convex = useConvex();
+  const isEnvironmentSuite = (suite?.environmentIds?.length ?? 0) > 0;
+  const projectEnvironmentViews = useProjectEnvironments(
+    isEnvironmentSuite ? projectId : null,
+    // A suite's environments may be ad-hoc rows.
+    { includeAdhoc: true },
+  );
+  const attachedEnvironments = useMemo(
+    () =>
+      isEnvironmentSuite && suite
+        ? attachedSuiteEnvironments(suite, projectEnvironmentViews)
+        : null,
+    [isEnvironmentSuite, suite, projectEnvironmentViews],
+  );
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated,
+    projectId: isEnvironmentSuite ? projectId : null,
+  });
+  const [quickRunServerGroup, setQuickRunServerGroup] = useState<string | null>(
+    null,
+  );
+  const quickRunServerGroupPickedRef = useRef(false);
+  useEffect(() => {
+    // Start on the group the suite's environments share; a pick sticks.
+    if (!attachedEnvironments || quickRunServerGroupPickedRef.current) return;
+    setQuickRunServerGroup(defaultQuickRunServerGroup(attachedEnvironments));
+  }, [attachedEnvironments]);
+
   // Quick Run never runs hostless: when the suite has attached hosts the
   // picker lists ONLY those (no "Suite default" — that pseudo-host mapped to a
   // null host context). Attachment-less suites run under the suite's own host
-  // config, surfaced read-only below rather than as a selectable option.
+  // config, surfaced read-only below rather than as a selectable option. An
+  // environment suite lists its environments' clients instead.
   const quickRunHostOptions = useMemo<
     Array<{ value: string; label: string; namedHostId: string }>
   >(() => {
+    if (isEnvironmentSuite) {
+      return (
+        attachedEnvironments ? quickRunClientIds(attachedEnvironments) : []
+      ).map((hostId) => {
+        const host = projectHosts.find(
+          (candidate) => candidate.hostId === hostId,
+        );
+        return {
+          value: hostId,
+          label: host?.displayName ?? host?.name ?? hostId,
+          namedHostId: hostId,
+        };
+      });
+    }
     const attachments = suite?.hostAttachments ?? [];
     return attachments.map(
       (attachment: NonNullable<typeof suite>["hostAttachments"][number]) => ({
@@ -1417,7 +1522,12 @@ export function TestTemplateEditor({
         namedHostId: attachment.namedHostId,
       }),
     );
-  }, [suite?.hostAttachments]);
+  }, [
+    suite?.hostAttachments,
+    isEnvironmentSuite,
+    attachedEnvironments,
+    projectHosts,
+  ]);
 
   useEffect(() => {
     setQuickRunHostSelection((current) => {
@@ -1450,24 +1560,9 @@ export function TestTemplateEditor({
    * traced iteration the drill-in would fall back to.
    */
   const openTrialRun = useMemo(() => {
-    const runId =
-      replayIteration?.suiteRunId ??
-      [
-        routeCompareAnchorIteration,
-        ...recentIterations,
-        lastSavedIteration,
-      ].find(
-        (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
-      )?.suiteRunId;
-    if (!runId) return null;
-    return suiteRuns.find((run) => run._id === runId) ?? null;
-  }, [
-    replayIteration,
-    routeCompareAnchorIteration,
-    recentIterations,
-    lastSavedIteration,
-    suiteRuns,
-  ]);
+    if (!tracedRunId) return null;
+    return suiteRuns.find((run) => run._id === tracedRunId) ?? null;
+  }, [tracedRunId, suiteRuns]);
 
   const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({
@@ -1483,49 +1578,6 @@ export function TestTemplateEditor({
    * run id, so the same projection + assembler runs locally on the doc
    * the client already holds.
    */
-  const nextQuestionForTrial = (iteration: EvalIteration | null) => {
-    return useSpine && iteration ? (
-      <NextQuestionLine
-        state={{
-          hasTrial: true,
-          judgedPass: Boolean(
-            iteration.suiteRunId &&
-            resolveIterationJudge(iteration, suiteRuns)?.passed,
-          ),
-          hasFailure: iteration.result === "failed",
-          trials: suggestionBatch?.iterations.length ?? 1,
-          hasChecks:
-            Boolean(editForm?.predicates?.list?.length) ||
-            (editForm?.steps ?? []).some((step) => step.kind === "assert"),
-          // The suggestions section left the scorecard, so "Review the
-          // suggestions" has nothing to point at. The other prompts stand.
-          hasSuggestions: false,
-          suiteHasGate: Boolean(
-            suite?.defaultPredicates?.some(
-              (p: Predicate) => p.role !== "advisory",
-            ),
-          ),
-        }}
-        onAct={(action) => {
-          if (action === "trials" || action === "models") {
-            // The next-run sheet left with the workspace redesign: the run
-            // controls sit in the header now, so the action primes the count
-            // there and leaves the model choice to that same control.
-            if (action === "trials") {
-              setEditForm((current) =>
-                current ? { ...current, runs: 3 } : current,
-              );
-              setIterationOverride((current) => Math.max(current, 3));
-            }
-          } else if (action === "gate") onOpenSuiteSettings?.();
-          else if (action === "failure") {
-            setTrialTabRequest({ iterationId: iteration._id, mode: "steps" });
-          }
-        }}
-      />
-    ) : null;
-  };
-
   const trialChainSlotFor = (iteration: EvalIteration | null) => {
     let chain: ReactNode = null;
     // On the spine the chain lives INSIDE the Scorecard as a chip strip: the
@@ -1627,12 +1679,13 @@ export function TestTemplateEditor({
   // only an attachment-less suite runs under the suite hostConfig. Gate the
   // system-tool merge on whichever of those actually carries a harness, so
   // emulated suites never see bash/read/… in the assertion dropdowns.
-  const { isAuthenticated } = useConvexAuth();
+  // An environment suite runs as the picked environment client.
+  const runsOnPickedClient = hasHostAttachments || isEnvironmentSuite;
   const { host: selectedQuickRunHost } = useHost({
     isAuthenticated,
-    hostId: hasHostAttachments ? (selectedQuickRunHostId ?? null) : null,
+    hostId: runsOnPickedClient ? (selectedQuickRunHostId ?? null) : null,
   });
-  const suiteRunHarnessId = hasHostAttachments
+  const suiteRunHarnessId = runsOnPickedClient
     ? (selectedQuickRunHost?.config?.harness ?? null)
     : (hostConfigBaseline?.harness ?? null);
   const { tools: harnessBuiltinCatalog } =
@@ -1646,12 +1699,16 @@ export function TestTemplateEditor({
     [availableTools, harnessBuiltinCatalog],
   );
 
+  // Environment suites resolve their servers server-side from the
+  // environment; the browser's connections are not a precondition.
   const missingServers = useMemo(
     () =>
-      quickRunSuiteServers.filter(
-        (server: string) => !connectedServerNames.has(server),
-      ),
-    [quickRunSuiteServers, connectedServerNames],
+      isEnvironmentSuite
+        ? []
+        : quickRunSuiteServers.filter(
+            (server: string) => !connectedServerNames.has(server),
+          ),
+    [isEnvironmentSuite, quickRunSuiteServers, connectedServerNames],
   );
   const connectedSuiteServerKey = useMemo(
     () =>
@@ -1693,7 +1750,8 @@ export function TestTemplateEditor({
     missingServers.length,
   ]);
 
-  const hasConfiguredSuiteServers = quickRunSuiteServers.length > 0;
+  const hasConfiguredSuiteServers =
+    isEnvironmentSuite || quickRunSuiteServers.length > 0;
   // Guests rely on the local persistent MCP manager; don't block Run on the
   // connected-servers check — the runner surfaces a connection error if the
   // server is genuinely missing.
@@ -1732,6 +1790,9 @@ export function TestTemplateEditor({
         (server) =>
           ids.includes(server.serverId) && server.action === "reconnect",
       );
+      // One server still needing authorization must not stop the others from
+      // refreshing; it is reported after they reload.
+      const unauthorized: string[] = [];
       for (const server of failed) {
         const name =
           projectServers?.find((candidate) => candidate._id === server.serverId)
@@ -1748,16 +1809,21 @@ export function TestTemplateEditor({
             allowInteractiveOAuthFlow: true,
           });
           if (!result.readyServerNames.includes(name))
-            throw new Error(
-              "Server authorization is required. Check the connection and retry.",
-            );
+            unauthorized.push(server.serverId);
         }
       }
       await loadEvalToolMetadata(
-        { ...metadataTarget, serverIds: ids },
+        {
+          ...metadataTarget,
+          serverIds: ids.filter((id) => !unauthorized.includes(id)),
+        },
         loadServerMetadata,
         true,
       );
+      if (unauthorized.length)
+        throw new Error(
+          "Server authorization is required. Check the connection and retry.",
+        );
     },
     [
       metadataTarget,
@@ -1788,6 +1854,37 @@ export function TestTemplateEditor({
   useEffect(() => {
     setAvailableTools(toolsMetadataState.tools);
   }, [toolsMetadataState]);
+  // Per server, not per merged list: harness built-ins or a second healthy
+  // server would otherwise hide one whose tools never arrived. A server that
+  // loaded empty, or kept its last catalogue through a failed refresh, owes
+  // nothing and is not reported.
+  const missingToolsStatus = (status: "loading" | "error") =>
+    toolsMetadataState.servers.some(
+      (server) => server.status === status && server.tools.length === 0,
+    );
+  const toolsStatus: ToolCatalogStatus | undefined = missingToolsStatus(
+    "loading",
+  )
+    ? "loading"
+    : missingToolsStatus("error")
+      ? "error"
+      : undefined;
+  // Retry can reconnect with an interactive OAuth flow; a second click while
+  // one runs would open a second.
+  const retryingToolsRef = useRef(false);
+  const handleRetryTools = useCallback(() => {
+    if (retryingToolsRef.current) return;
+    retryingToolsRef.current = true;
+    retryToolsMetadata()
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error ? error.message : "Couldn't reload tools",
+        );
+      })
+      .finally(() => {
+        retryingToolsRef.current = false;
+      });
+  }, [retryToolsMetadata]);
 
   const handleTitleClick = () => {
     setIsEditingTitle(true);
@@ -2490,13 +2587,8 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
       predicates: normalizedPredicates,
-      ...(caseCapabilities.capabilities?.scorers
-        ?.suppressedSuiteStandardCheckIds === true
-        ? {
-            suppressedSuiteStandardCheckIds:
-              form.suppressedSuiteStandardCheckIds ?? [],
-          }
-        : {}),
+      suppressedSuiteStandardCheckIds:
+        form.suppressedSuiteStandardCheckIds ?? [],
       // Omitted when undefined: `createTestCase` admits no `null` for this
       // field, and `handleSave` supplies the null-clear on the update path.
       ...(form.judgeConfigOverride !== undefined
@@ -2599,6 +2691,7 @@ export function TestTemplateEditor({
    * looking at.
    */
   const handleSave = async (): Promise<boolean> => {
+    if (readOnly) return false;
     if (isDraft) {
       await handleCreateFromDraft();
       return true;
@@ -2667,7 +2760,7 @@ export function TestTemplateEditor({
   const saveCaseChecks = (
     changes: Partial<Parameters<typeof updateTestCaseMutation>[0]>,
   ) => {
-    if (!currentTestCase || isDraft || !editForm) return;
+    if (readOnly || !currentTestCase || isDraft || !editForm) return;
     const testCaseId = currentTestCase._id;
     const revision = ++checksSaveRevision.current;
     const payload = {
@@ -2717,15 +2810,21 @@ export function TestTemplateEditor({
     enqueue();
   };
 
+  // Case chips save a model selection only where the deployment stores one.
+  const modelSelectionsSupported = useModelSelectionsSupported(projectId);
   const buildSelectedCompareModels = (
     modelValues: string[],
-  ): Array<{ provider: string; model: string }> => {
+  ): CaseModelEntry[] => {
     return modelValues.map((modelValue) => {
       const { provider, model } = parseModelValue(modelValue);
       if (!provider || !model) {
         throw new Error(`Invalid model selection: ${modelValue}`);
       }
-      return { provider, model };
+      return caseModelEntry(
+        { provider, model },
+        availableModels,
+        modelSelectionsSupported,
+      );
     });
   };
 
@@ -2737,17 +2836,19 @@ export function TestTemplateEditor({
       return;
     }
 
-    const nextModels = buildSelectedCompareModels(modelValues);
-
-    const currentModels: Array<{ provider: string; model: string }> =
-      currentTestCase.models ?? [];
-    const modelsUnchanged =
-      currentModels.length === nextModels.length &&
-      currentModels.every(
-        (model, index) =>
-          model.provider === nextModels[index]?.provider &&
-          model.model === nextModels[index]?.model,
-      );
+    const currentModels: EvalCase["models"] = currentTestCase.models ?? [];
+    // Saved entries keep their selections (efforts, and two entries of one
+    // model); only newly picked models are built from the catalog row.
+    const nextModels = caseModelEntriesForCompareValues(
+      modelValues,
+      currentModels,
+      (modelValue) => buildSelectedCompareModels([modelValue])[0]!,
+    );
+    // Selection-aware: an effort-only edit is a change.
+    const modelsUnchanged = caseModelEntriesUnchanged(
+      currentModels,
+      nextModels,
+    );
 
     if (!hasUnsavedChanges && modelsUnchanged) {
       return;
@@ -2799,6 +2900,35 @@ export function TestTemplateEditor({
       ),
     [modelOptions],
   );
+  // Run labels for the picks: the model's label, plus only what tells one
+  // model's picks apart ("Sonnet 4.5 · High" beside "Sonnet 4.5 · Low").
+  const compareLabelByValue = useMemo(() => {
+    const targets = selectedModelValues.map((key) =>
+      modelTarget(parseModelValue(key).model, quickRunSelections[key]),
+    );
+    const labels: Record<string, string> = { ...modelLabelByValue };
+    selectedModelValues.forEach((key, index) => {
+      labels[key] = modelTargetLabel(
+        targets[index]!,
+        targets.filter((_, other) => other !== index),
+        () =>
+          resolveModelOptionLabel(quickRunModelValue(key), modelLabelByValue),
+      );
+    });
+    return labels;
+  }, [modelLabelByValue, quickRunSelections, selectedModelValues]);
+  const handleQuickRunPicksChange = useCallback((picks: CaseRunPick[]) => {
+    const keys: string[] = [];
+    const selections: Record<string, ModelSelection> = {};
+    for (const { modelValue, selection } of picks) {
+      const key = quickRunKey(modelValue, selection);
+      if (keys.includes(key)) continue;
+      keys.push(key);
+      if (key !== modelValue && selection) selections[key] = selection;
+    }
+    setSelectedModelValues(keys);
+    setQuickRunSelections(selections);
+  }, []);
 
   useEffect(() => {
     if (!currentTestCase?._id) {
@@ -2837,6 +2967,7 @@ export function TestTemplateEditor({
 
     initializedSelectionCaseRef.current = currentTestCase._id;
     setSelectedModelValues(routeAnchoredModels);
+    setQuickRunSelections({});
   }, [
     currentTestCase,
     modelOptions,
@@ -2876,7 +3007,7 @@ export function TestTemplateEditor({
     setCompareRunRecords((current) =>
       buildHistoricalCompareRunRecords({
         selectedModelValues,
-        modelLabelByValue,
+        modelLabelByValue: compareLabelByValue,
         iterations: recentIterations,
         testCase: currentTestCase,
         existingRecords: current,
@@ -2885,7 +3016,7 @@ export function TestTemplateEditor({
     );
   }, [
     currentTestCase,
-    modelLabelByValue,
+    compareLabelByValue,
     recentIterations,
     routeCompareAnchorIteration,
     routeCompareAnchorIterationId,
@@ -2916,7 +3047,7 @@ export function TestTemplateEditor({
   useEffect(() => {
     setPersistedTestCaseModelValue(
       selectedTestCaseId,
-      selectedModelValues[0] ?? null,
+      selectedModelValues[0] ? quickRunModelValue(selectedModelValues[0]) : null,
     );
   }, [selectedModelValues, selectedTestCaseId]);
 
@@ -2938,11 +3069,11 @@ export function TestTemplateEditor({
 
         return buildCompareRunRecord({
           modelValue,
-          modelLabel: resolveModelOptionLabel(modelValue, modelLabelByValue),
+          modelLabel: resolveModelOptionLabel(modelValue, compareLabelByValue),
           iteration: null,
         });
       }),
-    [compareRunRecords, modelLabelByValue, selectedModelValues],
+    [compareRunRecords, compareLabelByValue, selectedModelValues],
   );
 
   // Multi-model compare still uses the dedicated side-by-side grid view; the
@@ -2981,6 +3112,7 @@ export function TestTemplateEditor({
     modelValues?: string[];
     sessionMode?: "new" | "reuse";
   }) => {
+    if (readOnly) return;
     // A draft has no Convex id to attach iterations to — Run is disabled in the
     // UI until the user saves; this guards the programmatic paths too.
     if (isDraft) {
@@ -3012,35 +3144,118 @@ export function TestTemplateEditor({
       return;
     }
 
-    const suiteServers = normalizeSuiteServerRefs(quickRunSuiteServers);
-    if (suiteServers.length === 0) {
-      toast.error("No MCP servers are configured for this suite.");
-      return;
+    // Legacy suites only: an environment suite's servers are its
+    // environment's, resolved server-side — its legacy server list and the
+    // browser's connections play no part.
+    const suiteServers = isEnvironmentSuite
+      ? []
+      : normalizeSuiteServerRefs(quickRunSuiteServers);
+    if (!isEnvironmentSuite) {
+      if (suiteServers.length === 0) {
+        toast.error("No MCP servers are configured for this suite.");
+        return;
+      }
+      const disconnectedSuiteServers = suiteServers.filter(
+        (name) => !connectedServerNames.has(name),
+      );
+      if (disconnectedSuiteServers.length > 0) {
+        if (ensureServersReady != null) {
+          const readiness = await ensureServersReady(suiteServers);
+          if (hasUnavailableServers(readiness)) {
+            toast.error(
+              formatEnsureServersReadyError(
+                readiness,
+                "run this test case",
+                projectServers,
+              ),
+            );
+            return;
+          }
+        } else {
+          toast.error(
+            formatMcpConnectServerPrompt(disconnectedSuiteServers, {
+              remoteServers: projectServers,
+              kind: "test-case",
+            }),
+          );
+          return;
+        }
+      }
     }
-    const disconnectedSuiteServers = suiteServers.filter(
-      (name) => !connectedServerNames.has(name),
-    );
-    if (disconnectedSuiteServers.length > 0) {
-      if (ensureServersReady != null) {
-        const readiness = await ensureServersReady(suiteServers);
-        if (hasUnavailableServers(readiness)) {
+
+    // Environment suites: every picked model becomes ONE environment — the
+    // suite's own for that client, model and group, or a lossless backend
+    // derivation — and all of them are resolved before any of them runs.
+    let environmentIds: Map<string, string> | null = null;
+    if (isEnvironmentSuite) {
+      if (isDirectGuest || !projectId) {
+        toast.error("Sign in to run this suite's environments.");
+        return;
+      }
+      if (!attachedEnvironments) {
+        toast.error(
+          "This suite's environments are still loading. Try again shortly.",
+        );
+        return;
+      }
+      const clientId =
+        quickRunHostSelection ?? quickRunClientIds(attachedEnvironments)[0];
+      if (!clientId) {
+        toast.error("Pick a client to run this case.");
+        return;
+      }
+      try {
+        environmentIds = await resolveQuickRunEnvironments(convex, {
+          projectId,
+          plans: planQuickRunTargets({
+            attached: attachedEnvironments,
+            serverAttachmentId: quickRunServerGroup,
+            targets: runModelValues.map((value) => {
+              const modelId = parseModelValue(value).model;
+              const modelSelection = quickRunSelections[value];
+              return {
+                key: value,
+                hostId: clientId,
+                ...(modelId ? { modelId } : {}),
+                // A pick at a chosen effort runs (or derives) the environment
+                // at that effort; a plain pick reuses the suite's as before.
+                ...(modelSelection ? { modelSelection } : {}),
+              };
+            }),
+            clientModelId: (hostId) =>
+              projectHosts
+                .find((host) => host.hostId === hostId)
+                ?.modelId?.trim() || undefined,
+          }),
+        });
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Couldn't prepare this suite's environments.",
+        );
+        return;
+      }
+      // The local run route executes on this inspector's connection pool and
+      // connects nothing itself, so connect the environments' servers first,
+      // as a legacy quick run does above. Hosted routes connect them.
+      if (!isHostedMode() && ensureServersReady != null) {
+        const blocked = await ensureLocalEnvironmentServers({
+          convex,
+          projectId,
+          environmentIds: environmentIds.values(),
+          ensureServersReady,
+        });
+        if (blocked) {
           toast.error(
             formatEnsureServersReadyError(
-              readiness,
+              blocked,
               "run this test case",
               projectServers,
             ),
           );
           return;
         }
-      } else {
-        toast.error(
-          formatMcpConnectServerPrompt(disconnectedSuiteServers, {
-            remoteServers: projectServers,
-            kind: "test-case",
-          }),
-        );
-        return;
       }
     }
 
@@ -3056,7 +3271,9 @@ export function TestTemplateEditor({
 
     if (startsNewCompareSession) {
       try {
-        await persistCompareRunDraft(savePayload, selectedModelValues);
+        await persistCompareRunDraft(savePayload, [
+          ...new Set(selectedModelValues.map(quickRunModelValue)),
+        ]);
       } catch (error) {
         console.error("Failed to save test case before compare run:", error);
         toast.error(
@@ -3074,7 +3291,9 @@ export function TestTemplateEditor({
     let preparedRuns: Array<{
       modelValue: string;
       modelLabel: string;
-      request: Awaited<ReturnType<typeof prepareSingleTestCaseRun>>;
+      request:
+        | Awaited<ReturnType<typeof prepareSingleTestCaseRun>>
+        | Awaited<ReturnType<typeof prepareEnvironmentTestCaseRun>>;
     }> = [];
     const preparationFailures: Array<{
       modelValue: string;
@@ -3086,48 +3305,61 @@ export function TestTemplateEditor({
       runModelValues.map(async (modelValue) => {
         const modelLabel = resolveModelOptionLabel(
           modelValue,
-          modelLabelByValue,
+          compareLabelByValue,
         );
         const advancedConfig = mergeAdvancedConfigWithOverride({
           baseAdvancedConfig: savePayload.advancedConfig,
           override: undefined,
         });
 
-        const preparedRun = await prepareSingleTestCaseRun({
-          projectId: isDirectGuest ? null : projectId,
-          suite: {
-            ...suite,
-            environment: {
-              ...(suite.environment ?? {}),
-              servers: suiteServers,
-            },
-          },
-          testCase: currentTestCase,
-          selectedModel: modelValue,
-          getAccessToken,
-          namedHostId: quickRunHostPlan.namedHostId,
-          testCaseOverrides: {
-            query: savePayload.query,
-            expectedToolCalls: savePayload.expectedToolCalls,
-            isNegativeTest: savePayload.isNegativeTest,
-            // The workspace owns the count (saved with the case, edited in the
-            // Next run sheet); only the old page has the per-run override.
-            runs: useWorkspace
-              ? (editForm.runs ?? DEFAULTS.RUNS_PER_TEST)
-              : iterationOverride,
-            expectedOutput: savePayload.expectedOutput,
-            steps: savePayload.steps,
-            advancedConfig,
-            matchOptions: savePayload.matchOptions,
-            predicates: savePayload.predicates,
-            ...(savePayload.suppressedSuiteStandardCheckIds !== undefined
-              ? {
-                  suppressedSuiteStandardCheckIds:
-                    savePayload.suppressedSuiteStandardCheckIds,
-                }
-              : {}),
-          },
-        });
+        const testCaseOverrides = {
+          query: savePayload.query,
+          expectedToolCalls: savePayload.expectedToolCalls,
+          isNegativeTest: savePayload.isNegativeTest,
+          // The workspace owns the count (saved with the case, edited in the
+          // Next run sheet); only the old page has the per-run override.
+          runs: useWorkspace
+            ? (editForm.runs ?? DEFAULTS.RUNS_PER_TEST)
+            : iterationOverride,
+          expectedOutput: savePayload.expectedOutput,
+          steps: savePayload.steps,
+          advancedConfig,
+          matchOptions: savePayload.matchOptions,
+          predicates: savePayload.predicates,
+          ...(savePayload.suppressedSuiteStandardCheckIds !== undefined
+            ? {
+                suppressedSuiteStandardCheckIds:
+                  savePayload.suppressedSuiteStandardCheckIds,
+              }
+            : {}),
+        };
+        const preparedRun = environmentIds
+          ? await prepareEnvironmentTestCaseRun({
+              projectId: projectId!,
+              testCase: currentTestCase,
+              environmentId: environmentIds.get(modelValue)!,
+              modelValue,
+              getAccessToken,
+              testCaseOverrides,
+              // One key per target per click: a retried request replays the
+              // same committed rows instead of running them again.
+              idempotencyKey: `quick-run:${crypto.randomUUID()}`,
+            })
+          : await prepareSingleTestCaseRun({
+              projectId: isDirectGuest ? null : projectId,
+              suite: {
+                ...suite,
+                environment: {
+                  ...(suite.environment ?? {}),
+                  servers: suiteServers,
+                },
+              },
+              testCase: currentTestCase,
+              selectedModel: quickRunModelValue(modelValue),
+              getAccessToken,
+              namedHostId: quickRunHostPlan.namedHostId,
+              testCaseOverrides,
+            });
 
         return {
           modelValue,
@@ -3139,7 +3371,10 @@ export function TestTemplateEditor({
 
     for (const [index, preparedResult] of preparedResults.entries()) {
       const modelValue = runModelValues[index]!;
-      const modelLabel = resolveModelOptionLabel(modelValue, modelLabelByValue);
+      const modelLabel = resolveModelOptionLabel(
+        modelValue,
+        compareLabelByValue,
+      );
 
       if (preparedResult.status === "fulfilled") {
         preparedRuns.push(preparedResult.value);
@@ -3460,62 +3695,70 @@ export function TestTemplateEditor({
             });
           } catch (error) {
             if (abortController.signal.aborted) {
-              let resolved!: CompareRunRecord;
-              setCompareRunRecords((previous) => {
-                const existing = previous[modelValue];
-                // A retry starts a newer request for this model and aborts the
-                // old controller. If that old abort rejects later, it must not
-                // overwrite the newer running/completed row as cancelled.
-                if (compareRequestGenByModelRef.current[modelValue] !== myGen) {
-                  resolved =
-                    existing ??
-                    buildCompareRunRecord({
-                      modelValue,
-                      modelLabel,
-                      iteration: null,
-                      completedAt: Date.now(),
-                    });
-                  return previous;
-                }
-                const base = buildCompareRunRecord({
-                  modelValue,
-                  modelLabel,
-                  iteration: null,
-                  cancelled: true,
-                  startedAt: existing?.startedAt ?? null,
-                  completedAt: Date.now(),
+              // Resolve from inside the updater, like the stream-completed path
+              // above: React may defer the updater, so a value assigned there
+              // isn't ready right after setCompareRunRecords returns.
+              return new Promise<CompareRunRecord>((resolve) => {
+                setCompareRunRecords((previous) => {
+                  const existing = previous[modelValue];
+                  // A retry starts a newer request for this model and aborts the
+                  // old controller. If that old abort rejects later, it must not
+                  // overwrite the newer running/completed row as cancelled.
+                  if (
+                    compareRequestGenByModelRef.current[modelValue] !== myGen
+                  ) {
+                    resolve(
+                      existing ??
+                        buildCompareRunRecord({
+                          modelValue,
+                          modelLabel,
+                          iteration: null,
+                          completedAt: Date.now(),
+                        }),
+                    );
+                    return previous;
+                  }
+                  const base = buildCompareRunRecord({
+                    modelValue,
+                    modelLabel,
+                    iteration: null,
+                    cancelled: true,
+                    startedAt: existing?.startedAt ?? null,
+                    completedAt: Date.now(),
+                  });
+                  const tokensUsed =
+                    existing?.streamingMetrics?.tokensUsed ??
+                    existing?.metrics.tokensUsed ??
+                    0;
+                  const toolCallCount =
+                    existing?.streamingMetrics?.toolCallCount ??
+                    existing?.metrics.toolCallCount ??
+                    0;
+                  const cancelledRecord: CompareRunRecord = {
+                    ...base,
+                    streamingTrace: existing?.streamingTrace,
+                    streamingDraftMessages: existing?.streamingDraftMessages,
+                    streamingActualToolCalls:
+                      existing?.streamingActualToolCalls,
+                    streamingMetrics:
+                      existing?.streamingMetrics != null
+                        ? existing.streamingMetrics
+                        : undefined,
+                    streamingStepStatus: existing?.streamingStepStatus,
+                    streamingLiveBrowserSteps:
+                      existing?.streamingLiveBrowserSteps,
+                    streamingLiveBrowserFrameSequence:
+                      existing?.streamingLiveBrowserFrameSequence,
+                    metrics: {
+                      ...base.metrics,
+                      toolCallCount,
+                      tokensUsed,
+                    },
+                  };
+                  resolve(cancelledRecord);
+                  return { ...previous, [modelValue]: cancelledRecord };
                 });
-                const tokensUsed =
-                  existing?.streamingMetrics?.tokensUsed ??
-                  existing?.metrics.tokensUsed ??
-                  0;
-                const toolCallCount =
-                  existing?.streamingMetrics?.toolCallCount ??
-                  existing?.metrics.toolCallCount ??
-                  0;
-                resolved = {
-                  ...base,
-                  streamingTrace: existing?.streamingTrace,
-                  streamingDraftMessages: existing?.streamingDraftMessages,
-                  streamingActualToolCalls: existing?.streamingActualToolCalls,
-                  streamingMetrics:
-                    existing?.streamingMetrics != null
-                      ? existing.streamingMetrics
-                      : undefined,
-                  streamingStepStatus: existing?.streamingStepStatus,
-                  streamingLiveBrowserSteps:
-                    existing?.streamingLiveBrowserSteps,
-                  streamingLiveBrowserFrameSequence:
-                    existing?.streamingLiveBrowserFrameSequence,
-                  metrics: {
-                    ...base.metrics,
-                    toolCallCount,
-                    tokensUsed,
-                  },
-                };
-                return { ...previous, [modelValue]: resolved };
               });
-              return resolved;
             }
             const message = getBillingErrorMessage(
               error,
@@ -3565,11 +3808,7 @@ export function TestTemplateEditor({
       if (compareRunUserStoppedRef.current) {
         toast.message("Compare run stopped.");
       } else if (successfulCount === totalRequestedModels) {
-        toast.success(
-          `Compare run finished across ${totalRequestedModels} model${
-            totalRequestedModels === 1 ? "" : "s"
-          }.`,
-        );
+        toast.success("Run finished.");
       } else if (successfulCount > 0) {
         toast.error(
           `${successfulCount}/${totalRequestedModels} model${
@@ -3695,7 +3934,11 @@ export function TestTemplateEditor({
     ? buildCaseChatHandoff({
         caseId: String(currentTestCase._id),
         serverNames: effectiveSuiteServers,
-        modelId: previewRecord?.model ?? selectedModelValues[0],
+        modelId:
+          previewRecord?.model ??
+          (selectedModelValues[0] !== undefined
+            ? quickRunModelValue(selectedModelValues[0])
+            : undefined),
         advancedConfig: currentAdvancedConfig,
       })
     : null;
@@ -3878,9 +4121,9 @@ export function TestTemplateEditor({
   const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
     ?.suiteRunId
     ? (suiteRuns.find(
-        (run) =>
-          run._id ===
-          selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId,
+        (run): run is EvalSuiteRun =>
+          run._id === selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId &&
+          "tests" in run.configSnapshot,
       ) ?? null)
     : null;
 
@@ -3973,6 +4216,7 @@ export function TestTemplateEditor({
             editForm.suppressedSuiteStandardCheckIds
           }
           suitePredicates={(suite?.defaultPredicates ?? []) as Predicate[]}
+          matchOptions={workspaceDraft.matchOptions}
           suiteJudgeConfig={suite?.judgeConfig}
           capabilities={caseCapabilities.capabilities}
           saveStatus={checksSaveStatus}
@@ -4044,6 +4288,8 @@ export function TestTemplateEditor({
                   current ? { ...current, predicates: next } : current,
                 )
               }
+              toolsStatus={toolsStatus}
+              onRetryTools={handleRetryTools}
               availableTools={assertableTools}
               suiteServers={effectiveSuiteServers}
               projectServers={projectServers}
@@ -4089,7 +4335,7 @@ export function TestTemplateEditor({
                   <button
                     type="button"
                     className="min-w-0 w-full text-left"
-                    onClick={handleTitleClick}
+                    onClick={readOnly ? undefined : handleTitleClick}
                   >
                     <h2 className="text-base font-semibold tracking-tight transition-opacity hover:opacity-80">
                       {editForm?.title || currentTestCase.title}
@@ -4099,8 +4345,9 @@ export function TestTemplateEditor({
                 {(currentTestCase as { lastSdkWriteAt?: number })
                   ?.lastSdkWriteAt != null ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    Synced from CI — the next CI report may overwrite manual
-                    edits.
+                    {readOnly
+                      ? "Managed in code. Update this test in your repository."
+                      : "Synced from CI — the next CI report may overwrite manual edits."}
                   </p>
                 ) : null}
                 {/*
@@ -4122,7 +4369,31 @@ export function TestTemplateEditor({
                   className="mt-2"
                 />
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {!readOnly && <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                {/* First, as far as it can get from the primary run button:
+                    a destructive action must not sit between two others. */}
+                {onDeleteCase && !isDraft && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        // Same outlined square as the settings gear beside it,
+                        // so the header reads as one set; red only on hover.
+                        variant="outline"
+                        size="sm"
+                        className="h-8 w-8 shrink-0 p-0 hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Delete test case"
+                        data-testid="case-header-delete"
+                        onClick={() => setDeleteCaseOpen(true)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      Delete test case
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {onExportDraft && !useWorkspace ? (
                   <Button
                     type="button"
@@ -4224,6 +4495,12 @@ export function TestTemplateEditor({
                     availableModels={availableModels}
                     disabled={isRunningCompare}
                     onModelsChange={setSelectedModelValues}
+                    {...(isEnvironmentSuite
+                      ? {
+                          onPicksChange: handleQuickRunPicksChange,
+                          selections: quickRunSelections,
+                        }
+                      : {})}
                     trials={editForm?.runs ?? DEFAULTS.RUNS_PER_TEST}
                     onTrialsChange={(next) =>
                       setEditForm((current) =>
@@ -4243,6 +4520,34 @@ export function TestTemplateEditor({
                       label: option.label,
                     }))}
                     onHostChange={setQuickRunHostSelection}
+                    {...(isEnvironmentSuite && attachedEnvironments
+                      ? {
+                          environmentSelection: (modelId: string) =>
+                            quickRunEnvironmentSelection(
+                              attachedEnvironments,
+                              quickRunHostSelection ??
+                                quickRunClientIds(attachedEnvironments)[0] ??
+                                "",
+                              modelId,
+                              (hostId) =>
+                                projectHosts
+                                  .find((host) => host.hostId === hostId)
+                                  ?.modelId?.trim() || undefined,
+                            ),
+                        }
+                      : {})}
+                    {...(isEnvironmentSuite && projectId
+                      ? {
+                          serverGroup: {
+                            projectId,
+                            value: quickRunServerGroup,
+                            onChange: (serverAttachmentId: string) => {
+                              quickRunServerGroupPickedRef.current = true;
+                              setQuickRunServerGroup(serverAttachmentId);
+                            },
+                          },
+                        }
+                      : {})}
                   />
                 ) : quickRunHostOptions.length > 0 ? (
                   <Tooltip>
@@ -4302,6 +4607,23 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {!useWorkspace && isEnvironmentSuite && projectId ? (
+                  // The server group the run's environments use — the same
+                  // picker as suite settings, defaulting to the group the
+                  // suite's environments share.
+                  <ServerPicker
+                    projectId={projectId}
+                    value={quickRunServerGroup}
+                    onChange={(serverAttachmentId) => {
+                      quickRunServerGroupPickedRef.current = true;
+                      setQuickRunServerGroup(serverAttachmentId);
+                    }}
+                    offerClear={false}
+                    disabled={isRunningCompare}
+                    emptyTriggerLabel="Pick a server group"
+                    triggerTestId="quick-run-server-group"
+                  />
+                ) : null}
                 {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -4328,26 +4650,6 @@ export function TestTemplateEditor({
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="top" sideOffset={6}>
                       Iterations for the next run
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {onDeleteCase && !isDraft && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                        aria-label="Delete test case"
-                        data-testid="case-header-delete"
-                        onClick={() => setDeleteCaseOpen(true)}
-                      >
-                        <Trash2 className="size-3.5" aria-hidden />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      Delete test case
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -4400,21 +4702,32 @@ export function TestTemplateEditor({
                       <span className="inline-flex items-center gap-2">
                         <Button
                           type="button"
+                          variant={isRunningCompare ? "secondary" : "default"}
                           size="sm"
                           className="h-8"
+                          // While the run is going this IS the stop: a disabled
+                          // "Running…" pill spent the one button the eye lands on
+                          // saying what the spinner already said, and pushed the
+                          // only useful action into a second, quieter one.
                           onClick={() =>
-                            useWorkspace
-                              ? setRunSetupOpen(true)
-                              : handlePrimaryRun()
+                            isRunningCompare
+                              ? handleStopCompare()
+                              : useWorkspace
+                                ? setRunSetupOpen(true)
+                                : handlePrimaryRun()
                           }
                           disabled={
-                            useWorkspace ? isRunningCompare : runPrimaryDisabled
+                            isRunningCompare
+                              ? false
+                              : useWorkspace
+                                ? false
+                                : runPrimaryDisabled
                           }
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Running…
+                              <Square className="size-3.5" />
+                              Cancel
                             </>
                           ) : (
                             <>
@@ -4427,18 +4740,6 @@ export function TestTemplateEditor({
                             </>
                           )}
                         </Button>
-                        {isRunningCompare ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                            onClick={handleStopCompare}
-                          >
-                            <Square className="size-3.5 opacity-90" />
-                            Stop
-                          </Button>
-                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="top" sideOffset={6}>
@@ -4449,21 +4750,32 @@ export function TestTemplateEditor({
                   <span className="inline-flex items-center gap-2">
                     <Button
                       type="button"
+                      variant={isRunningCompare ? "secondary" : "default"}
                       size="sm"
                       className="h-8"
+                      // While the run is going this IS the stop: a disabled
+                      // "Running…" pill spent the one button the eye lands on
+                      // saying what the spinner already said, and pushed the
+                      // only useful action into a second, quieter one.
                       onClick={() =>
-                        useWorkspace
-                          ? setRunSetupOpen(true)
-                          : handlePrimaryRun()
+                        isRunningCompare
+                          ? handleStopCompare()
+                          : useWorkspace
+                            ? setRunSetupOpen(true)
+                            : handlePrimaryRun()
                       }
                       disabled={
-                        useWorkspace ? isRunningCompare : runPrimaryDisabled
+                        isRunningCompare
+                          ? false
+                          : useWorkspace
+                            ? false
+                            : runPrimaryDisabled
                       }
                     >
                       {isRunningCompare ? (
                         <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Running…
+                          <Square className="size-3.5" />
+                          Cancel
                         </>
                       ) : (
                         <>
@@ -4476,18 +4788,6 @@ export function TestTemplateEditor({
                         </>
                       )}
                     </Button>
-                    {isRunningCompare ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onClick={handleStopCompare}
-                      >
-                        <Square className="size-3.5 opacity-90" />
-                        Stop
-                      </Button>
-                    ) : null}
                   </span>
                 )}
                 {/* Draft-run estimate: priced against the models the button will
@@ -4521,7 +4821,7 @@ export function TestTemplateEditor({
                   }
                   side="top"
                 />
-              </div>
+              </div>}
             </div>
           </div>
           {useWorkspace ? (
@@ -4543,7 +4843,7 @@ export function TestTemplateEditor({
                         onStepsChange={
                           workspaceInspectSteps ? () => undefined : setSteps
                         }
-                        readOnly={Boolean(workspaceInspectSteps)}
+                        readOnly={readOnly || Boolean(workspaceInspectSteps)}
                         availableTools={assertableTools}
                         argumentMatching={
                           resolveMatchOptions(
@@ -4654,6 +4954,7 @@ export function TestTemplateEditor({
                     />
                   ) : editForm && useSpine ? (
                     <CaseSpine
+                      readOnly={readOnly}
                       defaultChecks={
                         !useWorkspace ? (
                           <DefaultChecksReference
@@ -4700,6 +5001,8 @@ export function TestTemplateEditor({
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]
                       }
+                      toolsStatus={toolsStatus}
+                      onRetryTools={handleRetryTools}
                       availableTools={assertableTools}
                       suiteServers={effectiveSuiteServers}
                       projectServers={projectServers}
@@ -4775,6 +5078,7 @@ export function TestTemplateEditor({
                     />
                   ) : editForm ? (
                     <SimpleCaseForm
+                      readOnly={readOnly}
                       key={`simple-case:${currentTestCase?._id ?? "none"}`}
                       steps={editForm.steps}
                       onStepsChange={setSteps}
@@ -4813,6 +5117,8 @@ export function TestTemplateEditor({
                       suiteDefaultPredicates={
                         (suite?.defaultPredicates ?? []) as Predicate[]
                       }
+                      toolsStatus={toolsStatus}
+                      onRetryTools={handleRetryTools}
                       availableTools={assertableTools.map((tool) =>
                         typeof tool === "string" ? tool : tool.name,
                       )}
@@ -5094,7 +5400,6 @@ export function TestTemplateEditor({
                     ) : workspacePersistedIteration ? (
                       <IterationDetails
                         iteration={workspacePersistedIteration}
-                        requestedTab={trialTabRequest}
                         testCase={currentTestCase}
                         serverNames={effectiveSuiteServers}
                         layoutMode="full"
@@ -5115,7 +5420,7 @@ export function TestTemplateEditor({
                         }
                         scorecard={{
                           render: (ctx) => (
-                            <TrialScorecard
+                            <IterationReportScorecard
                               authored={
                                 authoredForTrial({
                                   trial: workspaceSelectedTrial,
@@ -5137,10 +5442,8 @@ export function TestTemplateEditor({
                                 workspacePersistedIteration,
                                 suiteRuns,
                               )}
-                              nextQuestionSlot={nextQuestionForTrial(
-                                workspacePersistedIteration,
-                              )}
                               envelope={ctx.envelope}
+                              trace={ctx.trace}
                               judgeHidden={ctx.reviewActive && ctx.judgeHidden}
                               judgeSlot={
                                 // The tab owns launch-triggered judging; this
@@ -5509,16 +5812,20 @@ export function TestTemplateEditor({
                       <span className="inline-flex shrink-0 items-center gap-2">
                         <Button
                           type="button"
-                          variant="outline"
+                          variant={isRunningCompare ? "secondary" : "outline"}
                           size="sm"
                           className="h-8 shrink-0 text-xs"
-                          onClick={() => handlePrimaryRun()}
-                          disabled={runPrimaryDisabled}
+                          // While the run is going this IS the stop — same as the
+                          // primary Run button.
+                          onClick={() =>
+                            isRunningCompare ? handleStopCompare() : handlePrimaryRun()
+                          }
+                          disabled={isRunningCompare ? false : runPrimaryDisabled}
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="size-3.5 animate-spin" />
-                              Running…
+                              <Square className="size-3.5" />
+                              Cancel
                             </>
                           ) : (
                             <>
@@ -5527,18 +5834,6 @@ export function TestTemplateEditor({
                             </>
                           )}
                         </Button>
-                        {isRunningCompare ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                            onClick={handleStopCompare}
-                          >
-                            <Square className="size-3.5 opacity-90" />
-                            Stop
-                          </Button>
-                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent
@@ -5553,16 +5848,20 @@ export function TestTemplateEditor({
                   <span className="inline-flex shrink-0 items-center gap-2">
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={isRunningCompare ? "secondary" : "outline"}
                       size="sm"
                       className="h-8 shrink-0 text-xs"
-                      onClick={() => void handleRunCompare()}
-                      disabled={runPrimaryDisabled}
+                      // While the run is going this IS the stop — same as the
+                      // primary Run button.
+                      onClick={() =>
+                        isRunningCompare ? handleStopCompare() : void handleRunCompare()
+                      }
+                      disabled={isRunningCompare ? false : runPrimaryDisabled}
                     >
                       {isRunningCompare ? (
                         <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Running…
+                          <Square className="size-3.5" />
+                          Cancel
                         </>
                       ) : (
                         <>
@@ -5571,18 +5870,6 @@ export function TestTemplateEditor({
                         </>
                       )}
                     </Button>
-                    {isRunningCompare ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onClick={handleStopCompare}
-                      >
-                        <Square className="size-3.5 opacity-90" />
-                        Stop
-                      </Button>
-                    ) : null}
                   </span>
                 )
               ) : null}

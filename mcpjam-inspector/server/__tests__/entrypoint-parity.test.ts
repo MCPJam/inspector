@@ -1,7 +1,10 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { CORS_OPTIONS } from "../config.js";
 
 /**
  * `server/index.ts` and `server/app.ts` must mount the same things.
@@ -13,11 +16,8 @@ import { describe, expect, it } from "vitest";
  * working, so a route added to only one file looks fine until someone opens
  * the desktop app and finds a 404.
  *
- * That is not hypothetical. `mayServeSessionToken` — the single decision point
- * that keeps the session token off tunnel hosts — was used by `index.ts` and
- * NOT by `app.ts`, which called the raw allowlist instead and never read
- * `X-Forwarded-Host`. Both files now go through it, and the last assertion
- * here locks that in permanently.
+ * In addition to route parity, both entrypoints must confirm credentials
+ * without disclosing local session tokens in either JSON or HTML.
  *
  * SOURCE-TEXT, not import. `index.ts` calls `serve()` at module scope: importing
  * it binds a port. Reading the files is the honest way to compare them, and it
@@ -79,6 +79,8 @@ const APP_ONLY: Readonly<Record<string, string>> = {
 const INDEX_ONLY_REGISTRATIONS: Readonly<Record<string, string>> = {
   registerBrowserController:
     "Records the control plane's own origin so the local browser's egress guard can refuse a self-dial. It needs the BOUND port, which app.ts never learns — the embedder picks it. Electron registers it in src/main.ts right after serve(), and any other embedder must do the same.",
+  registerPreviewIdentityRoute:
+    "Answers the *.mcpjam.dev preview router's identity check, and mounts only when PREVIEW_EDGE_SECRET and RAILWAY_PUBLIC_DOMAIN are both set, which CI does for PR previews alone. Electron is never a PR preview, so app.ts has nothing to mount.",
 };
 
 describe("server/index.ts <-> server/app.ts parity", () => {
@@ -103,8 +105,8 @@ describe("server/index.ts <-> server/app.ts parity", () => {
     expect(
       missingFromApp,
       `Mounted in server/index.ts but NOT server/app.ts — the desktop/embedded app will 404 on these. Mount them there too, or add an INDEX_ONLY reason:\n  ${missingFromApp.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     const missingFromIndex = [...appPaths]
@@ -113,8 +115,8 @@ describe("server/index.ts <-> server/app.ts parity", () => {
     expect(
       missingFromIndex,
       `Mounted in server/app.ts but NOT server/index.ts — the standalone server will 404 on these. Mount them there too, or add an APP_ONLY reason:\n  ${missingFromIndex.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -125,8 +127,8 @@ describe("server/index.ts <-> server/app.ts parity", () => {
     expect(
       staleIndexOnly,
       `INDEX_ONLY entries that are gone, or that app.ts now mounts too — remove them:\n  ${staleIndexOnly.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     const staleAppOnly = Object.keys(APP_ONLY)
@@ -135,22 +137,22 @@ describe("server/index.ts <-> server/app.ts parity", () => {
     expect(
       staleAppOnly,
       `APP_ONLY entries that are gone, or that index.ts now mounts too — remove them:\n  ${staleAppOnly.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     const indexRegistrations = registrations(indexSource);
     const appRegistrations = registrations(appSource);
     const staleIndexOnlyRegistrations = Object.keys(INDEX_ONLY_REGISTRATIONS)
       .filter(
-        (name) => !indexRegistrations.has(name) || appRegistrations.has(name)
+        (name) => !indexRegistrations.has(name) || appRegistrations.has(name),
       )
       .sort();
     expect(
       staleIndexOnlyRegistrations,
       `INDEX_ONLY_REGISTRATIONS entries that are gone, or that app.ts now wires too — remove them:\n  ${staleIndexOnlyRegistrations.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -160,7 +162,7 @@ describe("server/index.ts <-> server/app.ts parity", () => {
     const onlyIndex = [...indexRegistrations]
       .filter(
         (name) =>
-          !appRegistrations.has(name) && !(name in INDEX_ONLY_REGISTRATIONS)
+          !appRegistrations.has(name) && !(name in INDEX_ONLY_REGISTRATIONS),
       )
       .sort();
     const onlyApp = [...appRegistrations]
@@ -168,23 +170,47 @@ describe("server/index.ts <-> server/app.ts parity", () => {
       .sort();
     expect(
       { onlyIndex, onlyApp },
-      "One entry point wires a registration the other does not."
+      "One entry point wires a registration the other does not.",
     ).toEqual({ onlyIndex: [], onlyApp: [] });
   });
 
-  it("BOTH entry points go through mayServeSessionToken", () => {
-    // The specific regression this file exists to prevent from recurring.
-    // `app.ts` used `isAllowedHost` — the same allowlist WITHOUT the tunnel
-    // veto — so the session token could be served to a tunnel host through the
-    // desktop/embedded entry while the standalone server correctly refused.
+  it("neither entry point delivers session credentials", () => {
+    for (const source of [indexSource, appSource]) {
+      expect(source).not.toContain("__MCP_SESSION_TOKEN__");
+      expect(source).not.toContain("mayServeSessionToken");
+      expect(source).toContain("validateToken(authorization.slice(7))");
+      expect(source).toContain("ACCESS_LINK_REQUIRED");
+    }
+  });
+
+  /**
+   * The same class of bug as the session-token one above, and the reason
+   * `CORS_OPTIONS` exists: `exposeHeaders` was added to app.ts alone, so
+   * `x-request-id` stayed invisible to JS everywhere the standalone server runs
+   * — `npm run dev` and the packaged binary both — which is every place the
+   * feature it was added for is used.
+   */
+  it("both entry points share one CORS config, exposing the diagnostic headers", async () => {
     for (const [name, source] of [
       ["server/index.ts", indexSource],
       ["server/app.ts", appSource],
     ] as const) {
       expect(
-        source.includes("mayServeSessionToken"),
-        `${name} must decide session-token delivery through mayServeSessionToken, which vetoes tunnel hosts BEFORE consulting the allowlist. Calling isAllowedHost directly reintroduces the leak.`
-      ).toBe(true);
+        source,
+        `${name} must pass the shared CORS_OPTIONS rather than inlining its own cors({...}), or the two entry points drift on what they expose.`,
+      ).toMatch(/app\.use\(\s*"\*",\s*cors\(CORS_OPTIONS\)/);
     }
+
+    // index.ts serves a port as a side effect of import, so the shared options
+    // are exercised on a bare app rather than by importing that module.
+    const app = new Hono();
+    app.use("*", cors(CORS_OPTIONS));
+    app.get("/api/probe", (c) => c.json({ ok: true }));
+    const response = await app.request("/api/probe", {
+      headers: { Origin: "http://localhost:5173" },
+    });
+    const exposed = response.headers.get("Access-Control-Expose-Headers") ?? "";
+    expect(exposed).toContain("x-request-id");
+    expect(exposed).toContain("x-mcpjam-error-origin");
   });
 });

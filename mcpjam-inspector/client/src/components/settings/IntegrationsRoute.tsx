@@ -1,13 +1,8 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
-import {
-  ChevronRight,
-  Github,
-  MessageSquare,
-  Radio,
-  Slack,
-} from "lucide-react";
+import { ChevronRight, Hash, MessageSquare, Radio } from "lucide-react";
+import { GitHubIcon } from "@/components/ui/github-icon";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ErrorCard } from "@/components/ui/error-card";
@@ -15,6 +10,7 @@ import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useOrgSlackSettings } from "@/hooks/useOrgSlackSettings";
 import { SettingsPageShell } from "./SettingsPageShell";
 import { useGithubChecksSettings } from "@/hooks/useGithubChecksSettings";
+import { useIntegrationsTabFlag } from "@/hooks/useIntegrationsTabEnabled";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
 import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
 import {
@@ -33,10 +29,13 @@ import {
  * sentence about what the service does and its current state, and the
  * configuration itself lives on the service's own page.
  *
- * The TAB is unconditional — Slack exists for every org, so there is always at
- * least one card. The GITHUB CARD carries its own availability gate. That split
- * matters: gating the tab on GitHub would hide Slack from anyone without the
- * GitHub beta, which is the reachability bug in the other direction.
+ * The whole TAB sits behind `integrations-tab`, a beta gate on the container
+ * and nothing else. Inside it, each card still decides for itself: the GITHUB
+ * CARD carries its own availability gate, Discord and Observability their own
+ * flags, and Slack is unconditional — it exists for every org, so a flagged-in
+ * reader always sees at least one card. That split matters: gating the tab on
+ * GitHub would hide Slack from anyone without the GitHub beta, which is the
+ * reachability bug in the other direction.
  *
  * Slack is org-scoped, not per-project: notifications go to channels bound
  * from `organizations/:orgId/slack` (the Connections tab), which is also
@@ -151,7 +150,7 @@ function GithubChecksCard({
   return (
     <IntegrationCard
       testId="integration-card-github"
-      icon={<Github className="size-4 text-primary" aria-hidden />}
+      icon={<GitHubIcon className="size-4 text-primary" aria-hidden />}
       title="GitHub Checks"
       description="Run an eval suite on every pull request."
       status={status}
@@ -192,7 +191,7 @@ function SlackIntegrationCard({
   return (
     <IntegrationCard
       testId="integration-card-slack"
-      icon={<Slack className="size-4 text-primary" aria-hidden />}
+      icon={<Hash className="size-4 text-primary" aria-hidden />}
       title="Slack"
       description="Post eval failures and agent activity to Slack channels."
       status={status}
@@ -341,6 +340,19 @@ export function IntegrationsRoute({
   const { isLoading: organizationsLoading } = useOrganizationQueries({
     isAuthenticated,
   });
+  // The tab is a beta gate over the whole page, not a card. The rail already
+  // hides the entry; this is the same decision applied to the URL, so a link
+  // kept from a flagged-out session lands on Settings rather than on a page
+  // that is supposed to be dark.
+  //
+  // The FLAG'S OWN loading state, not the rail's `=== true` reading of it. A
+  // redirect cannot be taken back, and every direct hit on this URL arrives
+  // before PostHog has answered — so `undefined` waits here, exactly like the
+  // auth and organization reads below, and only an answered `false` navigates.
+  const integrationsTabFlag = useIntegrationsTabFlag();
+
+  if (integrationsTabFlag === undefined) return null;
+  if (!integrationsTabFlag) return <Navigate to="/settings" replace />;
 
   if (!activeOrganizationId) {
     if (authLoading || organizationsLoading) return null;

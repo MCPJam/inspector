@@ -63,6 +63,7 @@ import type {
   StagePredicateResultLike,
   StageSpanLike,
 } from "./stage-derivation.js";
+import { ASSERTION_STAGE, type AssertionKind } from "./evaluator-stage.js";
 import type { IterationStatus } from "./chain.js";
 
 /**
@@ -112,6 +113,8 @@ export type ChatSessionReadinessEvidence = {
 export type ChatSessionCriterionOutcome = {
   criterionId: string;
   passed: boolean;
+  status?: "scored" | "error";
+  predicate?: { type?: string; role?: string };
 };
 
 /**
@@ -195,6 +198,8 @@ export type ChatSessionStageInput = {
   readiness?: ChatSessionReadinessEvidence;
   criteria?: ChatSessionCriteriaEvidence;
   goalJudge?: ChatSessionGoalJudgeEvidence;
+  /** Frozen swarm policy; omitted on other chat surfaces. */
+  swarmPolicy?: { judgeDecisive: boolean; requiredCriteria: number };
 };
 
 /**
@@ -258,7 +263,11 @@ function predicateResultsFrom(
   // `deriveUserValue` report `passed` off an empty set — the exact vacuity the
   // analyzer's non-vacuity rule forbids.
   if (results.length === 0) return undefined;
-  return results.map((entry) => ({ passed: entry.passed }));
+  return results.map((entry) => ({
+    passed: entry.passed,
+    ...(entry.status ? { status: entry.status } : {}),
+    ...(entry.predicate ? { predicate: entry.predicate } : {}),
+  }));
 }
 
 /**
@@ -286,7 +295,17 @@ function predicateResultsFrom(
 function judgeEvidenceFrom(
   input: ChatSessionStageInput
 ): StageEvidence["judgeEvidence"] {
-  const { criteria, goalJudge, hasUserAsk } = input;
+  const { goalJudge, hasUserAsk } = input;
+  const criteria =
+    input.source === "swarm" && input.swarmPolicy?.judgeDecisive
+      ? undefined
+      : input.criteria;
+  if (
+    input.source === "swarm" &&
+    input.swarmPolicy &&
+    !input.swarmPolicy.judgeDecisive
+  )
+    return undefined;
 
   if (criteria?.status === "failed") return undefined;
   if (criteria?.status === "completed") {
@@ -367,14 +386,68 @@ export function buildChatSessionStageInput(
 
   const predicateResults = predicateResultsFrom(input.criteria);
   if (predicateResults) evidence.predicateResults = predicateResults;
+  if (input.source === "swarm" && input.swarmPolicy?.judgeDecisive) {
+    // A decisive judge may downgrade required assertions. Preserve failed
+    // assertions and stage-routed checks; a value pass cannot hide the judge.
+    evidence.predicateResults = predicateResults?.filter(
+      (r) =>
+        r.passed === false ||
+        r.status === "error" ||
+        (r.predicate?.type &&
+          ASSERTION_STAGE[r.predicate.type as AssertionKind] !== "userValue")
+    );
+  }
 
   // Rule 4, and rule 3's second half: the deterministic grader breaking is the
   // ONLY thing this flag ever means here. It outranks whatever a judge would
   // have said, which is why `judgeEvidenceFrom` returns nothing in that case.
-  if (input.criteria?.status === "failed") evidence.evaluatorErrored = true;
+  if (
+    input.criteria?.status === "failed" &&
+    (input.source !== "swarm" ||
+      !input.swarmPolicy ||
+      input.swarmPolicy.requiredCriteria > 0)
+  )
+    evidence.evaluatorErrored = true;
 
   const judgeEvidence = judgeEvidenceFrom(input);
   if (judgeEvidence) evidence.judgeEvidence = judgeEvidence;
+  if (input.source === "swarm" && input.swarmPolicy?.requiredCriteria) {
+    const requiredResults =
+      input.criteria?.results?.filter(
+        (r) => r.predicate?.role !== "advisory"
+      ) ?? [];
+    const requiredFailure = requiredResults.some(
+      (r) => r.status !== "error" && !r.passed
+    );
+    if (!requiredFailure && input.criteria?.status !== "failed") {
+      if (!input.criteria || input.criteria.status === "pending") {
+        // Pending assertions cannot borrow a passing judge result.
+        evidence.judgeEvidence = {
+          status: "pending",
+          pendingKind: "scheduled",
+        };
+        evidence.predicateResults = evidence.predicateResults?.filter(
+          (r) => r.passed === false
+        );
+      } else if (
+        requiredResults.length < input.swarmPolicy.requiredCriteria ||
+        requiredResults.some((r) => r.status === "error")
+      ) {
+        evidence.evaluatorErrored = true;
+      }
+    }
+  }
+
+  // A measured required failure is final even if another grader broke.
+  if (
+    input.source === "swarm" &&
+    input.swarmPolicy?.judgeDecisive &&
+    input.goalJudge?.status === "completed" &&
+    input.goalJudge.passed === false
+  ) {
+    delete evidence.evaluatorErrored;
+    if (judgeEvidence) evidence.judgeEvidence = judgeEvidence;
+  }
 
   return {
     authored: buildChatSessionAuthoredCase(input),

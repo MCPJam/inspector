@@ -782,4 +782,91 @@ describe("RunDetailView", () => {
       })
     ).toBeInTheDocument();
   });
+
+  /**
+   * `/evals` folds the run detail into the suite body, which drops the
+   * SuiteHeader row that carries the stop control everywhere else. Without a
+   * control here, a run started from that surface cannot be stopped at all.
+   */
+  describe("cancel control", () => {
+    const runningRun = () =>
+      makeRun({ status: "running", completedAt: undefined });
+
+    it("stops the run it is showing", async () => {
+      const onCancelRun = vi.fn();
+      render(
+        <RunDetailView
+          selectedRunDetails={runningRun()}
+          caseGroupsForSelectedRun={[makeIteration()]}
+          source="ui"
+          runDetailSortBy="test"
+          onSortChange={() => {}}
+          selectedIterationId={null}
+          onSelectIteration={() => {}}
+          onCancelRun={onCancelRun}
+          omitIterationList
+        />
+      );
+
+      await userEvent.click(screen.getByTestId("run-detail-cancel"));
+      expect(onCancelRun).toHaveBeenCalledWith(["run-1"]);
+    });
+
+    it("offers nothing to cancel once the run is over", () => {
+      render(
+        <RunDetailView
+          selectedRunDetails={makeRun({ status: "completed" })}
+          caseGroupsForSelectedRun={[makeIteration()]}
+          source="ui"
+          runDetailSortBy="test"
+          onSortChange={() => {}}
+          selectedIterationId={null}
+          onSelectIteration={() => {}}
+          onCancelRun={() => {}}
+          omitIterationList
+        />
+      );
+
+      expect(screen.queryByTestId("run-detail-cancel")).toBeNull();
+    });
+
+    it("renders no control on surfaces that already have one", () => {
+      // The CI sidebar and /evaluate pass no handler here precisely because
+      // their own headers carry a stop control; a second would duplicate it.
+      render(
+        <RunDetailView
+          selectedRunDetails={runningRun()}
+          caseGroupsForSelectedRun={[makeIteration()]}
+          source="ui"
+          runDetailSortBy="test"
+          onSortChange={() => {}}
+          selectedIterationId={null}
+          onSelectIteration={() => {}}
+          omitIterationList
+        />
+      );
+
+      expect(screen.queryByTestId("run-detail-cancel")).toBeNull();
+    });
+
+    it("blocks a second cancel while one is in flight", () => {
+      render(
+        <RunDetailView
+          selectedRunDetails={runningRun()}
+          caseGroupsForSelectedRun={[makeIteration()]}
+          source="ui"
+          runDetailSortBy="test"
+          onSortChange={() => {}}
+          selectedIterationId={null}
+          onSelectIteration={() => {}}
+          onCancelRun={() => {}}
+          cancellingRunId="run-1"
+          omitIterationList
+        />
+      );
+
+      expect(screen.getByTestId("run-detail-cancel")).toBeDisabled();
+    });
+  });
+
 });

@@ -16,7 +16,8 @@ import {
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
-import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import type { RunMetricsByRun } from "../evals/run-metrics";
+import type { EvalSuiteRun, EvalSuiteRunListItem } from "../evals/types";
 import { RunContextChip } from "../evals/run-context-chip";
 import {
   RunCommitCell,
@@ -115,9 +116,7 @@ function MetricCell({
     <td className="whitespace-nowrap px-3 py-2 tabular-nums">
       {cell.value ?? "—"}
       {cell.value != null && detail ? (
-        <span className="ml-1 text-[10px] text-muted-foreground">
-          {detail}
-        </span>
+        <span className="ml-1 text-[10px] text-muted-foreground">{detail}</span>
       ) : null}
       <Delta delta={cell.delta} />
     </td>
@@ -207,6 +206,7 @@ function LaneSection({
               <RunContextChip
                 run={lane.run}
                 hostNamesById={hostNamesById}
+                modelSuffix={lane.modelSuffix}
                 fallbackName="Suite default"
                 className="border-border bg-background shadow-none"
               />
@@ -261,7 +261,7 @@ function LaneSection({
 export function RunComparisonPage({
   currentRun,
   runs,
-  iterations,
+  metricsByRun,
   suiteName,
   hostNamesById,
   passThreshold,
@@ -269,8 +269,9 @@ export function RunComparisonPage({
   onOpenRun,
 }: {
   currentRun: EvalSuiteRun;
-  runs: readonly EvalSuiteRun[];
-  iterations: readonly EvalIteration[];
+  runs: readonly EvalSuiteRunListItem[];
+  /** One metrics object per run — see `evals/run-metrics.ts`. */
+  metricsByRun: RunMetricsByRun;
   suiteName: string;
   hostNamesById: Map<string, string | null>;
   /** The suite's pass bar as a FRACTION — see `resolveSuitePassThreshold`. */
@@ -283,11 +284,11 @@ export function RunComparisonPage({
       buildRunCompareLanes({
         currentRun,
         runs,
-        iterations,
+        metricsByRun,
         hostNamesById,
         passThreshold,
       }),
-    [currentRun, runs, iterations, hostNamesById, passThreshold],
+    [currentRun, runs, metricsByRun, hostNamesById, passThreshold],
   );
 
   return (
