@@ -16,7 +16,7 @@ vi.mock("../../../utils/harness/local/readiness.js", () => ({
 }));
 
 vi.mock("posthog-node", () => ({
-  PostHog: vi.fn(() => {
+  PostHog: vi.fn(function () {
     mocks.constructPostHog();
     return {
       getAllFlags: mocks.getAllFlags,

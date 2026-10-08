@@ -13,6 +13,7 @@ import {
   validateClientIdMetadataUrl,
 } from "../../oauth/state-machines/shared/client-id-metadata.js";
 import { executeDynamicClientRegistration } from "../../oauth/state-machines/shared/dynamic-client-registration.js";
+import { extractResponseErrorReason } from "../../oauth/state-machines/shared/response-error.js";
 import type {
   InfoLogLevel,
   LogErrorDetails,
@@ -289,22 +290,13 @@ function rankAuthServerCandidate(
   return 3;
 }
 
-function extractErrorMessage(body: any, fallback: string): string {
-  if (typeof body === "string" && body.trim()) {
-    return body;
-  }
-
-  if (!body || typeof body !== "object") {
-    return fallback;
-  }
-
-  return (
-    body.error_description ||
-    body.error ||
-    body.message ||
-    body.statusText ||
-    fallback
-  );
+/** The server's own reason for a failed response, or `fallback` when the body
+ * carries none. Shares the OAuth debugger's reader so both flows accept the
+ * same shapes: RFC 6749 `error`/`error_description`, a bare `message`, and
+ * the JSON-RPC `{ error: { code, message } }` an MCP server answers with. Only
+ * a non-blank string ever reaches flow state, which the UI renders as a line. */
+function extractErrorMessage(body: unknown, fallback: string): string {
+  return extractResponseErrorReason(body) ?? fallback;
 }
 
 // The only issuer policy error codes the flow state ever echoes; anything

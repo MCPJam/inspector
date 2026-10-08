@@ -45,12 +45,14 @@ vi.mock("../../web/auth.js", async () => {
 });
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-    action: convexActionMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+      action: convexActionMock,
+    };
+  }),
 }));
 
 import { deriveItemIdempotencyKey } from "../../../utils/idempotency.js";

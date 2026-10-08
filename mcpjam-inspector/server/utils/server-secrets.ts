@@ -325,13 +325,15 @@ export async function fetchRuntimeServerSecrets(args: {
       error instanceof Error &&
       (error.name === "AbortError" ||
         (error as { code?: string }).code === "ABORT_ERR");
+    // Tagged with the hop so a caller deciding per server can tell MCPJam's
+    // own reveal service not answering from the MCP server's refusal.
     throw new WebRouteError(
       isAbort ? 504 : 502,
       ErrorCode.SERVER_UNREACHABLE,
       isAbort
         ? `Secret reveal service timed out after ${RUNTIME_REVEAL_TIMEOUT_MS}ms`
         : `Failed to reach secret reveal service: ${parseErrorMessage(error)}`
-    );
+    ).withSetupFailureSource("secret_reveal");
   } finally {
     clearTimeout(timeoutId);
   }
@@ -358,7 +360,7 @@ export async function fetchRuntimeServerSecrets(args: {
       code,
       message,
       credentialRefusalDetails(body)
-    );
+    ).withSetupFailureSource("secret_reveal");
   }
 
   if (!body?.success) {
