@@ -1512,6 +1512,12 @@ keeps whatever hosts it already has. Host attachment synchronization only
 runs when no explicit CLI target overrides the file. Environment attachment
 synchronization is unaffected and always runs.
 
+When the suite file declares `target.environment`, passing `--server` is
+refused (exit **2**) before anything is written. An environment owns its
+closed server set and `--server` cannot override it. To run against a
+different server, either use the environment as declared or create a separate
+suite file without `target.environment` and pass `--server` there.
+
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
 (`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
