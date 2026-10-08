@@ -188,7 +188,12 @@ export function SidebarCredits({
                 }
                 isLoading={isLoading}
                 showCoin
-                isCreditMeter
+                isCreditMeter={
+                  balance != null &&
+                  (showMonthly
+                    ? monthlyTotal > 0
+                    : balance.freeDailyCreditsTotal > 0)
+                }
                 testId={
                   showMonthly ? "sidebar-usage-monthly" : "sidebar-usage-daily"
                 }

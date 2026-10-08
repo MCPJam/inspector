@@ -129,6 +129,17 @@ describe("SidebarCredits", () => {
     vi.useRealTimers();
   });
 
+  it("does not label a monthly balance with an unknown allowance as low", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: undefined,
+      monthlyAllowanceRemaining: 500,
+    };
+    renderCredits();
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
   it.each([75, 100, 5])(
     "shows credit balance at %s percent with a text warning only when low",
     (percent) => {

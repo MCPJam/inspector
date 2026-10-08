@@ -291,6 +291,17 @@ describe("CreditBalanceCard", () => {
     expect(screen.getByTestId("usage-paid")).toHaveTextContent("1,500 credits");
   });
 
+  it("does not label a monthly balance with an unknown allowance as low", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: undefined,
+      monthlyAllowanceRemaining: 500,
+    };
+    render(<CreditBalanceCard />);
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
   it("does not report low credits when the balance query fails", () => {
     balanceState = undefined;
     isLoadingState = false;
