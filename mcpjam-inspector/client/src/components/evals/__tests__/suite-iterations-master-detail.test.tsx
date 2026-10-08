@@ -25,6 +25,10 @@ const cloudState = vi.hoisted(() => ({
     computerEnvironmentId?: string;
   }>,
 }));
+vi.mock("@/hooks/useClients", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useClients")>()),
+  useHostList: () => ({ hosts: [{ hostId: "client-a1b2c3", name: "Claude", config: {} }], isLoading: false }),
+}));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
 }));
@@ -33,8 +37,8 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 
 vi.mock("../test-template-editor", () => ({
-  TestTemplateEditor: ({ readOnly, openCompareIterationId, onRunCase, evalRunsDisabledReason }: any) => (
-    <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} data-run-block={evalRunsDisabledReason}>
+  TestTemplateEditor: ({ readOnly, openCompareIterationId, onRunCase, launchReview }: any) => (
+    <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} data-run-block={launchReview?.disabledReason} data-run-clients={JSON.stringify(Array.from(launchReview?.hostNamesById ?? []))} data-run-environments={JSON.stringify(launchReview?.environments)}>
       <button onClick={() => onRunCase("case-1", {
         suiteOverride: { _id: "suite-1", environmentIds: ["one-run"] },
         iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
@@ -899,6 +903,18 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
       "checkout-flow",
     );
     expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it("passes resolved client names and ad-hoc environments into case launch review", () => {
+    cloudState.environments = [{ environmentId: "env-1", hostId: "client-a1b2c3", modelId: "sonnet" } as any];
+    renderOverview({
+      evaluateCaseEditor: true,
+      suite: { ...baseSuite, environmentIds: ["env-1"], hostAttachments: [] },
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    expect(screen.getByTestId("case-workspace")).toHaveAttribute("data-run-clients", '[["client-a1b2c3","Claude"]]');
+    expect(screen.getByTestId("case-workspace").getAttribute("data-run-environments")).toContain("env-1");
+    cloudState.environments = [];
   });
 
   it.each(["quota", "sandbox", "pending"])("passes the %s block to the case editor", (block) => {

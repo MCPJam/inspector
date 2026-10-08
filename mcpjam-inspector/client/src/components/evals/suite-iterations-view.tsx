@@ -2087,10 +2087,15 @@ export function SuiteIterationsView({
                   simpleCaseEditor={evaluateCaseEditor}
                   observeFirst={evaluateObserveFirst}
                   onRunCase={onRunCase}
-                  evalRunsDisabledReason={
-                    evalRunsDisabledReason ??
-                    (rerunningSuiteId ? "A run is already starting." : null)
-                  }
+                  launchReview={{
+                    projectId,
+                    suite,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}

@@ -74,6 +74,7 @@ vi.mock("@/components/evaluate/suite-run-review", () => ({
       <div role="dialog" aria-label="Setup Run">
         <span>{props.caseTitle}</span>
         <output data-testid="suite-run-cases">{JSON.stringify(props.cases.map((item: any) => item._id))}</output>
+        <output data-testid="case-run-client-names">{JSON.stringify(Array.from(props.hostNamesById.entries()))}</output>
         <output data-testid="case-run-block">{props.disabledReason}</output>
         <button onClick={async () => {
           try {
@@ -1053,6 +1054,40 @@ describe("TestTemplateEditor run view from route", () => {
         {...props}
       />,
     );
+
+  it("uses the parent launch data while its suite query is loading, including client names", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const original = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getTestSuite" ? undefined : original(name, args));
+    const onRunCase = vi.fn();
+    renderGoldenCase({ onRunCase, launchReview: {
+      suite: { _id: "suite-1", environment: { servers: ["srv"] }, environmentIds: ["env-1"] },
+      environments: [{ environmentId: "env-1", hostId: "client-a1b2c3", modelId: "sonnet" }],
+      hostNamesById: new Map([["client-a1b2c3", "Claude"]]),
+    } });
+    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.getByTestId("case-run-client-names")).toHaveTextContent("Claude");
+    expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onRunCase).toHaveBeenCalledWith("case-1", expect.objectContaining({
+      suiteOverride: expect.objectContaining({ _id: "suite-1" }), throwOnFailure: true,
+    }));
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+  });
+
+  it("waits for suite launch data instead of opening quick run", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const original = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: unknown) =>
+      name === "testSuites:getTestSuite" ? undefined : original(name, args));
+    renderGoldenCase({ onRunCase: vi.fn() });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.getByText("Loading suite setup…")).toHaveAttribute("role", "status");
+    expect(screen.queryByRole("button", { name: "Run test case" })).toBeNull();
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+  });
 
   it.each(["Eval iteration limit reached.", "Cloud sandboxes are unavailable."])(
     "passes the shared block to case setup and refuses its launch: %s", async (evalRunsDisabledReason) => {

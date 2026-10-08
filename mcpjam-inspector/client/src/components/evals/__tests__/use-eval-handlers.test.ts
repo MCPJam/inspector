@@ -512,6 +512,20 @@ describe("useEvalHandlers", () => {
       expect(mockAuthFetch).not.toHaveBeenCalled();
     });
 
+    it("throws a missing case to the setup sheet instead of silently resolving", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await expect(result.current.handleRerun({
+          _id: "suite-x", name: "Suite", environment: { servers: ["server-1"] },
+        } as any, { caseIds: ["not-in-this-suite"], throwOnFailure: true }))
+          .rejects.toThrow("That case is not in this suite.");
+      });
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
+      expect(result.current.rerunningSuiteId).toBeNull();
+    });
+
     it("sends no caseIds for an ordinary full rerun", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       await act(async () => {
@@ -1285,6 +1299,19 @@ describe("useEvalHandlers", () => {
       });
       expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
       expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("propagates a quota wall refusal to the setup sheet", async () => {
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+      const { result } = renderHook(() => useEvalHandlers({ ...defaultProps, organizationId: "org-1" }));
+      await act(async () => {
+        await expect(result.current.handleRerun({
+          _id: "suite-123", name: "Suite", environment: { servers: ["server-1"] },
+        } as any, { caseIds: ["test-case-1"], throwOnFailure: true })).rejects.toThrow();
+      });
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({ kind: "evalIterations" });
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
     });
 
     it("opens the wall for a cap the replay endpoint nests under details", async () => {

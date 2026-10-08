@@ -1015,6 +1015,8 @@ export function useEvalHandlers({
             )
           : testsPayload;
         if (wantedCaseIds?.length && narrowedTests.length === 0) {
+          if (options?.stayOnPage || options?.throwOnFailure)
+            throw new Error("That case is not in this suite.");
           setRerunningSuiteId(null);
           toast.error("That case is not in this suite.", {
             id: runStartedToastId,
@@ -1228,6 +1230,7 @@ export function useEvalHandlers({
           // The "Starting run…" toast above would sit next to the wall,
           // claiming the run is on its way.
           toast.dismiss(runStartedToastId);
+          if (options?.stayOnPage || options?.throwOnFailure) throw error;
         } else {
           // An environment suite has no browser-side server list to prompt
           // about — the backend resolved the set — so a "connect your servers"
