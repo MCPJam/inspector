@@ -1066,10 +1066,19 @@ export async function executeEvalRunFromFile(
   refuseRepetitions(loaded);
   refuseEmptyEnabledSet(loaded);
   refuseUnsupportedHostedSemantics(loaded);
+  const knobs = params.knobs;
+
+  if (loaded.authored.target.environment && knobs.server?.length) {
+    throw cliError(
+      "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE",
+      `Suite file targets environment "${loaded.authored.target.environment}", which owns its closed server set; --server cannot override it. Use the environment as declared, or create a separate suite file without target.environment for an explicit --server run.`,
+      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      { environment: loaded.authored.target.environment }
+    );
+  }
 
   const sourceHash = sha256HexOfBuffer(params.source.buffer);
   const authored = loaded.authored;
-  const knobs = params.knobs;
 
   // MANDATORY, and BEFORE the first write.
   //
