@@ -1341,7 +1341,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--notes <text>` | No | Free-text note stored on the run |
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
-| `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+| `--idempotency-key <key>` | No | Retry key for a lost launch response. For `--file`, a fresh key is minted and printed on every invocation when this flag is omitted; supply the printed key to replay the same run instead of starting a new one |
 | `--wait` | No | Wait for every launched run to reach a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
