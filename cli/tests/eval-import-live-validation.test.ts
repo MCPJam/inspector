@@ -1946,6 +1946,45 @@ describe("the preflight checks what the run will actually execute", () => {
     }
   });
 
+  test("--server refuses a file-owned environment before syncing anything", async () => {
+    const fixture = await startFixture({
+      servers: [
+        { id: "srv_billing", name: "billing" },
+        { id: "srv_alt", name: "alternate" },
+      ],
+      toolsByServer: {
+        billing: ["render_refund", "render_gone"],
+        alternate: ["render_refund", "render_gone"],
+      },
+      environments: { production: ["billing"] },
+    });
+    try {
+      const fileWithEnvironment = IMPORTED_WITH_TOOL_CALLS.replace(
+        "target:\n  servers:\n    - name: billing\n",
+        "target:\n  servers:\n    - name: billing\n  environment: production\n"
+      );
+      await withSuiteFile(fileWithEnvironment, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--server", "alternate"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+
+        assert.equal(run.result.exitCode, 2, run.stdout + run.stderr);
+        assert.match(
+          run.stdout + run.stderr,
+          /environment.*production.*--server cannot override.*separate suite file/s
+        );
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.batchBodies, []);
+        assert.deepEqual(fixture.updateBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("a host named in different case resolves, as it does at launch", async () => {
     const fixture = await startFixture({
       servers: [{ id: "srv_billing", name: "billing" }],
