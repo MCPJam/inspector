@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { Copy, Settings2, SquareSlash } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -74,20 +74,24 @@ function rowsFromActive(
  * Listed from the active-plugins read (every installed plugin, contributing or
  * skipped, with its active version's skills); a plugin that read has no row
  * for yet falls back to its version's components.
+ *
+ * `onListingChange` reports every row it shows, the fallback ones included,
+ * and stays `pending` while a fallback version has not answered, so the tab
+ * never says "No skills" beside skills it is still listing.
  */
 export function PluginSkillsSection({
   projectId,
   selectedSkillId,
   focusPluginId = null,
   onOpenSkill,
-  onCountChange,
+  onListingChange,
 }: {
   projectId: string;
   selectedSkillId: string | null;
   /** A `?plugin=` permalink: open this plugin's first skill once listed. */
   focusPluginId?: string | null;
   onOpenSkill: (skill: PluginSkillSelection) => void;
-  onCountChange?: (count: number) => void;
+  onListingChange?: (listing: { count: number; pending: boolean }) => void;
 }) {
   const installed = useProjectPlugins(projectId);
   const { plugins: activeRows } = useActivePlugins(projectId);
@@ -106,9 +110,31 @@ export function PluginSkillsSection({
       !activeRows.some((row) => row.pluginId === plugin.pluginId),
   );
 
+  // What each fallback plugin's version lists, once that version answered.
+  const [fallbackCounts, setFallbackCounts] = useState<
+    Record<string, number | undefined>
+  >({});
+  const reportFallback = useCallback(
+    (pluginId: string, count: number | undefined) =>
+      setFallbackCounts((previous) =>
+        previous[pluginId] === count
+          ? previous
+          : { ...previous, [pluginId]: count },
+      ),
+    [],
+  );
+  const fallbackCount = fallbackPlugins.reduce(
+    (total, plugin) => total + (fallbackCounts[plugin.pluginId] ?? 0),
+    0,
+  );
+  const fallbackPending = fallbackPlugins.some(
+    (plugin) => fallbackCounts[plugin.pluginId] === undefined,
+  );
+  const count = rows.length + fallbackCount;
+
   useEffect(() => {
-    onCountChange?.(rows.length);
-  }, [rows.length, onCountChange]);
+    onListingChange?.({ count, pending: fallbackPending });
+  }, [count, fallbackPending, onListingChange]);
 
   const [focusHandled, setFocusHandled] = useState(false);
   useEffect(() => {
@@ -136,6 +162,7 @@ export function PluginSkillsSection({
           plugin={plugin}
           selectedSkillId={selectedSkillId}
           onOpenSkill={onOpenSkill}
+          onCount={reportFallback}
         />
       ))}
     </div>
@@ -146,13 +173,22 @@ function PluginVersionSkillRows({
   plugin,
   selectedSkillId,
   onOpenSkill,
+  onCount,
 }: {
   plugin: PluginSummary;
   selectedSkillId: string | null;
   onOpenSkill: (skill: PluginSkillSelection) => void;
+  /** How many rows this lists; `undefined` until the version answers. */
+  onCount: (pluginId: string, count: number | undefined) => void;
 }) {
   const version = usePluginVersion(plugin.activeVersionId ?? null);
   const label = plugin.displayName || plugin.name;
+  const listed = version
+    ? version.skills.filter((component) => component.materializedSkillId).length
+    : undefined;
+  useEffect(() => {
+    onCount(plugin.pluginId, listed);
+  }, [plugin.pluginId, listed, onCount]);
   return (
     <>
       {(version?.skills ?? []).flatMap((component) =>
@@ -234,11 +270,17 @@ export function PluginSkillDetail({
   projectId,
   skill,
   onDetached,
+  onUninstalled,
 }: {
   projectId: string;
   skill: PluginSkillSelection;
   /** A detached copy now exists in the project store. */
   onDetached?: () => void;
+  /**
+   * The plugin was uninstalled from the Plugin section here (a plugin with
+   * no servers has no other one), so this skill is gone with it.
+   */
+  onUninstalled?: () => void;
 }) {
   const navigate = useAppNavigate();
   const installed = useProjectPlugins(projectId);
@@ -351,6 +393,7 @@ export function PluginSkillDetail({
           <PluginSettingsSection
             projectId={projectId}
             pluginId={skill.pluginId}
+            onUninstalled={onUninstalled}
           />
         </div>
       ) : null}

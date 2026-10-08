@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   pluginsEnabled: true,
   listSkills: vi.fn(async () => [] as Array<{ name: string }>),
+  listing: { count: 1, pending: false },
 }));
 
 vi.mock("@/lib/apis/mcp-skills-api", () => ({
@@ -41,22 +42,33 @@ const skill = {
 vi.mock("../skills/PluginSkills", () => ({
   PluginSkillsSection: ({
     onOpenSkill,
-    onCountChange,
+    onListingChange,
   }: {
     onOpenSkill: (selected: typeof skill) => void;
-    onCountChange?: (count: number) => void;
+    onListingChange?: (listing: { count: number; pending: boolean }) => void;
   }) => {
     useEffect(() => {
-      onCountChange?.(1);
-    }, [onCountChange]);
+      onListingChange?.(h.listing);
+    }, [onListingChange]);
     return (
       <button type="button" onClick={() => onOpenSkill(skill)}>
         triage · Plugin · Bits & Bolts
       </button>
     );
   },
-  PluginSkillDetail: ({ skill: opened }: { skill: typeof skill }) => (
-    <div data-testid="plugin-skill-detail">{opened.modelRef}</div>
+  PluginSkillDetail: ({
+    skill: opened,
+    onUninstalled,
+  }: {
+    skill: typeof skill;
+    onUninstalled?: () => void;
+  }) => (
+    <>
+      <div data-testid="plugin-skill-detail">{opened.modelRef}</div>
+      <button type="button" onClick={() => onUninstalled?.()}>
+        Uninstall plugin (stub)
+      </button>
+    </>
   ),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -71,6 +83,7 @@ import { SkillsTab } from "../SkillsTab";
 
 beforeEach(() => {
   h.pluginsEnabled = true;
+  h.listing = { count: 1, pending: false };
   h.listSkills.mockResolvedValue([]);
 });
 
@@ -89,6 +102,26 @@ describe("SkillsTab — plugin skills", () => {
     expect(screen.getByTestId("plugin-skill-detail").textContent).toBe(
       "bits-and-bolts/triage",
     );
+  });
+
+  it("clears the opened plugin skill once its plugin is uninstalled from the detail", async () => {
+    render(<SkillsTab projectId="project-1" cloudSkillsEnabled />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "triage · Plugin · Bits & Bolts",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Uninstall plugin (stub)" }),
+    );
+    expect(screen.queryByTestId("plugin-skill-detail")).not.toBeInTheDocument();
+  });
+
+  it("does not call the list empty while plugin skills are still being listed", async () => {
+    h.listing = { count: 0, pending: true };
+    render(<SkillsTab projectId="project-1" cloudSkillsEnabled />);
+    expect(await screen.findByText("0")).toBeInTheDocument();
+    expect(screen.queryByText(/No skills/i)).not.toBeInTheDocument();
   });
 
   it("shows none outside the plugins rollout", async () => {

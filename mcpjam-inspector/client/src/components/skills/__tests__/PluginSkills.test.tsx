@@ -52,8 +52,16 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: h.toastSuccess, error: h.toastError },
 }));
 vi.mock("@/components/plugins/PluginSettingsSection", () => ({
-  PluginSettingsSection: (props: { pluginId: string }) => (
-    <div data-testid="plugin-settings-section">{props.pluginId}</div>
+  PluginSettingsSection: (props: {
+    pluginId: string;
+    onUninstalled?: () => void;
+  }) => (
+    <>
+      <div data-testid="plugin-settings-section">{props.pluginId}</div>
+      <button type="button" onClick={() => props.onUninstalled?.()}>
+        Uninstall (stub)
+      </button>
+    </>
   ),
 }));
 vi.mock("../SkillFileViewer", () => ({
@@ -126,19 +134,22 @@ beforeEach(() => {
 describe("PluginSkillsSection", () => {
   it("lists each plugin skill with its plugin's badge and opens it", () => {
     const onOpenSkill = vi.fn();
-    const onCountChange = vi.fn();
+    const onListingChange = vi.fn();
     render(
       <PluginSkillsSection
         projectId="p_1"
         selectedSkillId={null}
         onOpenSkill={onOpenSkill}
-        onCountChange={onCountChange}
+        onListingChange={onListingChange}
       />,
     );
     const rowEl = screen.getByTestId("plugin-skill-row");
     expect(rowEl.textContent).toContain("triage");
     expect(rowEl.textContent).toContain("Plugin · Bits & Bolts");
-    expect(onCountChange).toHaveBeenLastCalledWith(1);
+    expect(onListingChange).toHaveBeenLastCalledWith({
+      count: 1,
+      pending: false,
+    });
     fireEvent.click(rowEl);
     expect(onOpenSkill).toHaveBeenCalledWith(selection);
   });
@@ -165,18 +176,50 @@ describe("PluginSkillsSection", () => {
     expect(onOpenSkill).toHaveBeenCalledWith(selection);
   });
 
-  it("falls back to the version's skills without an active-plugins answer", () => {
+  it("falls back to the version's skills without an active-plugins answer, and counts them", () => {
     h.activeRows.value = [];
+    const onListingChange = vi.fn();
     render(
       <PluginSkillsSection
         projectId="p_1"
         selectedSkillId={null}
         onOpenSkill={vi.fn()}
+        onListingChange={onListingChange}
       />,
     );
     expect(screen.getByTestId("plugin-skill-row").textContent).toContain(
       "Plugin · Bits & Bolts",
     );
+    // Counted like any other row, so the tab never says "0" beside it.
+    expect(onListingChange).toHaveBeenLastCalledWith({
+      count: 1,
+      pending: false,
+    });
+  });
+
+  it("stays pending while a fallback version has not answered", () => {
+    h.activeRows.value = [];
+    const answered = h.version.value;
+    h.version.value = undefined;
+    const onListingChange = vi.fn();
+    const props = {
+      projectId: "p_1",
+      selectedSkillId: null,
+      onOpenSkill: vi.fn(),
+      onListingChange,
+    };
+    const { rerender } = render(<PluginSkillsSection {...props} />);
+    expect(onListingChange).toHaveBeenLastCalledWith({
+      count: 0,
+      pending: true,
+    });
+
+    h.version.value = answered;
+    rerender(<PluginSkillsSection {...props} />);
+    expect(onListingChange).toHaveBeenLastCalledWith({
+      count: 1,
+      pending: false,
+    });
   });
 });
 
@@ -200,6 +243,20 @@ describe("PluginSkillDetail", () => {
       "pl_bits",
     );
     expect(h.navigate).not.toHaveBeenCalled();
+  });
+
+  it("tells the tab when the plugin is uninstalled from its Plugin section", () => {
+    const onUninstalled = vi.fn();
+    render(
+      <PluginSkillDetail
+        projectId="p_1"
+        skill={selection}
+        onUninstalled={onUninstalled}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("plugin-skill-open-plugin"));
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall (stub)" }));
+    expect(onUninstalled).toHaveBeenCalledTimes(1);
   });
 
   it("links to the plugin's server Settings when it has servers", () => {

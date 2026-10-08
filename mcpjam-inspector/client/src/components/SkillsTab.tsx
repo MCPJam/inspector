@@ -178,7 +178,10 @@ export function SkillsTab({
   const [pluginSkill, setPluginSkill] = useState<PluginSkillSelection | null>(
     null
   );
-  const [pluginSkillCount, setPluginSkillCount] = useState(0);
+  const [pluginSkills, setPluginSkills] = useState<{
+    count: number;
+    pending: boolean;
+  }>({ count: 0, pending: false });
   const [focusPluginId] = useState(readFocusPluginId);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
@@ -564,8 +567,11 @@ export function SkillsTab({
   const listIsEmpty =
     skills.length === 0 &&
     serverSkills.count === 0 &&
-    (!showPluginSkills || pluginSkillCount === 0);
-  const listIsSettling = fetchingSkills || serverSkills.pending;
+    (!showPluginSkills || pluginSkills.count === 0);
+  const listIsSettling =
+    fetchingSkills ||
+    serverSkills.pending ||
+    (showPluginSkills && pluginSkills.pending);
 
   return (
     <div className="h-full flex flex-col">
@@ -591,7 +597,7 @@ export function SkillsTab({
                 <Badge variant="secondary" className="text-xs font-mono">
                   {skills.length +
                     serverSkills.count +
-                    (showPluginSkills ? pluginSkillCount : 0)}
+                    (showPluginSkills ? pluginSkills.count : 0)}
                 </Badge>
               </div>
               {/* Upload and the Local/Cloud toggle act on the project store,
@@ -681,7 +687,7 @@ export function SkillsTab({
                       selectedSkillId={pluginSkill?.skillId ?? null}
                       focusPluginId={focusPluginId}
                       onOpenSkill={setPluginSkill}
-                      onCountChange={setPluginSkillCount}
+                      onListingChange={setPluginSkills}
                     />
                   ) : null}
                   {/* Placeholders for the WHOLE list, so they render only when
@@ -736,6 +742,7 @@ export function SkillsTab({
                 projectId={projectId}
                 skill={pluginSkill}
                 onDetached={() => void fetchSkills()}
+                onUninstalled={() => setPluginSkill(null)}
               />
             ) : selectedSkillName && selectedSkill ? (
               <>
