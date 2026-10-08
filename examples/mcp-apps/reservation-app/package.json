@@ -27,5 +27,8 @@
     "react-dom": "^19.2.0",
     "vite-plugin-singlefile": "^2.3.0",
     "zod": "^4.3.5"
+  },
+  "overrides": {
+    "source-map-js": "^1.2.2"
   }
 }
