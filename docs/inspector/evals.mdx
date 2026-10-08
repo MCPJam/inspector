@@ -417,6 +417,26 @@ requirements**, because it has no validity phase: its runs are always passed or
 failed, never inconclusive. The row says so rather than showing an inactive
 completion floor the suite has never applied.
 
+### Time & retry limits
+
+Suite settings has a **Time & retry limits** group that lets you author five execution clocks. Every run resolves these from the platform defaults when nothing is authored; an authored value overrides the default for that clock only.
+
+| On screen | What it bounds | Unit | API field |
+| --- | --- | --- | --- |
+| **Per-turn timeout** | How long one assistant turn may take, including the tool steps it drives. | Minutes | `settings.executionBudgets.turnTimeoutMs` |
+| **Per-tool-call timeout** | How long one MCP request may take. A host-pinned per-server override still wins over this. | Seconds | `settings.executionBudgets.toolCallTimeoutMs` |
+| **Per-iteration timeout** | How long one trial may take. A trial that runs out of clock fails alone; its siblings keep going. | Minutes | `settings.executionBudgets.iterationTimeoutMs` |
+| **Whole-run timeout** | A backstop for the whole run. The per-iteration clock is what usually fires first. | Minutes | `settings.executionBudgets.runTimeoutMs` |
+| **Model call retries** | How many times one model call is retried. Never applied to a live stream. | Count | `settings.executionBudgets.turnRetries` |
+
+**Un-authored is not zero.** An empty field shows the platform default it inherits as a placeholder. "No value" means "whatever the platform decides", and the change ledger describes it as "Platform default" rather than printing a number nobody chose.
+
+**Clearing the last authored clock sends `null`**, which resets all clocks to the platform defaults. Omitting the field would silently keep the budget just deleted.
+
+**Platform bounds only.** Each clock has a floor and a ceiling enforced by the platform. The save button refuses values outside those bounds before the request is sent. An organization that lowered its own ceiling is enforced by the server, which names the field and the bound in the error — the client does not know that number.
+
+Over the API, `settings.executionBudgets` on a suite PATCH accepts an object with any subset of the five fields, or `null` to clear all authored budgets. The GET response always includes `settings.executionBudgets` — `null` when nothing is authored, or an object containing only the clocks that have been set.
+
 ### Quality gate
 
 A different question from the pass criteria: not "did this run meet the bar"
