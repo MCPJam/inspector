@@ -39,7 +39,7 @@ import {
   percentToFraction,
 } from "../src/lib/eval-suite-export.js";
 import {
-  deriveFileRunIdempotencyKey,
+  resolveFileRunIdempotencyKey,
   fileCaseToCreateBody,
   fileCaseToUpdateBody,
   looksLikeCreateEvalApiJson,
@@ -1672,6 +1672,7 @@ async function startFileRunFixture(options?: {
    */
   failCreateIndexes?: readonly number[];
   failUpdates?: boolean;
+  failRun?: boolean;
 }): Promise<{
   baseUrl: string;
   authHeaders: string[];
@@ -2056,9 +2057,19 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       runBodies.push(body);
+      if (options?.failRun) {
+        res.statusCode = 503;
+        res.end(
+          JSON.stringify({
+            error: { code: "SERVICE_UNAVAILABLE", message: "fixture offline" },
+          })
+        );
+        return;
+      }
       const key =
         typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
       let runId = runsByKey.get(key);
+      const deduped = Boolean(runId);
       if (!runId) {
         runCounter += 1;
         runId = `run-file-${runCounter}`;
@@ -2070,6 +2081,7 @@ async function startFileRunFixture(options?: {
           runId,
           suiteId: "suite-file-1",
           status: "running",
+          ...(deduped ? { deduped: true } : {}),
           caseUpsert: { committed: [], failed: [] },
           servers: [{ id: "srv-billing", name: "billing" }],
           environment: null,
@@ -2434,6 +2446,7 @@ describe("eval run --file", () => {
         const payload = JSON.parse(run.stdout);
         assert.equal(payload.outcome, "started");
         assert.equal(payload.runId, "run-file-1");
+        assert.equal(payload.idempotencyKey, launched.idempotencyKey);
       });
     } finally {
       await fixture.close();
@@ -2561,6 +2574,12 @@ describe("eval run --file", () => {
           (entry) => JSON.parse(entry.stdout).runId
         );
         assert.deepEqual(ids, ["run-file-1", "run-file-1"]);
+        assert.equal(JSON.parse(first.stdout).targets[0].deduped, undefined);
+        assert.equal(JSON.parse(second.stdout).targets[0].deduped, true);
+        assert.match(
+          second.stderr,
+          /Eval idempotency key: file-key-1/
+        );
         assert.equal(
           (fixture.runBodies[0] as { idempotencyKey: string }).idempotencyKey,
           "file-key-1"
@@ -2575,6 +2594,117 @@ describe("eval run --file", () => {
         // same place: the query string.
         assert.equal(fixture.updateQueries[0]?.declaredSuiteId, "s_billing");
         assert.equal(updated.declaredSuiteId, undefined);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("same file twice without a retry key starts two separate runs", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const argv = runFileArgv(
+          fixture.baseUrl,
+          "--file",
+          file,
+          "--project",
+          "Alpha"
+        );
+        const first = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        const second = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        const firstReceipt = JSON.parse(first.stdout);
+        const secondReceipt = JSON.parse(second.stdout);
+        assert.equal(first.result.exitCode, 0, first.stderr);
+        assert.equal(second.result.exitCode, 0, second.stderr);
+        assert.equal(firstReceipt.runId, "run-file-1");
+        assert.equal(secondReceipt.runId, "run-file-2");
+        assert.notEqual(
+          firstReceipt.idempotencyKey,
+          secondReceipt.idempotencyKey
+        );
+        assert.equal(fixture.runBodies.length, 2);
+        assert.match(
+          first.stderr,
+          new RegExp(`Eval idempotency key: ${firstReceipt.idempotencyKey}`)
+        );
+        assert.match(
+          second.stderr,
+          new RegExp(`Eval idempotency key: ${secondReceipt.idempotencyKey}`)
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("launch errors carry the retry key in JSON details and copy", async () => {
+    const fixture = await startFileRunFixture({ failRun: true });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.notEqual(run.result.exitCode, 0);
+        const errorLine = run.stderr
+          .split("\n")
+          .find((line) => line.startsWith("{"));
+        assert.ok(errorLine, run.stderr);
+        const payload = JSON.parse(errorLine);
+        const key = (fixture.runBodies[0] as { idempotencyKey: string })
+          .idempotencyKey;
+        assert.equal(payload.error.details.idempotencyKey, key);
+        assert.match(payload.error.message, new RegExp(key));
+        assert.match(run.stderr, new RegExp(`Eval idempotency key: ${key}`));
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("human output says when an explicit retry key reused a run", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const argv = runFileArgv(
+          fixture.baseUrl,
+          "--file",
+          file,
+          "--project",
+          "Alpha",
+          "--idempotency-key",
+          "human-replay-key"
+        );
+        const formatIndex = argv.lastIndexOf("--format");
+        argv[formatIndex + 1] = "human";
+        await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        const replay = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        assert.equal(replay.result.exitCode, 0, replay.stderr);
+        assert.match(
+          replay.stderr,
+          /Reused existing eval run run-file-1 \(idempotency key replay\)/
+        );
+        assert.match(
+          replay.stderr,
+          /Eval idempotency key: human-replay-key/
+        );
       });
     } finally {
       await fixture.close();
@@ -2636,7 +2766,7 @@ describe("eval run --file", () => {
     }
   });
 
-  test("--format json is byte-identical across two runs of the same file", async () => {
+  test("JSON receipt marks an explicit-key replay as deduped", async () => {
     const fixture = await startFileRunFixture();
     try {
       await withTempDir(async (dir) => {
@@ -2659,7 +2789,12 @@ describe("eval run --file", () => {
         );
         assert.equal(first.result.exitCode, 0, first.stderr);
         assert.equal(second.result.exitCode, 0, second.stderr);
-        assert.equal(first.stdout, second.stdout);
+        const firstReceipt = JSON.parse(first.stdout);
+        const secondReceipt = JSON.parse(second.stdout);
+        assert.equal(firstReceipt.runId, secondReceipt.runId);
+        assert.equal(firstReceipt.targets[0].deduped, undefined);
+        assert.equal(secondReceipt.targets[0].deduped, true);
+        assert.equal(secondReceipt.idempotencyKey, "stable-json");
       });
     } finally {
       await fixture.close();
@@ -3487,30 +3622,11 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).kind, null);
   });
 
-  test("derived idempotency keys differ when run knobs differ", () => {
-    const shared = {
-      sourceHash: "a".repeat(64),
-      declaredSuiteId: "s_billing",
-      projectId: "proj-alpha",
-      target: { servers: [{ name: "billing" }] },
-    };
-    const one = deriveFileRunIdempotencyKey({
-      ...shared,
-      knobs: { iterations: 1 },
-    });
-    const ten = deriveFileRunIdempotencyKey({
-      ...shared,
-      knobs: { iterations: 10 },
-    });
-    const env = deriveFileRunIdempotencyKey({
-      ...shared,
-      knobs: { environment: ["prod"] },
-    });
-    assert.notEqual(one, ten);
-    assert.notEqual(one, env);
-    assert.equal(
-      deriveFileRunIdempotencyKey({ ...shared, knobs: { iterations: 1 } }),
-      one
-    );
+  test("file runs mint a fresh retry key unless the caller supplies one", () => {
+    const one = resolveFileRunIdempotencyKey();
+    const another = resolveFileRunIdempotencyKey();
+    assert.notEqual(one, another);
+    assert.match(one, /^[0-9a-f-]{36}$/i);
+    assert.equal(resolveFileRunIdempotencyKey("caller-retry-key"), "caller-retry-key");
   });
 });
