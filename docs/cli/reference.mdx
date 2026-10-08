@@ -1599,8 +1599,9 @@ that names `eval create --file`. The converse is also true: `eval create --file`
 on a versioned suite file names `eval run --file`.
 
 Export of a file-owned suite writes `declaredId` as `suite.id`. Export of a
-UI suite still writes the Convex id; running that file back is the ownership
-refusal.
+UI-owned suite derives a stable file identity (`s_export_<sourceSuiteId>`),
+so importing the exported file creates a file-owned clone rather than
+re-claiming the original UI suite.
 
 When the run targets an **attached project environment** (`eval environments
 set`), it executes against that environment's resolved host config, closed
@@ -2253,8 +2254,8 @@ that refuse today include:
 - a pinned sandbox image;
 - automatic LLM-as-judge grading, non-default match options, and an iterations
   floor that raises a case above its own count;
-- a compare-across-models case, a scenario-bound case, and cases that name
-  **different model providers** (a suite file carries one suite-level provider);
+- a compare-across-models case and cases that name **different model providers**
+  (a suite file carries one suite-level provider);
 - `replace`/`extend` check overrides, a case that inherits the suite's checks
   while also carrying its own, and any suite check the predicate contract does
   not recognise;
