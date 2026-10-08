@@ -238,11 +238,11 @@ jobs:
 
       # People and WorkOS see the preview at https://<env>.mcpjam.dev, served
       # by preview-router/. It forwards to exactly mcp-inspector-<env>.up.railway.app
-      # (UPSTREAM_PREFIX/SUFFIX in preview-router/wrangler.jsonc), so fail loudly
-      # if Railway handed this preview a different name.
+      # (UPSTREAM_PREFIX/SUFFIX in preview-router/wrangler.jsonc), so fail the
+      # job if Railway handed this preview a different name or none. The comment
+      # steps run under always() and still report the failure.
       - name: Read preview public domain
         id: preview_domain
-        continue-on-error: true
         env:
           PREVIEW_ENV: ${{ steps.meta.outputs.environment }}
         run: |
@@ -251,14 +251,12 @@ jobs:
             --environment "$PREVIEW_ENV" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [ -n "$DOMAIN" ]; then
-            if [ "$DOMAIN" != "mcp-inspector-${PREVIEW_ENV}.up.railway.app" ]; then
-              echo "::error::Railway named this preview '$DOMAIN', but the preview router only forwards to mcp-inspector-${PREVIEW_ENV}.up.railway.app — set that as the service domain in Railway"
-              exit 1
-            fi
-            echo "railway_url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-            echo "url=https://${PREVIEW_ENV}.mcpjam.dev" >> "$GITHUB_OUTPUT"
+          if [ "$DOMAIN" != "mcp-inspector-${PREVIEW_ENV}.up.railway.app" ]; then
+            echo "::error::Railway named this preview '${DOMAIN:-<no public domain>}', but the preview router only forwards to mcp-inspector-${PREVIEW_ENV}.up.railway.app — set that as the service domain in Railway"
+            exit 1
           fi
+          echo "railway_url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
+          echo "url=https://${PREVIEW_ENV}.mcpjam.dev" >> "$GITHUB_OUTPUT"
 
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
@@ -558,11 +556,11 @@ jobs:
 
       # People and WorkOS see the preview at https://<env>.mcpjam.dev, served
       # by preview-router/. It forwards to exactly mcp-inspector-<env>.up.railway.app
-      # (UPSTREAM_PREFIX/SUFFIX in preview-router/wrangler.jsonc), so fail loudly
-      # if Railway handed this preview a different name.
+      # (UPSTREAM_PREFIX/SUFFIX in preview-router/wrangler.jsonc), so fail the
+      # job if Railway handed this preview a different name or none. The comment
+      # steps run under always() and still report the failure.
       - name: Read preview public domain
         id: preview_domain
-        continue-on-error: true
         env:
           PREVIEW_ENV: ${{ steps.meta.outputs.environment }}
         run: |
@@ -571,14 +569,12 @@ jobs:
             --environment "$PREVIEW_ENV" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [ -n "$DOMAIN" ]; then
-            if [ "$DOMAIN" != "mcp-inspector-${PREVIEW_ENV}.up.railway.app" ]; then
-              echo "::error::Railway named this preview '$DOMAIN', but the preview router only forwards to mcp-inspector-${PREVIEW_ENV}.up.railway.app — set that as the service domain in Railway"
-              exit 1
-            fi
-            echo "railway_url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-            echo "url=https://${PREVIEW_ENV}.mcpjam.dev" >> "$GITHUB_OUTPUT"
+          if [ "$DOMAIN" != "mcp-inspector-${PREVIEW_ENV}.up.railway.app" ]; then
+            echo "::error::Railway named this preview '${DOMAIN:-<no public domain>}', but the preview router only forwards to mcp-inspector-${PREVIEW_ENV}.up.railway.app — set that as the service domain in Railway"
+            exit 1
           fi
+          echo "railway_url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
+          echo "url=https://${PREVIEW_ENV}.mcpjam.dev" >> "$GITHUB_OUTPUT"
 
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
@@ -981,11 +977,11 @@ jobs:
 
       # People and WorkOS see the preview at https://<env>.mcpjam.dev, served
       # by preview-router/. It forwards to exactly mcp-inspector-<env>.up.railway.app
-      # (UPSTREAM_PREFIX/SUFFIX in preview-router/wrangler.jsonc), so fail loudly
-      # if Railway handed this preview a different name.
+      # (UPSTREAM_PREFIX/SUFFIX in preview-router/wrangler.jsonc), so fail the
+      # job if Railway handed this preview a different name or none. The comment
+      # steps run under always() and still report the failure.
       - name: Read preview public domain
         id: preview_domain
-        continue-on-error: true
         env:
           PREVIEW_ENV: ${{ github.event.client_payload.inspector_environment }}
         run: |
@@ -994,14 +990,12 @@ jobs:
             --environment "$PREVIEW_ENV" \
             --service "$RAILWAY_INSPECTOR_SERVICE" \
             printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [ -n "$DOMAIN" ]; then
-            if [ "$DOMAIN" != "mcp-inspector-${PREVIEW_ENV}.up.railway.app" ]; then
-              echo "::error::Railway named this preview '$DOMAIN', but the preview router only forwards to mcp-inspector-${PREVIEW_ENV}.up.railway.app — set that as the service domain in Railway"
-              exit 1
-            fi
-            echo "railway_url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-            echo "url=https://${PREVIEW_ENV}.mcpjam.dev" >> "$GITHUB_OUTPUT"
+          if [ "$DOMAIN" != "mcp-inspector-${PREVIEW_ENV}.up.railway.app" ]; then
+            echo "::error::Railway named this preview '${DOMAIN:-<no public domain>}', but the preview router only forwards to mcp-inspector-${PREVIEW_ENV}.up.railway.app — set that as the service domain in Railway"
+            exit 1
           fi
+          echo "railway_url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
+          echo "url=https://${PREVIEW_ENV}.mcpjam.dev" >> "$GITHUB_OUTPUT"
 
       - name: Refresh preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
