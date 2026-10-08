@@ -1908,7 +1908,7 @@ async function handleTurn(c: Context): Promise<Response> {
           if (!hidden.ok) {
             return v1Error(
               c,
-              hidden.status === 409 ? "CONFLICT" : "INTERNAL_ERROR",
+              hidden.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
               hidden.message,
               { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
             );
