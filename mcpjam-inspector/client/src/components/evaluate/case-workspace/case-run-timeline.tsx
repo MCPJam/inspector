@@ -357,15 +357,15 @@ export function CaseRunTimeline({
       </div>
       <div className="overflow-x-auto rounded-lg border border-border bg-background text-foreground">
         <div className="min-w-[850px]">
-          <div className="grid grid-cols-[52px_64px_minmax(160px,1fr)_minmax(150px,1fr)_80px_80px_80px_52px] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className="grid grid-cols-[52px_64px_minmax(150px,1fr)_80px_80px_80px_52px_minmax(160px,1fr)] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <span>Run</span>
             <span>Iteration</span>
-            <span>Date</span>
             <span>Client / Model</span>
             <span>Result</span>
             <span>Latency</span>
             <span>Tokens</span>
             <span>Calls</span>
+            <span>Date</span>
           </div>
           {(showPendingRun ? [null, ...filtered] : filtered).map((it) => {
             const result = it ? computeIterationResult(it) : "pending";
@@ -393,7 +393,7 @@ export function CaseRunTimeline({
                     else onSelectLive?.();
                     setDrawerOpen(true);
                   }}
-                  className="grid w-full grid-cols-[52px_64px_minmax(160px,1fr)_minmax(150px,1fr)_80px_80px_80px_52px] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
+                  className="grid w-full grid-cols-[52px_64px_minmax(150px,1fr)_80px_80px_80px_52px_minmax(160px,1fr)] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
                 >
                   <span
                     className="truncate font-medium"
@@ -417,19 +417,6 @@ export function CaseRunTimeline({
                       {it?.iterationNumber ??
                         (it ? filtered.indexOf(it) + 1 : filtered.length + 1)}
                     </span>
-                  </span>
-                  <span
-                    className="truncate text-muted-foreground"
-                    data-testid="case-run-date"
-                    title={it ? formatTime(it.createdAt) : undefined}
-                  >
-                    {it ? (
-                      <time dateTime={new Date(it.createdAt).toISOString()}>
-                        {formatTime(it.createdAt)}
-                      </time>
-                    ) : (
-                      "just now"
-                    )}
                   </span>
                   <span
                     className="min-w-0"
@@ -480,6 +467,19 @@ export function CaseRunTimeline({
                   </span>
                   <span className="tabular-nums text-muted-foreground">
                     {it ? (it.actualToolCalls?.length ?? "—") : "—"}
+                  </span>
+                  <span
+                    className="truncate text-muted-foreground"
+                    data-testid="case-run-date"
+                    title={it ? formatTime(it.createdAt) : undefined}
+                  >
+                    {it ? (
+                      <time dateTime={new Date(it.createdAt).toISOString()}>
+                        {formatTime(it.createdAt)}
+                      </time>
+                    ) : (
+                      "just now"
+                    )}
                   </span>
                 </button>
               </div>

@@ -157,10 +157,12 @@ describe("CaseRunTimeline", () => {
     </CaseRunTimeline>);
     expect(screen.getByText("Run", { exact: true })).toBeVisible();
     expect(screen.getByText("Date", { exact: true })).toBeVisible();
+    expect(screen.getByText("Date", { exact: true }).parentElement?.lastElementChild).toBe(screen.getByText("Date", { exact: true }));
     for (const [index, row] of screen.getAllByTestId("case-run-row").entries()) {
       expect(within(row).getByTestId("case-run-number")).toHaveTextContent(/^#7$/);
       expect(within(row).getByText("#1", { exact: true })).toBeVisible();
       const date = within(row).getByTestId("case-run-date");
+      expect(row.lastElementChild).toBe(date);
       expect(date).toHaveTextContent(new Date(trials[index].createdAt).toLocaleString());
       expect(date.querySelector("time")).toHaveAttribute("datetime", new Date(trials[index].createdAt).toISOString());
     }
