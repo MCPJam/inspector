@@ -917,7 +917,7 @@ describe("createXAAStateMachine", () => {
         reasonCode: "not_assigned",
       });
       expect(state.currentStep).toBe("token_exchange_request");
-      expect(state.error).toBe("not_assigned");
+      expect(state.error).toBe("access_denied: not_assigned");
       expect(state.idJag).toBeUndefined();
     });
 
@@ -1067,6 +1067,8 @@ describe("createXAAStateMachine", () => {
       registrationId?: string;
       failTokenProxy?: boolean;
       negativeTestMode?: XAAFlowState["negativeTestMode"];
+      /** Response for the authenticated MCP request; defaults to a valid initialize result. */
+      mcpResult?: () => any;
     }) {
       let state: XAAFlowState = createInitialXAAFlowState({
         serverUrl: "https://mcp.example.com",
@@ -1123,6 +1125,10 @@ describe("createXAAStateMachine", () => {
               },
               ok: true,
             };
+          }
+
+          if (options.mcpResult) {
+            return options.mcpResult();
           }
 
           return {
@@ -1276,6 +1282,29 @@ describe("createXAAStateMachine", () => {
           (entry) => entry.step === "token_exchange_request"
         )
       ).toBe(true);
+    });
+
+    it("surfaces the server's JSON-RPC error message when the authenticated MCP request is rejected", async () => {
+      const { machine, getStateSnapshot } = buildRunnerHarness({
+        registrationId: "app_1",
+        mcpResult: () => ({
+          status: 404,
+          statusText: "Not Found",
+          headers: {},
+          body: {
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            error: { code: -32001, message: "Session not found" },
+          },
+          ok: false,
+        }),
+      });
+
+      await machine.runAll();
+
+      const final = getStateSnapshot();
+      expect(final.currentStep).toBe("authenticated_mcp_request");
+      expect(final.error).toBe("Session not found");
     });
 
     it("treats a rejection in a negative-test mode as the expected outcome, not an error", async () => {
@@ -2921,6 +2950,38 @@ describe("createXAAStateMachine discovery guards", () => {
     await machine.runAll();
     expect(getState().currentStep).toBe("discover_resource_metadata");
     expect(getState().error).toBe("Resource metadata request failed with 404");
+  });
+
+  it("surfaces the message nested under a failure body's error object", async () => {
+    const { machine, getState } = driveDiscovery(async () => ({
+      status: 404,
+      statusText: "",
+      headers: {},
+      body: {
+        error: {
+          code: 404,
+          message: "Requested entity was not found.",
+          status: "NOT_FOUND",
+        },
+      },
+      ok: false,
+    }));
+    await machine.runAll();
+    expect(getState().currentStep).toBe("discover_resource_metadata");
+    expect(getState().error).toBe("Requested entity was not found.");
+  });
+
+  it("skips a whitespace-only error field in favour of the message that follows it", async () => {
+    const { machine, getState } = driveDiscovery(async () => ({
+      status: 404,
+      statusText: "",
+      headers: {},
+      body: { error: "   ", message: "Real message" },
+      ok: false,
+    }));
+    await machine.runAll();
+    expect(getState().currentStep).toBe("discover_resource_metadata");
+    expect(getState().error).toBe("Real message");
   });
 
   it("treats a trailing slash and query as part of the resource identity", async () => {
