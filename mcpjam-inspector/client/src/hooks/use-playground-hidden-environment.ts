@@ -185,6 +185,16 @@ export function usePlaygroundHiddenEnvironment(
   compositionRef.current = composition;
   const compositionKey =
     composition && composition !== "loading" ? composition.key : null;
+  // Moves on every time the composition's key does, including through
+  // "nothing composed". A key alone cannot tell an A→B→A switch from no
+  // switch at all; this can.
+  const keyEpochRef = useRef({ key: compositionKey, epoch: 0 });
+  if (keyEpochRef.current.key !== compositionKey) {
+    keyEpochRef.current = {
+      key: compositionKey,
+      epoch: keyEpochRef.current.epoch + 1,
+    };
+  }
 
   const ensureAdhocEnvironment = useEnsureAdhocEnvironment();
   const ensureRef = useRef(ensureAdhocEnvironment);
@@ -246,6 +256,20 @@ export function usePlaygroundHiddenEnvironment(
   const recover = useCallback(async (): Promise<HiddenEnvironmentRecovery> => {
     const target = compositionRef.current;
     if (!target || target === "loading") return { ok: false };
+    const epoch = keyEpochRef.current.epoch;
+    // The client or the plugin set changed while this was in flight. Its
+    // answer is for a composition the chat no longer has: writing it would
+    // overwrite the newer one's state, and replaying onto it would send the
+    // turn to the previous client's environment.
+    const superseded = () => {
+      const now = compositionRef.current;
+      return (
+        !now ||
+        now === "loading" ||
+        now.key !== target.key ||
+        keyEpochRef.current.epoch !== epoch
+      );
+    };
     try {
       // A fresh read, not the subscription's last answer: the refusal says
       // the plugins changed, and the reactive copy may not have caught up.
@@ -261,6 +285,7 @@ export function usePlaygroundHiddenEnvironment(
         fresh?.enabled === true && Array.isArray(fresh.plugins)
           ? fresh.plugins
           : [];
+      if (superseded()) return { ok: false };
       const versionIds = runnablePluginVersionIds(rows);
       if (versionIds.length === 0) {
         setComposed({ key: target.key, status: "none" });
@@ -268,6 +293,7 @@ export function usePlaygroundHiddenEnvironment(
       }
       const serverIds = runnablePluginServerIds(rows);
       const environmentId = await ensureFor(target, versionIds);
+      if (superseded()) return { ok: false };
       // Held under the CURRENT key until the subscription moves on, at which
       // point the ordinary composition above takes over again.
       setComposed({
