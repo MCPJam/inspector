@@ -74,8 +74,10 @@ describe("CaseRunTimeline", () => {
       "text-foreground",
     );
     expect(
-      screen.getAllByTestId("case-run-row")[0].closest(".overflow-x-auto"),
+      screen.getByTestId("case-run-table"),
     ).toHaveClass("bg-background", "text-foreground");
+    expect(screen.getByTestId("case-run-table")).not.toHaveClass("overflow-x-auto");
+    expect(screen.getByTestId("case-run-table").firstElementChild).toHaveClass("min-w-0", "w-full");
     expect(screen.getByText("Iteration").parentElement).toHaveClass("bg-muted");
     await user.click(
       screen.getByRole("button", { name: "ChatGPT · actual-b", exact: true }),

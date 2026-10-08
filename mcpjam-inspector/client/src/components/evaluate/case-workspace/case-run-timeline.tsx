@@ -286,7 +286,7 @@ export function CaseRunTimeline({
   };
   return (
     <section
-      className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4"
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4"
       aria-label="Case runs"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -300,7 +300,7 @@ export function CaseRunTimeline({
               aria-pressed={!selectedTargetKey}
               onClick={() => setTargetKey(null)}
               className={cn(
-                "h-7 rounded-full border px-2.5 text-xs transition-colors",
+                "min-h-7 min-w-0 max-w-full break-words rounded-full border px-2.5 py-1 text-xs transition-colors",
                 !selectedTargetKey
                   ? "border-border bg-muted font-medium text-foreground"
                   : "border-border bg-background text-muted-foreground hover:text-foreground",
@@ -316,7 +316,7 @@ export function CaseRunTimeline({
               aria-pressed={target.key === selectedTargetKey}
               onClick={() => setTargetKey(target.key)}
               className={cn(
-                "h-7 rounded-full border px-2.5 text-xs transition-colors",
+                "min-h-7 min-w-0 max-w-full break-words rounded-full border px-2.5 py-1 text-xs transition-colors",
                 target.key === selectedTargetKey
                   ? "border-border bg-muted font-medium text-foreground"
                   : "border-border bg-background text-muted-foreground hover:text-foreground",
@@ -375,17 +375,20 @@ export function CaseRunTimeline({
           </div>
         ))}
       </div>
-      <div className="overflow-x-auto rounded-lg border border-border bg-background text-foreground">
-        <div className="min-w-[850px]">
-          <div className="grid grid-cols-[52px_64px_minmax(150px,1fr)_80px_80px_80px_52px_minmax(160px,1fr)] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            <span>Run</span>
-            <span>Iteration</span>
-            <span>Client / Model</span>
-            <span>Result</span>
-            <span>Latency</span>
-            <span>Tokens</span>
-            <span>Calls</span>
-            <span>Date</span>
+      <div
+        className="min-w-0 w-full rounded-lg border border-border bg-background text-foreground"
+        data-testid="case-run-table"
+      >
+        <div className="min-w-0 w-full">
+          <div className="grid grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,1.4fr)] gap-2 border-b border-border bg-muted px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="min-w-0 break-words">Run</span>
+            <span className="min-w-0 break-words">Iteration</span>
+            <span className="min-w-0 break-words">Client / Model</span>
+            <span className="min-w-0 break-words">Result</span>
+            <span className="min-w-0 break-words">Latency</span>
+            <span className="min-w-0 break-words">Tokens</span>
+            <span className="min-w-0 break-words">Calls</span>
+            <span className="min-w-0 break-words">Date</span>
           </div>
           {(showPendingRun ? [null, ...filtered] : filtered).map((it) => {
             const result = it ? computeIterationResult(it) : "pending";
@@ -413,7 +416,7 @@ export function CaseRunTimeline({
                     else onSelectLive?.();
                     setDrawerOpen(true);
                   }}
-                  className="grid w-full grid-cols-[52px_64px_minmax(150px,1fr)_80px_80px_80px_52px_minmax(160px,1fr)] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
+                  className="grid w-full grid-cols-[minmax(0,.55fr)_minmax(0,.85fr)_minmax(0,1.6fr)_minmax(0,.95fr)_repeat(3,minmax(0,.75fr))_minmax(0,1.4fr)] items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/30"
                 >
                   <span
                     className="truncate font-medium"
@@ -467,7 +470,7 @@ export function CaseRunTimeline({
                             ? "Stopped"
                             : "Running"}
                   </span>
-                  <span className="tabular-nums text-muted-foreground">
+                  <span className="min-w-0 truncate tabular-nums text-muted-foreground">
                     {/* Same reading the P50/P95 cards above are built from,
                         and the same one the run matrix shows per iteration —
                         `duration()` reported a latency for iterations the
@@ -476,20 +479,20 @@ export function CaseRunTimeline({
                       ? formatRunCaseLatencyMs(iterationLatencyP95([it]))
                       : "—"}
                   </span>
-                  <span className="tabular-nums text-muted-foreground">
+                  <span className="min-w-0 truncate tabular-nums text-muted-foreground">
                     {it &&
                     result !== "pending" &&
                     typeof it.tokensUsed === "number"
                       ? compactMetric(it.tokensUsed)
                       : "—"}
                   </span>
-                  <span className="tabular-nums text-muted-foreground">
+                  <span className="min-w-0 truncate tabular-nums text-muted-foreground">
                     {it && result !== "pending"
                       ? (it.actualToolCalls?.length ?? "—")
                       : "—"}
                   </span>
                   <span
-                    className="truncate text-muted-foreground"
+                    className="min-w-0 break-words text-muted-foreground"
                     data-testid="case-run-date"
                     title={it ? formatTime(it.createdAt) : undefined}
                   >
