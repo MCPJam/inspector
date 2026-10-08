@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-08
+
+#### Added
+
+- **`OPERATION_FEATURES`, `isOperationAvailable`, and `disabledOperations` in `@mcpjam/sdk/platform`** — `@mcpjam/sdk/platform` now declares which platform feature each operation belongs to. `OPERATION_FEATURES` maps every operation (deprecated aliases included) to its feature key, or `null` when the operation is always available. Given the feature availability the platform reports, `isOperationAvailable(name, features)` says whether a single operation is available, and `disabledOperations(features)` returns the full list of operations the caller cannot use. Both fail closed: a feature not reported as `true` counts as off, and an operation the SDK does not know is unavailable. `PLATFORM_FEATURES` provides a short human-readable label for each feature key. Use these to build a tool list that advertises only what the caller's organization can actually use, rather than advertising every operation and receiving a `403 FEATURE_UNAVAILABLE` at call time.
+
 ### 2026-10-07
 
 #### Added
