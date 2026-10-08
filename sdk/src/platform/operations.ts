@@ -4391,6 +4391,7 @@ export type RunEvalTargetResult =
       host?: { id: string; name: string };
       runId: string;
       runStatus: string;
+      deduped?: boolean;
       servers?: Array<{ id: string; name?: string }>;
       caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
     }
@@ -4418,6 +4419,8 @@ export type RunEvalSuiteResult = {
   outcome: "started" | "partial" | "failed";
   startedCount: number;
   failedCount: number;
+  /** Retry handle used for this launch, when the caller supplied or minted one. */
+  idempotencyKey?: string;
   /** Set only on a grouped launch. Sibling runs share it. */
   runGroupId?: string;
   /**
@@ -4841,6 +4844,9 @@ export const runEvalSuiteOperation: PlatformOperation<
         outcome: "started",
         startedCount: 1,
         failedCount: 0,
+        ...(typeof input.idempotencyKey === "string"
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
         ...(disclosure ? { disclosure } : {}),
         ...(composed ? { composed: composed.report } : {}),
         targets: [
@@ -4850,6 +4856,7 @@ export const runEvalSuiteOperation: PlatformOperation<
             ...(host ? { host } : {}),
             runId: created.runId,
             runStatus: created.status,
+            ...(created.deduped === true ? { deduped: true } : {}),
             servers,
             caseUpsert: created.caseUpsert,
           },
@@ -4918,6 +4925,7 @@ export const runEvalSuiteOperation: PlatformOperation<
         ...(host ? { host } : {}),
         runId: entry.runId,
         runStatus: entry.runStatus,
+        ...(entry.deduped === true ? { deduped: true } : {}),
         ...(entry.servers ? { servers: entry.servers } : {}),
         ...(entry.caseUpsert ? { caseUpsert: entry.caseUpsert } : {}),
       };
@@ -4937,6 +4945,9 @@ export const runEvalSuiteOperation: PlatformOperation<
       startedCount: group.startedCount,
       failedCount: group.failedCount,
       runGroupId: group.runGroupId,
+      ...(typeof input.idempotencyKey === "string"
+        ? { idempotencyKey: input.idempotencyKey }
+        : {}),
       ...(disclosure ? { disclosure } : {}),
       ...(composed ? { composed: composed.report } : {}),
       targets,

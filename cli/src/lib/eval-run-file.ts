@@ -8,9 +8,8 @@
  * offline and still exits 1 for a contract-invalid file.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
-  canonicalDigest,
   declareEvalSuiteFileValidity,
   formatSuiteFileFindings,
   loadEvalSuiteFile,
@@ -45,7 +44,7 @@ import {
   suiteDetailFromWire,
   type EvalVocabulary,
 } from "./eval-vocabulary.js";
-import { cliError, usageError } from "./output.js";
+import { CliError, cliError, normalizeCliError, usageError } from "./output.js";
 
 /** Hosted runs refuse more than this many iterations — named, not clamped. */
 export const HOSTED_ITERATIONS_CAP = 10;
@@ -922,52 +921,19 @@ export type EvalRunFileKnobs = {
 export const MAX_APPROVAL_REASON_LENGTH = 500;
 
 /**
- * File-run idempotency covers the bytes AND every knob that changes what
- * launches. Same file + `--iterations 1` vs `--iterations 10` must not
- * collapse onto one run.
+ * A CLI invocation is a fresh run by default. An explicit key is the caller's
+ * signal that this invocation is retrying the same launch after a lost reply.
  */
-export function deriveFileRunIdempotencyKey(params: {
-  sourceHash: string;
-  declaredSuiteId: string;
-  projectId: string;
-  target: unknown;
-  knobs: EvalRunFileKnobs;
-  fileEnvironment?: string;
-}): string {
-  if (params.knobs.idempotencyKey) return params.knobs.idempotencyKey;
-  return canonicalDigest({
-    sourceHash: params.sourceHash,
-    declaredSuiteId: params.declaredSuiteId,
-    project: params.projectId,
-    target: params.target,
-    servers: params.knobs.server ?? null,
-    environments:
-      params.knobs.environment ??
-      (params.fileEnvironment ? [params.fileEnvironment] : null),
-    hosts: params.knobs.host ?? null,
-    allTargets: params.knobs.allTargets === true,
-    // The digest KEY keeps its original spelling: it is an idempotency payload,
-    // and renaming it would re-key every file run ever launched.
-    repetitions: params.knobs.iterations ?? params.knobs.repetitions ?? null,
-    cases: params.knobs.case ?? null,
-    excludeSkills: params.knobs.excludeSkills === true,
-    refreshSnapshot: params.knobs.refreshSnapshot === true,
-    minPassRate: params.knobs.minPassRate ?? null,
-    matchOptions: params.knobs.matchOptions ?? null,
-    compose: params.knobs.compose ?? null,
-    // AUTHORED ids, sorted — not the hosted row ids the sync happened to
-    // return. Two equivalent syncs of the same file can land on different
-    // hosted ids, and keying on those would make the same run with the same
-    // approvals look like a different run on a re-sync. Sorted so `--allow-
-    // approximated a --allow-approximated b` and the reverse are one key: flag
-    // ORDER is not a property of the run.
-    approvals: params.knobs.approvals
-      ? {
-          cases: [...params.knobs.approvals.cases].sort(),
-          reason: params.knobs.approvals.reason,
-        }
-      : null,
-  });
+export function resolveFileRunIdempotencyKey(
+  idempotencyKey?: string
+): string {
+  if (idempotencyKey) return idempotencyKey;
+  // Idempotency means “this is the same request again,” not “same settings at
+  // some later point.” A content-derived key made an ordinary second CLI
+  // invocation silently return a potentially stale verdict. Callers retrying
+  // a request whose response was lost can opt into replay with
+  // --idempotency-key; every other invocation gets a distinct run.
+  return randomUUID();
 }
 
 function selectEnabledRunCases(
@@ -1028,6 +994,7 @@ export async function executeEvalRunFromFile(
     signal: AbortSignal;
     onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
     onDisclosureUnavailable?: (reason: string) => void;
+    onIdempotencyKey?: (key: string) => void;
   },
   params: {
     source: { text: string; bytes: number; buffer: Uint8Array };
@@ -1241,58 +1208,77 @@ export async function executeEvalRunFromFile(
     enabledCases: syncedCases.enabledCases,
   });
 
-  const idempotencyKey = deriveFileRunIdempotencyKey({
-    sourceHash,
-    declaredSuiteId: authored.suite.id,
-    projectId: project.id,
-    target: authored.target,
-    knobs,
-    fileEnvironment,
-  });
+  const idempotencyKey = resolveFileRunIdempotencyKey(knobs.idempotencyKey);
 
-  return runEvalSuiteOperation.execute(
-    {
-      project: project.id,
-      suite: synced.suite.id,
-      sourceHash,
-      idempotencyKey,
-      ...(knobs.server ? { servers: knobs.server } : {}),
-      ...(knobs.environment?.length === 1
-        ? { environment: knobs.environment[0] }
-        : knobs.environment?.length
-        ? { environments: knobs.environment }
-        : fileEnvironment
-        ? { environment: fileEnvironment }
-        : {}),
-      ...(knobs.host?.length === 1
-        ? { host: knobs.host[0] }
-        : knobs.host?.length
-        ? { hosts: knobs.host }
-        : fileHosts?.length === 1
-        ? { host: fileHosts[0] }
-        : fileHosts?.length
-        ? { hosts: fileHosts }
-        : {}),
-      ...(knobs.allTargets ? { allAttached: true } : {}),
-      ...(knobs.iterations !== undefined || knobs.repetitions !== undefined
-        ? { iterations: knobs.iterations ?? knobs.repetitions }
-        : {}),
-      cases: runCases,
-      ...(knobs.excludeSkills ? { excludeSkills: true } : {}),
-      ...(knobs.refreshSnapshot ? { refreshSnapshot: true } : {}),
-      ...(knobs.notes !== undefined ? { notes: knobs.notes } : {}),
-      ...(knobs.minPassRate !== undefined
-        ? { minPassRate: knobs.minPassRate }
-        : {}),
-      ...(knobs.matchOptions ? { matchOptions: knobs.matchOptions } : {}),
-      ...(knobs.compose ? { compose: knobs.compose } : {}),
-      ...(importApprovals ? { importApprovals } : {}),
-    },
-    {
-      client: negotiated.client,
-      signal: context.signal,
-      onDisclosure: context.onDisclosure,
-      onDisclosureUnavailable: context.onDisclosureUnavailable,
-    }
-  );
+  // Keep the retry handle visible if the network drops after the launch. It
+  // goes to stderr so JSON and reporter output on stdout stays valid.
+  context.onIdempotencyKey?.(idempotencyKey);
+  let result: RunEvalSuiteResult;
+  try {
+    result = await runEvalSuiteOperation.execute(
+      {
+        project: project.id,
+        suite: synced.suite.id,
+        sourceHash,
+        idempotencyKey,
+        ...(knobs.server ? { servers: knobs.server } : {}),
+        ...(knobs.environment?.length === 1
+          ? { environment: knobs.environment[0] }
+          : knobs.environment?.length
+          ? { environments: knobs.environment }
+          : fileEnvironment
+          ? { environment: fileEnvironment }
+          : {}),
+        ...(knobs.host?.length === 1
+          ? { host: knobs.host[0] }
+          : knobs.host?.length
+          ? { hosts: knobs.host }
+          : fileHosts?.length === 1
+          ? { host: fileHosts[0] }
+          : fileHosts?.length
+          ? { hosts: fileHosts }
+          : {}),
+        ...(knobs.allTargets ? { allAttached: true } : {}),
+        ...(knobs.iterations !== undefined || knobs.repetitions !== undefined
+          ? { iterations: knobs.iterations ?? knobs.repetitions }
+          : {}),
+        cases: runCases,
+        ...(knobs.excludeSkills ? { excludeSkills: true } : {}),
+        ...(knobs.refreshSnapshot ? { refreshSnapshot: true } : {}),
+        ...(knobs.notes !== undefined ? { notes: knobs.notes } : {}),
+        ...(knobs.minPassRate !== undefined
+          ? { minPassRate: knobs.minPassRate }
+          : {}),
+        ...(knobs.matchOptions ? { matchOptions: knobs.matchOptions } : {}),
+        ...(knobs.compose ? { compose: knobs.compose } : {}),
+        ...(importApprovals ? { importApprovals } : {}),
+      },
+      {
+        client: negotiated.client,
+        signal: context.signal,
+        onDisclosure: context.onDisclosure,
+        onDisclosureUnavailable: context.onDisclosureUnavailable,
+      }
+    );
+  } catch (error) {
+    const normalized = normalizeCliError(error);
+    const details =
+      normalized.details &&
+      typeof normalized.details === "object" &&
+      !Array.isArray(normalized.details)
+        ? { ...normalized.details, idempotencyKey }
+        : {
+            idempotencyKey,
+            ...(normalized.details !== undefined
+              ? { cause: normalized.details }
+              : {}),
+          };
+    throw new CliError(
+      normalized.code,
+      `${normalized.message}\nRetry this launch with --idempotency-key ${idempotencyKey}.`,
+      normalized.exitCode,
+      details
+    );
+  }
+  return { ...result, idempotencyKey };
 }

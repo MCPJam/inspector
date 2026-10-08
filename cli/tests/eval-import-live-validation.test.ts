@@ -1574,7 +1574,7 @@ describe("eval run --file --allow-approximated", () => {
     }
   });
 
-  test("the approvals change the run's idempotency key, and flag order does not", async () => {
+  test("each file invocation gets a fresh key and approval flag order is normalized", async () => {
     const fixture = await startFixture();
     try {
       await withSuiteFile(APPROVAL_SUITE, async (file) => {
@@ -1610,13 +1610,24 @@ describe("eval run --file --allow-approximated", () => {
           (body) => (body as { idempotencyKey: string }).idempotencyKey
         );
         assert.equal(keys.length, 4);
-        // Approving something is a different run from not approving it.
-        assert.notEqual(keys[0], keys[1]);
-        // …but the ORDER the flags were typed in is not a property of the run.
-        assert.equal(keys[1], keys[2]);
-        // The reason is part of the decision, so a different reason is a
-        // different run rather than a dedupe onto the first one's receipt.
-        assert.notEqual(keys[1], keys[3]);
+        assert.equal(new Set(keys).size, 4);
+        const approvals = fixture.runBodies.map(
+          (body) =>
+            (body as { importApprovals?: unknown }).importApprovals ?? null
+        );
+        // The request semantics are independent of the order CLI flags were
+        // typed in, even though each invocation has its own retry key.
+        const canonicalApprovals = (value: unknown) =>
+          Array.isArray(value)
+            ? [...value].sort((left, right) =>
+                String(left.testCaseId).localeCompare(String(right.testCaseId))
+              )
+            : value;
+        assert.deepEqual(
+          canonicalApprovals(approvals[1]),
+          canonicalApprovals(approvals[2])
+        );
+        assert.notDeepEqual(approvals[1], approvals[3]);
       });
     } finally {
       await fixture.close();
