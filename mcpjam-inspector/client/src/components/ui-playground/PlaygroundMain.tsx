@@ -2790,14 +2790,21 @@ export function PlaygroundMain({
     }
     for (const notice of pluginNotices) showPluginNotice(chatSessionId, notice);
   }, [chatSessionId, sentUserTurns, pluginNotices]);
-  // Compare columns each run a plain client turn: say so once.
+  // Compare columns each run a plain client turn: say so once per comparison.
+  // Keyed by the chat and by the compare lanes' generation, which a new or
+  // cleared chat moves on, so every later comparison in the tab says it too.
   useEffect(() => {
     if (!isCompareMode || !hiddenEnvironment.wanted) return;
-    showPluginNotice(`compare:${convexProjectId ?? ""}`, {
-      kind: "off",
-      reason: "compare",
-    });
-  }, [isCompareMode, hiddenEnvironment.wanted, convexProjectId]);
+    showPluginNotice(
+      `${chatSessionId}:compare:${multiModelSessionGeneration}`,
+      { kind: "off", reason: "compare" },
+    );
+  }, [
+    isCompareMode,
+    hiddenEnvironment.wanted,
+    chatSessionId,
+    multiModelSessionGeneration,
+  ]);
 
   useEffect(() => {
     if (isMultiModelMode && modelCompareCards[0]) {
