@@ -59,6 +59,21 @@ describe("update failure reporting", () => {
     reportUpdateFailure(JSON.parse(JSON.stringify(attempt)), "install_threw");
     expect(mocks.capture).toHaveBeenCalledTimes(1);
   });
+  it("keeps only an opaque user ID and its actor kind", () => {
+    reportUpdateFailure(newAttempt("3.10.0"), "updater_error");
+    const event = mocks.processors[0]({
+      ...mocks.capture.mock.calls[0][0],
+      user: {
+        id: "user_A",
+        email: "private@example.com",
+        data: { token: "private" },
+      },
+      tags: { actor_kind: "signedIn", secret: "private" },
+    });
+    expect(event.user).toEqual({ id: "user_A" });
+    expect(event.tags.actor_kind).toBe("signedIn");
+    expect(JSON.stringify(event)).not.toContain("private");
+  });
   it("bounds a never-ending flush", async () => {
     vi.useFakeTimers();
     mocks.flush.mockImplementation(() => new Promise(() => {}));

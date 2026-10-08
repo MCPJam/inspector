@@ -1,0 +1,35 @@
+name: Preview cleanup checks
+
+on:
+  pull_request:
+    paths:
+      - .github/scripts/preview-cleanup.test.mjs
+      - .github/scripts/railway-env.sh
+      - .github/scripts/reap-preview-envs.sh
+      - .github/workflows/preview-close.yml
+      - .github/workflows/pr-preview.yml
+      - .github/workflows/preview-cleanup-checks.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/scripts/preview-cleanup.test.mjs
+      - .github/scripts/railway-env.sh
+      - .github/scripts/reap-preview-envs.sh
+      - .github/workflows/preview-close.yml
+      - .github/workflows/pr-preview.yml
+      - .github/workflows/preview-cleanup-checks.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node --test .github/scripts/preview-cleanup.test.mjs
+      - run: bash -n .github/scripts/railway-env.sh .github/scripts/reap-preview-envs.sh

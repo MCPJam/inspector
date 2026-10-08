@@ -39,6 +39,11 @@ let evalQuotaState:
     }
   | undefined = undefined;
 let evalQuotaLoadingState = false;
+let allowanceState: { remaining: number; granted: number } | null = null;
+
+vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
+  useSwarmSponsorshipAllowance: () => allowanceState,
+}));
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -75,8 +80,8 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: evalQuotaLoadingState,
     isAtLimit: Boolean(
       evalQuotaState &&
-        evalQuotaState.allowed !== null &&
-        evalQuotaState.used >= evalQuotaState.allowed,
+      evalQuotaState.allowed !== null &&
+      evalQuotaState.used >= evalQuotaState.allowed,
     ),
   }),
 }));
@@ -116,7 +121,25 @@ describe("CreditBalanceCard", () => {
     isLoadingState = false;
     evalQuotaState = undefined;
     evalQuotaLoadingState = false;
+    allowanceState = null;
     window.location.hash = "";
+  });
+
+  it("shows the remaining sponsored swarm conversations beside the credit meters", () => {
+    allowanceState = { remaining: 37, granted: 500 };
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    const row = screen.getByTestId("usage-swarm-sponsored");
+    expect(row).toHaveTextContent("Sponsored swarm conversations");
+    expect(row).toHaveTextContent("37 / 500 remaining");
+    expect(row).not.toHaveTextContent(/free|guarantee/i);
+  });
+
+  it("omits the sponsored row when there is no allowance to show", () => {
+    render(<CreditBalanceCard organizationId="org-1" />);
+    expect(
+      screen.queryByTestId("usage-swarm-sponsored"),
+    ).not.toBeInTheDocument();
   });
 
   it("opens organization usage from the See Usage action", async () => {
@@ -268,6 +291,24 @@ describe("CreditBalanceCard", () => {
     expect(screen.getByTestId("usage-paid")).toHaveTextContent("1,500 credits");
   });
 
+  it("does not label a monthly balance with an unknown allowance as low", () => {
+    balanceState = {
+      ...balanceState!,
+      billingModel: "monthly_flat",
+      monthlyAllowanceTotal: undefined,
+      monthlyAllowanceRemaining: 500,
+    };
+    render(<CreditBalanceCard />);
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
+  it("does not report low credits when the balance query fails", () => {
+    balanceState = undefined;
+    isLoadingState = false;
+    render(<CreditBalanceCard />);
+    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+  });
+
   it("does not flash legacy allowances while V2 balances load", () => {
     balanceState = undefined;
     isLoadingState = true;
@@ -305,7 +346,9 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Compare plans for more monthly credits and top-ups" }),
+      screen.getByRole("link", {
+        name: "Compare plans for more monthly credits and top-ups",
+      }),
     ).toHaveAttribute("href", "/organizations/org-1/plans");
     window.history.replaceState({}, "", "/");
   });
@@ -651,6 +694,25 @@ describe("CreditBalanceCard", () => {
       ).not.toBeInTheDocument();
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
     });
+
+    it.each([75, 100, 5])(
+      "renders the monthly credit meter at %s percent",
+      (percent) => {
+        balanceState = {
+          ...balanceState!,
+          monthlyAllowanceRemaining: (18000 * percent) / 100,
+        };
+        render(<CreditBalanceCard />);
+        const meter = screen.getByLabelText("Monthly credits remaining");
+        expect(meter).toHaveAttribute("aria-valuenow", String(percent));
+        expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
+        expect(meter).toHaveClass(
+          percent <= 10
+            ? "[&_[data-slot=progress-indicator]]:bg-destructive"
+            : "bg-muted",
+        );
+      },
+    );
 
     it("keeps reset timing in the monthly credit tooltip", async () => {
       render(<CreditBalanceCard pricingVersion="v1" />);

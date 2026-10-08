@@ -9,6 +9,8 @@ import {
   groupSwarmSessionsByGoal,
   groupSwarmSessionsByRun,
   journeySessionRowToThread,
+  fetchSwarmFundingPreview,
+  fundingChangeOf,
   launchJourneyRun,
   LaunchJourneyRunError,
   generateSwarmPersonaBatch,
@@ -663,5 +665,161 @@ describe("generateSwarmPersonaBatch — sign-in refusal", () => {
       message: "You are not a member of this project.",
     });
     expect(signInRemedyMessage(err)).toBeNull();
+  });
+});
+
+describe("launchJourneyRun — sponsored conversations", () => {
+  it("sends expectedSponsored when supplied, including zero, and omits it otherwise", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(202, { runId: "run-1" }));
+
+    await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+      expectedSponsored: 0,
+    });
+    await launchJourneyRun({ journeyId: "j", projectId: "p", launchKey: "lk" });
+
+    expect(JSON.parse(authFetchMock.mock.calls[0]![1].body)).toMatchObject({
+      expectedSponsored: 0,
+    });
+    expect(JSON.parse(authFetchMock.mock.calls[1]![1].body)).not.toHaveProperty(
+      "expectedSponsored",
+    );
+  });
+
+  it("returns the funding the backend reports, and ignores a malformed one", async () => {
+    authFetchMock.mockResolvedValueOnce(
+      jsonResponse(202, {
+        runId: "run-1",
+        funding: { sponsored: 2, credits: 1, total: 3 },
+      }),
+    );
+    authFetchMock.mockResolvedValueOnce(
+      jsonResponse(202, { runId: "run-2", funding: { sponsored: "2" } }),
+    );
+
+    const first = await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+    });
+    const second = await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+    });
+
+    expect(first.funding).toEqual({ sponsored: 2, credits: 1, total: 3 });
+    expect(second).toEqual({ runId: "run-2" });
+  });
+
+  it("surfaces a 409 swarm_funding_changed as a typed error that never opens the limit dialog", async () => {
+    useMCPJamLimitDialogStore.setState(
+      useMCPJamLimitDialogStore.getInitialState(),
+    );
+    authFetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        code: "CONFLICT",
+        message: "Sponsored conversations changed",
+        details: {
+          code: "swarm_funding_changed",
+          expectedSponsored: 5,
+          actualSponsored: 3,
+          totalConversations: 15,
+        },
+      }),
+    );
+
+    const error = await launchJourneyRun({
+      journeyId: "j",
+      projectId: "p",
+      launchKey: "lk",
+      expectedSponsored: 5,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(LaunchJourneyRunError);
+    expect(error.status).toBe(409);
+    expect(error.limitDialogRaised).toBe(false);
+    expect(fundingChangeOf(error)).toEqual({
+      expectedSponsored: 5,
+      actualSponsored: 3,
+      totalConversations: 15,
+    });
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("fundingChangeOf is undefined for every other error", () => {
+    expect(fundingChangeOf(new Error("x"))).toBeUndefined();
+    expect(
+      fundingChangeOf(new LaunchJourneyRunError(409, "conflict", false, "other")),
+    ).toBeUndefined();
+    expect(
+      fundingChangeOf(
+        new LaunchJourneyRunError(402, "credits", false, "swarm_funding_changed"),
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("fetchSwarmFundingPreview", () => {
+  it("POSTs the plan and normalizes the answer", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        supported: true,
+        remaining: 12.9,
+        granted: 500,
+        runs: [
+          {
+            sponsored: 5,
+            credits: 10,
+            total: 15,
+            targets: [
+              { targetId: "t1", eligible: false, reason: "harness" },
+              { eligible: true },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const preview = await fetchSwarmFundingPreview("proj-1", [
+      { journeyRefId: "j1", sessionsPerTarget: 3 },
+    ]);
+
+    const [url, init] = authFetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/web/swarm/funding-preview");
+    expect(JSON.parse(init.body)).toEqual({
+      projectId: "proj-1",
+      runs: [{ journeyRefId: "j1", sessionsPerTarget: 3 }],
+    });
+    expect(preview).toEqual({
+      supported: true,
+      remaining: 12,
+      granted: 500,
+      runs: [
+        {
+          sponsored: 5,
+          credits: 10,
+          total: 15,
+          targets: [{ targetId: "t1", eligible: false, reason: "harness" }],
+        },
+      ],
+    });
+  });
+
+  it("reads anything short of an explicit supported:true as unsupported", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(200, {}));
+    expect(await fetchSwarmFundingPreview("p", [])).toEqual({
+      supported: false,
+      remaining: 0,
+      granted: 0,
+      runs: [],
+    });
+  });
+
+  it("throws on a failed request so callers can launch as before", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(500, {}));
+    await expect(fetchSwarmFundingPreview("p", [])).rejects.toThrow(/500/);
   });
 });

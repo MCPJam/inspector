@@ -94,3 +94,24 @@ Volume is genuinely unknown.
 
 The `deployment` tag exists precisely so step 3 can be scoped rather than
 blanket.
+
+## Actor identity
+
+Request captures carry `user.id` and `actor_kind` from the verified signed-in
+user, then the verified guest. The request uses AsyncLocalStorage; stream
+reporters and request loggers also bind delayed callbacks to that context.
+Session-authenticated local Electron requests snapshot the desktop actor at
+request start, so changing accounts cannot relabel a running request.
+Unknown hosted requests remain anonymous.
+
+Electron main and renderer start with a random `installation:<uuid>` ID saved
+in the app's user-data directory. Sign-in and guest changes update main through
+IPC accepted only from the app window's main frame and origin. Sign-out, reload,
+and window replacement restore the installation fallback. Native crash reports
+keep the scope stored at crash time. New server and main paths send only the ID
+and actor kind; desktop diagnostic and updater filters retain only `user.id`.
+
+After hosted deployment and the desktop release, check new events for `user.id`
+and `actor_kind`. Historical events stay unchanged. User counts represent
+accounts, guests, or installations, rather than an exact number of people.
+This change does not alter HTTP/database APIs or the 256 KiB request limit.

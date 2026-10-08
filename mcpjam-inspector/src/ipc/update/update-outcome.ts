@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as Sentry from "@sentry/electron/main";
+import { sentryUserId } from "../../../shared/sentry-identity.js";
 import log from "electron-log";
 import {
   installedVersionMatches,
@@ -144,11 +145,16 @@ export async function reportPendingInstallResults(
       Sentry.withScope((scope) => {
         scope.addEventProcessor((event) => ({
           ...event,
-          user: undefined,
+          user: sentryUserId(event.user),
           request: undefined,
           extra: undefined,
           breadcrumbs: [],
-          tags,
+          tags: {
+            ...tags,
+            ...(event.tags?.actor_kind
+              ? { actor_kind: event.tags.actor_kind }
+              : {}),
+          },
           contexts: { update: event.contexts?.update },
         }));
         Sentry.captureEvent({
