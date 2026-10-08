@@ -117,6 +117,20 @@ describe("SkillsTab — plugin skills", () => {
     expect(screen.queryByTestId("plugin-skill-detail")).not.toBeInTheDocument();
   });
 
+  it("closes the opened plugin skill when the project changes", async () => {
+    const { rerender } = render(
+      <SkillsTab projectId="project-1" cloudSkillsEnabled />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "triage · Plugin · Bits & Bolts",
+      }),
+    );
+    expect(screen.getByTestId("plugin-skill-detail")).toBeInTheDocument();
+    rerender(<SkillsTab projectId="project-2" cloudSkillsEnabled />);
+    expect(screen.queryByTestId("plugin-skill-detail")).not.toBeInTheDocument();
+  });
+
   it("does not call the list empty while plugin skills are still being listed", async () => {
     h.listing = { count: 0, pending: true };
     render(<SkillsTab projectId="project-1" cloudSkillsEnabled />);
