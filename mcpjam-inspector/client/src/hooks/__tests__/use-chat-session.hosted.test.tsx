@@ -2053,3 +2053,405 @@ it("hands back a browser keyed by an unprovisioned local project", async () => {
     mockState.appState = null;
   }
 });
+
+describe("useChatSession — hidden environment (a Playground chat's plugins)", () => {
+  const TURN_URL = "/api/web/chat-v2";
+  const clientContext = {
+    projectId: "project-1",
+    selectedServerIds: ["server-id-1"],
+    hostId: "host_1",
+  };
+
+  function sentBody(index = -1) {
+    return JSON.parse(
+      String(
+        (mockState.authFetch.mock.calls.at(index)?.[1] as RequestInit)?.body ??
+          "{}",
+      ),
+    );
+  }
+
+  it("a client turn without one sends exactly the client turn", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: clientContext,
+      }),
+    );
+    const plain = lastTransportOptions.body();
+    unmount();
+
+    const again = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { ...clientContext, hiddenEnvironment: undefined },
+      }),
+    );
+    expect(again.result.current.hiddenEnvironmentActive).toBe(false);
+    expect(again.result.current.hiddenEnvironmentOffReason).toBeNull();
+    const body = lastTransportOptions.body();
+    expect(body).toEqual(plain);
+    expect(body.hostId).toBe("host_1");
+    expect(body).not.toHaveProperty("executionTarget");
+    expect(body).not.toHaveProperty("environmentOverrides");
+    expect(body).not.toHaveProperty("includeProjectSkills");
+    again.unmount();
+  });
+
+  it("sends the composed environment INSTEAD of hostId, with the chat's servers plus its plugins'", () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...clientContext,
+          hiddenEnvironment: {
+            environmentId: "env_hidden",
+            // A plugin server the user also selected is named once.
+            pluginServerIds: ["srv_plugin", "server-id-1"],
+          },
+        },
+      }),
+    );
+    expect(result.current.hiddenEnvironmentActive).toBe(true);
+    const body = lastTransportOptions.body();
+    expect(body).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_hidden" },
+      environmentOverrides: { serverIds: ["server-id-1", "srv_plugin"] },
+      includeProjectSkills: true,
+      selectedServerIds: ["server-id-1"],
+    });
+    // `hostId` + `executionTarget` is a 400.
+    expect(body).not.toHaveProperty("hostId");
+    expect(lastTransportOptions.api).toBe(TURN_URL);
+    unmount();
+  });
+
+  it("names an empty server set explicitly — never 'follow the environment'", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          ...clientContext,
+          selectedServerIds: [],
+          hiddenEnvironment: {
+            environmentId: "env_hidden",
+            pluginServerIds: [],
+          },
+        },
+      }),
+    );
+    expect(lastTransportOptions.body()).toMatchObject({
+      environmentOverrides: { serverIds: [] },
+    });
+    unmount();
+  });
+
+  it("still resolves the chat's own server names before the send, and uses the ids it got", async () => {
+    const ensureServerIds = vi.fn(async () => [
+      { serverName: "server-1", serverId: "server-id-fresh" },
+    ]);
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...clientContext,
+          selectedServerIds: [],
+          ensureServerIds,
+          hiddenEnvironment: {
+            environmentId: "env_hidden",
+            pluginServerIds: ["srv_plugin"],
+          },
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true),
+    );
+    mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockState.authFetch.mockClear();
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "hi" });
+    });
+
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-1"]);
+    expect(sentBody()).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_hidden" },
+      environmentOverrides: { serverIds: ["server-id-fresh", "srv_plugin"] },
+    });
+    unmount();
+  });
+
+  it("holds sends while the environment is being composed", async () => {
+    const { result, rerender, unmount } = renderHook(
+      ({ environmentId }: { environmentId: string | null }) =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            ...clientContext,
+            hiddenEnvironment: { environmentId, pluginServerIds: [] },
+          },
+        }),
+      { initialProps: { environmentId: null as string | null } },
+    );
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true),
+    );
+    expect(result.current.submitBlocked).toBe(true);
+    rerender({ environmentId: "env_hidden" });
+    await waitFor(() => expect(result.current.submitBlocked).toBe(false));
+    unmount();
+  });
+
+  it("keeps the conversation when the composition changes between messages", async () => {
+    vi.mocked(generateId)
+      .mockImplementationOnce(() => "chat-session-id")
+      .mockImplementation(() => "chat-session-id-2");
+    const onReset = vi.fn();
+    const { result, rerender, unmount } = renderHook(
+      ({ environmentId }: { environmentId: string | null }) =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          onReset,
+          hostedContext: {
+            ...clientContext,
+            ...(environmentId
+              ? {
+                  hiddenEnvironment: {
+                    environmentId,
+                    pluginServerIds: ["srv_plugin"],
+                  },
+                }
+              : {}),
+          },
+        }),
+      { initialProps: { environmentId: null as string | null } },
+    );
+    await waitFor(() =>
+      expect(result.current.isSessionBootstrapComplete).toBe(true),
+    );
+    const sessionId = result.current.chatSessionId;
+    onReset.mockClear();
+
+    // Plugins load, then a plugin version changes: the chat stays keyed by
+    // its client, so neither forks the transcript.
+    rerender({ environmentId: "env_a" });
+    rerender({ environmentId: "env_b" });
+
+    expect(result.current.chatSessionId).toBe(sessionId);
+    expect(onReset).not.toHaveBeenCalled();
+    expect(lastTransportOptions.body()).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_b" },
+    });
+    unmount();
+  });
+
+  it("is ignored beside an explicit environment target", () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          requiresWebChatApi: true,
+          executionTarget: { kind: "environment", environmentId: "env_named" },
+          hiddenEnvironment: {
+            environmentId: "env_hidden",
+            pluginServerIds: ["srv_plugin"],
+          },
+        },
+      }),
+    );
+    expect(result.current.hiddenEnvironmentActive).toBe(false);
+    const body = lastTransportOptions.body();
+    expect(body.executionTarget).toEqual({
+      kind: "environment",
+      environmentId: "env_named",
+    });
+    expect(body).not.toHaveProperty("environmentOverrides");
+    expect(body).not.toHaveProperty("includeProjectSkills");
+    unmount();
+  });
+
+  describe("one retry when a plugin changed under the chat", () => {
+    function hiddenInit() {
+      return {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          executionTarget: { kind: "environment", environmentId: "env_old" },
+          environmentOverrides: { serverIds: ["server-id-1", "srv_old"] },
+          includeProjectSkills: true,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      } satisfies RequestInit;
+    }
+
+    function refusal(code: string) {
+      return new Response(
+        JSON.stringify({
+          code: "CONFLICT",
+          message:
+            'Plugin "Bits" can no longer provide its server (disabled). Remove the pin from this environment.',
+          details: { code, reason: "disabled" },
+        }),
+        {
+          status: 409,
+          headers: {
+            "Content-Type": "application/json",
+            "x-request-id": "req_1",
+          },
+        },
+      );
+    }
+
+    function renderHidden(recover: ReturnType<typeof vi.fn>) {
+      return renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            ...clientContext,
+            hiddenEnvironment: {
+              environmentId: "env_old",
+              pluginServerIds: ["srv_old"],
+              recover,
+            },
+          },
+        }),
+      );
+    }
+
+    function chatFetch() {
+      return lastTransportOptions.fetch as (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => Promise<Response>;
+    }
+
+    beforeEach(() => {
+      mockState.authFetch.mockReset();
+    });
+
+    it("recomposes and replays once on ENV_PLUGIN_UNAVAILABLE", async () => {
+      const recover = vi.fn().mockResolvedValue({
+        ok: true,
+        environmentId: "env_new",
+        pluginServerIds: ["srv_new"],
+      });
+      const { unmount } = renderHidden(recover);
+      mockState.authFetch
+        .mockResolvedValueOnce(refusal("ENV_PLUGIN_UNAVAILABLE"))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      const response = await chatFetch()(TURN_URL, hiddenInit());
+
+      expect(response.status).toBe(200);
+      expect(recover).toHaveBeenCalledTimes(1);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+      // Only what the composition owns changed.
+      expect(sentBody(1)).toEqual({
+        projectId: "project-1",
+        selectedServerIds: ["server-id-1"],
+        executionTarget: { kind: "environment", environmentId: "env_new" },
+        environmentOverrides: { serverIds: ["server-id-1", "srv_new"] },
+        includeProjectSkills: true,
+        messages: [{ role: "user", content: "hi" }],
+      });
+      unmount();
+    });
+
+    it("recovers from ENV_PLUGIN_COMPONENT_UNSUPPORTED the same way", async () => {
+      const recover = vi.fn().mockResolvedValue({
+        ok: true,
+        environmentId: "env_new",
+        pluginServerIds: [],
+      });
+      const { unmount } = renderHidden(recover);
+      mockState.authFetch
+        .mockResolvedValueOnce(refusal("ENV_PLUGIN_COMPONENT_UNSUPPORTED"))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      const response = await chatFetch()(TURN_URL, hiddenInit());
+      expect(response.status).toBe(200);
+      expect(recover).toHaveBeenCalledTimes(1);
+      unmount();
+    });
+
+    it("replays as a plain client turn when no plugin is runnable any more", async () => {
+      const recover = vi
+        .fn()
+        .mockResolvedValue({ ok: true, environmentId: null });
+      const { unmount } = renderHidden(recover);
+      mockState.authFetch
+        .mockResolvedValueOnce(refusal("ENV_PLUGIN_UNAVAILABLE"))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      await chatFetch()(TURN_URL, hiddenInit());
+
+      expect(sentBody(1)).toEqual({
+        projectId: "project-1",
+        selectedServerIds: ["server-id-1"],
+        hostId: "host_1",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      unmount();
+    });
+
+    it("never retries twice, and says so in plain words", async () => {
+      const recover = vi.fn().mockResolvedValue({
+        ok: true,
+        environmentId: "env_new",
+        pluginServerIds: [],
+      });
+      const { unmount } = renderHidden(recover);
+      mockState.authFetch
+        .mockResolvedValueOnce(refusal("ENV_PLUGIN_UNAVAILABLE"))
+        .mockResolvedValueOnce(refusal("ENV_PLUGIN_UNAVAILABLE"));
+
+      const response = await chatFetch()(TURN_URL, hiddenInit());
+
+      expect(recover).toHaveBeenCalledTimes(1);
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+      expect(response.status).toBe(409);
+      expect(response.headers.get("x-request-id")).toBe("req_1");
+      const payload = await response.json();
+      expect(payload).toEqual({
+        code: "CONFLICT",
+        message:
+          "A plugin this chat uses changed and couldn't be loaded. Check the plugin in Servers, then send your message again.",
+      });
+      expect(JSON.stringify(payload)).not.toMatch(/environment/i);
+      unmount();
+    });
+
+    it("a recovery that can't finish fails plainly without a replay", async () => {
+      const recover = vi.fn().mockResolvedValue({ ok: false });
+      const { unmount } = renderHidden(recover);
+      mockState.authFetch.mockResolvedValueOnce(
+        refusal("ENV_PLUGIN_UNAVAILABLE"),
+      );
+
+      const response = await chatFetch()(TURN_URL, hiddenInit());
+
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+      expect(response.status).toBe(409);
+      expect((await response.json()).message).not.toMatch(/environment/i);
+      unmount();
+    });
+
+    it("leaves any other refusal alone", async () => {
+      const recover = vi.fn();
+      const { unmount } = renderHidden(recover);
+      mockState.authFetch.mockResolvedValueOnce(refusal("ENV_HOST_MISSING"));
+
+      const response = await chatFetch()(TURN_URL, hiddenInit());
+
+      expect(recover).not.toHaveBeenCalled();
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+      expect((await response.json()).details.code).toBe("ENV_HOST_MISSING");
+      unmount();
+    });
+  });
+});

@@ -24,6 +24,18 @@ export {
 } from "./errors.js";
 
 export {
+  OPERATION_FEATURES,
+  PLATFORM_FEATURES,
+  PLATFORM_FEATURE_KEYS,
+  disabledOperations,
+  isOperationAvailable,
+  operationFeature,
+  type FeatureAvailability,
+  type OperationFeature,
+  type PlatformFeatureKey,
+} from "./features.js";
+
+export {
   DEFAULT_PLATFORM_API_BASE_URL,
   DEFAULT_PLATFORM_USER_AGENT,
   API_VOCABULARY_HEADER,

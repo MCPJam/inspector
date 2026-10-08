@@ -11,9 +11,11 @@ vi.mock("@mcpjam/sdk", async () => {
   );
   return {
     ...actual,
-    MCPClientManager: mcpClientManagerMock.mockImplementation(() => ({
-      disconnectAllServers: disconnectAllServersMock,
-    })),
+    MCPClientManager: mcpClientManagerMock.mockImplementation(function () {
+      return {
+        disconnectAllServers: disconnectAllServersMock,
+      };
+    }),
   };
 });
 

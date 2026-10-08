@@ -39,12 +39,14 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
 }));
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    mutation: convexMutationMock,
-    query: vi.fn(),
-    action: vi.fn(),
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      mutation: convexMutationMock,
+      query: vi.fn(),
+      action: vi.fn(),
+    };
+  }),
 }));
 
 import v1Routes from "../index.js";

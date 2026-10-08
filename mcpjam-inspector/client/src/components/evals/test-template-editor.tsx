@@ -1,3 +1,8 @@
+import type { EvalSuite, CaseRunLaunchOptions } from "./types";
+import {
+  SuiteRunReview,
+  type SuiteRunReviewProps,
+} from "../evaluate/suite-run-review";
 import { useSelectedRun } from "./use-selected-run";
 import type { EvalSuiteRunListItem } from "./types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
@@ -408,6 +413,13 @@ interface TestTemplateEditorProps {
    * without a flag mock.
    */
   observeFirst?: boolean;
+  /** The suite view owns launch targets, client names, and shared run blocks. */
+  launchReview?: Omit<
+    SuiteRunReviewProps,
+    "cases" | "caseTitle" | "initialIterations" | "onClose" | "onStart"
+  >;
+  /** Shared quota, sandbox, or launch-in-progress block from the suite view. */
+  evalRunsDisabledReason?: string | null;
   /**
    * Launch a run of THIS case only, as a suite run.
    *
@@ -417,7 +429,7 @@ interface TestTemplateEditorProps {
    */
   onRunCase?: (
     caseId: string,
-    opts?: { iterationOverride?: number; skipJudge?: boolean },
+    opts?: CaseRunLaunchOptions,
   ) => void | Promise<void>;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -1025,6 +1037,8 @@ export function TestTemplateEditor({
   trialChainEnabled = false,
   simpleCaseEditor = false,
   onRunCase,
+  launchReview,
+  evalRunsDisabledReason: evalRunsDisabledReasonProp,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -1323,10 +1337,13 @@ export function TestTemplateEditor({
     [detailRun, listedSuiteRuns],
   );
 
-  const suite = useQuery(
+  const queriedSuite = useQuery(
     "testSuites:getTestSuite" as any,
     canQuerySuite ? ({ suiteId } as any) : "skip",
   ) as any;
+  const suite = launchReview?.suite ?? queriedSuite;
+  const evalRunsDisabledReason =
+    launchReview?.disabledReason ?? evalRunsDisabledReasonProp;
 
   /**
    * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
@@ -1687,13 +1704,17 @@ export function TestTemplateEditor({
   const suiteHostLabel = getScenarioHostLabel(suiteHostStyle);
   const suiteHostLogoSrc = getScenarioHostLogo(suiteHostStyle);
 
+  // Keyed on the suite view's memoized map, not `launchReview` itself: that
+  // object is a fresh literal on every parent render.
+  const launchHostNamesById = launchReview?.hostNamesById;
   const hostNamesById = useMemo(() => {
+    if (launchHostNamesById) return new Map(launchHostNamesById);
     const map = new Map<string, string | null>();
     for (const attachment of suite?.hostAttachments ?? []) {
       map.set(attachment.namedHostId, attachment.hostName);
     }
     return map;
-  }, [suite?.hostAttachments]);
+  }, [launchHostNamesById, suite?.hostAttachments]);
   const hasHostAttachments = (suite?.hostAttachments?.length ?? 0) > 0;
 
   // ── Harness system tools (assertable built-ins) ──────────────────────────
@@ -2154,35 +2175,57 @@ export function TestTemplateEditor({
    * while the pane showed the latest. A ref always holds the current one.
    */
   const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
-  const runTest = useCallback(async () => {
-    const caseId = currentTestCase?._id;
-    if (!onRunCase || !caseId || isDraft || hasInvalidFieldDraft) return;
-    setRunTestPending(true);
-    try {
-      if (hasUnsavedChanges) {
-        // A refused save (an unset tool question, an invalid step list) must
-        // not launch: the run executes the PERSISTED case, so it would grade
-        // a version of the case the author is not looking at.
-        const saved = await handleSaveRef.current?.();
-        if (!saved) return;
+  const runTest = useCallback(
+    async (launch?: {
+      suite: EvalSuite;
+      options: {
+        iterationOverride: number;
+        ephemeralEnvironment?: boolean;
+        throwOnFailure?: boolean;
+      };
+    }) => {
+      const caseId = currentTestCase?._id;
+      if (!onRunCase || !caseId || isDraft) return;
+      if (hasInvalidFieldDraft) {
+        if (launch)
+          throw new Error("Complete the highlighted fields before running.");
+        return;
       }
-      await onRunCase(caseId, {
-        iterationOverride,
-        skipJudge:
-          editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
-      });
-    } finally {
-      setRunTestPending(false);
-    }
-  }, [
-    onRunCase,
-    currentTestCase?._id,
-    isDraft,
-    hasInvalidFieldDraft,
-    hasUnsavedChanges,
-    iterationOverride,
-    editForm?.judgeConfigOverride?.goalCompletion?.enabled,
-  ]);
+      if (launch && evalRunsDisabledReason)
+        throw new Error(evalRunsDisabledReason);
+      setRunTestPending(true);
+      try {
+        if (hasUnsavedChanges) {
+          // A refused save (an unset tool question, an invalid step list) must
+          // not launch: the run executes the PERSISTED case, so it would grade
+          // a version of the case the author is not looking at.
+          const saved = await handleSaveRef.current?.();
+          if (!saved) {
+            if (launch) throw new Error("Save the test case before running.");
+            return;
+          }
+        }
+        await onRunCase(caseId, {
+          iterationOverride,
+          ...(launch ? { ...launch.options, suiteOverride: launch.suite } : {}),
+          skipJudge:
+            editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
+        });
+      } finally {
+        setRunTestPending(false);
+      }
+    },
+    [
+      onRunCase,
+      evalRunsDisabledReason,
+      currentTestCase?._id,
+      isDraft,
+      hasInvalidFieldDraft,
+      hasUnsavedChanges,
+      iterationOverride,
+      editForm?.judgeConfigOverride?.goalCompletion?.enabled,
+    ],
+  );
 
   const arePromptTurnsValid = useMemo(() => {
     if (!editForm) return true;
@@ -4499,46 +4542,71 @@ export function TestTemplateEditor({
                   {/* The gear duplicated the whole check list and owned the one
                     control the spine did not have a home for (argument
                     matching). On the spine it is gone; `/evals` keeps it. */}
-                  {editForm && !useSpine ? (
-                    <CasePassCriteriaPopover
-                      matchOptions={editForm.matchOptions}
-                      onMatchOptionsChange={(next) =>
-                        setEditForm((current) =>
-                          current
-                            ? { ...current, matchOptions: next }
-                            : current,
-                        )
+                {editForm && !useSpine ? (
+                  <CasePassCriteriaPopover
+                    matchOptions={editForm.matchOptions}
+                    onMatchOptionsChange={(next) =>
+                      setEditForm((current) =>
+                        current ? { ...current, matchOptions: next } : current,
+                      )
+                    }
+                    suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                    predicates={editForm.predicates}
+                    onPredicatesChange={(next: CasePredicates | undefined) =>
+                      setEditForm((current) =>
+                        current ? { ...current, predicates: next } : current,
+                      )
+                    }
+                    suppressedSuiteStandardCheckIds={
+                      editForm?.suppressedSuiteStandardCheckIds
+                    }
+                    suiteDefaultPredicates={
+                      (suite?.defaultPredicates ?? []) as Predicate[]
+                    }
+                    availableTools={availableTools.map((t) => t.name)}
+                    onAppendScenarioToSteps={(scenarioAsserts) => {
+                      setEditForm((current) => {
+                        if (!current) return current;
+                        return {
+                          ...current,
+                          steps: appendScenarioPredicatesAsAssertSteps(
+                            current.steps,
+                            scenarioAsserts,
+                          ),
+                        };
+                      });
+                    }}
+                  />
+                ) : null}
+                {useWorkspace && onRunCase && !isDirectGuest ? (
+                  // Opens once the suite is known; never the quick-run sheet.
+                  runSetupOpen &&
+                  suite && (
+                    <SuiteRunReview
+                      {...(launchReview ?? {
+                        projectId,
+                        suite,
+                        environments: projectEnvironmentViews,
+                        hostNamesById,
+                      })}
+                      cases={[currentTestCase]}
+                      caseTitle={editForm?.title || currentTestCase.title}
+                      initialIterations={
+                        editForm?.runs ?? DEFAULTS.RUNS_PER_TEST
                       }
-                      suiteDefaultMatchOptions={suite?.defaultMatchOptions}
-                      predicates={editForm.predicates}
-                      onPredicatesChange={(next: CasePredicates | undefined) =>
-                        setEditForm((current) =>
-                          current ? { ...current, predicates: next } : current,
-                        )
+                      disabledReason={
+                        evalRunsDisabledReason ??
+                        saveDisabledTooltip ??
+                        (isDraft ? "Save the test case before running." : null)
                       }
-                      suppressedSuiteStandardCheckIds={
-                        editForm?.suppressedSuiteStandardCheckIds
+                      onClose={() => setRunSetupOpen(false)}
+                      onStart={(launchSuite, options) =>
+                        runTest({ suite: launchSuite, options })
                       }
-                      suiteDefaultPredicates={
-                        (suite?.defaultPredicates ?? []) as Predicate[]
-                      }
-                      availableTools={availableTools.map((t) => t.name)}
-                      onAppendScenarioToSteps={(scenarioAsserts) => {
-                        setEditForm((current) => {
-                          if (!current) return current;
-                          return {
-                            ...current,
-                            steps: appendScenarioPredicatesAsAssertSteps(
-                              current.steps,
-                              scenarioAsserts,
-                            ),
-                          };
-                        });
-                      }}
                     />
-                  ) : null}
-                  {useWorkspace ? (
-                    <CaseRunSetup
+                  )
+                ) : useWorkspace ? (
+                  <CaseRunSetup
                     open={runSetupOpen}
                     onOpenChange={setRunSetupOpen}
                     caseTitle={editForm?.title || currentTestCase.title}
@@ -5239,6 +5307,9 @@ export function TestTemplateEditor({
                       "Untitled test case"
                     }
                     suiteName={suite?.name}
+                    defaultHostLabel={
+                      hostConfigBaseline?.hostStyle ? suiteHostLabel : undefined
+                    }
                     liveVerdict={
                       workspaceLiveRecord && workspaceSelectedTrial
                         ? trialVerdict(workspaceSelectedTrial).word
