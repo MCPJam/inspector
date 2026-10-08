@@ -97,10 +97,16 @@ import {
 import {
   admitPluginWorkspace,
   assertPluginWorkspaceRuntime,
+  pluginResolverIncludesAdmission,
   readPluginExecutionContext,
+  registerPluginAdmissionResolver,
   resolvePluginCleanupActor,
   PluginWorkspaceAdmissionError,
 } from "../../services/plugin-host/admission.js";
+import {
+  createAppCallYield,
+  runAppCall,
+} from "../../services/plugin-host/app-call-priority.js";
 import { pluginInstances } from "../../services/plugin-host/instances.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
 import {
@@ -1329,38 +1335,60 @@ async function invoke(
     { hostId: instance.hostId, serverId: instance.owner.serverId },
     instance,
   );
+  const resolveActivation: typeof runtime.resolve =
+    origin === "quick-action"
+      ? async (name, signal, read) => {
+          const resolved = await resolvePluginActivation(
+            runtime,
+            instance.activation.sourceToolName!,
+            instance.activation.selector,
+            signal,
+            read,
+          );
+          if (
+            resolved.plan.params.name !== name ||
+            resolved.resourceUri !== instance.resourceUri ||
+            resolved.presentation !== instance.activation.presentation ||
+            pluginBindingDigest(resolved.plan.params.arguments) !==
+              pluginBindingDigest(params.arguments)
+          )
+            throw denied();
+          return resolved;
+        }
+      : runtime.resolve;
+  // The host's activation call waits while the App's own calls run (see
+  // app-call-priority.ts); it still resolves everything itself afterwards.
+  const yieldToApp =
+    origin === "app" ? undefined : createAppCallYield(body.instanceToken);
+  let resolve = resolveActivation;
+  if (yieldToApp) {
+    resolve = async (name, signal, read) => {
+      await yieldToApp(signal);
+      return resolveActivation(name, signal, read);
+    };
+    if (pluginResolverIncludesAdmission(resolveActivation))
+      registerPluginAdmissionResolver(resolve);
+  }
+  // The first resolution makes the instance's fenced reads (durable control
+  // beside admission), so the invoker's first authorization can reuse it.
+  const fence = pluginInstances.fence(
+    body.instanceToken,
+    actor,
+    c.req.raw.signal,
+  );
   // Await the complete dispatch/delivery before releasing its request-owned manager.
   return await invokePluginRequest(c, {
     actor,
     owner: instance.owner,
     admission,
     runtime,
-    resolve:
-      origin === "quick-action"
-        ? async (name, signal, read) => {
-            const resolved = await resolvePluginActivation(
-              runtime,
-              instance.activation.sourceToolName!,
-              instance.activation.selector,
-              signal,
-              read,
-            );
-            if (
-              resolved.plan.params.name !== name ||
-              resolved.resourceUri !== instance.resourceUri ||
-              resolved.presentation !== instance.activation.presentation ||
-              pluginBindingDigest(resolved.plan.params.arguments) !==
-                pluginBindingDigest(params.arguments)
-            )
-              throw denied();
-            return resolved;
-          }
-        : runtime.resolve,
+    resolve,
     origin,
     invocationId,
     params,
     approval: body.approval,
     resume: body.resume,
+    firstRead: fence.read,
     assertLive: () => {
       pluginInstances.get(body.instanceToken, actor);
     },
@@ -1464,6 +1492,7 @@ async function invoke(
           pluginInstances.signal(body.instanceToken, actor),
         ]),
         origin,
+        fence,
       ),
   });
 }
@@ -1473,7 +1502,10 @@ instances.post("/activation/execute", (c) =>
   ),
 );
 instances.post("/call", (c) =>
-  route(c, async () => invoke(c, callSchema.parse(await c.req.json()), "app")),
+  route(c, async () => {
+    const body = callSchema.parse(await c.req.json());
+    return runAppCall(body.instanceToken, () => invoke(c, body, "app"));
+  }),
 );
 /** Resolve a plugin link clicked or pasted in chat to the installed plugin
  * (or plain server) it names, among this chat's servers. The client then

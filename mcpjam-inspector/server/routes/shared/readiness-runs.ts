@@ -29,8 +29,8 @@ import { executeHostedReadinessRun } from "../../services/readiness/worker.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 
-/** The two words the public vocabulary uses. Never `anthropic`/`chatgpt`. */
-export const READINESS_PUBLISHERS = ["claude", "openai"] as const;
+/** The words the public vocabulary uses. Never `anthropic`/`chatgpt`/`meta`. */
+export const READINESS_PUBLISHERS = ["claude", "openai", "muse"] as const;
 export type ReadinessPublisher = (typeof READINESS_PUBLISHERS)[number];
 
 /**

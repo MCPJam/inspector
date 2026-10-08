@@ -1,5 +1,10 @@
 import type { DesktopActivity } from "../shared/desktop-diagnostics";
 import { contextBridge, ipcRenderer } from "electron";
+import {
+  SENTRY_ACTOR_CHANNEL,
+  SENTRY_INSTALLATION_ARGUMENT,
+  type SentryActor,
+} from "../shared/sentry-identity";
 
 import type {
   UpdateStatus,
@@ -8,6 +13,10 @@ import type {
 
 // Define the API interface
 interface ElectronAPI {
+  sentry?: {
+    installationId: string;
+    setActor: (actor: SentryActor | null) => void;
+  };
   diagnostics?: { record: (activity: DesktopActivity) => void };
   // App metadata
   app: {
@@ -106,6 +115,13 @@ interface ElectronAPI {
 
 // Expose protected methods that allow the renderer process to use
 const electronAPI: ElectronAPI = {
+  sentry: {
+    installationId:
+      process.argv
+        .find((arg) => arg.startsWith(SENTRY_INSTALLATION_ARGUMENT))
+        ?.slice(SENTRY_INSTALLATION_ARGUMENT.length) ?? "",
+    setActor: (actor) => ipcRenderer.send(SENTRY_ACTOR_CHANNEL, actor),
+  },
   diagnostics: {
     record: (activity) => ipcRenderer.send("desktop:diagnostic", activity),
   },

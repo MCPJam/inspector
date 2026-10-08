@@ -183,14 +183,55 @@ export function isHeldCreditsRefusal(
 }
 
 /**
+ * `spending_reservation_busy` (503): MCPJam's own reservation lost its
+ * concurrency race on every retry and committed nothing, so the model was not
+ * called, so asking again is safe (`runSpendingReservationWithOccRetry` in the
+ * backend's `convex/lib/occRetry.ts`).
+ *
+ * A wait on MCPJam's side: no provider throttled anything and no purchase
+ * helps, so a surface must not call it either.
+ */
+export function isBusyReservation(code?: string | null): boolean {
+  return code === "spending_reservation_busy";
+}
+
+/**
+ * The busy reservation's own sentences: the backend's ("could not reserve
+ * spending capacity because ...", and its older "spend capacity" and "MCPJam
+ * is temporarily busy" wordings) and the one {@link humanizeSwarmAttemptError}
+ * words it with. All of them say MCPJam is the one waiting.
+ */
+const BUSY_RESERVATION_SENTENCE =
+  /\bcould not reserve (?:spend|spending) capacity\b|\bMCPJam is temporarily busy\b|\btemporarily busy reserving spending capacity\b/i;
+
+/**
+ * A busy reservation by its code, or by its own sentence when the code was
+ * lost: a live event carries only the humanized message, and a stored row can
+ * carry the runner's generic code (or, from before the runner kept the busy
+ * code, the credit denial) beside it. The same fallback a hold has.
+ *
+ * A code that names a different refusal rules the sentence out, and a text
+ * that also states an exhaustion is an exhaustion.
+ */
+export function isBusyReservationRefusal(
+  code?: string | null,
+  message?: string | null,
+): boolean {
+  if (isBusyReservation(code)) return true;
+  return (
+    !!message &&
+    !namesAnotherRefusal(code) &&
+    BUSY_RESERVATION_SENTENCE.test(message) &&
+    !statesExhaustion(message)
+  );
+}
+
+/**
  * A refusal that lifts in seconds on its own: a wait, never an exhausted
  * wallet.
  *
  * - `holds_committed`: see {@link isHeldCreditsRefusal}.
- * - `spending_reservation_busy` (503): MCPJam's own reservation lost its
- *   concurrency race on every retry and committed nothing, so the model was not
- *   called, so asking again is safe (`runSpendingReservationWithOccRetry` in
- *   the backend's `convex/lib/occRetry.ts`).
+ * - A busy reservation: see {@link isBusyReservation}.
  */
 export function isTransientSpendRefusal(
   code?: string | null,
@@ -198,7 +239,7 @@ export function isTransientSpendRefusal(
   message?: string | null,
 ): boolean {
   return (
-    code === "spending_reservation_busy" ||
+    isBusyReservation(code) ||
     isHeldCreditsRefusal(code, refusalReason, message)
   );
 }

@@ -1,3 +1,5 @@
+import { useSelectedRun } from "./use-selected-run";
+import type { EvalSuiteRunListItem } from "./types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
   loadEvalToolMetadata,
@@ -396,7 +398,7 @@ interface TestTemplateEditorProps {
    * Suite runs for the current suite — used by the Runs tab to show which
    * host produced each batch (via `namedHostId` on suite runs).
    */
-  suiteRuns?: EvalSuiteRun[];
+  suiteRuns?: EvalSuiteRunListItem[];
   /**
    * Renders the case as a SPINE — numbered actions with their checks nested
    * under the action each one follows — instead of the form plus the Steps
@@ -1013,7 +1015,7 @@ export function TestTemplateEditor({
   projectId,
   availableModels,
   suiteIterations,
-  suiteRuns = [],
+  suiteRuns: listedSuiteRuns = [],
   onExportDraft,
   onContinueInChat,
   onSelectTab,
@@ -1280,6 +1282,24 @@ export function TestTemplateEditor({
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
 
+  const tracedRunId = [
+    replayIteration,
+    routeCompareAnchorIteration,
+    ...recentIterations,
+    lastSavedIteration,
+  ].find(
+    (iteration): iteration is EvalIteration =>
+      !!iteration && !!(iteration.blob || iteration.chatSessionId),
+  )?.suiteRunId;
+  const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
+  const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
+  const suiteRuns = useMemo(
+    () => detailRun
+      ? [detailRun, ...listedSuiteRuns.filter((run) => run._id !== detailRun._id)]
+      : listedSuiteRuns,
+    [detailRun, listedSuiteRuns],
+  );
+
   const suite = useQuery(
     "testSuites:getTestSuite" as any,
     canQuerySuite ? ({ suiteId } as any) : "skip",
@@ -1540,24 +1560,9 @@ export function TestTemplateEditor({
    * traced iteration the drill-in would fall back to.
    */
   const openTrialRun = useMemo(() => {
-    const runId =
-      replayIteration?.suiteRunId ??
-      [
-        routeCompareAnchorIteration,
-        ...recentIterations,
-        lastSavedIteration,
-      ].find(
-        (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
-      )?.suiteRunId;
-    if (!runId) return null;
-    return suiteRuns.find((run) => run._id === runId) ?? null;
-  }, [
-    replayIteration,
-    routeCompareAnchorIteration,
-    recentIterations,
-    lastSavedIteration,
-    suiteRuns,
-  ]);
+    if (!tracedRunId) return null;
+    return suiteRuns.find((run) => run._id === tracedRunId) ?? null;
+  }, [tracedRunId, suiteRuns]);
 
   const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({
@@ -4116,9 +4121,9 @@ export function TestTemplateEditor({
   const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
     ?.suiteRunId
     ? (suiteRuns.find(
-        (run) =>
-          run._id ===
-          selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId,
+        (run): run is EvalSuiteRun =>
+          run._id === selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId &&
+          "tests" in run.configSnapshot,
       ) ?? null)
     : null;
 

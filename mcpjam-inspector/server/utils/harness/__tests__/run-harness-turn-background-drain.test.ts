@@ -267,6 +267,72 @@ describe("runHarnessTurn background drain", () => {
     expect(background.every((chunk) => chunk.transient === true)).toBe(true);
   });
 
+  it("streams a subagent's steps as transient chunks, never text or transcript", async () => {
+    const step = (rawValue: Record<string, unknown>) => ({
+      type: "raw",
+      rawValue: {
+        mcpjam: "subagent-step",
+        rootToolUseId: "toolu_agent",
+        parentToolUseId: "toolu_agent",
+        toolUseId: "toolu_read",
+        ...rawValue,
+      },
+    });
+    harnessState.script = [
+      { type: "text-delta", delta: "Planning " },
+      step({
+        kind: "tool-call",
+        toolName: "Read",
+        input: { file_path: "/work/README.md" },
+      }),
+      step({ kind: "tool-result", isError: false }),
+      { type: "text-delta", delta: "done." },
+      { type: "finish", finishReason: "stop" },
+    ];
+    harnessState.finalText = "Planning done.";
+
+    const result = await runHarnessTurn(options() as any, "ui");
+    const chunks = sseChunks(await result.response!.text());
+    const steps = chunks.filter(
+      (chunk) => chunk.type === "data-harness-subagent-step",
+    );
+    expect(steps.map((chunk) => chunk.data)).toEqual([
+      {
+        kind: "tool-call",
+        rootToolUseId: "toolu_agent",
+        parentToolUseId: "toolu_agent",
+        toolUseId: "toolu_read",
+        toolName: "Read",
+        input: { file_path: "/work/README.md" },
+      },
+      {
+        kind: "tool-result",
+        rootToolUseId: "toolu_agent",
+        parentToolUseId: "toolu_agent",
+        toolUseId: "toolu_read",
+        isError: false,
+      },
+    ]);
+    expect(steps.every((chunk) => chunk.transient === true)).toBe(true);
+    // A step does not split the answer, and is no tool call of the turn's.
+    expect(chunks.filter((chunk) => chunk.type === "text-start")).toHaveLength(
+      1,
+    );
+    expect(chunks.some((chunk) => String(chunk.type).startsWith("tool-"))).toBe(
+      false,
+    );
+    expect(assistantTexts(result.messageHistory)).toEqual(["Planning done."]);
+    expect(
+      result.messageHistory.some(
+        (message) =>
+          Array.isArray(message.content) &&
+          (message.content as Array<{ type: string }>).some((part) =>
+            part.type.startsWith("tool-"),
+          ),
+      ),
+    ).toBe(false);
+  });
+
   it("splits a background agent's follow-up into its own text part, in the UI and the transcript", async () => {
     harnessState.script = drainedTurn;
     harnessState.finalText = "I started the plan.Here is the plan.";

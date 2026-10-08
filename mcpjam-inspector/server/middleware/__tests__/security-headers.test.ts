@@ -133,6 +133,72 @@ describe("securityHeadersMiddleware document policies", () => {
     expect(res.headers.get("Permissions-Policy")).toBeNull();
   });
 
+  it.each(["https", "http"])(
+    "preserves document policies with conditional HSTS over %s",
+    async (scheme) => {
+      mockConfig.hosted = true;
+      const res = await createApp().request("/", {
+        headers: { "x-forwarded-proto": scheme },
+      });
+
+      expect(res.headers.get("Strict-Transport-Security")).toBe(
+        scheme === "https" ? "max-age=31536000" : null,
+      );
+      expect(res.headers.get("Content-Security-Policy")).toBe(
+        DOCUMENT_CONTENT_SECURITY_POLICY,
+      );
+      expect(res.headers.get("Permissions-Policy")).toBe(
+        DOCUMENT_PERMISSIONS_POLICY,
+      );
+      expect(res.headers.get("Content-Security-Policy-Report-Only")).toBe(
+        buildReportOnlyContentSecurityPolicy(),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "x-forwarded-proto: https",
+      "http://app.test/",
+      { "x-forwarded-proto": "https" },
+    ],
+    [
+      "a multi-hop x-forwarded-proto",
+      "http://app.test/",
+      { "x-forwarded-proto": "https, http" },
+    ],
+    ["an https:// request URL", "https://app.test/", {}],
+  ])("sends HSTS in hosted mode over %s", async (_label, url, headers) => {
+    mockConfig.hosted = true;
+    const res = await createApp().request(url, { headers });
+    expect(res.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=31536000",
+    );
+  });
+
+  it("omits HSTS in hosted mode when the client-facing hop is plain HTTP", async () => {
+    mockConfig.hosted = true;
+    const res = await createApp().request("https://app.test/", {
+      headers: { "x-forwarded-proto": "http" },
+    });
+    expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+  });
+
+  // A local run behind a TLS proxy is served on https://localhost, where HSTS
+  // would pin every localhost port to HTTPS. Outside hosted mode neither the
+  // URL nor a client-supplied x-forwarded-proto turns it on.
+  it.each([
+    [
+      "x-forwarded-proto: https",
+      "http://localhost/",
+      { "x-forwarded-proto": "https" },
+    ],
+    ["an https:// request URL", "https://localhost/", {}],
+  ])("omits HSTS outside hosted mode over %s", async (_label, url, headers) => {
+    const res = await createApp().request(url, { headers });
+    expect(res.headers.get("Strict-Transport-Security")).toBeNull();
+  });
+
   it("sends the report-only policy on hosted non-document responses", async () => {
     mockConfig.hosted = true;
     const res = await createApp().request("/api/data");

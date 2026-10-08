@@ -8,12 +8,16 @@ import { focusChatComposer } from "@/components/chat-v2/chat-input/composer-focu
 
 const RIGHT_RAIL_SIZE_KEY = "mcpjam.playground.rightRailSize";
 const DEFAULT_RIGHT_RAIL_SIZE = 30;
+/** Narrower than this is a sliver left by a drag, not a width to come back to. */
+export const MIN_USABLE_RIGHT_RAIL_SIZE = 15;
 
 /** The rail's remembered width (percent of the panel group). */
 export function readRightRailSize(): number {
   try {
     const value = Number(window.localStorage.getItem(RIGHT_RAIL_SIZE_KEY));
-    return Number.isFinite(value) && value >= 4 && value <= 50
+    return Number.isFinite(value) &&
+      value >= MIN_USABLE_RIGHT_RAIL_SIZE &&
+      value <= 50
       ? value
       : DEFAULT_RIGHT_RAIL_SIZE;
   } catch {
@@ -21,9 +25,33 @@ export function readRightRailSize(): number {
   }
 }
 
+/** The part of a resizable panel the rail reveal needs. */
+export interface RevealablePanel {
+  isCollapsed?: () => boolean;
+  getSize?: () => number;
+  resize: (size: number) => void;
+}
+
+/**
+ * Bring the rail to a usable width. A panel that is open but dragged down to
+ * a sliver counts as closed: revealing an App (or its settings) into a few
+ * pixels looks like nothing happened.
+ */
+export function revealRightRailPanel(
+  panel: RevealablePanel | null | undefined,
+  rememberedSize: number,
+) {
+  if (!panel) return;
+  if (
+    panel.isCollapsed?.() ||
+    (panel.getSize?.() ?? 0) < MIN_USABLE_RIGHT_RAIL_SIZE
+  )
+    panel.resize(Math.max(rememberedSize, MIN_USABLE_RIGHT_RAIL_SIZE));
+}
+
 export function writeRightRailSize(size: number) {
   try {
-    if (size >= 4 && size <= 50)
+    if (size >= MIN_USABLE_RIGHT_RAIL_SIZE && size <= 50)
       window.localStorage.setItem(RIGHT_RAIL_SIZE_KEY, String(size));
   } catch {
     // Remembering the width is a convenience.
