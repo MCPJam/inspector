@@ -1,3 +1,4 @@
+import type { EvalSuiteRunListItem } from "@/components/evals/types";
 import {
   dependentFilterOptions,
   selectedFilter,
@@ -74,7 +75,7 @@ export function CombinedRunContent({
   onEditCase,
   onEditEvaluator,
   onOpenIteration,
-}: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRun[] }) {
+}: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRunListItem[] }) {
   const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
   const history = useProjectRunHistory(
     projectId ?? "",
@@ -91,14 +92,17 @@ export function CombinedRunContent({
   const record = useCallback((id: string, report: MemberReport) => {
     setReports((previous) => new Map(previous).set(id, report));
   }, []);
-  const hydratedRuns = runs.map(
-    (run) => history.details.get(run._id)?.run ?? run,
-  );
+  const hydratedRuns = runs.flatMap((run) => {
+    const full =
+      history.details.get(run._id)?.run ??
+      (run._id === routeRun._id ? routeRun : undefined);
+    return full ? [full] : [];
+  });
   const iterations = [...history.details.values()].flatMap(
     (detail) => detail.iterations,
   );
   const matrix = buildRunResultsMatrix({
-    run: hydratedRuns[0],
+    run: routeRun,
     runs: hydratedRuns,
     iterations,
     hostNamesById,
@@ -155,6 +159,7 @@ export function CombinedRunContent({
       selectedReports.map((report) => report.view),
       isFiltered,
       previousIterations,
+      isFiltered ? selectedRuns.length : runs.length,
     ),
     pairings,
   };
@@ -164,6 +169,7 @@ export function CombinedRunContent({
     hydratedRuns.flatMap((run) => reports.get(run._id)?.view ?? []),
     false,
     previousIterations,
+    runs.length,
   ).verdict;
   const diagnostics = selectedReports.flatMap((report) => report.diagnostics);
   const chains = new Map(
@@ -180,6 +186,7 @@ export function CombinedRunContent({
     !history.loading &&
     history.errorCount === 0 &&
     launchRuns.length > 0 &&
+    runs.every((run) => history.details.has(run._id)) &&
     launchRuns.every(
       (run) =>
         history.details.has(run._id) && isTerminalEvalRunStatus(run.status),
@@ -514,6 +521,7 @@ export function combinedReportView(
   views: RunVerdictHeroView[],
   filtered: boolean,
   previousIterations?: EvalIteration[] | null,
+  expectedMembers = runs.length,
 ): RunVerdictHeroView {
   const fallback = buildRunVerdictHero({
     run: runs[0] ?? ({ status: "pending" } as EvalSuiteRun),
@@ -521,7 +529,7 @@ export function combinedReportView(
     decision: { status: "disabled", summary: null, diagnostics: [] },
   });
   const pending =
-    views.length < runs.length || views.some((view) => view.pending);
+    views.length < expectedMembers || views.some((view) => view.pending);
   const words = new Set(views.map((view) => view.verdict.word));
   const iterationIds = new Set(iterations.map((iteration) => iteration._id));
   const focusView =

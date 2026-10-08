@@ -5,7 +5,7 @@ icon: "package"
 ---
 
 <Note>
-Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account. Importing a plugin requires **project admin** — it creates shared executable capabilities, so it carries the same bar as managing shared OAuth connections. Project members can view installed plugins; the feature flag only controls whether the surface appears, never who may import.
+Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry only appears when the feature is active for your account. Importing a plugin requires **project admin** — it creates shared executable capabilities, so it carries the same bar as managing shared OAuth connections. Project members can view installed plugins; the feature flag only controls whether the surface appears, never who may import.
 </Note>
 
 A **plugin** is an [Agent Plugins 1.0](https://agent-plugins.org) bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
@@ -164,42 +164,80 @@ The dialog stays open across close and reopen so an in-progress import is not lo
 - **Inspection failed** (the bundle was uploaded but not yet inspected) — click **Resume inspection** to re-drive the inspect step.
 - **Terminal failure** — click **Start a new import** to upload the bundle again.
 
-## Plugins section
+## Plugin servers on the Servers tab
 
-Once at least one plugin is installed, a **Plugins** section appears above the server grid on the Connect tab. Each plugin is shown as a group card.
+Once a plugin is installed and has an active version, each MCP server it declares appears as a server card in the Servers tab grid, alongside your project's own servers. The card shows:
 
-### Plugin group card
+- The plugin's icon and the server's declared name.
+- A **from \<plugin\>** badge identifying which plugin added it.
+- A status indicator where a project server's connect switch would sit.
 
-The card shows the plugin's name and a rolled-up health badge:
+### Plugin server status
 
-| Badge | Meaning |
-|-------|---------|
-| Ready | All components of the active revision are ready to use |
-| Needs auth | At least one component requires authorization before its first tool call |
-| Local runtime | At least one component runs only from a local MCPJam process |
-| Computer required | At least one component runs only inside a Project Computer |
-| No active revision | The plugin is installed but no revision has been made active |
+| Status | Meaning |
+|--------|---------|
+| Active | The plugin is running and chats will use it |
+| Needs sign-in | The plugin requires authorization before it can run |
+| Needs setup | At least one credential or environment variable has not been configured |
 | Disabled | The plugin has been disabled |
-| Checking… | Setup status is still loading |
+| Skipped: \<reason\> | The plugin was skipped for a specific reason |
 
-Click the card header to expand it and see the active revision's components:
+Plugin server cards are not reorderable — they belong to the plugin's version, not your project's server list.
 
-- **Revision ID** — the short content-addressed identity of the active bundle.
-- **MCP servers** — each server's key, transport, placement, and readiness.
-- **Skills** — model references for each declared skill, namespaced as `<plugin-name>/<skill-name>`.
-- **Unsupported components** — a count of the same inert components the import preview itemizes. Only the count appears here; the per-component keys and reasons are shown at import time.
-- **Other revisions** — ready revisions of the same plugin that are not currently active. Click **Activate** next to a revision to make it the active one.
+### Opening a plugin server's settings
 
-### Plugin actions
+Click a plugin server card, or click **⋮ → Configure**, to open its **Settings**. The Settings panel contains:
 
-Click the **⋮** menu on a plugin card to:
+- **Plugin section** — the plugin's status, active version, and other available versions. Click **Activate** next to a version to make it the active one. Activating a version changes what chats run from the next message.
+- **Setup** — per-server component readiness and a **Configure** button to supply credential values.
+- **Set up \<plugin\>** — appears when the plugin's version declares an onboarding flow.
+- **Disable / Enable** — temporarily disable the plugin without uninstalling it.
+- **Uninstall plugin…** — soft-uninstall the plugin (project admins only).
 
-- **Disable / Enable** — temporarily disable a plugin without uninstalling it.
-- **Uninstall** — soft-uninstall the plugin. Revisions already used by runs and sessions are preserved so existing history stays reproducible. Uninstall is blocked while a live environment still pins one of the plugin's versions.
+Lifecycle actions (Activate, Disable/Enable, Uninstall) require project admin. Project members can view the settings and configure credential values.
+
+### Plugins with no active version
+
+A plugin that has been installed but has no active version ("Install only") shows a single card labelled with the plugin's name. Click it to open Settings, where you can activate a version or uninstall the plugin.
+
+## Plugin skills on the Skills tab
+
+Plugin skills appear as a source in the Skills tab list alongside local, library, and connected-server skills. Each row is badged **Plugin · \<plugin name\>** and is counted in the tab's skill total.
+
+Click a plugin skill row to open its read-only detail, which shows:
+
+- The skill's `SKILL.md` content.
+- Its model reference.
+- **Plugin settings** — a link to the plugin's server Settings (or an inline Plugin section for a skills-only plugin with no servers).
+- **Detach as copy** — creates an independent, editable copy of the skill in your project store (project admins only).
 
 ## Credential setup
 
-After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
+After installing a plugin, each MCP server component that requires credentials shows its readiness in the server card's status indicator and in the Settings panel. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values in the server's Settings under **Setup** — MCPJam never reads or stores credential values from the bundle itself.
+
+## Plugins in Playground chat
+
+When your project has at least one installed plugin with an active revision, the Playground runs that plugin on every chat turn automatically — you do not need to select an environment or configure anything extra.
+
+**What you see in the composer**
+
+Plugin servers appear in the server list inside the **Options** panel (the **+** button in the chat input) as on and read-only, labelled with the plugin's name. They are not part of your manual server selection and cannot be toggled off here — to change whether a plugin runs, disable or uninstall it from the plugin server card on the Servers tab.
+
+**Skipped plugins**
+
+If an installed plugin cannot run on a given chat — for example, it needs authorization, its component runs only on a local machine, or it has been disabled — the chat shows one plain notice per session the first time you send a message, explaining which plugins were skipped and why. The same information appears as a Logs entry in the right rail.
+
+**Compare mode**
+
+Multi-model and multi-host compare columns each run as plain client turns without plugins. The chat says so once on the first send of each comparison.
+
+**Desktop app**
+
+On the desktop app, a turn that must stay on the local route — a model keyed to this machine, a local-only server, a client run on this machine, or this machine's browser or shell — runs without plugins and shows a brief explanation. Turns that can use the web route carry plugins as normal.
+
+**Reopening a chat**
+
+When you reopen a chat that ran with plugins, the Playground recomposes for the current client using whatever plugins are active now. Plugin versions are project state, like a live server configuration, so the reopened chat reflects the project's current plugin setup rather than pinning the exact versions from the original session.
 
 ## Plugin provenance in runs and sessions
 

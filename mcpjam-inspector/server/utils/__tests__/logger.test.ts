@@ -11,10 +11,12 @@ vi.mock("@sentry/node", () => ({
 const mockIngest = vi.fn();
 const mockFlush = vi.fn().mockResolvedValue(undefined);
 vi.mock("@axiomhq/js", () => ({
-  Axiom: vi.fn().mockImplementation(() => ({
-    ingest: mockIngest,
-    flush: mockFlush,
-  })),
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: mockIngest,
+      flush: mockFlush,
+    };
+  }),
 }));
 
 const baseRequestContext: RequestLogContext = {

@@ -61,6 +61,17 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
   },
 };
 
+/**
+ * The server card shell, shared by project server cards and the cards of
+ * servers an installed plugin adds, so the two stay one look.
+ */
+export const SERVER_CARD_CLASS_NAME =
+  "group h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-all duration-200 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none";
+
+/** Added to the shell when clicking the card opens its details. */
+export const SERVER_CARD_INTERACTIVE_CLASS_NAME =
+  "cursor-pointer hover:border-border hover:shadow-md hover:border-primary/40";
+
 export const getConnectionStatusMeta = (status: ConnectionStatus) =>
   connectionStatusMeta[status] || connectionStatusMeta.disconnected;
 

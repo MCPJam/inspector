@@ -136,6 +136,7 @@ export function pluginModelAppRoutes(ports: {
                 operationId: z.string().uuid(),
                 sequence: z.number().int().positive(),
                 params: pluginModelContextParamsSchema,
+                attach: z.literal("user").optional(),
               })
             : action === "remove"
             ? handle.extend({
@@ -187,6 +188,7 @@ export function pluginModelAppRoutes(ports: {
             operationId: raw.operationId,
             sequence: raw.sequence,
             params: raw.params,
+            ...(raw.attach === "user" ? { attach: "user" as const } : {}),
           });
           return c.json({
             ...result,

@@ -109,6 +109,17 @@ describe("shouldAutoResumeTurn (real ai package)", () => {
 
   it("is inert when the last message is not an assistant turn", () => {
     const empty = { messages: [] as UIMessage[] };
+    const user = {
+      messages: [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as unknown as UIMessage[],
+    };
+    expect(lastStepHasPendingApproval(empty)).toBe(false);
+    expect(shouldAutoResumeTurn(empty)).toBe(false);
+    expect(lastStepHasPendingApproval(user)).toBe(false);
+    expect(shouldAutoResumeTurn(user)).toBe(false);
+  });
+
   describe("a turn that ran out of steps", () => {
     // The last allowed step's tools ran, so its tool calls are all settled —
     // exactly what resumes a turn. The server's reply to that resume is what
@@ -154,16 +165,5 @@ describe("shouldAutoResumeTurn (real ai package)", () => {
       ]);
       expect(shouldAutoResumeTurn({ messages: [message] })).toBe(false);
     });
-  });
-
-    const user = {
-      messages: [
-        { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
-      ] as unknown as UIMessage[],
-    };
-    expect(lastStepHasPendingApproval(empty)).toBe(false);
-    expect(shouldAutoResumeTurn(empty)).toBe(false);
-    expect(lastStepHasPendingApproval(user)).toBe(false);
-    expect(shouldAutoResumeTurn(user)).toBe(false);
   });
 });

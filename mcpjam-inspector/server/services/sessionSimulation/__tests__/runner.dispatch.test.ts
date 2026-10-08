@@ -1033,3 +1033,100 @@ it.each([false, true])(
       });
   },
 );
+
+describe("drainAssistantTurn — sponsored swarm claim", () => {
+  const sponsoredArgs = (overrides: Record<string, unknown> = {}) =>
+    baseArgs({
+      sourceType: "swarm",
+      journeyRunId: "run-1",
+      hostId: "host-1",
+      sponsorship: { targetId: "target-1", sessionIdx: 2 },
+      ...overrides,
+    }) as Parameters<typeof drainAssistantTurn>[0];
+
+  it("sends the platform claim on every host step of a sponsored session, on the MCPJam-hosted rail", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(sponsoredArgs());
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream");
+    expect(opts.extraBodyFields).toMatchObject({
+      billingFeature: "swarm_starter",
+      journeyRunId: "run-1",
+      hostId: "host-1",
+      targetId: "target-1",
+      sessionIdx: 2,
+    });
+  });
+
+  it("omits sessionIdx on the target-level setup turn", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      sponsoredArgs({ sponsorship: { targetId: "target-1" } }),
+    );
+
+    const fields = (calls[0] as any).extraBodyFields;
+    expect(fields.billingFeature).toBe("swarm_starter");
+    expect(fields).not.toHaveProperty("sessionIdx");
+  });
+
+  it("sends no claim for a credit-funded session", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      sponsoredArgs({ sponsorship: undefined }),
+    );
+
+    const fields = (calls[0] as any).extraBodyFields;
+    expect(fields).toMatchObject({ journeyRunId: "run-1" });
+    expect(fields).not.toHaveProperty("billingFeature");
+    expect(fields).not.toHaveProperty("targetId");
+  });
+
+  it("refuses to run a sponsored step on BYOK instead of dropping the claim", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
+    });
+
+    await expect(drainAssistantTurn(sponsoredArgs())).rejects.toThrow(
+      /swarm_sponsorship_rejected/,
+    );
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to run a sponsored step on local BYOK", async () => {
+    stubDirectEngine([]);
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+
+    await expect(drainAssistantTurn(sponsoredArgs())).rejects.toThrow(
+      /swarm_sponsorship_rejected/,
+    );
+    expect(runDirectChatTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to run a sponsored step on a harness", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await expect(
+      drainAssistantTurn(sponsoredArgs({ harness: "claude-code" })),
+    ).rejects.toThrow(/swarm_sponsorship_rejected/);
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
+});

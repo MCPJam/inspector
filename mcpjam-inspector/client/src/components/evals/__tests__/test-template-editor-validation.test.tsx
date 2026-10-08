@@ -55,6 +55,8 @@ vi.mock("@/lib/apis/evals-api", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useQueries: () => ({}),
+
   useMutation: (_name: unknown) => useMutationMock(),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),

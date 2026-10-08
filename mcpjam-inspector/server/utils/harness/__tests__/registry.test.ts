@@ -751,7 +751,7 @@ function addUsage(total, usage) {
             path: "/tmp/harness/claude-code/bridge.mjs",
             // Already-patched markers so the group patches are skipped and
             // only the verification runs — isolating the assertion under test.
-            content: `emitAssistantTextFallback; gatewayModelOverrideSettingsFor; mcpjamBackgroundDrainReducer;`,
+            content: `emitAssistantTextFallback; gatewayModelOverrideSettingsFor; mcpjamBackgroundDrainReducer; mcpjamForwardSubagentStep;`,
           },
         ],
         commands: [],
@@ -800,6 +800,10 @@ function addUsage(total, usage) {
     expect(bridge?.content.match(/function mcpjamBackgroundDrainReducer\(/g)).toHaveLength(1);
     expect(bridge?.content.match(/mcpjamDrainController\.observe\(msg\)/g)).toHaveLength(1);
     expect(bridge?.content.match(/mcpjamDrainController\.answer\(\)/g)).toHaveLength(1);
+    // Group E: a subagent's steps are forwarded inside the guard, once.
+    expect(
+      bridge?.content.match(/mcpjamForwardSubagentStep\(state, emit, msg\);/g),
+    ).toHaveLength(1);
   });
 
   it("refuses to half-patch a turn loop whose shape moved", async () => {

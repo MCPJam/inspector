@@ -101,6 +101,68 @@ describe("bearerAuthMiddleware — header gate", () => {
   });
 });
 
+describe("bearerAuthMiddleware — sk_ keys on a self-hosted server", () => {
+  it("answers hosted-only, not 'Invalid API key', when this server cannot validate keys", async () => {
+    vi.stubEnv("WORKOS_API_KEY", "");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    // What `getWorkOSClient()` does without the admin key.
+    validateApiKeyMock.mockRejectedValueOnce(
+      new Error("WORKOS_API_KEY is not set"),
+    );
+    try {
+      const res = await createApp().request("/test", {
+        headers: { authorization: "Bearer sk_self_hosted" },
+      });
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({
+        code: "FEATURE_NOT_SUPPORTED",
+        details: { reason: "FEATURE_REQUIRES_HOSTED" },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("keeps a validation failure a 401 when this server has its own WorkOS admin key", async () => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    // A WorkOS outage, not a missing configuration.
+    validateApiKeyMock.mockRejectedValueOnce(new Error("WorkOS unavailable"));
+    try {
+      const res = await createApp().request("/test", {
+        headers: { authorization: "Bearer sk_during_outage" },
+      });
+      expect(res.status).toBe(401);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("answers hosted-only when the key validates but the user lookup needs the missing credential", async () => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_admin");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "key_1", owner: { id: "user_1" } },
+    });
+    const { ServiceCredentialUnavailableError } =
+      await import("../../services/service-credential.js");
+    resolveUserByExternalIdMock.mockRejectedValueOnce(
+      new ServiceCredentialUnavailableError("Identity lookup"),
+    );
+    try {
+      const res = await createApp().request("/test", {
+        headers: { authorization: "Bearer sk_valid_key" },
+      });
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "FEATURE_REQUIRES_HOSTED" },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
   it("returns 401 when WorkOS marks the key as invalid", async () => {
     validateApiKeyMock.mockResolvedValueOnce({ apiKey: null });

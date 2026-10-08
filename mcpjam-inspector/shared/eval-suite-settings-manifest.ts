@@ -170,6 +170,40 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
       "A presentation grouping of settings.minimumIterations and settings.repetitions; the row itself only shows whichever count rule this suite uses.",
   },
   {
+    key: "turnTimeoutMs",
+    // "Per turn", not "turnTimeoutMs": the row names the thing being bounded,
+    // and a reader deciding whether 5 minutes is enough is thinking about one
+    // assistant turn, not about a field.
+    label: "Per-turn timeout",
+    api: "settings.executionBudgets.turnTimeoutMs",
+  },
+  {
+    key: "toolCallTimeoutMs",
+    label: "Per-tool-call timeout",
+    api: "settings.executionBudgets.toolCallTimeoutMs",
+  },
+  {
+    key: "iterationTimeoutMs",
+    // The UNIT that fails alone from PR 2 on, which is why it reads
+    // "iteration" here and `unitTimeoutMs` once resolved: authors think in
+    // iterations, and the runtime thinks in units shared with swarms.
+    label: "Per-iteration timeout",
+    api: "settings.executionBudgets.iterationTimeoutMs",
+  },
+  {
+    key: "runTimeoutMs",
+    label: "Whole-run timeout",
+    api: "settings.executionBudgets.runTimeoutMs",
+  },
+  {
+    key: "turnRetries",
+    // Retries of one model CALL, not of a turn's work: a live stream is never
+    // replayed. Named for what an author controls rather than for the AI SDK
+    // knob it becomes.
+    label: "Model call retries",
+    api: "settings.executionBudgets.turnRetries",
+  },
+  {
     key: "repetitions",
     // A DEFAULT that a case replaces, not a floor that raises it. Same
     // vocabulary as the floor above, one word apart, on purpose.
@@ -318,6 +352,13 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
   "settings.judge.rubric": {
     criteria: [{ id: "cites", label: "Cites a source" }],
   },
+  // Minutes as milliseconds, each well inside its platform ceiling so the
+  // sample exercises the path rather than the bound.
+  "settings.executionBudgets.turnTimeoutMs": 300_000,
+  "settings.executionBudgets.toolCallTimeoutMs": 45_000,
+  "settings.executionBudgets.iterationTimeoutMs": 900_000,
+  "settings.executionBudgets.runTimeoutMs": 2_400_000,
+  "settings.executionBudgets.turnRetries": 1,
   "settings.repetitions": 3,
   "settings.passThreshold": 0.8,
   "settings.validity": { minCompletionRate: 0.9 },

@@ -119,7 +119,12 @@ import {
 } from "@/shared/model-provider";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
-import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  formatErrorMessage,
+} from "@/components/chat-v2/shared/chat-helpers";
+import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
+import { isAbortError } from "@/shared/abort-errors";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import {
   withBuiltInToolDefinitions,
@@ -238,8 +243,11 @@ import {
   type HostedMrtrRound,
 } from "@/stores/hosted-mrtr-store";
 import {
+  isHarnessBackgroundTaskDataPart,
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
+  isHarnessSubagentStepDataPart,
+  isHarnessToolOutputDataPart,
   type HarnessResetReason,
 } from "@/shared/harness-session";
 import {
@@ -258,6 +266,8 @@ import {
 } from "@/shared/hosted-task-created";
 import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
+import { useHarnessAgentActivityStore } from "@/stores/harness-agent-activity-store";
+import { useHarnessLiveOutputStore } from "@/stores/harness-live-output-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -265,7 +275,16 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@/lib/client-config-v2";
-import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import type {
+  HiddenEnvironmentRecovery,
+  HostedRuntimeContext,
+} from "@/lib/hosted-runtime-context";
+import {
+  hiddenEnvironmentServerOverride,
+  plainHiddenEnvironmentFailure,
+  readRecoverableHiddenEnvironmentCode,
+  retargetHiddenEnvironmentBody,
+} from "@/lib/plugins/hidden-environment";
 import type { HostedExecutionTarget } from "@/shared/execution-target";
 import {
   buildResolvedServerBatchRequest,
@@ -915,7 +934,22 @@ export interface UseChatSessionReturn {
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
+  /**
+   * The surface supplied a hidden environment and this chat's turns carry it
+   * (see `HostedHiddenEnvironment`). False when none was supplied.
+   */
+  hiddenEnvironmentActive: boolean;
+  /**
+   * A hidden environment was supplied, but this turn has to stay on this
+   * machine's own chat route, which cannot run it — so it runs as the plain
+   * client turn it would have been. Null otherwise.
+   */
+  hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null;
 }
+
+/** Why a supplied hidden environment does not carry this chat's turns. */
+export type HiddenEnvironmentOffReason =
+  "local_harness" | "local_server" | "local_model" | "local_tools";
 
 /**
  * Provider for a locked (guest / host-pinned) model id.
@@ -1825,6 +1859,8 @@ type HostedSessionScope = {
   targetKey?: string;
 };
 
+const EMPTY_SERVER_IDS: string[] = [];
+
 /** Build the {@link HostedSessionScope} target key. Exported for tests. */
 export function hostedTargetKey(input: {
   projectId?: string | null;
@@ -1859,6 +1895,39 @@ export function areHostedSessionScopesEqual(
   b: HostedSessionScope,
 ): boolean {
   return a.projectId === b.projectId && a.targetKey === b.targetKey;
+}
+
+/**
+ * A chat turn that failed for an OpenAI plugin extension reason (the server
+ * tags those with `details.pluginCode`), or one an App sent, gets a Logs
+ * entry beside the chat's own error.
+ */
+export function logPluginChatFailure(
+  error: Error,
+  appMessageTurn: boolean,
+): void {
+  if (isAbortError(error)) return;
+  const formatted = formatErrorMessage(error);
+  let pluginCode: unknown;
+  const start = error.message.indexOf("{");
+  if (start >= 0) {
+    try {
+      pluginCode = JSON.parse(error.message.slice(start))?.details?.pluginCode;
+    } catch {
+      // Not a JSON envelope (a stream error); only an App turn is logged.
+    }
+  }
+  if (typeof pluginCode !== "string" && !appMessageTurn) return;
+  const code =
+    typeof pluginCode === "string" ? pluginCode : "APP_MESSAGE_TURN_FAILED";
+  const reason = formatted?.message ?? error.message;
+  logPluginExtensionIssue({
+    code,
+    message: appMessageTurn
+      ? `The message an App sent to this chat didn't get a reply. ${reason}`
+      : reason,
+    dedupeKey: `chat-turn:${code}`,
+  });
 }
 
 function isAuthDeniedError(error: unknown): boolean {
@@ -1915,6 +1984,12 @@ export function useChatSession(
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
+  // A hidden environment rides a CLIENT-turn context: it needs the client it
+  // was composed for, and nothing else may already be saying what to run.
+  const hostedHiddenEnvironment =
+    hostedHostId && !hostedScenarioId && !hostedContext?.executionTarget
+      ? hostedContext?.hiddenEnvironment
+      : undefined;
   // CACHE KEYING ONLY — see `HostedRuntimeContext.presentationHostId`. Never
   // added to a request body or to `hostedTargetKey`: the execution target must
   // stay a single statement.
@@ -1962,7 +2037,9 @@ export function useChatSession(
   // Published-scenario runtime sessions must use the org-aware web engine
   // on every platform — their servers resolve by Convex id, which the
   // local /api/mcp engine can't connect. See HostedRuntimeContext.
-  const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
+  // The surface's own statement. The effective flag, which also counts a
+  // hidden environment this chat carries, is `hostedRequiresWebChatApi` below.
+  const explicitRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
   const hostedRefreshAccessSession = hostedContext?.refreshAccessSession;
@@ -2609,6 +2686,20 @@ export function useChatSession(
               part.data.machine,
               chatSessionIdRef.current,
             );
+        } else if (isHarnessSubagentStepDataPart(part)) {
+          // A subagent's step, shown live on its Agent call's card.
+          useHarnessAgentActivityStore.getState().applyStep(part.data);
+        } else if (isHarnessToolOutputDataPart(part)) {
+          // A running command's output, shown live on its activity row.
+          useHarnessLiveOutputStore
+            .getState()
+            .append(part.data.toolCallId, part.data.delta);
+        } else if (isHarnessBackgroundTaskDataPart(part)) {
+          // A background agent's status, on the same card. Notices and
+          // keepalives carry no tool call and are dropped by the store.
+          useHarnessAgentActivityStore
+            .getState()
+            .applyBackgroundTask(part.data);
         } else if (isHistoryNoticeDataPart(part)) {
           // Earlier replies in this chat are not in the model's context this
           // turn; the thread says so, once, inline. Recorded for the chat the
@@ -3114,6 +3205,46 @@ export function useChatSession(
       return isLocalOnlyMcpServerConfig(server.config);
     });
   }, [appState, hostedProjectId, selectedServers]);
+  // ── Hidden environment (a Playground chat's plugins) ────────────────────
+  //
+  // Only the web chat route resolves an environment, so a chat carries its
+  // hidden environment only where that route can run the turn. In the hosted
+  // app it always can. On this machine, a turn that has to stay on the local
+  // route — a client run here, a local-only server, a model keyed on this
+  // machine, this machine's browser or shell — runs as the plain client turn
+  // it would have been, and the surface says the plugins were off.
+  const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
+    !hostedHiddenEnvironment || HOSTED_MODE
+      ? null
+      : !explicitRequiresWebChatApi && localHarnessExecution?.requested === true
+        ? "local_harness"
+        : hasLocalOnlySelectedServer
+          ? "local_server"
+          : !(isMcpJamModel || selectedModelUsesOrgRuntime)
+            ? "local_model"
+            : localBrowserRequested ||
+                (resolvedLocalEngine && Boolean(localConsentToken))
+              ? "local_tools"
+              : null;
+  const hiddenEnvironmentActive =
+    !!hostedHiddenEnvironment && hiddenEnvironmentOffReason === null;
+  // What this turn actually sends against: set only once the environment is
+  // composed. Until then a hidden-environment chat holds sends (see
+  // `hostedContextNotReady`) rather than racing a client turn out without
+  // its plugins.
+  const hiddenEnvironmentId = hiddenEnvironmentActive
+    ? (hostedHiddenEnvironment?.environmentId ?? null)
+    : null;
+  const hiddenPluginServerIds = hiddenEnvironmentActive
+    ? (hostedHiddenEnvironment?.pluginServerIds ?? EMPTY_SERVER_IDS)
+    : EMPTY_SERVER_IDS;
+  const hiddenEnvironmentRecover = hiddenEnvironmentActive
+    ? hostedHiddenEnvironment?.recover
+    : undefined;
+  // Like an environment target, a hidden environment's turn can only run on
+  // `/api/web/chat-v2`.
+  const hostedRequiresWebChatApi =
+    explicitRequiresWebChatApi || hiddenEnvironmentActive;
   const localMcpRuntimeRequired =
     !HOSTED_MODE &&
     !hostedRequiresWebChatApi &&
@@ -3158,6 +3289,9 @@ export function useChatSession(
   // `new Error(await response.text())` and the status, content type, and
   // request id are gone by the time `handleChatError` runs.
   const lastChatResponseRef = useRef<ChatResponseMeta | null>(null);
+  // Whether the turn in flight was sent by an App (`ui/message`), so its
+  // failure also lands in the Logs panel next to the App's other entries.
+  const appMessageTurnRef = useRef(false);
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3219,6 +3353,44 @@ export function useChatSession(
         }
       }
 
+      // Hidden environment recovery. A plugin this chat's composition pins
+      // was disabled, uninstalled or replaced after it was composed, and the
+      // route refused the turn PRE-STREAM. Re-read the plugins, recompose,
+      // and replay ONCE — onto the new composition, or as a plain client turn
+      // when nothing is runnable any more. A second refusal, or a recovery
+      // that cannot finish, is restated in plain words: the route's own
+      // message names an environment the member never chose.
+      if (
+        !response.ok &&
+        hiddenEnvironmentRecover &&
+        hostedHostId &&
+        typeof init?.body === "string" &&
+        (await readRecoverableHiddenEnvironmentCode(response))
+      ) {
+        const refused = response;
+        const recovery: HiddenEnvironmentRecovery =
+          await hiddenEnvironmentRecover();
+        const replayBody = recovery.ok
+          ? retargetHiddenEnvironmentBody(
+              init.body,
+              recovery.environmentId === null
+                ? { environmentId: null, hostId: hostedHostId }
+                : {
+                    environmentId: recovery.environmentId,
+                    pluginServerIds: recovery.pluginServerIds,
+                  },
+            )
+          : null;
+        if (replayBody !== null) {
+          response = await authFetch(input, { ...init, body: replayBody });
+          if (await readRecoverableHiddenEnvironmentCode(response)) {
+            response = plainHiddenEnvironmentFailure(response);
+          }
+        } else {
+          response = plainHiddenEnvironmentFailure(refused);
+        }
+      }
+
       // Stash on every outcome, including ok: a stream that fails partway
       // through still wants the request id that opened it.
       lastChatResponseRef.current = readChatResponseMeta(response);
@@ -3240,6 +3412,8 @@ export function useChatSession(
       hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
+      hiddenEnvironmentRecover,
+      hostedHostId,
     ],
   );
 
@@ -3250,6 +3424,7 @@ export function useChatSession(
       // that no-ops everything else. A hosted 502 produced zero client
       // telemetry — the failure a user reported was one we had no record of.
       reportChatFailure(chatError, lastChatResponseRef.current);
+      logPluginChatFailure(chatError, appMessageTurnRef.current);
 
       // Try to recover a structured limitKind from a JSON-shaped error message
       // so the concurrency carve-out is honored on the SSE error path. Best
@@ -3449,14 +3624,35 @@ export function useChatSession(
                 ? { environmentOverrides: hostedEnvironmentOverrides }
                 : {}),
             }
-          : // Host-bound direct preview: forward the saved host id so the server
-            // re-resolves the host's authoritative runtime config (harness /
-            // computer included). Only on the direct path — scenario sessions own
-            // their host via scenarioId and the server ignores hostId when
-            // scenarioId is set.
-            isHostedDirectChat && hostedHostId
-            ? { hostId: hostedHostId }
-            : {}),
+          : hiddenEnvironmentId
+            ? {
+                // Hidden environment (a Playground chat's plugins): the
+                // composed environment INSTEAD of `hostId`. Its server set is
+                // always an explicit override — the chat's own resolved
+                // servers plus its plugins' — because an override replaces
+                // the environment's set, and the composition stores none.
+                executionTarget: {
+                  kind: "environment" as const,
+                  environmentId: hiddenEnvironmentId,
+                },
+                environmentOverrides: {
+                  serverIds: hiddenEnvironmentServerOverride(
+                    resolvedServerIds,
+                    hiddenPluginServerIds,
+                  ),
+                },
+                // The project's skills reach this turn as they reach a client
+                // turn, alongside the plugins' own.
+                includeProjectSkills: true,
+              }
+            : // Host-bound direct preview: forward the saved host id so the server
+              // re-resolves the host's authoritative runtime config (harness /
+              // computer included). Only on the direct path — scenario sessions own
+              // their host via scenarioId and the server ignores hostId when
+              // scenarioId is set.
+              isHostedDirectChat && hostedHostId
+              ? { hostId: hostedHostId }
+              : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
@@ -3719,6 +3915,8 @@ export function useChatSession(
     hostedExecutionTarget,
     hostedEnvironmentId,
     hostedEnvironmentOverrides,
+    hiddenEnvironmentId,
+    hiddenPluginServerIds,
     hostedAccessVersion,
     hostedScenarioSurface,
     getOllamaBaseUrl,
@@ -4690,6 +4888,7 @@ export function useChatSession(
           const extra = {
             metadata: timestampedMetadata,
           } as { metadata: unknown };
+          appMessageTurnRef.current = pluginMessage !== undefined;
           if (pluginMessage) {
             baseSendMessage(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
@@ -5712,13 +5911,16 @@ export function useChatSession(
   // `servers:getProjectServers`, so they can never appear in the browser's
   // name-keyed catalog and the gate would never open.
   const hostedContextNotReady =
-    orgOrHostedContextRequired &&
-    (!hostedProjectId ||
-      (!hostedEnvironmentId &&
-        selectedServerIdsRequired &&
-        selectedServers.length > 0 &&
-        !hostedEnsureServerIds &&
-        hostedSelectedServerIds.length !== selectedServers.length));
+    (orgOrHostedContextRequired &&
+      (!hostedProjectId ||
+        (!hostedEnvironmentId &&
+          selectedServerIdsRequired &&
+          selectedServers.length > 0 &&
+          !hostedEnsureServerIds &&
+          hostedSelectedServerIds.length !== selectedServers.length))) ||
+    // A hidden environment still being composed: a send now would go out as a
+    // client turn without the chat's plugins.
+    (hiddenEnvironmentActive && hiddenEnvironmentId === null);
   const isStreaming = status === "streaming" || status === "submitted";
 
   // The blocked tool call cannot outlive the stream: when it ends (finished,
@@ -5885,5 +6087,7 @@ export function useChatSession(
     disableForAuthentication,
     submitBlocked,
     inputDisabled,
+    hiddenEnvironmentActive,
+    hiddenEnvironmentOffReason,
   };
 }

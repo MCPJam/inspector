@@ -106,6 +106,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   INSTANCE_CONTEXT_REMOVAL_STALE:
     "That context item already changed, so it couldn't be removed. Try again with the current context.",
   INSTANCE_CONTEXT_TOO_LARGE: "The App's model context is too large.",
+  INSTANCE_CONTEXT_HELD:
+    "You removed this App's context from the chat, so context the App sends on its own isn't attached. Use the App (for example its attach button) to attach it again.",
   INSTANCE_MESSAGE_UNAVAILABLE:
     "This App can't send chat messages (the client has messages turned off).",
   INSTANCE_REQUEST_BUSY:
@@ -142,6 +144,10 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   PLUGIN_WORKSPACE_DENIED:
     "Plugin extensions aren't available for this project or account.",
   PLUGIN_WORKSPACE_CANCELLED: "The request was cancelled.",
+  PLUGIN_WORKSPACE_UNREACHABLE:
+    "MCPJam couldn't reach its backend to check plugin access (a network problem or timeout). Check your connection and try again.",
+  PLUGIN_WORKSPACE_SIGN_IN_EXPIRED:
+    "Your sign-in lapsed while MCPJam was checking plugin access. Retry once your session reconnects, or sign in again.",
   PLUGIN_INSTANCE_CANCELLED: "The request was cancelled.",
   INVALID_PLUGIN_INSTANCE_REQUEST: "The request was malformed.",
   // Deep links

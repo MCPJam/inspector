@@ -21,6 +21,12 @@ import {
   onlyFallbackAnswered,
   upstreamTransportStatus,
 } from "../../utils/hosted-connect-failure.js";
+import { HOSTED_MODE } from "../../config.js";
+import { isServiceCredentialUnavailableError } from "../../services/service-credential.js";
+import {
+  DEFAULT_HOSTED_API_URL,
+  resolveHostedApiOrigin,
+} from "../../services/api-keys-relay.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -123,7 +129,8 @@ export const ErrorCode = {
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 export class WebRouteError extends Error {
-  setupFailureSource?: "oauth_refresh" | "xaa_mint" | "authorization_required";
+  setupFailureSource?:
+    "oauth_refresh" | "xaa_mint" | "authorization_required" | "secret_reveal";
   status: number;
   code: ErrorCode;
   details?: Record<string, unknown>;
@@ -353,6 +360,70 @@ export function webErrorFromRoute(
         : {}),
     }
   );
+}
+
+/**
+ * `details.reason` on the shared hosted-only answer. Stable: the client keys
+ * its "available in the hosted app" copy on it.
+ */
+export const FEATURE_REQUIRES_HOSTED = "FEATURE_REQUIRES_HOSTED";
+
+/**
+ * Status of the hosted-only answer. 422, the status the public v1 contract
+ * already gives `FEATURE_NOT_SUPPORTED`, so the web and v1 surfaces agree and
+ * a self-hosted build's missing credential never counts against the 5xx
+ * budget or pages anyone.
+ */
+export const FEATURE_REQUIRES_HOSTED_STATUS = 422;
+
+function hostedAppUrl(): string {
+  try {
+    return resolveHostedApiOrigin();
+  } catch {
+    return DEFAULT_HOSTED_API_URL;
+  }
+}
+
+/**
+ * THE hosted-only answer: this Inspector cannot do `feature` because it holds
+ * no MCPJam service credential (every self-hosted build), and the hosted app
+ * can. `feature` is human copy, shown verbatim. On a hosted deployment the
+ * same condition is a misconfiguration and answers 500 instead.
+ *
+ * Reuses `FEATURE_NOT_SUPPORTED` rather than minting a code (the v1 code
+ * table is a contract shared with the backend); the specific reason rides in
+ * `details`, the convention `SESSION_REVOKED` already follows.
+ */
+export function hostedOnlyRouteError(
+  feature: string,
+  hosted: boolean = HOSTED_MODE,
+  /** What the hosted server lacks, for the hosted 500 (the operator's clue). */
+  missing: string = "its service credential",
+): WebRouteError {
+  // On the hosted app itself a missing credential is a deployment fault, not
+  // a limitation of the build: telling a user to "use the hosted app" while
+  // they are on it would be wrong. Answer the generic hosted 500 (the detail
+  // stays in the request log and Sentry), the way the hosted startup check
+  // reports the same condition.
+  if (hosted) {
+    return new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      `${feature} is unavailable: this hosted server is missing ${missing}.`,
+    );
+  }
+  const hostedUrl = hostedAppUrl();
+  return new WebRouteError(
+    FEATURE_REQUIRES_HOSTED_STATUS,
+    ErrorCode.FEATURE_NOT_SUPPORTED,
+    `${feature} is only available in the hosted MCPJam app (${hostedUrl}).`,
+    { reason: FEATURE_REQUIRES_HOSTED, feature, hostedUrl },
+  );
+}
+
+/** Respond with {@link hostedOnlyRouteError} from a Hono handler. */
+export function hostedOnlyResponse(c: any, feature: string) {
+  return webErrorFromRoute(c, mapRuntimeError(hostedOnlyRouteError(feature)));
 }
 
 export function parseErrorMessage(error: unknown): string {
@@ -715,6 +786,11 @@ function isTargetDependencyFailure(routeError: WebRouteError): boolean {
  * branches below produce, instead of being duplicated down five return paths.
  */
 function classifyRuntimeError(error: unknown): WebRouteError {
+  // A self-hosted build without the service credential asked for a
+  // credential-backed feature. Not a fault anywhere: answer hosted-only.
+  if (isServiceCredentialUnavailableError(error)) {
+    return hostedOnlyRouteError(error.feature);
+  }
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);

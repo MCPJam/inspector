@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/electron/main";
+import { sentryUserId } from "../../../shared/sentry-identity.js";
 import log from "electron-log";
 import { updateShutdownSnapshot } from "./update-shutdown.js";
 import type { UpdateAttempt } from "./update-attempt.js";
@@ -44,10 +45,15 @@ export function reportUpdateFailure(
       scope.addEventProcessor((event) => ({
         ...event,
         breadcrumbs: [],
-        user: undefined,
+        user: sentryUserId(event.user),
         request: undefined,
         extra: undefined,
-        tags,
+        tags: {
+          ...tags,
+          ...(event.tags?.actor_kind
+            ? { actor_kind: event.tags.actor_kind }
+            : {}),
+        },
         contexts: {
           update: event.contexts?.update,
           update_shutdown: event.contexts?.update_shutdown,

@@ -40,6 +40,7 @@ function createDeferred() {
 
 const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
+const useQueriesMock = vi.hoisted(() => vi.fn((_requests: unknown) => ({})));
 const reviewBlobAction = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ messages: [] }),
 );
@@ -198,6 +199,8 @@ vi.mock("@/lib/apis/evals-api", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useQueries: useQueriesMock,
+
   useMutation: (name: unknown) => useMutationMock(name),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => reviewBlobAction,
@@ -1028,6 +1031,111 @@ describe("TestTemplateEditor run view from route", () => {
         {...props}
       />,
     );
+
+  it.each([
+    { source: "recent blob", trace: { blob: "trace-blob" } },
+    { source: "recent chat", trace: { chatSessionId: "trace-chat" } },
+    { source: "route anchor", trace: { blob: "trace-blob" } },
+    { source: "last saved", trace: { blob: "trace-blob" } },
+    { source: "traceless anchor", trace: {} },
+    { source: "no trace", trace: {} },
+  ])("hydrates the displayed run for $source", async ({ source, trace }) => {
+    const newest = { ...baseIteration, suiteRunId: "newest-run" };
+    const traced = {
+      ...baseIteration,
+      _id: "traced-iteration",
+      suiteRunId: "traced-run",
+      ...trace,
+    } as EvalIteration;
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      lastMessageRun: source === "last saved" ? traced._id : undefined,
+    } as any;
+    const query = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: any) =>
+      name === "testSuites:getTestIteration" && args?.iterationId === traced._id
+        ? traced
+        : query(name, args),
+    );
+    const olderTraced = {
+      ...baseIteration,
+      _id: "older-traced",
+      suiteRunId: "older-run",
+      blob: "older-blob",
+    };
+    renderGoldenCase({
+      suiteIterations: source.startsWith("recent")
+        ? [newest, traced, olderTraced]
+        : source.endsWith("anchor")
+          ? [newest, olderTraced]
+          : [newest],
+      ...(source.endsWith("anchor")
+        ? { openCompareIterationId: traced._id }
+        : {}),
+    });
+    await screen.findByTestId("simple-case-form");
+    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectedRun: {
+        args: {
+          runId:
+            source === "no trace"
+              ? "newest-run"
+              : source === "traceless anchor"
+                ? "older-run"
+                : "traced-run",
+        },
+      },
+    });
+  });
+
+  it("hydrates a replayed run before a newer trace-bearing run", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const newest = {
+      ...baseIteration,
+      suiteRunId: "newest-run",
+      blob: "newest-blob",
+    };
+    const replayed = {
+      ...baseIteration,
+      _id: "replayed",
+      suiteRunId: "replayed-run",
+      blob: "replayed-blob",
+    };
+    const query = useQueryMock.getMockImplementation()!;
+    useQueryMock.mockImplementation((name: string, args: any) =>
+      name === "testSuites:getTestIteration" &&
+      args?.iterationId === replayed._id
+        ? replayed
+        : query(name, args),
+    );
+    renderGoldenCase({
+      observeFirst: true,
+      suiteIterations: [newest, replayed],
+    });
+    expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectedRun: { args: { runId: "newest-run" } },
+    });
+    fireEvent.click((await screen.findAllByTestId("case-run-row"))[1]);
+    await waitFor(() =>
+      expect(useQueriesMock.mock.calls.at(-1)?.[0]).toMatchObject({
+        selectedRun: { args: { runId: "replayed-run" } },
+      }),
+    );
+  });
+
+  it("keeps every summary run's client label in the case editor Runs tab", async () => {
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const user = userEvent.setup();
+    const summaryRuns = ["ChatGPT", "Claude"].map((name, index) => ({
+      _id: `summary-run-${index}`, suiteId: "suite-1", createdBy: "u1", runNumber: index + 1,
+      configRevision: "rev", configSnapshot: {}, status: "completed", createdAt: Date.now(),
+      client: { name, hostStyle: name.toLowerCase(), source: "attached" },
+    }));
+    renderGoldenCase({ simpleCaseEditor: false, suiteRuns: summaryRuns, suiteIterations: summaryRuns.map((run, index) => ({ ...baseIteration, _id: `summary-it-${index}`, suiteRunId: run._id, trigger: "suite" })) });
+    await user.click(await screen.findByRole("tab", { name: /Runs/ }));
+    expect(await screen.findByText("ChatGPT")).toBeVisible();
+    expect(screen.getByText("Claude")).toBeVisible();
+  });
 
   it("shows code-owned cases in the workspace without authoring controls", async () => {
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;

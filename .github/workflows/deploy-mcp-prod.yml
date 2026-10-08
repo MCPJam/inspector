@@ -113,7 +113,8 @@ jobs:
       # what's live on staging is byte-identical (for the worker's
       # purposes) to what we'd ship. The mcp-relevant path list mirrors
       # deploy-mcp-staging.yml's `paths:` trigger filter, minus the
-      # workflow file itself (which isn't a build input).
+      # workflow file itself (which isn't a build input);
+      # .github/scripts/mcp-workflow-paths.test.mjs keeps the two in sync.
       - name: Require green staging for current MCP build inputs
         uses: actions/github-script@v9
         with:
@@ -167,13 +168,18 @@ jobs:
 
             const isMcpRelevant = (filename) =>
               filename.startsWith("mcp/") ||
+              filename.startsWith("design-system/") ||
+              filename.startsWith("sdk/") ||
+              filename.startsWith("evaluators/") ||
               filename === "package.json" ||
               filename === "package-lock.json" ||
               filename === ".changeset/config.json";
 
+            // A rename's old path counts too: moving a file out of a build
+            // input changes the build.
             const touched = (diff.files ?? [])
-              .map((f) => f.filename)
-              .filter(isMcpRelevant);
+              .flatMap((f) => [f.filename, f.previous_filename])
+              .filter((filename) => filename && isMcpRelevant(filename));
 
             if (touched.length > 0) {
               core.setFailed(
@@ -191,16 +197,16 @@ jobs:
               `differs only in non-MCP paths — safe to promote.`
             );
 
-  # The candidate itself, evaluated. `--server mcpjam-mcp-staging` points the
-  # suite file's cases at the staging worker, which is what is about to be
-  # promoted — the same file that monitors production nightly, so the two can
-  # never drift into two different definitions of "working".
+  # The candidate itself, evaluated. The staging suite file targets the staging
+  # worker, which is what is about to be promoted. Production is monitored by a
+  # sibling file whose cases a drift test keeps identical, so the two can never
+  # become two different definitions of "working".
   eval-gate:
     needs: verify-staging
     if: ${{ !inputs.skip_eval_gate }}
     uses: ./.github/workflows/mcp-dogfood-evals.yml
     with:
-      server: mcpjam-mcp-staging
+      suite_file: .mcpjam/evals/mcpjam-mcp.yaml
     secrets: inherit
 
   deploy:

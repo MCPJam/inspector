@@ -52,7 +52,7 @@ import {
  *
  * Auth to the platform worker: the worker verifies AuthKit JWTs from the
  * same issuer the inspector authenticates with (prod `login.mcpjam.com`,
- * staging `dynamic-echo-14-staging`), so the caller's bearer is forwarded
+ * staging `deep-vanilla-68-test`), so the caller's bearer is forwarded
  * as the MCP `accessToken`. Local dev tokens come from the dev AuthKit app,
  * which only the LOCAL worker (`wrangler dev --env dev`) trusts — `npm run
  * dev` starts that worker automatically, so the agent talks to it on

@@ -56,3 +56,16 @@ describe("project history snapshots", () => {
     expect(result.current.loading).toBe(false);
   });
 });
+
+it("folds history metrics without fetching full run snapshots", async () => {
+  const { result } = renderHook(() =>
+    useProjectRunHistory("project", rows, true, { includeRunSnapshot: false }),
+  );
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.details.get("one")?.iterations).toEqual([]);
+  expect(
+    mocks.query.mock.calls.every(
+      ([name]) => name !== "testSuites:getTestSuiteRun",
+    ),
+  ).toBe(true);
+});

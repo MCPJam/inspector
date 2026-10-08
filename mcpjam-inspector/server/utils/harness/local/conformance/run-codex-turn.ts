@@ -218,6 +218,8 @@ type TurnResult = {
   errors: string[];
   tools: string[];
   finishMs: number;
+  /** App-server notification methods the turn passed through as `raw`. */
+  methods: string[];
 };
 
 async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt: string): Promise<TurnResult> {
@@ -227,6 +229,7 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
   const toolCalls = new Map<string, any>();
   let text = "";
   let approvals = 0;
+  const methods: string[] = [];
   let res: any = await agent.stream({ session: sessionRef.s, prompt });
   let stream: AsyncIterable<any> = res.fullStream;
   for (let round = 0; round < 4; round++) {
@@ -236,6 +239,7 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
       parts[type] = (parts[type] ?? 0) + 1;
       if (type === "text-delta") text += part.text ?? part.textDelta ?? part.delta ?? "";
       if (type === "tool-call") toolCalls.set(part.toolCallId, part);
+      if (type === "raw" && typeof part.rawValue?.method === "string") methods.push(part.rawValue.method);
       if (type === "tool-approval-request") { paused = part; break; }
       if (type === "error") errors.push(String(part.error?.message ?? part.error ?? part));
     }
@@ -259,7 +263,7 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
   const finishMs = Math.round(performance.now() - start);
   const tools = [...toolCalls.values()].map((c: any) => String(c.toolName));
   console.log(`[codex-conformance] ${label}: ${finishMs}ms parts=${JSON.stringify(parts)} tools=${JSON.stringify(tools)} text=${JSON.stringify(text.slice(0, 200))}`);
-  return { text, parts, approvals, errors, tools, finishMs };
+  return { text, parts, approvals, errors, tools, finishMs, methods };
 }
 
 async function main() {
@@ -437,6 +441,12 @@ async function main() {
   if (probeCalls < 1) failures.push("the host-executed MCP tool never ran");
   if (!turns.mcp.text.includes("PROBE_OK:conformance")) failures.push("the MCP tool's result did not come back through the model");
   if (turns.mcp.approvals > 0) failures.push("the relayed MCP tool raised a Codex approval (MCPJam's gate must be the single authority)");
+
+  // Codex's own plan reaches the turn as `turn/plan/updated`, which the
+  // Inspector shows as the reply's checklist.
+  turns.plan = await runTurn("plan", agent, sessionRef, "PLAN");
+  if (!turns.plan.methods.includes("turn/plan/updated")) failures.push("Codex's update_plan never reached the turn as turn/plan/updated");
+  if (turns.plan.approvals > 0) failures.push("update_plan raised a Codex approval");
 
   // Process tree and hygiene while the session is live.
   const kids = await descendants(bridgePid);

@@ -8,6 +8,8 @@ import {
 } from "../invocation";
 import {
   createPluginInvocationReceiptPort,
+  PLUGIN_COMBINED_CLAIM_RETRY_MS,
+  resetPluginCombinedClaimDetection,
   type DurableInvocationReceipt,
   type PluginInvocationReceiptPort,
 } from "../receipt-store";
@@ -104,6 +106,95 @@ function seeded(saved = receipt()) {
   return { store, current, invoker: new AuthorizedToolInvoker(owner, current) };
 }
 afterEach(() => vi.restoreAllMocks());
+describe("the combined claim and dispatch", () => {
+  const claim = {
+    fingerprint,
+    revision: "revision-1",
+    writerHash: "a".repeat(64),
+    round: 0,
+    legFingerprint: fingerprint,
+    dispatch: true as const,
+  };
+  const store = (refuse: (body: Record<string, unknown>) => string | null) => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      const code = refuse(body);
+      if (code) return Response.json({ code }, { status: 409 });
+      return Response.json({
+        claimed: true,
+        receipt: {
+          ...receipt(body.dispatch ? "dispatched" : "reserved"),
+          legs: [
+            {
+              round: 0,
+              fingerprint,
+              state: body.dispatch ? "dispatched" : "reserved",
+            },
+          ],
+        },
+      });
+    });
+    return { bodies, fetchImpl };
+  };
+  afterEach(() => resetPluginCombinedClaimDetection());
+  it("asks the store to claim and mark dispatched in one write", async () => {
+    const s = store(() => null);
+    const port = createPluginInvocationReceiptPort(owner, "subject", {
+      env,
+      fetchImpl: s.fetchImpl as unknown as typeof fetch,
+    })!;
+    const result = await port.claim("op", claim, AbortSignal.timeout(1000));
+    expect(s.bodies).toEqual([
+      expect.objectContaining({ action: "claim", dispatch: true }),
+    ]);
+    expect(result.receipt.legs[0]!.state).toBe("dispatched");
+  });
+  it("falls back to a plain claim on a store that refuses the field, and remembers", async () => {
+    const s = store((body) =>
+      body.dispatch ? "INVALID_RECEIPT_REQUEST" : null,
+    );
+    const port = createPluginInvocationReceiptPort(owner, "subject", {
+      env,
+      fetchImpl: s.fetchImpl as unknown as typeof fetch,
+    })!;
+    const first = await port.claim("op", claim, AbortSignal.timeout(1000));
+    expect(first.receipt.legs[0]!.state).toBe("reserved");
+    expect(s.bodies.map((body) => body.dispatch ?? false)).toEqual([
+      true,
+      false,
+    ]);
+    // Not asked again within the window: one plain claim.
+    await port.claim("op-2", claim, AbortSignal.timeout(1000));
+    expect(s.bodies.map((body) => body.dispatch ?? false)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    // A backend deployed later is picked up after the window.
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(
+      now + PLUGIN_COMBINED_CLAIM_RETRY_MS + 1,
+    );
+    await port.claim("op-3", claim, AbortSignal.timeout(1000));
+    expect(s.bodies.slice(3).map((body) => body.dispatch ?? false)).toEqual([
+      true,
+      false,
+    ]);
+  });
+  it("never falls back on the store's own refusal", async () => {
+    const s = store(() => "INVOCATION_ID_REUSED");
+    const port = createPluginInvocationReceiptPort(owner, "subject", {
+      env,
+      fetchImpl: s.fetchImpl as unknown as typeof fetch,
+    })!;
+    await expect(
+      port.claim("op", claim, AbortSignal.timeout(1000)),
+    ).rejects.toMatchObject({ code: "INVOCATION_ID_REUSED" });
+    expect(s.bodies).toHaveLength(1);
+  });
+});
 describe("trusted receipt request ports and recovery", () => {
   it("sends only digests in data and the service credential in its dedicated header", async () => {
     const fetchImpl = vi.fn(async () => Response.json({ receipt: null }));

@@ -53,8 +53,11 @@
  * browser-sent history. A legacy migration must use trusted persisted history
  * loaded for the target chat, not signatures supplied by the browser.
  *
- * THE KEY is derived from `INSPECTOR_SERVICE_TOKEN` under its own label, so
- * every hosted replica shares it. In hosted mode verification always runs
+ * THE KEY is derived from `HISTORY_PROVENANCE_SECRET` under its own label
+ * (`HISTORY_PROVENANCE_SECRET_PREVIOUS` verifies too, so rotating it is a
+ * non-event), falling back for one release to `INSPECTOR_SERVICE_TOKEN` — so
+ * rotating the infra token no longer wipes the model's view of stored history.
+ * See `utils/signing-keys.ts`. Every hosted replica shares it. In hosted mode verification always runs
  * ({@link historyVerificationFor}); a hosted deployment without the key — or a
  * turn without a chat session — can verify nothing, so it shows the model none
  * of the history's assistant content rather than all of it. In local mode,
@@ -77,10 +80,14 @@ import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import {
   canonicalDigest,
-  deriveServiceTokenKey,
   verifyToolApprovalId,
   type ToolApprovalBinding,
 } from "./tool-approval-token.js";
+import {
+  HISTORY_PROVENANCE_SECRET_ENV,
+  resolveSigningKeyRing,
+  type SigningKeyRing,
+} from "./signing-keys.js";
 
 /** The signature form this server issues. */
 export const PROVENANCE_SIGNATURE_PREFIX = "mjpv2";
@@ -126,7 +133,14 @@ export const TOOL_OUTPUT_TRUST_NOTE = [
 ].join("\n\n");
 
 export interface ProvenanceContext {
+  /** The key new signatures are made with. */
   key: Buffer;
+  /**
+   * Every key a signature may verify under, `key` first. Absent means `key`
+   * alone. Lets a stored signature made under the previous secret (or the
+   * legacy service-token key) keep verifying across a rotation.
+   */
+  acceptedKeys?: readonly Buffer[];
   projectId: string;
   /** The chat session the content belongs to, as the server knows it. */
   chatSessionId: string;
@@ -140,7 +154,21 @@ export function resolveHistoryProvenanceKey(
   env: NodeJS.ProcessEnv = process.env,
   hosted: boolean = process.env.VITE_MCPJAM_HOSTED_MODE === "true",
 ): Buffer | null {
-  return hosted ? deriveServiceTokenKey(PROVENANCE_KEY_LABEL, env) : null;
+  return resolveHistoryProvenanceKeyRing(env, hosted)?.signing ?? null;
+}
+
+/** The provenance key ring (see `utils/signing-keys.ts`), hosted mode only. */
+export function resolveHistoryProvenanceKeyRing(
+  env: NodeJS.ProcessEnv = process.env,
+  hosted: boolean = process.env.VITE_MCPJAM_HOSTED_MODE === "true",
+): SigningKeyRing | null {
+  return hosted
+    ? resolveSigningKeyRing({
+        secretEnv: HISTORY_PROVENANCE_SECRET_ENV,
+        label: PROVENANCE_KEY_LABEL,
+        env,
+      })
+    : null;
 }
 
 /**
@@ -151,11 +179,17 @@ export function resolveHistoryProvenanceKey(
 export function historyProvenanceContextFor(
   projectId: string | null | undefined,
   chatSessionId: string | null | undefined,
-  key: Buffer | null = resolveHistoryProvenanceKey(),
+  keyOrRing: Buffer | SigningKeyRing | null = resolveHistoryProvenanceKeyRing(),
 ): ProvenanceContext | null {
-  return key && projectId && chatSessionId
-    ? { key, projectId, chatSessionId }
-    : null;
+  if (!keyOrRing || !projectId || !chatSessionId) return null;
+  return Buffer.isBuffer(keyOrRing)
+    ? { key: keyOrRing, projectId, chatSessionId }
+    : {
+        key: keyOrRing.signing,
+        acceptedKeys: keyOrRing.accepted,
+        projectId,
+        chatSessionId,
+      };
 }
 
 /**
@@ -179,7 +213,7 @@ export function historyVerificationFor(
     ctx: historyProvenanceContextFor(
       projectId,
       chatSessionId,
-      resolveHistoryProvenanceKey(env, true),
+      resolveHistoryProvenanceKeyRing(env, true),
     ),
   };
 }
@@ -194,7 +228,13 @@ let ephemeralFenceKey: Buffer | undefined;
 export function resolveToolOutputFenceKey(
   env: NodeJS.ProcessEnv = process.env,
 ): Buffer {
-  const derived = deriveServiceTokenKey(FENCE_KEY_LABEL, env);
+  // Same root as the provenance ring (dedicated secret, else the legacy
+  // service-token key), under the fence's own label.
+  const derived = resolveSigningKeyRing({
+    secretEnv: HISTORY_PROVENANCE_SECRET_ENV,
+    label: FENCE_KEY_LABEL,
+    env,
+  })?.signing;
   if (derived) return derived;
   ephemeralFenceKey ??= randomBytes(32);
   return ephemeralFenceKey;
@@ -274,6 +314,15 @@ function sameSignature(given: unknown, expected: string | null): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * `ctx` once per key a signature may verify under. Every key is checked by
+ * the callers below (no early exit), so timing does not say which matched.
+ */
+function verificationContexts(ctx: ProvenanceContext): ProvenanceContext[] {
+  const keys = ctx.acceptedKeys?.length ? ctx.acceptedKeys : [ctx.key];
+  return keys.map((key) => ({ ...ctx, key }));
+}
+
 /** Check a chat-bound item signature and return its id for replay detection. */
 function checkItemSignature(
   ctx: ProvenanceContext,
@@ -283,13 +332,17 @@ function checkItemSignature(
 ): { ok: boolean; itemId?: string } {
   const parsed = parseSignature(signature);
   if (!parsed) return { ok: false };
-  if (parsed.itemId === undefined) return { ok: false };
-  return sameSignature(
-    signature,
-    itemSignature(ctx, kind, parsed.itemId, content),
-  )
-    ? { ok: true, itemId: parsed.itemId }
-    : { ok: false };
+  const itemId = parsed.itemId;
+  if (itemId === undefined) return { ok: false };
+  let matched = false;
+  for (const candidate of verificationContexts(ctx)) {
+    matched =
+      sameSignature(
+        signature,
+        itemSignature(candidate, kind, itemId, content),
+      ) || matched;
+  }
+  return matched ? { ok: true, itemId } : { ok: false };
 }
 
 function checkToolSignature(
@@ -299,11 +352,14 @@ function checkToolSignature(
   signature: unknown,
 ): boolean {
   const parsed = parseSignature(signature);
-  if (!parsed || !content) return false;
-  return (
-    parsed.itemId === undefined &&
-    sameSignature(signature, toolSignature(ctx, kind, content))
-  );
+  if (!parsed || !content || parsed.itemId !== undefined) return false;
+  let matched = false;
+  for (const candidate of verificationContexts(ctx)) {
+    matched =
+      sameSignature(signature, toolSignature(candidate, kind, content)) ||
+      matched;
+  }
+  return matched;
 }
 
 /**

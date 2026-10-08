@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createModelContextController,
+  PluginContextHeld,
   PluginContextUpdateRejected,
 } from "../model-context-controller";
 const result = (id: string) => ({
@@ -98,6 +99,9 @@ describe("context replace queue", () => {
       send,
       sendRemoval: remove,
       onSnapshot: snapshots,
+      // The replacement comes from the person using the App, so it may
+      // follow their removal.
+      userAttaching: () => true,
     });
     update.restore({ revision: 3, sequence: 2, state: state("old", "first") });
     const removing = update.remove("old", 0);
@@ -108,7 +112,10 @@ describe("context replace queue", () => {
     expect(send).not.toHaveBeenCalled();
     finish({ revision: 4, sequence: 2, state: null });
     await Promise.all([removing, replacing]);
-    expect(send.mock.calls[0][0].sequence).toBe(3);
+    expect(send.mock.calls[0][0]).toMatchObject({
+      sequence: 3,
+      attach: "user",
+    });
     expect(snapshots.mock.lastCall![0]).toMatchObject({
       revision: 5,
       sequence: 3,
@@ -204,5 +211,68 @@ describe("context replace queue", () => {
     ).toThrow("UNSUPPORTED");
     expect(send).not.toHaveBeenCalled();
     await expect(update({})).rejects.toThrow("closed");
+  });
+  it("keeps a removal removed until the person uses the App again", async () => {
+    let using = false;
+    const onHeld = vi.fn();
+    const send = vi.fn(async (request) => ({
+      ...result(`u${request.sequence}`),
+      snapshot: {
+        revision: request.sequence + 1,
+        sequence: request.sequence,
+        state: {
+          updateId: `u${request.sequence}`,
+          content: [{ type: "text", text: "view" }],
+        },
+      },
+    }));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+      sendRemoval: vi.fn(async () => ({
+        revision: 2,
+        sequence: 1,
+        state: null,
+      })),
+      onSnapshot: () => {},
+      userAttaching: () => using,
+      onHeld,
+    });
+    update.restore({
+      revision: 1,
+      sequence: 1,
+      state: { updateId: "u1", content: [{ type: "text", text: "view" }] },
+    });
+    await update.remove("u1", 0);
+    // The App re-sends its view on its own (Bits & Bolts redraws): refused
+    // here, without a request, and not an unknown outcome.
+    const view = { content: [{ type: "text", text: "view" }] };
+    await expect(update(view)).rejects.toBeInstanceOf(PluginContextHeld);
+    expect(send).not.toHaveBeenCalled();
+    expect(onHeld).toHaveBeenCalledOnce();
+    // The person clicks into the App and attaches again.
+    using = true;
+    await update(view);
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sequence: 2, attach: "user" }),
+    );
+    // Attached again, the App's own updates flow as before.
+    using = false;
+    await update(view);
+    expect(send.mock.lastCall![0]).not.toHaveProperty("attach");
+  });
+  it("learns a hold from the server after a remount", async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(new PluginContextHeld("held"))
+      .mockResolvedValueOnce(result("u2"));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+      userAttaching: () => false,
+    });
+    await expect(update({})).rejects.toBeInstanceOf(PluginContextHeld);
+    await expect(update({})).rejects.toBeInstanceOf(PluginContextHeld);
+    expect(send).toHaveBeenCalledOnce();
   });
 });

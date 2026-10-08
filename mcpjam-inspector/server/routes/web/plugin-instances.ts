@@ -1296,7 +1296,10 @@ async function invoke(
   origin: "entrypoint" | "app" | "quick-action",
 ) {
   const { admission, bearer, actor } = await admitted(c, body);
-  const instance = await pluginInstances.getPersistent(
+  // The instance's durable control, read once for this phase: the fence's
+  // first read (the route's first resolution, below) stands on it for its
+  // control leg and adds only the admission and host read.
+  const { instance, fence } = await pluginInstances.readFenced(
     body.instanceToken,
     actor,
     c.req.raw.signal,
@@ -1329,38 +1332,42 @@ async function invoke(
     { hostId: instance.hostId, serverId: instance.owner.serverId },
     instance,
   );
+  const resolveActivation: typeof runtime.resolve =
+    origin === "quick-action"
+      ? async (name, signal, read) => {
+          const resolved = await resolvePluginActivation(
+            runtime,
+            instance.activation.sourceToolName!,
+            instance.activation.selector,
+            signal,
+            read,
+          );
+          if (
+            resolved.plan.params.name !== name ||
+            resolved.resourceUri !== instance.resourceUri ||
+            resolved.presentation !== instance.activation.presentation ||
+            pluginBindingDigest(resolved.plan.params.arguments) !==
+              pluginBindingDigest(params.arguments)
+          )
+            throw denied();
+          return resolved;
+        }
+      : runtime.resolve;
+  // The first resolution makes the instance's fenced read (durable control
+  // beside admission), so the invoker's first authorization can reuse it.
   // Await the complete dispatch/delivery before releasing its request-owned manager.
   return await invokePluginRequest(c, {
     actor,
     owner: instance.owner,
     admission,
     runtime,
-    resolve:
-      origin === "quick-action"
-        ? async (name, signal, read) => {
-            const resolved = await resolvePluginActivation(
-              runtime,
-              instance.activation.sourceToolName!,
-              instance.activation.selector,
-              signal,
-              read,
-            );
-            if (
-              resolved.plan.params.name !== name ||
-              resolved.resourceUri !== instance.resourceUri ||
-              resolved.presentation !== instance.activation.presentation ||
-              pluginBindingDigest(resolved.plan.params.arguments) !==
-                pluginBindingDigest(params.arguments)
-            )
-              throw denied();
-            return resolved;
-          }
-        : runtime.resolve,
+    resolve: resolveActivation,
     origin,
     invocationId,
     params,
     approval: body.approval,
     resume: body.resume,
+    firstRead: fence.read,
     assertLive: () => {
       pluginInstances.get(body.instanceToken, actor);
     },
@@ -1464,6 +1471,7 @@ async function invoke(
           pluginInstances.signal(body.instanceToken, actor),
         ]),
         origin,
+        fence,
       ),
   });
 }

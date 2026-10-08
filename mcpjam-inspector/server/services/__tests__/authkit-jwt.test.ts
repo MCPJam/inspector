@@ -20,8 +20,8 @@ const ISSUER = "https://login.mcpjam.com";
 const CLIENT_ID = "client_test_123";
 const SUB = "user_workos_42";
 const PRODUCTION_CLIENT_ID = "client_01K4C1TVPBE7JTBFQJF9SDW9P9";
-const STAGING_CLIENT_ID = "client_01K4C1TVA6CMQ3G32F1P301A9G";
-const DEVELOPMENT_CLIENT_ID = "client_01KTN2EWHHJCKRB8RSR307X4SG";
+const LEGACY_STAGING_CLIENT_ID = "client_01K4C1TVA6CMQ3G32F1P301A9G";
+const STAGING_CLIENT_ID = "client_01KTN2EWHHJCKRB8RSR307X4SG";
 
 let trustedPrivate: CryptoKey;
 let trustedPublic: CryptoKey;
@@ -111,10 +111,10 @@ describe("verifyAuthKitToken", () => {
   });
 
   it("rejects a token from an untrusted issuer", async () => {
-    const token = await sign(trustedPrivate, { iss: "https://evil.example.com" });
-    await expect(
-      verifyAuthKitToken(token, deps()),
-    ).rejects.toThrow(/issuer/i);
+    const token = await sign(trustedPrivate, {
+      iss: "https://evil.example.com",
+    });
+    await expect(verifyAuthKitToken(token, deps())).rejects.toThrow(/issuer/i);
   });
 
   it("rejects a token with the wrong audience", async () => {
@@ -125,7 +125,7 @@ describe("verifyAuthKitToken", () => {
   });
 
   it("does not infer an MCP resource for an unknown AuthKit client id", async () => {
-    const resource = resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)!;
+    const resource = resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)![0];
     const token = await sign(trustedPrivate, { aud: resource });
 
     expect(resolveMcpResourceIndicator(CLIENT_ID)).toBeUndefined();
@@ -148,7 +148,7 @@ describe("verifyAuthKitToken", () => {
     };
     const token = await sign(trustedPrivate, {
       iss: productionIssuer,
-      aud: resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID),
+      aud: resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)?.[0],
     });
 
     await expect(
@@ -171,11 +171,11 @@ describe("verifyAuthKitToken", () => {
     };
     const wrongIssuer = await sign(trustedPrivate, {
       iss: "https://other-issuer.example",
-      aud: resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID),
+      aud: resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)?.[0],
     });
     const wrongEnvironment = await sign(trustedPrivate, {
       iss: productionIssuer,
-      aud: resolveMcpResourceIndicator(STAGING_CLIENT_ID),
+      aud: resolveMcpResourceIndicator(LEGACY_STAGING_CLIENT_ID)?.[0],
     });
 
     for (const token of [wrongIssuer, wrongEnvironment]) {
@@ -188,15 +188,16 @@ describe("verifyAuthKitToken", () => {
   });
 
   it("maps only the known environment client ids and matches the worker hosts", () => {
-    expect(resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)).toBe(
+    expect(resolveMcpResourceIndicator(PRODUCTION_CLIENT_ID)).toEqual([
       "https://mcp.mcpjam.com/mcp",
-    );
-    expect(resolveMcpResourceIndicator(STAGING_CLIENT_ID)).toBe(
+    ]);
+    expect(resolveMcpResourceIndicator(LEGACY_STAGING_CLIENT_ID)).toEqual([
       "https://mcp-staging.mcpjam.com/mcp",
-    );
-    expect(resolveMcpResourceIndicator(DEVELOPMENT_CLIENT_ID)).toBe(
+    ]);
+    expect(resolveMcpResourceIndicator(STAGING_CLIENT_ID)).toEqual([
       "http://localhost:8787/mcp",
-    );
+      "https://mcp-staging.mcpjam.com/mcp",
+    ]);
     expect(resolveMcpResourceIndicator("client_unknown")).toBeUndefined();
 
     const wrangler = readFileSync(
@@ -207,6 +208,48 @@ describe("verifyAuthKitToken", () => {
     expect(wrangler).toContain('"pattern": "mcp-staging.mcpjam.com"');
     expect(wrangler).toContain("localhost:8787");
   });
+
+  it.each(["http://localhost:8787/mcp", "https://mcp-staging.mcpjam.com/mcp"])(
+    "accepts %s only for staging OAuth with explicit opt-in",
+    async (aud) => {
+      const issuer = "https://deep-vanilla-68-test.authkit.app";
+      const stagingDeps: AuthKitVerifyDeps = {
+        clientId: STAGING_CLIENT_ID,
+        resolveKey: () => trustedPublic,
+      };
+      const token = await sign(trustedPrivate, { iss: issuer, aud });
+      await expect(
+        verifyAuthKitToken(token, stagingDeps),
+      ).rejects.toBeInstanceOf(AuthKitVerificationError);
+      await expect(
+        verifyAuthKitToken(token, stagingDeps, {
+          allowMcpResourceAudience: true,
+        }),
+      ).resolves.toMatchObject({ sub: SUB });
+      for (const iss of [
+        "https://api.workos.com/",
+        "https://dynamic-echo-14-staging.authkit.app",
+      ]) {
+        const wrongIssuer = await sign(trustedPrivate, { iss, aud });
+        await expect(
+          verifyAuthKitToken(wrongIssuer, stagingDeps, {
+            allowMcpResourceAudience: true,
+          }),
+        ).rejects.toBeInstanceOf(AuthKitVerificationError);
+      }
+      const productionToken = await sign(trustedPrivate, {
+        iss: "https://login.mcpjam.com",
+        aud,
+      });
+      await expect(
+        verifyAuthKitToken(
+          productionToken,
+          { clientId: PRODUCTION_CLIENT_ID, resolveKey: () => trustedPublic },
+          { allowMcpResourceAudience: true },
+        ),
+      ).rejects.toBeInstanceOf(AuthKitVerificationError);
+    },
+  );
 
   it("rejects an expired token", async () => {
     const token = await sign(trustedPrivate, { expSecondsFromNow: -60 });

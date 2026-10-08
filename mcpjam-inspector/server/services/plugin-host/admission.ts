@@ -5,6 +5,10 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { timedPluginStep } from "./timing.js";
 import type { HostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
+  isFetchConnectionFailure,
+  isFetchTimeout,
+} from "../../utils/fetch-error-cause.js";
+import {
   pluginServerIdentitySchema,
   type PluginServerIdentity,
 } from "./bindings.js";
@@ -112,8 +116,9 @@ export async function readPluginExecutionContext(options: {
         ? { hostConfig: reply.hostConfig as HostRuntimeConfig }
         : {}),
     };
-  } catch {
-    throw new PluginWorkspaceAdmissionError(options.signal?.aborted === true);
+  } catch (error) {
+    if (options.signal?.aborted) throw new PluginWorkspaceAdmissionError(true);
+    throw pluginAdmissionFailure(error, signal.aborted);
   }
 }
 
@@ -161,8 +166,9 @@ export async function readPluginWorkspaceReadiness(options: {
     )
       throw new PluginWorkspaceAdmissionError();
     return (reply as { enabled: boolean }).enabled;
-  } catch {
-    throw new PluginWorkspaceAdmissionError(options.signal?.aborted === true);
+  } catch (error) {
+    if (options.signal?.aborted) throw new PluginWorkspaceAdmissionError(true);
+    throw pluginAdmissionFailure(error, signal.aborted);
   }
 }
 
@@ -194,27 +200,94 @@ export async function resolvePluginCleanupActor(options: {
       throw new PluginWorkspaceAdmissionError();
     }
     return (result as { _id: string })._id;
-  } catch {
-    throw new PluginWorkspaceAdmissionError(options.signal?.aborted === true);
+  } catch (error) {
+    if (options.signal?.aborted) throw new PluginWorkspaceAdmissionError(true);
+    throw pluginAdmissionFailure(error, deadline.aborted);
   }
 }
 
-export class PluginWorkspaceAdmissionError extends Error {
-  readonly status: 403 | 408;
-  readonly code: "PLUGIN_WORKSPACE_DENIED" | "PLUGIN_WORKSPACE_CANCELLED";
+/**
+ * Why admission did not grant. Only `denied` is the backend's answer; the
+ * others say the answer never arrived, so the person can retry instead of
+ * reading a network blip as "not available for this project".
+ */
+export type PluginWorkspaceAdmissionFailure =
+  "denied" | "cancelled" | "unreachable" | "signed-out";
 
-  constructor(cancelled = false) {
-    super(
-      cancelled
-        ? "Plugin workspace request cancelled"
-        : "Plugin workspace execution is unavailable for this project",
-    );
+const ADMISSION_FAILURES = {
+  denied: {
+    status: 403,
+    code: "PLUGIN_WORKSPACE_DENIED",
+    message: "Plugin workspace execution is unavailable for this project",
+  },
+  cancelled: {
+    status: 408,
+    code: "PLUGIN_WORKSPACE_CANCELLED",
+    message: "Plugin workspace request cancelled",
+  },
+  unreachable: {
+    status: 503,
+    code: "PLUGIN_WORKSPACE_UNREACHABLE",
+    message:
+      "MCPJam couldn't reach its backend to check plugin access (network problem or timeout)",
+  },
+  // 403, never 401: a 401 on these routes means "nothing ran, resend", and a
+  // failure here can follow work this request already did.
+  "signed-out": {
+    status: 403,
+    code: "PLUGIN_WORKSPACE_SIGN_IN_EXPIRED",
+    message: "Your sign-in lapsed while MCPJam was checking plugin access",
+  },
+} as const;
+
+export class PluginWorkspaceAdmissionError extends Error {
+  readonly status: 403 | 408 | 503;
+  readonly code: (typeof ADMISSION_FAILURES)[PluginWorkspaceAdmissionFailure]["code"];
+  readonly failure: PluginWorkspaceAdmissionFailure;
+
+  constructor(failure: PluginWorkspaceAdmissionFailure | boolean = "denied") {
+    const kind =
+      failure === true ? "cancelled" : failure === false ? "denied" : failure;
+    const described = ADMISSION_FAILURES[kind];
+    super(described.message);
     this.name = "PluginWorkspaceAdmissionError";
-    this.status = cancelled ? 408 : 403;
-    this.code = cancelled
-      ? "PLUGIN_WORKSPACE_CANCELLED"
-      : "PLUGIN_WORKSPACE_DENIED";
+    this.failure = kind;
+    this.status = described.status;
+    this.code = described.code;
   }
+}
+
+/**
+ * A credential the backend refused. Same wording `convex-read-errors.ts`
+ * matches; deliberately not a bare "unauthorized", which backend refusals use.
+ */
+const AUTHENTICATION_FAILURE =
+  /\b(unauthenticated|invalid token|token (has )?expired|expired token|jwt)\b/i;
+
+/**
+ * Name a failed admission read without echoing backend detail. A
+ * `ConvexError` payload is the backend deciding; a transport failure or our
+ * own deadline is the backend not answering; anything else stays a denial.
+ */
+export function pluginAdmissionFailure(
+  error: unknown,
+  deadlineExpired: boolean,
+): PluginWorkspaceAdmissionError {
+  if (error instanceof PluginWorkspaceAdmissionError && !deadlineExpired)
+    return error;
+  if (
+    deadlineExpired ||
+    isFetchTimeout(error) ||
+    isFetchConnectionFailure(error)
+  )
+    return new PluginWorkspaceAdmissionError("unreachable");
+  const data = (error as { data?: unknown } | null)?.data;
+  if (data === undefined || data === null) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (AUTHENTICATION_FAILURE.test(message))
+      return new PluginWorkspaceAdmissionError("signed-out");
+  }
+  return new PluginWorkspaceAdmissionError();
 }
 
 export interface PluginWorkspaceAdmission {
@@ -312,12 +385,10 @@ export async function admitPluginWorkspace(options: {
       if (requestSignals.some((candidate) => candidate.aborted)) {
         throw new PluginWorkspaceAdmissionError(true);
       }
-      if (error instanceof PluginWorkspaceAdmissionError && !deadline.aborted) {
-        throw error;
-      }
-      // Rollout false/unavailable, lost membership, expired auth, backend
-      // failure and malformed replies all deny. Never echo backend details.
-      throw new PluginWorkspaceAdmissionError();
+      // Rollout false/unavailable, lost membership and malformed replies
+      // deny; an unreachable backend or a lapsed sign-in says so instead.
+      // Never echo backend details.
+      throw pluginAdmissionFailure(error, deadline.aborted);
     }
   };
 
