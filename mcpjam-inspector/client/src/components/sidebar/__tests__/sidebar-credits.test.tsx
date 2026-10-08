@@ -140,6 +140,7 @@ describe("SidebarCredits", () => {
     };
     renderCredits();
     expect(screen.getByText("Low credits")).toBeInTheDocument();
+    expect(screen.getByText("550 / 5,550")).toBeInTheDocument();
   });
 
   it("does not label a monthly balance with an unknown allowance as low", () => {

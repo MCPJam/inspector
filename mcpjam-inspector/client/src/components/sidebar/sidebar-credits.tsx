@@ -173,7 +173,7 @@ export function SidebarCredits({
                 percentText={
                   balance
                     ? showMonthly
-                      ? `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()}`
+                      ? `${monthlyRemaining.toLocaleString()} / ${meterCapacity.toLocaleString()}`
                       : `${balance.freeDailyCreditsRemaining.toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
                     : ""
                 }
