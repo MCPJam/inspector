@@ -55,6 +55,21 @@ describe("suite run review", () => {
     },
   );
 
+  it("labels a one-case launch and keeps its iterations separate from suite defaults", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mcpjam:suite-run-iterations:suite", "9");
+    const onStart = vi.fn();
+    render(<SuiteRunReview suite={{ ...suite, minIterations: undefined }}
+      cases={[cases[0]]} caseTitle="Find my account" initialIterations={2}
+      environments={environments} hostNamesById={names} onStart={onStart} onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    expect(screen.getByText("Find my account")).toBeVisible();
+    expect(screen.getByRole("spinbutton")).toHaveValue(2);
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ _id: suite._id }), { iterationOverride: 2, throwOnFailure: true });
+    expect(localStorage.getItem("mcpjam:suite-run-iterations:suite")).toBe("9");
+  });
+
   it("requires a target and never mutates suite defaults", () => {
     expect(() => selectReviewTargets(suite, [])).toThrow("Select at least one");
     expect(() => selectReviewTargets(suite, ["stale"])).toThrow(

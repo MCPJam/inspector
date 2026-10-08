@@ -67,6 +67,27 @@ const projectServersMock = vi.hoisted(() => ({
 
 // The harness × model picker locks read each host's config; these tests have
 // no Convex client for that query, so the reads answer "not known yet".
+vi.mock("@/components/evaluate/suite-run-review", () => ({
+  SuiteRunReview: (props: any) => {
+    const [error, setError] = useState<string>();
+    return (
+      <div role="dialog" aria-label="Setup Run">
+        <span>{props.caseTitle}</span>
+        <output data-testid="suite-run-cases">{JSON.stringify(props.cases.map((item: any) => item._id))}</output>
+        <button onClick={async () => {
+          try {
+            await props.onStart({ ...props.suite, environmentIds: ["one-run", "second-client"] }, {
+              iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+            });
+            props.onClose();
+          } catch (failure) { setError((failure as Error).message); }
+        }}>Run test case</button>
+        {error && <p role="alert">{error}</p>}
+      </div>
+    );
+  },
+}));
+
 vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
@@ -1031,6 +1052,39 @@ describe("TestTemplateEditor run view from route", () => {
         {...props}
       />,
     );
+
+  it("launches case setup through the suite's ephemeral launcher", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn();
+    renderGoldenCase({ onRunCase });
+    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    expect(onRunCase).toHaveBeenCalledWith("case-1", {
+      iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+      skipJudge: false,
+      suiteOverride: expect.objectContaining({ _id: "suite-1", environmentIds: ["one-run", "second-client"] }),
+    });
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Setup Run" })).toBeNull();
+  });
+
+  it("saves case edits before an ephemeral suite launch and keeps launch errors visible", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn().mockRejectedValue(new Error("Client is disconnected"));
+    renderGoldenCase({ onRunCase, observeFirst: true });
+    const prompt = await screen.findByLabelText("What does the user ask?");
+    await user.clear(prompt);
+    await user.type(prompt, "Find my current account");
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await screen.findByText("Client is disconnected");
+    expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    expect(updateTestCaseMutationMock.mock.invocationCallOrder[0]).toBeLessThan(onRunCase.mock.invocationCallOrder[0]);
+    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+  });
 
   it.each([
     { source: "recent blob", trace: { blob: "trace-blob" } },

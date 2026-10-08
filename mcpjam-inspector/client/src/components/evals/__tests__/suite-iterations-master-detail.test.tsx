@@ -33,7 +33,14 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 
 vi.mock("../test-template-editor", () => ({
-  TestTemplateEditor: ({ readOnly, openCompareIterationId }: {readOnly?: boolean; openCompareIterationId?: string}) => <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId} />,
+  TestTemplateEditor: ({ readOnly, openCompareIterationId, onRunCase }: any) => (
+    <div data-testid="case-workspace" data-readonly={String(readOnly)} data-iteration={openCompareIterationId}>
+      <button onClick={() => onRunCase("case-1", {
+        suiteOverride: { _id: "suite-1", environmentIds: ["one-run"] },
+        iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+      })}>Launch case overrides</button>
+    </div>
+  ),
 }));
 
 vi.mock("convex/react", () => ({
@@ -892,6 +899,20 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
       "checkout-flow",
     );
     expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it("forwards ephemeral case setup to the suite runner with only that case", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+    renderOverview({
+      suiteDetailOverview: true, evaluateCaseEditor: true, onRerun,
+      route: { type: "test-edit", suiteId: "suite-1", testId: "case-1" },
+    });
+    await user.click(screen.getByRole("button", { name: "Launch case overrides" }));
+    expect(onRerun).toHaveBeenCalledWith({ _id: "suite-1", environmentIds: ["one-run"] }, {
+      caseIds: ["case-1"], iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true,
+    });
+    expect(baseSuite.environmentIds).not.toEqual(["one-run"]);
   });
 
   it("opens test edit from the opted-in suite-detail case list", async () => {

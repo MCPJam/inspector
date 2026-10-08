@@ -1,3 +1,5 @@
+import type { EvalSuite, CaseRunLaunchOptions } from "./types";
+import { SuiteRunReview } from "../evaluate/suite-run-review";
 import { useSelectedRun } from "./use-selected-run";
 import type { EvalSuiteRunListItem } from "./types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
@@ -416,7 +418,7 @@ interface TestTemplateEditorProps {
    */
   onRunCase?: (
     caseId: string,
-    opts?: { iterationOverride?: number; skipJudge?: boolean },
+    opts?: CaseRunLaunchOptions,
   ) => void | Promise<void>;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -2131,34 +2133,48 @@ export function TestTemplateEditor({
    * while the pane showed the latest. A ref always holds the current one.
    */
   const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
-  const runTest = useCallback(async () => {
-    const caseId = currentTestCase?._id;
-    if (!onRunCase || !caseId || isDraft) return;
-    setRunTestPending(true);
-    try {
-      if (hasUnsavedChanges) {
-        // A refused save (an unset tool question, an invalid step list) must
-        // not launch: the run executes the PERSISTED case, so it would grade
-        // a version of the case the author is not looking at.
-        const saved = await handleSaveRef.current?.();
-        if (!saved) return;
+  const runTest = useCallback(
+    async (launch?: {
+      suite: EvalSuite;
+      options: {
+        iterationOverride: number;
+        ephemeralEnvironment?: boolean;
+        throwOnFailure?: boolean;
+      };
+    }) => {
+      const caseId = currentTestCase?._id;
+      if (!onRunCase || !caseId || isDraft) return;
+      setRunTestPending(true);
+      try {
+        if (hasUnsavedChanges) {
+          // A refused save (an unset tool question, an invalid step list) must
+          // not launch: the run executes the PERSISTED case, so it would grade
+          // a version of the case the author is not looking at.
+          const saved = await handleSaveRef.current?.();
+          if (!saved) {
+            if (launch) throw new Error("Save the test case before running.");
+            return;
+          }
+        }
+        await onRunCase(caseId, {
+          iterationOverride,
+          ...(launch ? { ...launch.options, suiteOverride: launch.suite } : {}),
+          skipJudge:
+            editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
+        });
+      } finally {
+        setRunTestPending(false);
       }
-      await onRunCase(caseId, {
-        iterationOverride,
-        skipJudge:
-          editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
-      });
-    } finally {
-      setRunTestPending(false);
-    }
-  }, [
-    onRunCase,
-    currentTestCase?._id,
-    isDraft,
-    hasUnsavedChanges,
-    iterationOverride,
-    editForm?.judgeConfigOverride?.goalCompletion?.enabled,
-  ]);
+    },
+    [
+      onRunCase,
+      currentTestCase?._id,
+      isDraft,
+      hasUnsavedChanges,
+      iterationOverride,
+      editForm?.judgeConfigOverride?.goalCompletion?.enabled,
+    ],
+  );
 
   const arePromptTurnsValid = useMemo(() => {
     if (!editForm) return true;
@@ -4482,7 +4498,29 @@ export function TestTemplateEditor({
                     }}
                   />
                 ) : null}
-                {useWorkspace ? (
+                {useWorkspace && onRunCase && suite && !isDirectGuest ? (
+                  runSetupOpen && (
+                    <SuiteRunReview
+                      projectId={projectId}
+                      suite={suite}
+                      cases={[currentTestCase]}
+                      caseTitle={editForm?.title || currentTestCase.title}
+                      initialIterations={
+                        editForm?.runs ?? DEFAULTS.RUNS_PER_TEST
+                      }
+                      environments={projectEnvironmentViews}
+                      hostNamesById={hostNamesById}
+                      disabledReason={
+                        saveDisabledTooltip ??
+                        (isDraft ? "Save the test case before running." : null)
+                      }
+                      onClose={() => setRunSetupOpen(false)}
+                      onStart={(launchSuite, options) =>
+                        runTest({ suite: launchSuite, options })
+                      }
+                    />
+                  )
+                ) : useWorkspace ? (
                   <CaseRunSetup
                     open={runSetupOpen}
                     onOpenChange={setRunSetupOpen}

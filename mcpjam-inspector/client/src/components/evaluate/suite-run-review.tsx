@@ -40,6 +40,9 @@ export type SuiteRunReviewProps = {
   projectId?: string | null;
   suite: EvalSuite;
   cases: readonly EvalCase[];
+  /** A case-scoped sheet uses the same launcher and only changes its labels. */
+  caseTitle?: string;
+  initialIterations?: number;
   environments?: readonly ReviewEnvironment[];
   hostNamesById: ReadonlyMap<string, string | null>;
   onClose: () => void;
@@ -172,6 +175,8 @@ export function SuiteRunReview(props: SuiteRunReviewProps) {
 export function SuiteRunReviewContent({
   suite,
   cases,
+  caseTitle,
+  initialIterations,
   environments = [],
   hostNamesById,
   onClose,
@@ -198,7 +203,8 @@ export function SuiteRunReviewContent({
       Math.min(
         10,
         Math.max(
-          readRememberedIterations(suite._id) ??
+          initialIterations ??
+            readRememberedIterations(suite._id) ??
             suite.verdictPolicyDefaults?.repetitions ??
             DEFAULTS.RUNS_PER_TEST,
           suite.minIterations ?? 1,
@@ -265,7 +271,7 @@ export function SuiteRunReviewContent({
         // Failures come back here to show inline, not as a toast behind it.
         { iterationOverride: count, throwOnFailure: true },
       );
-      rememberIterations(suite._id, count);
+      if (!caseTitle) rememberIterations(suite._id, count);
       onClose();
     } catch (failure) {
       // A ConvexError keeps its reason in `data`; its message is the raw
@@ -297,8 +303,11 @@ export function SuiteRunReviewContent({
       >
         <SheetHeader className="border-b border-border px-6 py-4 pr-12">
           <SheetTitle className="break-words text-lg tracking-tight">
-            Setup Run · {suite.name}
+            {caseTitle ? "Setup Run" : `Setup Run · ${suite.name}`}
           </SheetTitle>
+          {caseTitle && (
+            <p className="text-sm text-muted-foreground">{caseTitle}</p>
+          )}
         </SheetHeader>
         <div className="flex-1 space-y-5 overflow-y-auto p-6">
           <RunIterationControl
@@ -317,7 +326,9 @@ export function SuiteRunReviewContent({
                 </span>
               </h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Each client/model combination runs the whole suite.
+                {caseTitle
+                  ? "Each client/model combination runs this test case."
+                  : "Each client/model combination runs the whole suite."}
               </p>
               <div className="mt-3 overflow-hidden rounded-lg border border-border">
                 {targets.map((target) => (
@@ -399,7 +410,7 @@ export function SuiteRunReviewContent({
                 <strong className="font-semibold tabular-nums text-foreground">
                   {cases.length}
                 </strong>{" "}
-                cases ×{" "}
+                {cases.length === 1 ? "case" : "cases"} ×{" "}
                 <strong className="font-semibold tabular-nums text-foreground">
                   {validCount ? count : "—"}
                 </strong>{" "}
@@ -445,7 +456,11 @@ export function SuiteRunReviewContent({
             ) : (
               <Play className="size-4" />
             )}
-            {starting ? "Starting run…" : "Start run"}
+            {starting
+              ? "Starting run…"
+              : caseTitle
+                ? "Run test case"
+                : "Start run"}
           </Button>
         </div>
       </SheetContent>
