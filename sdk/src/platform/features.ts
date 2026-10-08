@@ -194,7 +194,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_study_metrics: "sandboxes",
   get_study_usage: "sandboxes",
   list_study_findings: "sandboxes",
-  get_study_signals: "sandboxes",
   get_study_insights: "sandboxes",
   request_study_insights: "sandboxes",
   dismiss_study_finding: "sandboxes",
@@ -246,6 +245,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   archive_swarm: null,
   cancel_swarm_run_insights: null,
   cancel_study_insights: null,
+  // The only read that names the window `cancel_study_insights` takes. The
+  // backend does not gate it.
+  get_study_signals: null,
   list_sandbox_images: null,
   get_sandbox_image: null,
   delete_sandbox_image: null,
@@ -355,7 +357,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_user_testing_insights: "sandboxes",
   get_user_testing_metrics: "sandboxes",
   get_user_testing_session: "sandboxes",
-  get_user_testing_signals: "sandboxes",
   get_user_testing_usage: "sandboxes",
   get_wave_insights: "sandboxes",
   launch_journey_run: "sandboxes",
@@ -374,6 +375,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_journey: null,
   list_journeys: null,
   cancel_user_testing_insights: null,
+  get_user_testing_signals: null,
   cancel_wave_insights: null,
   cancel_journey_run: null,
   get_journey_run: null,

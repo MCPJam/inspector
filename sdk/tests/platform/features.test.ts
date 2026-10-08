@@ -159,6 +159,8 @@ describe("isOperationAvailable", () => {
       "cancel_readiness_run",
       "cancel_swarm_run_insights",
       "cancel_study_insights",
+      "get_study_signals",
+      "get_user_testing_signals",
       "list_personas",
       "delete_persona",
       "list_goals",
