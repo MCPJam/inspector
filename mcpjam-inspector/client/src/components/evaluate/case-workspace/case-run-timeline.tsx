@@ -15,6 +15,13 @@ import {
   iterationLatencyP95,
   runHostLabel,
 } from "@/components/evals/helpers";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { formatRunCaseLatencyMs } from "@/components/evals/run-case-groups";
 import {
   runIterationTargetKey,
@@ -35,6 +42,7 @@ import type {
 } from "@/components/evals/types";
 
 const UNKNOWN_MODEL = "Unknown model";
+const ALL_FILTER = "__all__";
 const age = (ts: number) => {
   const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   return minutes < 1
@@ -77,7 +85,8 @@ export function CaseRunTimeline({
   onSelectLive?: () => void;
   children: ReactNode;
 }) {
-  const [targetKey, setTargetKey] = useState<string | null>(null);
+  const [clientFilter, setClientFilter] = useState<string | null>(null);
+  const [modelFilter, setModelFilter] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => {
     if (live) setDrawerOpen(true);
@@ -112,7 +121,7 @@ export function CaseRunTimeline({
             it._id,
             {
               // The TARGET (`targetKey`; the bare model id when default), so
-              // Sonnet at Low and at High are two chips.
+              // Sonnet at Low and at High remain separate model options.
               model: runIterationTargetKey(run, it) || UNKNOWN_MODEL,
               client,
             },
@@ -121,42 +130,15 @@ export function CaseRunTimeline({
       ),
     [iterations, suiteRuns, hostNamesById, defaultClient],
   );
-  const targets = useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        key: string;
-        client: string;
-        model: string;
-        iterations: EvalIteration[];
-      }
-    >();
-    for (const iteration of iterations) {
-      const metadata = runMetadata.get(iteration._id)!;
-      const key = `${metadata.client}\u0000${metadata.model}`;
-      const target = grouped.get(key) ?? {
-        key,
-        client: metadata.client,
-        model: metadata.model,
-        iterations: [],
-      };
-      target.iterations.push(iteration);
-      grouped.set(key, target);
-    }
-    if (pendingRun) {
-      const client = pendingRun.client ?? defaultClient;
-      const key = `${client}\u0000${pendingRun.model}`;
-      if (!grouped.has(key))
-        grouped.set(key, {
-          key,
-          client,
-          model: pendingRun.model,
-          iterations: [],
-        });
-    }
-    return [...grouped.values()];
-  }, [iterations, pendingRun, runMetadata, defaultClient]);
-  // Labels show only what differs: a lone target reads as its model.
+  const clients = useMemo(
+    () => [
+      ...new Set([
+        ...[...runMetadata.values()].map((metadata) => metadata.client),
+        ...(pendingRun ? [pendingRun.client ?? defaultClient] : []),
+      ]),
+    ],
+    [runMetadata, pendingRun, defaultClient],
+  );
   const targetKeysInView = useMemo(
     () => [
       ...new Set([
@@ -172,23 +154,34 @@ export function CaseRunTimeline({
     key === UNKNOWN_MODEL
       ? key
       : targetKeyLabel(key, targetKeysInView, (modelId) => modelId);
-  const pendingKey = pendingRun
-    ? `${pendingRun.client ?? defaultClient}\u0000${pendingRun.model}`
+  const selectedClient = clients.includes(clientFilter ?? "")
+    ? clientFilter
     : null;
-  // A client/model filter applies only after the user picks a chip.
-  const selectedTarget = targets.find((target) => target.key === targetKey);
-  const selectedTargetKey = selectedTarget?.key ?? null;
+  const selectedModel = targetKeysInView.includes(modelFilter ?? "")
+    ? modelFilter
+    : null;
   const filtered = useMemo(
     () =>
-      [...(selectedTarget?.iterations ?? iterations)].sort(
-        (a, b) =>
-          (a.iterationNumber ?? 0) - (b.iterationNumber ?? 0) ||
-          a.createdAt - b.createdAt,
-      ),
-    [selectedTarget, iterations],
+      iterations
+        .filter((iteration) => {
+          const metadata = runMetadata.get(iteration._id)!;
+          return (
+            (!selectedClient || metadata.client === selectedClient) &&
+            (!selectedModel || metadata.model === selectedModel)
+          );
+        })
+        .sort(
+          (a, b) =>
+            (a.iterationNumber ?? 0) - (b.iterationNumber ?? 0) ||
+            a.createdAt - b.createdAt,
+        ),
+    [iterations, runMetadata, selectedClient, selectedModel],
   );
   const showPendingRun = Boolean(
-    pendingRun && (!selectedTargetKey || pendingKey === selectedTargetKey),
+    pendingRun &&
+    (!selectedClient ||
+      (pendingRun.client ?? defaultClient) === selectedClient) &&
+    (!selectedModel || pendingRun.model === selectedModel),
   );
   // Measured results: an infra row is in neither the pass count nor the tone.
   const completed = filtered.filter((it) =>
@@ -294,37 +287,54 @@ export function CaseRunTimeline({
           Test case averages
         </h3>
         <div className="ml-auto flex min-w-0 flex-wrap justify-end gap-1.5">
-          {targets.length > 1 && (
-            <button
-              type="button"
-              aria-pressed={!selectedTargetKey}
-              onClick={() => setTargetKey(null)}
-              className={cn(
-                "min-h-7 min-w-0 max-w-full break-words rounded-full border px-2.5 py-1 text-xs transition-colors",
-                !selectedTargetKey
-                  ? "border-border bg-muted font-medium text-foreground"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground",
-              )}
+          <Select
+            value={selectedClient ?? ALL_FILTER}
+            onValueChange={(value) =>
+              setClientFilter(value === ALL_FILTER ? null : value)
+            }
+          >
+            <SelectTrigger
+              size="sm"
+              aria-label="Client"
+              className="w-auto min-w-0 max-w-full rounded-full text-xs"
             >
-              All clients
-            </button>
-          )}
-          {targets.map((target) => (
-            <button
-              key={target.key}
-              type="button"
-              aria-pressed={target.key === selectedTargetKey}
-              onClick={() => setTargetKey(target.key)}
-              className={cn(
-                "min-h-7 min-w-0 max-w-full break-words rounded-full border px-2.5 py-1 text-xs transition-colors",
-                target.key === selectedTargetKey
-                  ? "border-border bg-muted font-medium text-foreground"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground",
-              )}
+              <SelectValue className="min-w-0 truncate">
+                {selectedClient ?? "Client"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER}>All clients</SelectItem>
+              {clients.map((client) => (
+                <SelectItem key={client} value={client}>
+                  {client}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={selectedModel ?? ALL_FILTER}
+            onValueChange={(value) =>
+              setModelFilter(value === ALL_FILTER ? null : value)
+            }
+          >
+            <SelectTrigger
+              size="sm"
+              aria-label="Model"
+              className="w-auto min-w-0 max-w-full rounded-full text-xs"
             >
-              {target.client} · {modelLabel(target.model)}
-            </button>
-          ))}
+              <SelectValue className="min-w-0 truncate">
+                {selectedModel ? modelLabel(selectedModel) : "Model"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER}>All models</SelectItem>
+              {targetKeysInView.map((model) => (
+                <SelectItem key={model} value={model}>
+                  {modelLabel(model)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <div
@@ -515,7 +525,9 @@ export function CaseRunTimeline({
           })}
           {filtered.length === 0 && !showPendingRun ? (
             <p className="p-4 text-xs text-muted-foreground">
-              Run this case to see its results here.
+              {selectedClient || selectedModel
+                ? "No runs match these filters."
+                : "Run this case to see its results here."}
             </p>
           ) : null}
         </div>
