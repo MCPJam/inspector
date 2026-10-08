@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react-electron";
 import { resolve, dirname } from "path";
@@ -139,6 +140,19 @@ export default defineConfig(({ command, mode }) => {
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_SHA__: JSON.stringify(
+        (() => {
+          try {
+            return execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: fileURLToPath(new URL(".", import.meta.url)),
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            }).trim();
+          } catch {
+            return "unknown";
+          }
+        })(),
+      ),
       // Sentry `dist`, matching the `--dist` that forge.config.ts's
       // packageAfterCopy hook uploads `.vite/renderer` under. This config only
       // ever builds the Electron renderer, and forge builds it on the machine
