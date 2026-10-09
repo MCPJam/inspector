@@ -69,7 +69,6 @@
   "overrides": {
     "shell-quote": "^1.11.0",
     "source-map-js": "^1.2.2",
-    "http-cache-semantics": "^4.3.0",
     "tar": "^7.5.22",
     "ws": "^8.21.3",
     "ip-address": "^10.7.0",
