@@ -4,7 +4,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import {
   carryEffortToModel,
-  editableSelection,
+  nonLegacySelection,
   environmentsForModelCell,
   selectionReasoningEffort,
   setEffortForRow,
@@ -161,7 +161,7 @@ describe("setEffortForRow", () => {
     // The backend's legacy validator is closed, so `{ source: "legacy",
     // settings }` would be refused on save.
     const legacy = { source: "legacy", modelId: "gpt-5" } as const;
-    expect(editableSelection(legacy)).toBeUndefined();
+    expect(nonLegacySelection(legacy)).toBeUndefined();
     expect(selectionReasoningEffort(legacy)).toBeUndefined();
     const set = setEffortForRow({
       ...args,

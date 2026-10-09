@@ -31,7 +31,7 @@ import type { ModelSelectionPurpose } from "@mcpjam/sdk/browser";
  * works from the bare id, exactly as for a row saved before selections, and
  * an effort pick mints a proper selection from the row instead.
  */
-export function editableSelection(
+export function nonLegacySelection(
   selection: RequestedModelSelection | undefined | null,
 ): ModelSelection | undefined {
   return selection && selection.source !== "legacy" ? selection : undefined;
@@ -40,7 +40,7 @@ export function editableSelection(
 export function selectionReasoningEffort(
   selection: RequestedModelSelection | undefined | null,
 ): ModelReasoningEffort | undefined {
-  return editableSelection(selection)?.settings?.reasoningEffort;
+  return nonLegacySelection(selection)?.settings?.reasoningEffort;
 }
 
 /** The selection with its effort set (or cleared); other settings survive. */
@@ -139,7 +139,7 @@ export function setEffortForRow(args: {
   bareIds?: "canonicalize" | "keep-id";
 }): { modelId: string; selection: ModelSelection | undefined } | null {
   const { row, effort, purpose, bareIds = "keep-id" } = args;
-  const selection = editableSelection(args.selection);
+  const selection = nonLegacySelection(args.selection);
   const base =
     selection ??
     (bareIds === "canonicalize"

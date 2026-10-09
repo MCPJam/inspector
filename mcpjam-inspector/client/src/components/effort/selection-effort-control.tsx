@@ -31,7 +31,7 @@ import {
   reasoningEffortRouteForRow,
 } from "@/lib/reasoning-effort-options";
 import {
-  editableSelection,
+  nonLegacySelection,
   selectionReasoningEffort,
   setEffortForRow,
   withReasoningEffort,
@@ -88,7 +88,7 @@ export function SelectionEffortControl({
         : [],
     [row, harness],
   );
-  const saved = editableSelection(selection);
+  const saved = nonLegacySelection(selection);
   const value = selectionReasoningEffort(saved);
   // The provider default for the row, unless the caller knows better.
   const captionLevel =

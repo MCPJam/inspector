@@ -88,23 +88,14 @@ export function compareSelectionForRow(
  * The row a stored selection runs on, or `undefined` when none is available.
  * A hosted selection only resolves to a hosted row and an own-key selection
  * (org, local, stored legacy) only to an own-key row: a card never silently
- * changes who pays.
+ * changes who pays. `findModelForStoredChoice` already keeps a stored legacy
+ * selection off hosted rows.
  */
 export function resolveCompareSelectionRow(
   selection: RequestedModelSelection,
   models: readonly ModelDefinition[],
   orgConfig: OrgVisibleConfig | undefined,
 ): ModelDefinition | undefined {
-  if (isLegacySelection(selection)) {
-    const own = models.filter(
-      (model) => String(model.id) === selection.modelId && !isHostedRow(model),
-    );
-    return (
-      (selection.provider
-        ? own.find((model) => String(model.provider) === selection.provider)
-        : undefined) ?? own[0]
-    );
-  }
   const row = findModelForStoredChoice(
     { modelId: selection.modelId, selection },
     models,

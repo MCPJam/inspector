@@ -165,7 +165,7 @@ export type HostConfigInputV2 = {
    * the backend both refuse a disagreeing pair, so writers set or clear the
    * two together. The stored legacy form (a model id outside the hosted
    * catalog, saved without a selection) round-trips unchanged: editors treat
-   * it as no selection (`editableSelection`) and never write settings on it.
+   * it as no selection (`nonLegacySelection`) and never write settings on it.
    */
   modelSelection?: ModelSelection | LegacyModelSelection;
   systemPrompt: string;
