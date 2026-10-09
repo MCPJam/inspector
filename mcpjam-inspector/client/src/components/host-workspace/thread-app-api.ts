@@ -13,6 +13,7 @@ import {
   appendPluginDiagnostics,
   describePluginError,
 } from "@/lib/plugin-diagnostics";
+import { PLUGIN_APP_REPLY_MAX_BYTES } from "@/shared/plugin-app-ui-limits";
 
 export type ThreadAppToolResult = z.infer<typeof mcpAppToolResultSchema>;
 
@@ -106,7 +107,7 @@ async function post(
   }
   signal.throwIfAborted();
   const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > 2 * 1024 * 1024)
+  if (new TextEncoder().encode(text).byteLength > PLUGIN_APP_REPLY_MAX_BYTES)
     throw new ThreadAppError("INSTANCE_RESPONSE_TOO_LARGE");
   let value: Record<string, unknown>;
   try {
