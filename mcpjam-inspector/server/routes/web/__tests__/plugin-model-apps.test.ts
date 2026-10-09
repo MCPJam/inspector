@@ -56,10 +56,7 @@ const meta = { ui: { resourceUri: "ui://app" } };
 function fixture() {
   const result = modelApps.publish(
     { content: [] },
-    {
-      ...source,
-      owner: { ...source.owner, instanceId: crypto.randomUUID() },
-    } as never,
+    { ...source, owner: { ...source.owner, instanceId: crypto.randomUUID() } } as never,
     "pickFile",
     "source-revision",
     meta,

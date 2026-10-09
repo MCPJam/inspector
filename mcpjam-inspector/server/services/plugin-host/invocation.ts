@@ -244,9 +244,7 @@ export const pluginRetainedResults = new PluginRetainedResultBudget();
 /** A JSON-RPC error response is the server's authoritative answer: the call
  * is known to have failed. Local transport failures (timeouts, closed or
  * unsent connections, malformed results) leave the outcome unknown. */
-export function classifyPluginToolFailure(
-  error: unknown,
-): "failed" | "unknown" {
+export function classifyPluginToolFailure(error: unknown): "failed" | "unknown" {
   const code =
     error && typeof error === "object"
       ? (error as { code?: unknown }).code
@@ -670,10 +668,7 @@ export class AuthorizedToolInvoker {
   ) {
     const saved = this.ports.receipts
       ? await awaitOwned(signal ?? new AbortController().signal, () =>
-          this.ports.receipts!.read(
-            invocationId,
-            signal ?? new AbortController().signal,
-          ),
+          this.ports.receipts!.read(invocationId, signal ?? new AbortController().signal),
         )
       : null;
     const last = saved?.legs.at(-1);
@@ -685,7 +680,8 @@ export class AuthorizedToolInvoker {
       continuations: new Map(),
     };
     this.restore(recovered, saved!);
-    if (recovered.revision !== receipt.revision) fail("AUTHORIZATION_CHANGED");
+    if (recovered.revision !== receipt.revision)
+      fail("AUTHORIZATION_CHANGED");
     return this.replay(origin, params, receipt, recovered.result, signal);
   }
 

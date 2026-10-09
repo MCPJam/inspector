@@ -56,7 +56,8 @@ export function chatPluginFormPlan(input: {
   legacyServerIds: string[];
 } {
   const admitted = !input.harness || input.harness === "codex";
-  if (!admitted) return { admitted, modernServerIds: [], legacyServerIds: [] };
+  if (!admitted)
+    return { admitted, modernServerIds: [], legacyServerIds: [] };
   const modernServerIds =
     input.mrtrEnabled && !input.harness && input.forms !== false
       ? input.serverIds.filter((id) => {

@@ -59,7 +59,7 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   RESOURCE_UNSUPPORTED: "This file source doesn't support that operation.",
   // Local files and file targets
   PLUGIN_FILE_TARGETS_NOT_DECLARED:
-    "This client lists no files for this server. Add them under the client's mcpProfile.extensions[\"mcpjam/plugin-file-targets\"] (a root folder and each file's relative path).",
+    'This client lists no files for this server. Add them under the client\'s mcpProfile.extensions["mcpjam/plugin-file-targets"] (a root folder and each file\'s relative path).',
   PLUGIN_LOCAL_FILES_NOT_CONFIGURED:
     "Opening local files is off on this MCPJam install. Set MCPJAM_PLUGIN_LOCAL_FILE_ROOTS to a JSON list of allowed folders, each {actorId, projectId, serverId, root}, then restart MCPJam.",
   PLUGIN_LOCAL_FILE_ROOTS_INVALID:
@@ -77,13 +77,14 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   PLUGIN_FILE_READ_ONLY:
     "This file is read-only. Only files listed in the client's \"mcpjam/plugin-file-targets\" (in an allowed local folder, or on the project's Computer on the cloud) can be saved.",
   PLUGIN_LOCAL_FILE_NOT_LISTED:
-    "That path isn't one of the files listed for this server in the client's \"mcpjam/plugin-file-targets\".",
+    'That path isn\'t one of the files listed for this server in the client\'s "mcpjam/plugin-file-targets".',
   // App instances
   INSTANCE_UNAVAILABLE:
     "This App session has ended (it was closed, expired or the server restarted). Reopen the App.",
   INSTANCE_DENIED:
     "This App isn't allowed to do that here. It may belong to another chat, client or user, or the request doesn't match how the App was opened.",
-  INSTANCE_LIMIT: "Too many Apps are open. Close some Apps and try again.",
+  INSTANCE_LIMIT:
+    "Too many Apps are open. Close some Apps and try again.",
   INSTANCE_STORE_UNAVAILABLE:
     "Apps can't be opened because the App session store isn't available on this MCPJam server.",
   INSTANCE_RENEWAL_UNAVAILABLE:
@@ -182,7 +183,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     'An option\'s _meta["openai/preview"] has no valid target.',
   PLUGIN_FORMS_DISABLED:
     "This client has Forms turned off, so the form takes no answers or uploads. A form that was already open ends as cancelled when it's submitted, and its answer isn't sent to the server. Turn Forms on in the client's OpenAI plugin extensions to answer forms.",
-  FORM_SOURCE_UNAVAILABLE: "This form has expired or was already answered.",
+  FORM_SOURCE_UNAVAILABLE:
+    "This form has expired or was already answered.",
   FORM_PREVIEW_UNAVAILABLE: "That preview isn't available for this form.",
   PLUGIN_FORM_PREVIEW_TIMEOUT:
     "The preview didn't open within 30 seconds, so MCPJam stopped waiting. The form and its answers are unchanged. Try again; if it keeps happening, check that the server answers the preview's resource read or preview tool promptly.",
@@ -198,7 +200,7 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "MCPJam couldn't check where this form's files would be uploaded. Nothing was uploaded and the request is still open; retry, or cancel the request.",
   // Settings
   PLUGIN_SETTINGS_TOOL_UNAVAILABLE:
-    "The server's openai/settings capability names a read or update tool that tools/list doesn't include.",
+    'The server\'s openai/settings capability names a read or update tool that tools/list doesn\'t include.',
   PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED:
     "Both settings tools must declare an outputSchema.",
   PLUGIN_SETTINGS_READ_ARGUMENTS_INVALID:
@@ -250,10 +252,7 @@ const PREFIX_DESCRIPTIONS: readonly [string, string][] = [
   ["PLUGIN_FORM_", "This form couldn't be shown."],
   ["RESOURCE_", "The App's file request couldn't be completed."],
   ["INSTANCE_CONTEXT_", "The App's model context couldn't be updated."],
-  [
-    "INSTANCE_",
-    "This App session couldn't complete the request. Reopen the App.",
-  ],
+  ["INSTANCE_", "This App session couldn't complete the request. Reopen the App."],
   ["INVOCATION_", "The tool call couldn't be completed."],
   ["CONTINUATION_", "The form answer couldn't be delivered to the server."],
 ];

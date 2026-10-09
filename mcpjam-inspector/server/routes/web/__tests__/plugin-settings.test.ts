@@ -255,6 +255,25 @@ describe("owned structured settings", () => {
       ).status,
     ).toBe(403);
   });
+  it.each([
+    ["above the old 1 MiB limit", "a".repeat(1024 * 1024 + 1), 200],
+    ["exactly 5 MiB", "a".repeat(5 * 1024 * 1024), 200],
+    ["over 5 MiB in UTF-8 bytes", "é".repeat(2621441), 403],
+  ])("opens settings App HTML up to the common UI bound: %s", async (_name, html, status) => {
+    f.read.mockResolvedValue({
+      contents: [
+        {
+          uri: "ui://settings",
+          mimeType: "text/html;profile=mcp-app",
+          text: html,
+          _meta: { ui: { csp: {} } },
+        },
+      ],
+    });
+    await opened();
+    const response = await post("app/open", { ...handle(), toolName: "reset" });
+    expect(response.status).toBe(status);
+  });
   it("clears the private document on original owner close", async () => {
     await opened();
     abort.abort();
