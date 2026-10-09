@@ -259,7 +259,7 @@ export function InteractActionFields({
               value={k}
               className={paper ? "text-sm" : "text-[11px]"}
             >
-              {k}
+              {k === "key" ? "Keyboard key" : k}
             </SelectItem>
           ))}
         </SelectContent>

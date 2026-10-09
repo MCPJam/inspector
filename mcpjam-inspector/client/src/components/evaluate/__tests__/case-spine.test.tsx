@@ -1088,7 +1088,10 @@ it.each(["click", "type", "key", "scroll", "wait"] as const)(
       screen.getByRole("combobox", { name: "Interaction type" }),
     );
     await user.click(
-      screen.getByRole("option", { name: actionKind, exact: true }),
+      screen.getByRole("option", {
+        name: actionKind === "key" ? "Keyboard key" : actionKind,
+        exact: true,
+      }),
     );
     const written = onStepsChange.mock.calls.at(-1)![0] as TestStep[];
     expect(written.filter((step) => step.kind !== "interact")).toEqual(golden);
