@@ -176,6 +176,21 @@ describe("PluginSkillsSection", () => {
     expect(onOpenSkill).toHaveBeenCalledWith(selection);
   });
 
+  it("opens a permalinked plugin's first skill from the version fallback", () => {
+    h.activeRows.value = [];
+    const onOpenSkill = vi.fn();
+    render(
+      <PluginSkillsSection
+        projectId="p_1"
+        selectedSkillId={null}
+        focusPluginId="pl_bits"
+        onOpenSkill={onOpenSkill}
+      />,
+    );
+    expect(onOpenSkill).toHaveBeenCalledTimes(1);
+    expect(onOpenSkill).toHaveBeenCalledWith({ ...selection, description: "" });
+  });
+
   it("falls back to the version's skills without an active-plugins answer, and counts them", () => {
     h.activeRows.value = [];
     const onListingChange = vi.fn();
