@@ -367,6 +367,11 @@ field you edit and the units it takes.
 | **Suite accuracy** | Does one rate across the whole run reach this percentage? Individual cases have no threshold of their own. | Percentage, 0–100 | `settings.minimumAccuracy` |
 | **Per-case pass rate** | Does each case pass at least this share of its own iterations? A case that falls short fails, whatever the rest of the suite did. | Fraction, 0–1 | `settings.passThreshold` |
 
+A suite with no suite accuracy set is judged at **70%**. New runs save the
+threshold they were judged at, so changing the setting later does not re-judge
+them. Older runs that saved no threshold were judged at 100% and keep that
+result.
+
 <Warning>
   **These are not two units of one number.** Take ten equally sized cases, nine
   of which always pass and one of which always fails. A 90% suite accuracy

@@ -291,7 +291,7 @@ export function PerCaseIterationsControl({
 function perCaseDefaultsOrFallback(
   defaults: SuiteVerdictPolicyDefaults | undefined,
 ): SuiteVerdictPolicyDefaults {
-  return defaults ?? { repetitions: 1, passThreshold: 1 };
+  return defaults ?? { repetitions: 1, passThreshold: 0.7 };
 }
 
 /**
