@@ -56,6 +56,10 @@ import {
   type ImportHostedOAuthTokensRequest,
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import {
+  fetchOAuthRecoveryHeaders,
+  stageOAuthRecoveryHeaders,
+} from "@/lib/apis/server-secrets-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
@@ -65,7 +69,11 @@ import {
   writeHostedOAuthPendingMarker,
   type HostedOAuthCallbackContext,
 } from "@/lib/hosted-oauth-callback";
-import { getRedirectUri } from "./constants";
+import {
+  getRedirectUri,
+  resolveProtectedPreviewAppUrl,
+  supportsMcpJamCimdRedirect,
+} from "./constants";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import {
   appendOAuthTraceHttpHistory,
@@ -168,7 +176,9 @@ type OAuthRegistrationStrategy =
 
 export interface StoredOAuthConfig {
   scopes?: string[];
+  /** Legacy records may contain values; new records persist only this marker. */
   customHeaders?: Record<string, string>;
+  hasCustomHeaders?: boolean;
   resourceUrl?: string;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
@@ -176,6 +186,24 @@ export interface StoredOAuthConfig {
   protocolVersion?: OAuthProtocolVersion;
   registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
+}
+
+export function serializeStoredOAuthConfig(config: StoredOAuthConfig): string {
+  const publicConfig: StoredOAuthConfig = {
+    scopes: config.scopes,
+    hasCustomHeaders: config.hasCustomHeaders === true ? true : undefined,
+    resourceUrl: config.resourceUrl,
+    registryServerId: config.registryServerId,
+    useRegistryOAuthProxy: config.useRegistryOAuthProxy,
+    protocolMode: config.protocolMode,
+    protocolVersion: config.protocolVersion,
+    registrationMode: config.registrationMode,
+    registrationStrategy: config.registrationStrategy,
+  };
+  // Encoding gives CodeQL an explicit protection boundary after the allowlist
+  // above. It is not relied on to protect secret values: those are excluded
+  // structurally and recovered from the encrypted secret store.
+  return encodeURIComponent(JSON.stringify(publicConfig));
 }
 
 interface OAuthRoutingConfig {
@@ -896,6 +924,7 @@ function buildAutomaticAuthorizationDecisionReason(
 function annotateTraceWithAuthorizationPlan(input: {
   trace: OAuthTrace;
   authorizationPlan?: ResolvedAuthorizationPlan;
+  automaticRegistrationOverrideReason?: string;
   requestedRegistrationMode: OAuthRegistrationMode;
   requestedProtocolMode: OAuthProtocolMode;
   protocolResolutionSource?: OAuthProtocolResolutionSource;
@@ -971,7 +1000,9 @@ function annotateTraceWithAuthorizationPlan(input: {
   const selectedStrategyLabel = formatAuthorizationStrategyLabel(
     authorizationPlan.registrationStrategy
   );
-  const reason = buildAutomaticAuthorizationDecisionReason(authorizationPlan);
+  const reason =
+    input.automaticRegistrationOverrideReason ??
+    buildAutomaticAuthorizationDecisionReason(authorizationPlan);
   const supportedStrategies =
     authorizationPlan.capabilities.registrationStrategies.length > 0
       ? authorizationPlan.capabilities.registrationStrategies.map(
@@ -996,9 +1027,12 @@ function annotateTraceWithAuthorizationPlan(input: {
       : {}),
     ...(reason ? { Reason: reason } : {}),
     ...(authorizationPlan.registrationStrategy === "dcr" &&
-    !authorizationPlan.capabilities.supportsCimd
+    (!authorizationPlan.capabilities.supportsCimd ||
+      input.automaticRegistrationOverrideReason)
       ? {
-          "CIMD Support": "Not advertised by authorization server",
+          "CIMD Support": input.automaticRegistrationOverrideReason
+            ? "Unavailable for this preview callback"
+            : "Not advertised by authorization server",
         }
       : {}),
   };
@@ -1036,7 +1070,9 @@ export function readStoredOAuthConfig(
       };
     }
 
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(
+      raw.trimStart().startsWith("{") ? raw : decodeURIComponent(raw)
+    );
     const config: StoredOAuthConfig = {
       registryServerId:
         typeof parsed?.registryServerId === "string"
@@ -1077,6 +1113,10 @@ export function readStoredOAuthConfig(
           ? parsed.registrationStrategy
           : undefined,
     };
+
+    if (parsed?.hasCustomHeaders === true) {
+      config.hasCustomHeaders = true;
+    }
 
     if (
       Array.isArray(parsed?.scopes) &&
@@ -1135,7 +1175,7 @@ export function buildStoredOAuthConfig(
   }
 
   if (options.customHeaders && Object.keys(options.customHeaders).length > 0) {
-    config.customHeaders = options.customHeaders;
+    config.hasCustomHeaders = true;
   }
 
   if (options.resourceUrl?.trim()) {
@@ -1727,12 +1767,26 @@ function writeStoredOAuthConfig(
   updates: Partial<StoredOAuthConfig>
 ): void {
   const existing = readStoredOAuthConfig(serverName);
+  const publicConfig: StoredOAuthConfig = {
+    ...existing,
+    ...updates,
+  };
+  const hasCustomHeaders =
+    updates.hasCustomHeaders ??
+    existing.hasCustomHeaders ??
+    Boolean(existing.customHeaders);
+  delete publicConfig.customHeaders;
+  if (hasCustomHeaders) {
+    publicConfig.hasCustomHeaders = true;
+  } else {
+    delete publicConfig.hasCustomHeaders;
+  }
+  // Only the explicit public allowlist in serializeStoredOAuthConfig reaches
+  // this sink. Secrets are recovered from protected storage instead.
   localStorage.setItem(
     `mcp-oauth-config-${serverName}`,
-    JSON.stringify({
-      ...existing,
-      ...updates,
-    })
+    // codeql[js/clear-text-storage-of-sensitive-data]
+    serializeStoredOAuthConfig(publicConfig)
   );
 }
 
@@ -2487,6 +2541,48 @@ function buildConvexBindingForServer(input: {
   return previousBinding;
 }
 
+async function recoverOAuthCustomHeaders(input: {
+  serverName: string;
+  serverUrl: string;
+  oauthConfig: StoredOAuthConfig;
+}): Promise<Record<string, string> | undefined> {
+  // Let an authorization started by an older build complete once. New writes
+  // remove the values and retain only `hasCustomHeaders`.
+  if (
+    input.oauthConfig.customHeaders &&
+    Object.keys(input.oauthConfig.customHeaders).length > 0
+  ) {
+    return input.oauthConfig.customHeaders;
+  }
+  if (!input.oauthConfig.hasCustomHeaders) return undefined;
+
+  const binding = buildConvexBindingForServer({
+    serverName: input.serverName,
+    oauthResourceUrl: input.oauthConfig.resourceUrl,
+    registryServerId: input.oauthConfig.registryServerId,
+    useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
+  });
+  const recoveryHandleKey = `mcp-oauth-recovery-handle-${input.serverName}`;
+  const recoveryHandle = binding
+    ? undefined
+    : sessionStorage.getItem(recoveryHandleKey) ?? undefined;
+  const headers = await fetchOAuthRecoveryHeaders({
+    serverName: input.serverName,
+    serverUrl: input.serverUrl,
+    ...(recoveryHandle ? { recoveryHandle } : {}),
+    ...(binding
+      ? { projectId: binding.projectId, serverId: binding.serverId }
+      : {}),
+  });
+  if (Object.keys(headers).length === 0) {
+    throw new Error(
+      "OAuth custom headers are no longer available. Save them again and retry authorization."
+    );
+  }
+  if (recoveryHandle) sessionStorage.removeItem(recoveryHandleKey);
+  return headers;
+}
+
 /**
  * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
  * Both OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`) need an
@@ -2646,6 +2742,12 @@ export async function initiateOAuth(
   options: BuiltOAuthRequest,
   control?: { shouldContinue?: () => boolean }
 ): Promise<OAuthResult> {
+  const protectedPreviewUrl = resolveProtectedPreviewAppUrl(window.location);
+  if (protectedPreviewUrl) {
+    window.location.replace(protectedPreviewUrl);
+    return { success: true };
+  }
+
   const assertCurrent = () => {
     if (control?.shouldContinue && !control.shouldContinue()) {
       throw new Error("OAuth authorization was canceled.");
@@ -2658,6 +2760,7 @@ export async function initiateOAuth(
   const getState = () => state;
   const requestedProtocolMode = resolveOAuthProtocolMode(options);
   const requestedRegistrationMode = resolveOAuthRegistrationMode(options);
+  let automaticRegistrationOverrideReason: string | undefined;
   let traceAuthorizationPlan: ResolvedAuthorizationPlan | undefined;
   const emitTraceSnapshot = (snapshot: OAuthTraceSnapshot) =>
     publishOAuthTraceUpdate(
@@ -2670,6 +2773,7 @@ export async function initiateOAuth(
           snapshot,
         }),
         authorizationPlan: traceAuthorizationPlan,
+        automaticRegistrationOverrideReason,
         requestedRegistrationMode,
         requestedProtocolMode,
         protocolResolutionSource: options.protocolResolutionSource,
@@ -2687,6 +2791,7 @@ export async function initiateOAuth(
           state: nextState,
         }),
         authorizationPlan: traceAuthorizationPlan,
+        automaticRegistrationOverrideReason,
         requestedRegistrationMode,
         requestedProtocolMode,
         protocolResolutionSource: options.protocolResolutionSource,
@@ -2714,12 +2819,43 @@ export async function initiateOAuth(
       },
       undefined
     );
-    const authorizationPlan = await resolveOAuthExecutionPlan(
+    let authorizationPlan = await resolveOAuthExecutionPlan(
       provider,
       fetchFn,
       options
     );
     assertCurrent();
+    if (
+      authorizationPlan.status === "ready" &&
+      authorizationPlan.registrationStrategy === "cimd" &&
+      typeof window !== "undefined" &&
+      !supportsMcpJamCimdRedirect(window.location)
+    ) {
+      if (requestedRegistrationMode !== "auto") {
+        return {
+          success: false,
+          error:
+            "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
+        };
+      }
+      if (!authorizationPlan.capabilities.supportsDcr) {
+        return {
+          success: false,
+          error:
+            "CIMD is unavailable on this preview host, and the authorization server did not advertise DCR as a fallback.",
+        };
+      }
+      automaticRegistrationOverrideReason =
+        "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.";
+      // Discovery already established that this automatic plan can use DCR.
+      // Switch only the selected strategy instead of planning again from the
+      // full OAuth options object, which may include credentials that must not
+      // flow into persisted plan metadata.
+      authorizationPlan = {
+        ...authorizationPlan,
+        registrationStrategy: "dcr",
+      };
+    }
     traceAuthorizationPlan = authorizationPlan;
     if (
       authorizationPlan.status !== "ready" ||
@@ -2737,6 +2873,31 @@ export async function initiateOAuth(
       options.serverUrl
     );
 
+    let recoveryHandle: string | undefined;
+    if (
+      !HOSTED_MODE &&
+      options.customHeaders &&
+      Object.keys(options.customHeaders).length > 0 &&
+      !buildConvexBindingForServer({
+        serverName: options.serverName,
+        oauthResourceUrl: options.resourceUrl,
+        registryServerId: options.registryServerId,
+        useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      })
+    ) {
+      recoveryHandle = generateRandomString(48);
+      await stageOAuthRecoveryHeaders({
+        serverName: options.serverName,
+        serverUrl: options.serverUrl,
+        recoveryHandle,
+        headers: options.customHeaders,
+      });
+      sessionStorage.setItem(
+        `mcp-oauth-recovery-handle-${options.serverName}`,
+        recoveryHandle
+      );
+    }
+
     // Store server URL for callback recovery
     localStorage.setItem(
       `mcp-serverUrl-${options.serverName}`,
@@ -2746,16 +2907,20 @@ export async function initiateOAuth(
 
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig({
-      ...options,
+      scopes: options.scopes,
+      registryServerId: options.registryServerId,
+      useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      customHeaders: options.customHeaders,
+      resourceUrl: options.resourceUrl,
       protocolMode: requestedProtocolMode,
       protocolVersion,
       registrationMode: requestedRegistrationMode,
       registrationStrategy,
     });
-    localStorage.setItem(
-      `mcp-oauth-config-${options.serverName}`,
-      JSON.stringify(oauthConfig)
-    );
+    // This redirect-recovery record contains public OAuth metadata only.
+    // Custom headers and client credentials may contain secrets and must be
+    // recovered from their protected sources instead of browser storage.
+    writeStoredOAuthConfig(options.serverName, oauthConfig);
 
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.
@@ -3546,7 +3711,7 @@ export async function handleOAuthCallback(
   const serverName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
 
   // Read registryServerId from stored OAuth config if present
-  const oauthConfig = readStoredOAuthConfig(serverName);
+  let oauthConfig = readStoredOAuthConfig(serverName);
   let serverUrl: string | undefined;
   let previousTrace: OAuthTrace | undefined;
   let failureStage = "callback-validation";
@@ -3562,6 +3727,17 @@ export async function handleOAuthCallback(
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
+
+    options.assertProjectAccess?.();
+    const recoveredCustomHeaders = await recoverOAuthCustomHeaders({
+      serverName,
+      serverUrl,
+      oauthConfig,
+    });
+    oauthConfig = {
+      ...oauthConfig,
+      customHeaders: recoveredCustomHeaders,
+    };
 
     // Get stored client credentials if any
     const storedClientInfo = readStoredClientInformation(serverName);
@@ -3997,6 +4173,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  sessionStorage.removeItem(`mcp-oauth-recovery-handle-${serverName}`);
   oauthBindingStorage.clear(serverName);
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);

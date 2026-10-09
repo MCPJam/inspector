@@ -8,11 +8,13 @@ import {
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
 import {
+  assertBearerToken,
   ErrorCode,
   WebRouteError,
   mapRuntimeError,
   webErrorFromRoute,
 } from "./errors.js";
+import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
@@ -27,6 +29,140 @@ import { boundText } from "../../utils/hosted-upstream-projection.js";
 
 const oauthWeb = new Hono();
 const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
+const LOCAL_RECOVERY_TTL_MS = 15 * 60 * 1000;
+const LOCAL_RECOVERY_MAX_RECORDS = 128;
+const LOCAL_RECOVERY_MAX_HEADER_BYTES = 64 * 1024;
+const LOCAL_RECOVERY_MAX_SERVER_NAME_LENGTH = 256;
+const LOCAL_RECOVERY_MAX_SERVER_URL_LENGTH = 4096;
+const localRecoveryHeaders = new Map<
+  string,
+  { expiresAt: number; headers: Record<string, string> }
+>();
+
+function evictExpiredLocalRecoveryHeaders(now = Date.now()): void {
+  for (const [key, record] of localRecoveryHeaders) {
+    if (record.expiresAt <= now) localRecoveryHeaders.delete(key);
+  }
+}
+
+function localRecoveryPrincipal(c: Context): string {
+  const guestId = c.get("guestId");
+  if (typeof guestId === "string" && guestId) return `guest:${guestId}`;
+  const workosUserId = c.get("workosUserId");
+  if (typeof workosUserId === "string" && workosUserId) {
+    return `workos:${workosUserId}`;
+  }
+  const workosApiKeyId = c.get("workosApiKeyId");
+  if (typeof workosApiKeyId === "string" && workosApiKeyId) {
+    return `api-key:${workosApiKeyId}`;
+  }
+  // Legacy local clients use passthrough bearer tokens. The high-entropy,
+  // single-use recovery handle remains the capability in that case.
+  return "unverified-passthrough";
+}
+
+function parseRecoveryHandle(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(value)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Missing or invalid OAuth recovery handle",
+    );
+  }
+  return value;
+}
+
+function parseRecoveryBinding(body: unknown): {
+  serverName: string;
+  serverUrl: string;
+} {
+  const record =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const serverName =
+    typeof record.serverName === "string" ? record.serverName : "";
+  const serverUrl =
+    typeof record.serverUrl === "string" ? record.serverUrl : "";
+  if (
+    !serverName ||
+    serverName.length > LOCAL_RECOVERY_MAX_SERVER_NAME_LENGTH ||
+    !serverUrl ||
+    serverUrl.length > LOCAL_RECOVERY_MAX_SERVER_URL_LENGTH
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Missing or invalid OAuth recovery binding",
+    );
+  }
+  try {
+    const parsed = new URL(serverUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("unsupported protocol");
+    }
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Missing or invalid OAuth recovery binding",
+    );
+  }
+  return { serverName, serverUrl };
+}
+
+function localRecoveryKey(input: {
+  principal: string;
+  recoveryHandle: string;
+  serverName: string;
+  serverUrl: string;
+}): string {
+  return [
+    input.principal,
+    input.recoveryHandle,
+    input.serverName,
+    input.serverUrl,
+  ].join("\0");
+}
+
+function omitAuthorizationHeader(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers ?? {}).filter(
+      ([name]) => name.toLowerCase() !== "authorization",
+    ),
+  );
+}
+
+function parseRecoveryHeaders(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.entries(value).filter(
+    ([key, headerValue]) =>
+      key.trim().length > 0 &&
+      key.length <= 256 &&
+      typeof headerValue === "string" &&
+      headerValue.length <= 8192,
+  );
+  if (entries.length > 64) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Too many OAuth recovery headers",
+    );
+  }
+  const totalBytes = entries.reduce(
+    (sum, [key, headerValue]) =>
+      sum + Buffer.byteLength(key) + Buffer.byteLength(headerValue),
+    0,
+  );
+  if (totalBytes > LOCAL_RECOVERY_MAX_HEADER_BYTES) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "OAuth recovery headers are too large",
+    );
+  }
+  return Object.fromEntries(entries);
+}
 
 function safeHostname(url: string | undefined): string {
   if (!url) return "unknown";
@@ -136,7 +272,8 @@ async function proxyConvexOAuthPost(c: Context, path: string) {
   return new Response(bodyText, {
     status: response.status,
     headers: {
-      "Content-Type": response.headers.get("content-type") ?? "application/json",
+      "Content-Type":
+        response.headers.get("content-type") ?? "application/json",
     },
   });
 }
@@ -243,6 +380,98 @@ for (const path of CONVEX_OAUTH_PROXY_PATHS) {
     }
   });
 }
+
+/**
+ * Recover callback-only OAuth headers from the encrypted server-secret store.
+ * Values are returned to the initiating browser for this exchange only and are
+ * never written to browser storage. The backend verifies that the credential
+ * binding permits the requested server URL.
+ */
+oauthWeb.post("/recovery-headers", async (c) => {
+  try {
+    const bearerToken = assertBearerToken(c);
+    const body = await c.req.json();
+    const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+    const serverId = typeof body?.serverId === "string" ? body.serverId : "";
+    const { serverName, serverUrl } = parseRecoveryBinding(body);
+    if (projectId && serverId) {
+      const secrets = await fetchRuntimeServerSecrets({
+        bearerToken,
+        projectId,
+        serverId,
+        expectedTargetUrl: serverUrl,
+        accessScope: "project_member",
+      });
+      return c.json({
+        success: true,
+        headers: omitAuthorizationHeader(secrets.headers),
+      });
+    }
+    const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
+    evictExpiredLocalRecoveryHeaders();
+    const key = localRecoveryKey({
+      principal: localRecoveryPrincipal(c),
+      recoveryHandle,
+      serverName,
+      serverUrl,
+    });
+    const staged = localRecoveryHeaders.get(key);
+    localRecoveryHeaders.delete(key);
+    if (!staged || staged.expiresAt <= Date.now()) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "OAuth recovery headers are no longer available",
+      );
+    }
+    return c.json({
+      success: true,
+      headers: omitAuthorizationHeader(staged.headers),
+    });
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
+
+oauthWeb.post("/recovery-headers/stage", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { serverName, serverUrl } = parseRecoveryBinding(body);
+    const recoveryHandle = parseRecoveryHandle(body?.recoveryHandle);
+    const headers = parseRecoveryHeaders(body?.headers);
+    if (Object.keys(headers).length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Missing OAuth recovery headers",
+      );
+    }
+    evictExpiredLocalRecoveryHeaders();
+    const key = localRecoveryKey({
+      principal: localRecoveryPrincipal(c),
+      recoveryHandle,
+      serverName,
+      serverUrl,
+    });
+    if (
+      !localRecoveryHeaders.has(key) &&
+      localRecoveryHeaders.size >= LOCAL_RECOVERY_MAX_RECORDS
+    ) {
+      throw new WebRouteError(
+        429,
+        ErrorCode.RATE_LIMITED,
+        "Too many pending OAuth recovery records",
+      );
+    }
+    localRecoveryHeaders.set(key, {
+      expiresAt: Date.now() + LOCAL_RECOVERY_TTL_MS,
+      headers,
+    });
+    return c.json({ success: true });
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
 
 // Local-mode token import — see backend `/web/oauth/import-tokens` for shape.
 // The local CLI's `MCPOAuthProvider` uses this to push browser-side

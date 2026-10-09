@@ -8,6 +8,11 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
   hasOAuthConfig: vi.fn().mockReturnValue(false),
   getStoredTokens: vi.fn().mockReturnValue(null),
+  readStoredOAuthConfig: vi.fn((serverName: string) => {
+    const raw = localStorage.getItem(`mcp-oauth-config-${serverName}`);
+    if (!raw) return {};
+    return JSON.parse(raw.startsWith("{") ? raw : decodeURIComponent(raw));
+  }),
 }));
 
 import { useServerForm } from "../use-server-form";

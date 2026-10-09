@@ -1147,8 +1147,21 @@ describe("mcp-oauth", () => {
       });
     });
 
-    it("does not persist preregistered client secrets to localStorage", async () => {
+    it("does not persist OAuth credentials or custom headers to localStorage", async () => {
       vi.resetModules();
+
+      const sessionToken = await import("@/lib/session-token");
+      const isolatedAuthFetch = sessionToken.authFetch as ReturnType<
+        typeof vi.fn
+      >;
+      isolatedAuthFetch.mockImplementation(async (input: RequestInfo | URL) => {
+        const url = getUrlString(input);
+        return createJsonResponse(
+          url.includes("/api/web/oauth/recovery-headers/stage")
+            ? { success: true }
+            : {}
+        );
+      });
 
       const oauthModule = await import("../mcp-oauth");
       vi.spyOn(
@@ -1161,6 +1174,9 @@ describe("mcp-oauth", () => {
         serverUrl: "https://example.com/mcp",
         clientId: "hosted-client-id",
         clientSecret: "hosted-client-secret",
+        customHeaders: {
+          "X-API-Key": "custom-header-secret",
+        },
       });
 
       expect(result.success).toBe(true);
@@ -1175,10 +1191,20 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
         "hosted-client-secret"
       );
+      expect(
+        JSON.parse(
+          decodeURIComponent(
+            localStorage.getItem("mcp-oauth-config-hosted") ?? "%7B%7D"
+          )
+        )
+      ).toMatchObject({ hasCustomHeaders: true });
       for (let i = 0; i < localStorage.length; i += 1) {
         const key = localStorage.key(i);
         expect(key ? localStorage.getItem(key) : "").not.toContain(
           "hosted-client-secret"
+        );
+        expect(key ? localStorage.getItem(key) : "").not.toContain(
+          "custom-header-secret"
         );
       }
     });
@@ -1463,6 +1489,76 @@ describe("mcp-oauth", () => {
             "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR.",
         }),
       });
+    });
+
+    it("forces DCR on preview callbacks and records the override in the trace", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createCimdDiscoveryState());
+      const constants = await import("../constants");
+      vi.spyOn(constants, "supportsMcpJamCimdRedirect").mockReturnValue(false);
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+        registrationMode: "auto",
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockRunOAuthStateMachine).toHaveBeenCalledWith(
+        expect.objectContaining({ registrationStrategy: "dcr" })
+      );
+      expect(findAutomaticDecisionStep(result)).toMatchObject({
+        message:
+          "Automatic resolved to DCR for this run. CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.",
+        details: expect.objectContaining({
+          "Automatic Decision": "DCR",
+          Reason:
+            "CIMD cannot use this preview's per-origin OAuth callback because it is not registered in the static client metadata, so automatic mode used DCR.",
+          "CIMD Support": "Unavailable for this preview callback",
+        }),
+      });
+    });
+
+    it("rejects explicitly selected CIMD on preview callbacks", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValue(createCimdDiscoveryState());
+      const constants = await import("../constants");
+      vi.spyOn(constants, "supportsMcpJamCimdRedirect").mockReturnValue(false);
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+        registrationMode: "cimd",
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error:
+          "CIMD is unavailable on this preview host because its OAuth callback is not registered. Use Automatic or DCR for this preview.",
+      });
+      expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("rejects automatic preview fallback when DCR is not advertised", async () => {
+      const discoveryState = createCimdDiscoveryState();
+      delete discoveryState.authorizationServerMetadata.registration_endpoint;
+      mockDiscoverOAuthServerInfo.mockResolvedValue(discoveryState);
+      const constants = await import("../constants");
+      vi.spyOn(constants, "supportsMcpJamCimdRedirect").mockReturnValue(false);
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+        registrationMode: "auto",
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error:
+          "CIMD is unavailable on this preview host, and the authorization server did not advertise DCR as a fallback.",
+      });
+      expect(mockRunOAuthStateMachine).not.toHaveBeenCalled();
     });
 
     it("returns safe defaults when stored OAuth config is missing or malformed", async () => {
@@ -1969,7 +2065,11 @@ describe("mcp-oauth", () => {
       });
       const { initiateOAuth } = await import("../mcp-oauth");
 
-      const initiateResult = await initiateOAuth({ serverName, serverUrl });
+      const initiateResult = await initiateOAuth({
+        serverName,
+        serverUrl,
+        scopes: ["documents:read"],
+      });
       expect(initiateResult.success).toBe(true);
 
       const storedFlow = JSON.parse(
@@ -1978,11 +2078,13 @@ describe("mcp-oauth", () => {
       expect(
         new URL(storedFlow.state.authorizationUrl).searchParams.get("resource")
       ).toBe(advertisedResource);
-      expect(
-        JSON.parse(
-          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "{}"
-        ).resourceUrl
-      ).toBe(advertisedResource);
+      const storedConfig = JSON.parse(
+        decodeURIComponent(
+          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "%7B%7D"
+        )
+      );
+      expect(storedConfig.resourceUrl).toBe(advertisedResource);
+      expect(storedConfig.scopes).toEqual(["documents:read"]);
 
       // The callback half used to delete the flow session on purpose, to reach
       // the legacy direct exchange. That implementation is gone — the callback
@@ -2109,8 +2211,13 @@ describe("mcp-oauth", () => {
         true
       );
 
-      expect(localStorage.getItem("mcp-oauth-config-asana")).toBe(
-        JSON.stringify({
+      expect(
+        JSON.parse(
+          decodeURIComponent(
+            localStorage.getItem("mcp-oauth-config-asana") ?? "%7B%7D"
+          )
+        )
+      ).toEqual({
           registryServerId: "registry-asana",
           useRegistryOAuthProxy: true,
           resourceUrl: "https://mcp.asana.com/v2/mcp",
@@ -2118,8 +2225,7 @@ describe("mcp-oauth", () => {
           protocolVersion: "2025-11-25",
           registrationMode: "preregistered",
           registrationStrategy: "preregistered",
-        })
-      );
+        });
     });
 
     it("reuses the stored OAuth client information when a fresh OAuth flow starts", async () => {
@@ -2719,6 +2825,81 @@ describe("mcp-oauth", () => {
             },
           }),
         })
+      );
+    });
+
+    it("recovers custom headers from the protected server-secret store for callback exchange", async () => {
+      await seedPendingOAuth(undefined);
+      localStorage.setItem(
+        "mcp-oauth-config-asana",
+        JSON.stringify({ hasCustomHeaders: true })
+      );
+      localStorage.setItem(
+        "mcp-oauth-binding-asana",
+        JSON.stringify({
+          projectId: "project-1",
+          serverId: "server-1",
+          kind: "generic",
+        })
+      );
+      authFetch
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            success: true,
+            headers: { "X-Tenant": "protected-tenant" },
+          })
+        )
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            status: 200,
+            statusText: "OK",
+            headers: { "Content-Type": "application/json" },
+            body: { access_token: "token", token_type: "Bearer" },
+          })
+        );
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authServerUrl, options) => {
+          const response = await options!.fetchFn!(
+            "https://app.asana.com/-/oauth_token",
+            {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: options!.authorizationCode!,
+                code_verifier: options!.codeVerifier,
+                redirect_uri: String(options!.redirectUri),
+              }),
+            }
+          );
+          return await response.json();
+        }
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
+
+      expect(callbackResult.success).toBe(true);
+      expect(authFetch).toHaveBeenNthCalledWith(
+        1,
+        "/api/web/oauth/recovery-headers",
+        expect.objectContaining({
+          body: JSON.stringify({
+            serverName: "asana",
+            serverUrl: "https://mcp.asana.com/v2/mcp",
+            projectId: "proj_default",
+            serverId: "srv_asana",
+          }),
+        })
+      );
+      expect(mockRunOAuthStateMachine).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customHeaders: { "X-Tenant": "protected-tenant" },
+        })
+      );
+      expect(localStorage.getItem("mcp-oauth-config-asana")).not.toContain(
+        "protected-tenant"
       );
     });
 

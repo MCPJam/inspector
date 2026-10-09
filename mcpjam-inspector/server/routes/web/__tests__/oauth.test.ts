@@ -6,9 +6,14 @@ import {
   postJson,
 } from "./helpers/test-app.js";
 
-const { executeOAuthProxyMock, fetchOAuthMetadataMock } = vi.hoisted(() => ({
+const {
+  executeOAuthProxyMock,
+  fetchOAuthMetadataMock,
+  fetchRuntimeServerSecretsMock,
+} = vi.hoisted(() => ({
   executeOAuthProxyMock: vi.fn(),
   fetchOAuthMetadataMock: vi.fn(),
+  fetchRuntimeServerSecretsMock: vi.fn(),
 }));
 
 vi.mock("../../../utils/oauth-proxy.js", () => ({
@@ -23,6 +28,16 @@ vi.mock("../../../utils/oauth-proxy.js", () => ({
     }
   },
 }));
+
+vi.mock("../../../utils/server-secrets.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/server-secrets.js")
+  >("../../../utils/server-secrets.js");
+  return {
+    ...actual,
+    fetchRuntimeServerSecrets: fetchRuntimeServerSecretsMock,
+  };
+});
 
 import { OAuthProxyError } from "../../../utils/oauth-proxy.js";
 import { initGuestTokenSecret } from "../../../services/guest-token.js";
@@ -62,6 +77,7 @@ describe("web routes — oauth requires bearer token", () => {
   beforeEach(() => {
     executeOAuthProxyMock.mockReset();
     fetchOAuthMetadataMock.mockReset();
+    fetchRuntimeServerSecretsMock.mockReset();
   });
 
   it("POST /proxy returns 401 without bearer token", async () => {
@@ -117,9 +133,216 @@ describe("web routes — oauth requires bearer token", () => {
       finalUrl: "https://example.com/token",
     });
     expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
-      "https://example.com/token"
+      "https://example.com/token",
     );
   });
+
+  it("POST /recovery-headers returns only protected headers for the bound server", async () => {
+    fetchRuntimeServerSecretsMock.mockResolvedValueOnce({
+      env: { PRIVATE_ENV: "not-returned" },
+      headers: {
+        "X-Tenant": "protected-tenant",
+        Authorization: "Bearer mcp-server-token",
+      },
+      boundOrigins: ["https://mcp.example.com"],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      {
+        projectId: "project-1",
+        serverId: "server-1",
+        serverName: "example",
+        serverUrl: "https://mcp.example.com/mcp",
+      },
+      token,
+    );
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      success: true,
+      headers: { "X-Tenant": "protected-tenant" },
+    });
+    expect(fetchRuntimeServerSecretsMock).toHaveBeenCalledWith({
+      bearerToken: token,
+      projectId: "project-1",
+      serverId: "server-1",
+      expectedTargetUrl: "https://mcp.example.com/mcp",
+      accessScope: "project_member",
+    });
+  });
+
+  it("stages and consumes callback headers for an unsynced local server", async () => {
+    const binding = {
+      serverName: "local-example",
+      serverUrl: "http://127.0.0.1:3000/mcp",
+      recoveryHandle: "a".repeat(48),
+    };
+    const stageResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers/stage",
+      {
+        ...binding,
+        headers: {
+          "X-Tenant": "local-tenant",
+          authorization: "Bearer mcp-server-token",
+        },
+      },
+      token,
+    );
+    expect((await expectJson(stageResponse)).status).toBe(200);
+
+    const recoverResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      binding,
+      token,
+    );
+    expect(await expectJson(recoverResponse)).toEqual({
+      status: 200,
+      data: { success: true, headers: { "X-Tenant": "local-tenant" } },
+    });
+
+    const replayResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      binding,
+      token,
+    );
+    expect((await expectJson(replayResponse)).status).toBe(404);
+  });
+
+  it("recovers local headers after the caller bearer token rotates", async () => {
+    const binding = {
+      serverName: "rotating-token-example",
+      serverUrl: "http://127.0.0.1:3001/mcp",
+      recoveryHandle: "b".repeat(48),
+    };
+    const stageResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers/stage",
+      { ...binding, headers: { "X-Tenant": "local-tenant" } },
+      token,
+    );
+    expect((await expectJson(stageResponse)).status).toBe(200);
+
+    const recoverResponse = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers",
+      binding,
+      "refreshed-token-456",
+    );
+    expect(await expectJson(recoverResponse)).toEqual({
+      status: 200,
+      data: { success: true, headers: { "X-Tenant": "local-tenant" } },
+    });
+  });
+
+  it("bounds pending local recovery records and evicts them after expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      for (let index = 0; index < 128; index += 1) {
+        const response = await postJson(
+          app,
+          "/api/web/oauth/recovery-headers/stage",
+          {
+            serverName: `bounded-${index}`,
+            serverUrl: `http://127.0.0.1:${3000 + index}/mcp`,
+            recoveryHandle: `bounded_${String(index).padStart(32, "0")}`,
+            headers: { "X-Tenant": `tenant-${index}` },
+          },
+          token,
+        );
+        expect((await expectJson(response)).status).toBe(200);
+      }
+
+      const rejected = await postJson(
+        app,
+        "/api/web/oauth/recovery-headers/stage",
+        {
+          serverName: "over-capacity",
+          serverUrl: "http://127.0.0.1:4000/mcp",
+          recoveryHandle: "c".repeat(48),
+          headers: { "X-Tenant": "tenant" },
+        },
+        token,
+      );
+      expect((await expectJson(rejected)).status).toBe(429);
+
+      vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+      const afterExpiry = await postJson(
+        app,
+        "/api/web/oauth/recovery-headers/stage",
+        {
+          serverName: "after-expiry",
+          serverUrl: "http://127.0.0.1:4001/mcp",
+          recoveryHandle: "d".repeat(48),
+          headers: { "X-Tenant": "tenant" },
+        },
+        token,
+      );
+      expect((await expectJson(afterExpiry)).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects an oversized local recovery record", async () => {
+    const headers = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [
+        `X-Large-${index}`,
+        "x".repeat(8192),
+      ]),
+    );
+    const response = await postJson(
+      app,
+      "/api/web/oauth/recovery-headers/stage",
+      {
+        serverName: "oversized",
+        serverUrl: "http://127.0.0.1:4002/mcp",
+        recoveryHandle: "e".repeat(48),
+        headers,
+      },
+      token,
+    );
+    expect((await expectJson(response)).status).toBe(400);
+  });
+
+  it.each([
+    {
+      label: "server name",
+      serverName: "n".repeat(257),
+      serverUrl: "http://127.0.0.1:4003/mcp",
+    },
+    {
+      label: "server URL",
+      serverName: "oversized-url",
+      serverUrl: `https://example.com/${"u".repeat(4096)}`,
+    },
+    {
+      label: "non-HTTP URL",
+      serverName: "invalid-url",
+      serverUrl: "file:///tmp/mcp.sock",
+    },
+  ])(
+    "rejects an invalid recovery $label before retaining it",
+    async (binding) => {
+      const response = await postJson(
+        app,
+        "/api/web/oauth/recovery-headers/stage",
+        {
+          serverName: binding.serverName,
+          serverUrl: binding.serverUrl,
+          recoveryHandle: "f".repeat(48),
+          headers: { "X-Tenant": "tenant" },
+        },
+        token,
+      );
+      expect((await expectJson(response)).status).toBe(400);
+    },
+  );
 
   it("GET /metadata succeeds with bearer token", async () => {
     fetchOAuthMetadataMock.mockResolvedValueOnce({
@@ -137,7 +360,7 @@ describe("web routes — oauth requires bearer token", () => {
     expect(status).toBe(200);
     expect(data).toEqual({ issuer: "https://example.com" });
     expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
-      "https://example.com/.well-known/oauth"
+      "https://example.com/.well-known/oauth",
     );
   });
 });
@@ -249,10 +472,13 @@ describe("web routes — oauth session forwarding", () => {
 
   it("POST /session forwards the bearer-authenticated session bootstrap to Convex", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: true, sessionId: "session-123" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ success: true, sessionId: "session-123" }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -266,7 +492,12 @@ describe("web routes — oauth session forwarding", () => {
       },
     };
 
-    const response = await postJson(app, "/api/web/oauth/session", payload, token);
+    const response = await postJson(
+      app,
+      "/api/web/oauth/session",
+      payload,
+      token,
+    );
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);
@@ -309,7 +540,12 @@ describe("web routes — oauth session forwarding", () => {
       serverId: "srv_1",
     };
 
-    const response = await postJson(app, "/api/web/oauth/tokens", payload, token);
+    const response = await postJson(
+      app,
+      "/api/web/oauth/tokens",
+      payload,
+      token,
+    );
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);
