@@ -10,7 +10,7 @@ import {
   useProjectPlugins,
 } from "@/hooks/usePluginImportApi";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { useCanManageProjectClients } from "@/hooks/useProjects";
 import type { PluginServerDetail } from "@/components/connection/ServerDetailModal";
 import { pluginCardServers } from "./InstalledPluginServerCards";
 
@@ -37,12 +37,21 @@ export function useServersTabPlugins({
   const installed = useProjectPlugins(enabled ? projectId : null);
   const { plugins: activeRows } = useActivePlugins(projectId);
   const { isAuthenticated } = useConvexAuth();
-  const { canManageMembers } = useProjectMembers({
+  // Plugin management clears `canManageProjectMembers`, which this mirrors
+  // for anonymous owners too (the members list answers false for them).
+  const { canManage } = useCanManageProjectClients({
     isAuthenticated,
-    projectId: enabled && installed && installed.length > 0 ? projectId : null,
+    projectId,
   });
   const navigate = useAppNavigate();
   const [detail, setDetail] = useState<PluginServerDetail | null>(null);
+  // An open plugin belongs to the project it was opened in. Kept across a
+  // switch, its Settings would act on that plugin under the new project.
+  const [detailProjectId, setDetailProjectId] = useState(projectId);
+  if (detailProjectId !== projectId) {
+    setDetailProjectId(projectId);
+    setDetail(null);
+  }
 
   // The flag is a per-viewer rollout, so a permalink can reach someone outside
   // it. Same answer as a missing plugin: whether it exists is not ours to say.
@@ -108,18 +117,19 @@ export function useServersTabPlugins({
   return {
     plugins,
     rowFor,
-    canManage: canManageMembers === true,
+    canManage,
     /** A permalink named a plugin this viewer cannot see. */
     routeUnavailable: routeState.kind === "unavailable",
     /**
      * Whether any installed plugin adds a card to the grid: a server card, or
-     * its own card when no version is active. Without an answer from the
-     * active-plugins read, an activated plugin is assumed to add servers.
+     * its own card when it has no version active or nothing to show. Without
+     * an answer from the active-plugins read, an activated plugin is assumed
+     * to add servers.
      */
     hasPluginCards: plugins.some((plugin) => {
       if (!plugin.activeVersionId) return true;
       const row = rowFor(plugin.pluginId);
-      return row ? row.servers.length > 0 : true;
+      return row ? row.servers.length > 0 || row.skills.length === 0 : true;
     }),
     detail,
     setDetail,
