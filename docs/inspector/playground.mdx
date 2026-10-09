@@ -63,7 +63,7 @@ The Playground is a three-column IDE shell. Each side rail is collapsible — dr
 **Right rail — Logs / Shell**
 
 - **Logs** (always available) — Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
-- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
+- **Shell** (shown when the previewed host has a Project Computer and is not a harness client) — A live terminal on the personal computer. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
 
 ## Chat, Trace, and Raw Views
 
@@ -306,7 +306,7 @@ Click **Edit** on a tool-result card to make the **Input** and **Result** JSON e
 
 ## Right Rail
 
-The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached.
+The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached and is not a harness client (Claude Code, Codex, or Cursor). Harness clients run on disposable per-conversation boxes, not a personal computer, so the Shell tab is not shown for them.
 
 ### Logs tab
 
@@ -333,7 +333,7 @@ When a search is active and the source filter is hiding matching entries, a bann
 
 ### Shell tab
 
-When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+When the previewed host has a Project Computer and is not a harness client (Claude Code, Codex, or Cursor), a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
 
 Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
 
