@@ -359,7 +359,7 @@ export function ActionRow({
         ) : null}
 
         {open && step.kind === "interact" ? (
-          <fieldset disabled={readOnly} className="contents">
+          <fieldset disabled={readOnly} className="min-w-0">
             <div className="space-y-2 text-card-foreground">
               <div className="space-y-1.5">
                 <Label
