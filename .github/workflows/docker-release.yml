@@ -1,0 +1,137 @@
+name: Docker Release
+
+# Publishes the self-hosted Inspector image, mcpjam/mcp-inspector on Docker
+# Hub, at the Inspector version `main` carries. release.yml calls it once that
+# version is on npm. Dispatching it by hand is the retry path, and the way to
+# push the current version without cutting a release.
+#
+# Same Dockerfile Railway builds the hosted app from, but with no build args:
+# without VITE_MCPJAM_HOSTED_MODE the bundle is the local Inspector, the one
+# `npx @mcpjam/inspector` runs.
+on:
+  workflow_call:
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+  workflow_dispatch:
+
+concurrency:
+  group: docker-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_REPOSITORY: mcpjam/mcp-inspector
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # `latest` moves on every run, so only `main` may publish: a dispatch
+      # from a branch would hand every `docker pull` unreleased code.
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "docker-release.yml must run from main" >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: mcpjam-inspector/package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Read the Inspector version
+        id: version
+        run: echo "version=$(jq -r .version mcpjam-inspector/package.json)" >> "$GITHUB_OUTPUT"
+
+      # Between a version PR merging and its release publishing, `main`
+      # already carries the next version; a dispatch in that window must not
+      # tag it `latest`. Retried because release.yml calls this seconds after
+      # `npm publish`, before the registry may answer for the new version.
+      - name: Require the version on npm
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "@mcpjam/inspector@$VERSION" version | grep -qx "$VERSION"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::@mcpjam/inspector@$VERSION is not on npm. Only released versions go to Docker Hub." >&2
+          exit 1
+
+  # One native runner per architecture: under QEMU the arm64 build (npm ci,
+  # the client bundle, Chromium) takes several times longer.
+  build:
+    needs: prepare
+    name: Build ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # The build context is the whole checkout and this image is public;
+          # keep the token out of .git/config.
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./mcpjam-inspector/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ${{ env.DOCKER_REPOSITORY }}:v${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+
+  # The tags users pull, each pointing at both architectures. Written only
+  # after both builds pushed, so `latest` never names a single-arch image.
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create the multi-arch tags
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            --tag "$DOCKER_REPOSITORY:v$VERSION" \
+            --tag "$DOCKER_REPOSITORY:latest" \
+            "$DOCKER_REPOSITORY:v$VERSION-amd64" \
+            "$DOCKER_REPOSITORY:v$VERSION-arm64"
+          echo "Published \`$DOCKER_REPOSITORY:v$VERSION\` and \`latest\` (linux/amd64, linux/arm64)." >> "$GITHUB_STEP_SUMMARY"
