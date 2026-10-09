@@ -511,12 +511,12 @@ describe("useToolExecution step-up (SEP-2350)", () => {
         requiredScope: "read write admin",
         resourceMetadataUrl: "https://rs.example/.well-known",
       },
-      {
+      expect.objectContaining({
         operation: {
           method: "tools/call",
           operation: "get_weather",
         },
-      }
+      })
     );
     expect(mockResetToolCallStepUp).not.toHaveBeenCalled();
   });
@@ -585,18 +585,19 @@ describe("useToolExecution step-up (SEP-2350)", () => {
         requiredScope: undefined,
         resourceMetadataUrl: "https://rs.example/.well-known",
       },
-      {
+      expect.objectContaining({
         operation: {
           method: "tools/call",
           operation: "get_weather",
         },
-      }
+      })
     );
   });
 
-  it("does not drive step-up for an errorDescription-only challenge (nothing to re-authorize with)", async () => {
-    // Neither a `requiredScope` nor a `resourceMetadataUrl` — redirecting would
-    // only burn the bounded step-up budget.
+  it("drives step-up for an errorDescription-only challenge (discovery chooses the scopes)", async () => {
+    // Neither a `requiredScope` nor a `resourceMetadataUrl`: the
+    // re-authorization falls back to the previous scopes and discovery's
+    // `scopes_supported`, still bounded by the one-attempt budget.
     mockExecuteToolApi.mockResolvedValueOnce({
       error: "Insufficient scope",
       insufficientScope: {
@@ -613,6 +614,6 @@ describe("useToolExecution step-up (SEP-2350)", () => {
       await result.current.executeTool({ parameters: {} });
     });
 
-    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
   });
 });

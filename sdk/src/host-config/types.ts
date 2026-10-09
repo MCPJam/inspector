@@ -26,6 +26,11 @@ import {
   isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
+import type {
+  AuthChallengeAction,
+  ToolResultAuthChallengeTrigger,
+  UnauthorizedChallengeTrigger,
+} from "../mcp-client-manager/auth-challenge.js";
 
 import type { ModelSelection } from "./model-selection.js";
 
@@ -188,10 +193,13 @@ export const TOOL_PARAM_HEADER_MIRRORING_MODES = [
 //   server's integrity check; belongs to the conformance harness.
 // - Elicitation form/url support — already modeled, as
 //   `clientCapabilities.elicitation.{form,url}`. Do not duplicate it here.
-// - list_changed handling — a real divergence between hosts, but making
-//   MCPJam's own tool list go stale is an anti-feature for a debugger.
-//   It belongs in the host catalog as a fact to DISPLAY about a host, not
-//   as a behavior to simulate.
+//
+// list_changed handling used to sit on this list (a stale tool list looked
+// like an anti-feature for a debugger). It is now modeled after all, as
+// `toolListChanged` on the profile below: `listens: false` refuses the
+// standalone listen channel, and `refetches: false` drops
+// `notifications/tools/list_changed` so the cached `tools/list` stays stale —
+// the stale list IS what a server author needs to see from such a host.
 
 /**
  * How the simulated client walks paginated list results (`tools/list`,
@@ -247,6 +255,36 @@ export const MRTR_SUPPORT_MODES = [
   "none",
 ] as const satisfies readonly MrtrSupport[];
 
+// ── Mid-session sign-in ("lazy authentication") knobs ─────────────────
+//
+// Four sibling fields on the profile below say how the simulated client
+// reacts when a server refuses a call until the user signs in. The value
+// unions and their permitted-literal arrays live with the recognition code in
+// `../mcp-client-manager/auth-challenge.ts` (`AuthChallengeAction`,
+// `UnauthorizedChallengeTrigger`, `ToolResultAuthChallengeTrigger`), which
+// also owns the absent values (`AUTH_CHALLENGE_POLICY_DEFAULTS`) and the
+// reader (`authChallengePolicyFrom`). They are not redefined here.
+//
+// - `unauthorizedChallenge` / `unauthorizedChallengeTrigger` — an HTTP `401`
+//   on a request (MCP authorization spec). Absent = act on it (`"prompt"`)
+//   whatever the 401 carries (`"any"`), as the reference SDK client does.
+// - `toolResultAuthChallenge` / `toolResultAuthChallengeTrigger` — a `200`
+//   tool result with `isError: true` and `_meta["mcp/www_authenticate"]`
+//   (OpenAI's contract).
+//
+// ASYMMETRY, on purpose: for the `_meta` pair the absent action is the one
+// that does NOT act (`"passthrough"`), because the `_meta` challenge is not in
+// the MCP spec, so a spec-conforming client treats it as an ordinary error.
+// That keeps the shared rule above (absent = spec-conforming) true for all
+// four fields. A host that honors `_meta` writes `toolResultAuthChallenge`;
+// the absent trigger is then OpenAI's own rule.
+//
+// Each trigger only narrows its action: it is inert while that action is
+// `"passthrough"`. A 403 `insufficient_scope` is outside these knobs (every
+// host steps up on it). The `401` pair has no mechanism on stdio, so it is
+// inert there; the `_meta` pair rides the tool result and applies on any
+// transport.
+
 /**
  * Which cancellation leaf a connection on `version` is governed by.
  *
@@ -277,6 +315,11 @@ export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
   "toolCallCancellation",
+  "toolListChanged",
+  "unauthorizedChallenge",
+  "unauthorizedChallengeTrigger",
+  "toolResultAuthChallenge",
+  "toolResultAuthChallengeTrigger",
 ] as const;
 
 /**
@@ -390,6 +433,35 @@ export type HostConfigMcpProfileV1 = {
     listens?: boolean;
     refetches?: boolean;
   };
+  // Mid-session sign-in knobs (see the "lazy authentication" block above the
+  // profile for the shared semantics). Absent is spec-conforming for all four,
+  // which for the `_meta` pair means NOT acting: that challenge is not in the
+  // MCP spec.
+  /**
+   * Action on a recognized HTTP `401` during a session. Absent = `"prompt"`
+   * (the spec reading, and the reference SDK client).
+   */
+  unauthorizedChallenge?: AuthChallengeAction;
+  /**
+   * What a `401` needs before the host treats it as a challenge. Absent =
+   * `"any"` (spec: the header is optional, with a well-known fallback).
+   * `"bearer-header"` requires `WWW-Authenticate: Bearer` (Claude);
+   * `"resource-metadata"` also requires its `resource_metadata` parameter.
+   */
+  unauthorizedChallengeTrigger?: UnauthorizedChallengeTrigger;
+  /**
+   * Action on a `200` `isError` tool result carrying
+   * `_meta["mcp/www_authenticate"]`. Absent = `"passthrough"`: the `_meta`
+   * challenge is not in the MCP spec, so here the absent value is the one
+   * that does not act.
+   */
+  toolResultAuthChallenge?: AuthChallengeAction;
+  /**
+   * What the `_meta` challenge needs. Absent = `"oauth2-scheme+error-params"`
+   * (OpenAI's "both halves" rule — the tool declares an `oauth2`
+   * `securitySchemes` entry — plus both `error` and `error_description`).
+   */
+  toolResultAuthChallengeTrigger?: ToolResultAuthChallengeTrigger;
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the

@@ -47,6 +47,10 @@ import {
 } from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+} from "../directory-readiness/lazy-auth.js";
+import {
   MODEL_REASONING_EFFORTS,
   MODEL_SELECTION_FALLBACK_PROVIDERS,
   MODEL_SELECTION_SOURCES,
@@ -69,14 +73,23 @@ import {
   type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
+  bundledHostCompatCatalog,
   evaluateMarketHosts,
   scanWidgetUsage,
   type CompatFinding,
   type CompatProvenance,
   type CompatVerdict,
+  type HostCompatCatalog,
+  type HostCompatTool,
   type HostCompatToolsInput,
   type ReadResourceResult,
 } from "../host-compat/index.js";
+import {
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  authChallengePolicyFrom,
+  hasOAuth2Scheme,
+  resolveToolSecuritySchemes,
+} from "../mcp-client-manager/auth-challenge.js";
 import {
   buildShowServersPayload,
   projectResolutionError,
@@ -1475,7 +1488,7 @@ export const callServerToolOperation: PlatformOperation<
   name: "call_server_tool",
   title: "Call MCPJam server tool",
   description:
-    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data.",
+    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data. If the server asks for sign-in on this call, the error is AUTH_REQUIRED (HTTP 403) with the parsed challenge in details.authChallenge; a completed result can also carry authChallenge beside it. Nothing signs in automatically: the user must connect the server with OAuth, then call again.",
   readOnly: false,
   mayBeDestructive: true,
   permalink: noPermalink(
@@ -1839,6 +1852,104 @@ export type CheckHostCompatibilityResult = {
 // Bound the tools pagination so a pathological server can't loop forever.
 const HOST_COMPAT_TOOLS_PAGE_CAP = 50;
 
+/**
+ * Hosts that would show a tool-result sign-in challenge as an ordinary error,
+ * for a server whose tools rely on one.
+ *
+ * WHAT "RELIES ON ONE" MEANS HERE. A tool whose `securitySchemes` (top level,
+ * then `_meta.securitySchemes`) include `oauth2` is declaring the pattern in
+ * which a protected call answers with an `isError` result carrying
+ * `_meta["mcp/www_authenticate"]`. That is one host's contract, not the MCP
+ * spec's, and a host whose resolved `toolResultAuthChallenge` is `passthrough`
+ * — the default when its profile says nothing — shows that result as a plain
+ * failure and never starts sign-in.
+ *
+ * `info`, and appended without moving the verdict: the declaration says what
+ * the server INTENDS, not what it sends. A server may also refuse the same
+ * call with an HTTP 401, which every host acts on, and only a driven call
+ * could tell the two apart. A host whose profile states nothing gets
+ * `assumed` provenance, because the `passthrough` it is graded on is a
+ * default rather than a recorded fact about that host.
+ *
+ * Exported for direct testing against a synthetic catalog.
+ */
+export function toolResultAuthChallengeFindings(
+  tools: readonly HostCompatTool[],
+  host: {
+    hostLabel: string;
+    provenance: CompatProvenance;
+    mcpProfile?: unknown;
+  }
+): CompatFinding[] {
+  const declared = authChallengePolicyFrom(host.mcpProfile);
+  const action =
+    declared?.toolResultAuthChallenge ??
+    AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallenge;
+  if (action !== "passthrough") return [];
+
+  const relying = tools
+    .filter((tool) =>
+      hasOAuth2Scheme(
+        resolveToolSecuritySchemes({
+          declaration: {
+            securitySchemes: tool.securitySchemes,
+            _meta: tool._meta,
+          },
+        })
+      )
+    )
+    .map((tool) => tool.name)
+    .sort();
+  if (relying.length === 0) return [];
+
+  return [
+    {
+      lane: "server",
+      severity: "info",
+      code: "tool_result_auth_challenge_ignored",
+      title: "Sign-in challenges in tool results are shown as errors",
+      detail: `${host.hostLabel} shows a tool result carrying _meta["mcp/www_authenticate"] as an ordinary error and does not start sign-in from it. These tools declare an oauth2 security scheme, the pattern that asks for sign-in that way: ${relying.join(
+        ", "
+      )}.`,
+      remediation:
+        'To ask for sign-in in the way the MCP spec defines, refuse the unauthenticated call with HTTP 401 and a `WWW-Authenticate: Bearer resource_metadata="…"` header; hosts that read the _meta challenge can be served it alongside.',
+      tools: relying,
+      provenance:
+        declared?.toolResultAuthChallenge !== undefined
+          ? host.provenance
+          : "assumed",
+    },
+  ];
+}
+
+/** Append the tool-result sign-in finding to every host it applies to. */
+function withToolResultAuthChallengeFindings<
+  Report extends {
+    hostId: string;
+    hostLabel: string;
+    provenance: CompatProvenance;
+    findings: CompatFinding[];
+  },
+>(
+  reports: readonly Report[],
+  tools: readonly HostCompatTool[],
+  catalog: HostCompatCatalog
+): Report[] {
+  return reports.map((report) => {
+    const host = Object.hasOwn(catalog.hostsById, report.hostId)
+      ? catalog.hostsById[report.hostId]
+      : undefined;
+    const extra = toolResultAuthChallengeFindings(tools, {
+      hostLabel: report.hostLabel,
+      provenance: report.provenance,
+      mcpProfile: host?.mcpProfile,
+    });
+    return extra.length > 0
+      ? { ...report, findings: [...report.findings, ...extra] }
+      : report;
+  });
+}
+
 export const checkHostCompatibilityOperation: PlatformOperation<
   ServerScopedInput,
   CheckHostCompatibilityResult
@@ -1890,6 +2001,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       tools: rawTools.map((tool) => ({
         name: String(tool.name),
         _meta: tool._meta as Record<string, unknown> | undefined,
+        // KEPT, not dropped: the per-tool auth declaration is what tells a
+        // host whether to act on a tool-result sign-in challenge. `_meta`
+        // (and any `_meta.securitySchemes` in it) rides along above.
+        ...(tool.securitySchemes !== undefined
+          ? { securitySchemes: tool.securitySchemes }
+          : {}),
       })),
     };
 
@@ -1921,7 +2038,13 @@ export const checkHostCompatibilityOperation: PlatformOperation<
         appOnly: requirements.appOnlyWidgets.length,
       },
       unknownDimensions: requirements.unknownDimensions,
-      hosts: reports.map((report) => ({
+      hosts: withToolResultAuthChallengeFindings(
+        reports,
+        toolsData.tools,
+        // The same catalog `evaluateMarketHosts` graded against: the bundled
+        // one, since no live catalog is passed above.
+        bundledHostCompatCatalog()
+      ).map((report) => ({
         hostId: report.hostId,
         hostLabel: report.hostLabel,
         verdict: report.verdict,
@@ -1976,12 +2099,51 @@ const readinessRunScopedInput = z.object({
 
 export type ReadinessRunScopedInput = z.infer<typeof readinessRunScopedInput>;
 
+const readinessProbeToolName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(LAZY_AUTH_PROBE_LIMITS.toolNameMaxChars);
+
+/**
+ * The lazy-auth probe's request. `enabled` is a LITERAL `true`: a field that
+ * makes a run call tools on somebody else's server is not one a falsy-looking
+ * value should be able to set, and `false` is expressed by omitting the field.
+ */
+const readinessLazyAuthProbeInput = z
+  .strictObject({
+    enabled: z.literal(true),
+    toolName: readinessProbeToolName
+      .optional()
+      .describe("The protected read-only tool to call without credentials."),
+    publicToolName: readinessProbeToolName
+      .optional()
+      .describe("The public read-only tool to call without credentials."),
+  })
+  .refine(
+    (probe) =>
+      probe.toolName === undefined || probe.toolName !== probe.publicToolName,
+    { message: "toolName and publicToolName must name different tools" }
+  );
+
 const startReadinessInput = serverScopedInput.extend({
   includeLlmObservations: z
     .boolean()
     .optional()
     .describe(
       "Ask a model for optional experience observations. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Defaults false; the deterministic grade is complete without it."
+    ),
+  lazyAuthProbe: readinessLazyAuthProbeInput
+    .optional()
+    .describe(
+      "Verify lazy authentication (mid-session sign-in): the run calls at most two tools annotated readOnlyHint: true — one public, one protected — WITHOUT credentials and grades how the protected call is refused. The saved server's credential is never sent on these calls. Omit to make no tool calls. Without tool names, tools are picked by their securitySchemes."
+    ),
+  claimedFeatures: z
+    .array(z.enum(DIRECTORY_FEATURE_CLAIMS))
+    .max(LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims)
+    .optional()
+    .describe(
+      `Features the submitter claims (${DIRECTORY_FEATURE_CLAIMS.join(", ")}). A claim is reported as claimed, never as verified.`
     ),
   idempotencyKey: z
     .string()
@@ -2001,6 +2163,26 @@ const startOpenAIReadinessInput = startReadinessInput.extend({
       "REQUIRED, and never inferred: which submission shape is being graded. The two package shapes need an upload this API cannot receive — grade those with `mcpjam readiness check` locally."
     ),
 });
+
+/**
+ * The two optional readiness fields, present only when supplied.
+ *
+ * Absent rather than `undefined`: a start that asked for neither must send a
+ * body an endpoint that predates them still accepts.
+ */
+function readinessProbeFields(input: {
+  lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>;
+  claimedFeatures?: string[];
+}): { lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>; claimedFeatures?: string[] } {
+  return {
+    ...(input.lazyAuthProbe !== undefined
+      ? { lazyAuthProbe: input.lazyAuthProbe }
+      : {}),
+    ...(input.claimedFeatures !== undefined && input.claimedFeatures.length > 0
+      ? { claimedFeatures: [...new Set(input.claimedFeatures)].sort() }
+      : {}),
+  };
+}
 
 /**
  * Muse's start: the server and the replay guard. No `includeLlmObservations`,
@@ -2061,6 +2243,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
+        ...readinessProbeFields(input),
       },
       { signal }
     );
@@ -2109,6 +2292,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
+        ...readinessProbeFields(input),
       },
       { signal }
     );

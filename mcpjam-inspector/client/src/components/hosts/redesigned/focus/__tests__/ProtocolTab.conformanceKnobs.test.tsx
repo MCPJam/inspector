@@ -41,6 +41,16 @@ function Harness({ initial }: { initial: HostConfigInputV2 }) {
       <div data-testid="refetches">
         {String(draft.mcpProfile?.toolListChanged?.refetches ?? "<undefined>")}
       </div>
+      <div data-testid="auth">
+        {JSON.stringify({
+          unauthorizedChallenge: draft.mcpProfile?.unauthorizedChallenge,
+          unauthorizedChallengeTrigger:
+            draft.mcpProfile?.unauthorizedChallengeTrigger,
+          toolResultAuthChallenge: draft.mcpProfile?.toolResultAuthChallenge,
+          toolResultAuthChallengeTrigger:
+            draft.mcpProfile?.toolResultAuthChallengeTrigger,
+        })}
+      </div>
       <div data-testid="profile">
         {draft.mcpProfile === undefined ? "<no-profile>" : "profile"}
       </div>
@@ -277,5 +287,205 @@ describe("ProtocolTab tool list changed controls", () => {
     expect(applied).not.toBeNull();
     // Fail-closed: an unreadable leaf reads as conforming, not as degraded.
     expect(applied?.mcpProfile?.toolListChanged).toEqual({ refetches: false });
+  });
+});
+
+describe("ProtocolTab mid-session sign-in controls", () => {
+  const unauthorizedCombo = () =>
+    screen.getByRole("combobox", { name: "On HTTP 401" });
+  const unauthorizedTriggerCombo = () =>
+    screen.getByRole("combobox", { name: "HTTP 401 trigger" });
+  const toolResultCombo = () =>
+    screen.getByRole("combobox", { name: "On tool-result _meta challenge" });
+  const toolResultTriggerCombo = () =>
+    screen.getByRole("combobox", { name: "Tool-result _meta trigger" });
+  const stored = () =>
+    JSON.parse(screen.getByTestId("auth").textContent ?? "{}") as Record<
+      string,
+      string | undefined
+    >;
+
+  it("shows the SDK defaults for a host that never configured them", () => {
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+    // The two families default differently on purpose: a 401 is in the MCP
+    // spec, the `_meta` challenge is not.
+    expect(unauthorizedCombo()).toHaveTextContent(
+      "Prompt to sign in (default)",
+    );
+    expect(unauthorizedTriggerCombo()).toHaveTextContent("Any 401 (default)");
+    expect(toolResultCombo()).toHaveTextContent("Pass through (default)");
+    expect(toolResultTriggerCombo()).toHaveTextContent(
+      "oauth2 + error and error_description (default)",
+    );
+    expect(stored()).toEqual({});
+    expect(screen.getByTestId("profile").textContent).toBe("<no-profile>");
+  });
+
+  it("stores a non-default value when the user picks it", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+
+    await user.click(unauthorizedCombo());
+    await user.click(screen.getByRole("option", { name: "Notify" }));
+    await user.click(unauthorizedTriggerCombo());
+    await user.click(
+      screen.getByRole("option", { name: "Needs WWW-Authenticate: Bearer" }),
+    );
+    await user.click(toolResultCombo());
+    await user.click(screen.getByRole("option", { name: "Prompt to sign in" }));
+    await user.click(toolResultTriggerCombo());
+    await user.click(
+      screen.getByRole("option", { name: "Tool declares oauth2" }),
+    );
+
+    expect(stored()).toEqual({
+      unauthorizedChallenge: "notify",
+      unauthorizedChallengeTrigger: "bearer-header",
+      toolResultAuthChallenge: "prompt",
+      toolResultAuthChallengeTrigger: "oauth2-scheme",
+    });
+  });
+
+  it("writes ABSENCE when the user picks the default back", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initial={{
+          ...emptyHostConfigInputV2(),
+          mcpProfile: {
+            profileVersion: 1,
+            unauthorizedChallenge: "notify",
+            toolResultAuthChallenge: "prompt",
+          },
+        }}
+      />,
+    );
+
+    await user.click(unauthorizedCombo());
+    await user.click(
+      screen.getByRole("option", { name: "Prompt to sign in (default)" }),
+    );
+    // The `_meta` family is still set, so the profile survives.
+    expect(stored()).toEqual({ toolResultAuthChallenge: "prompt" });
+    expect(screen.getByTestId("profile").textContent).toBe("profile");
+
+    await user.click(toolResultCombo());
+    await user.click(
+      screen.getByRole("option", { name: "Pass through (default)" }),
+    );
+    expect(stored()).toEqual({});
+    // Nothing left in the profile, so it collapses and hashes like a host
+    // that never opened this tab.
+    expect(screen.getByTestId("profile").textContent).toBe("<no-profile>");
+  });
+
+  it("says a trigger is inert while its action passes through", () => {
+    render(
+      <Harness
+        initial={{
+          ...emptyHostConfigInputV2(),
+          mcpProfile: {
+            profileVersion: 1,
+            unauthorizedChallenge: "passthrough",
+          },
+        }}
+      />,
+    );
+    // Both triggers are inert here: the 401 action is stored as Pass through
+    // and the `_meta` action defaults to it. They stay editable, so a stored
+    // trigger is never stranded.
+    expect(
+      screen.getAllByText("No effect while the action above is Pass through."),
+    ).toHaveLength(2);
+    expect(unauthorizedTriggerCombo()).toBeEnabled();
+    expect(toolResultTriggerCombo()).toBeEnabled();
+  });
+
+  it("disables every control when read-only", () => {
+    render(
+      <ProtocolTab
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={() => {}}
+        attention={[]}
+        readOnly
+      />,
+    );
+    for (const combo of [
+      unauthorizedCombo(),
+      unauthorizedTriggerCombo(),
+      toolResultCombo(),
+      toolResultTriggerCombo(),
+    ]) {
+      expect(combo).toBeDisabled();
+    }
+  });
+});
+
+describe("ProtocolTab JSON round-trip for the sign-in knobs", () => {
+  it("omits the keys entirely when unset", () => {
+    const doc = protocolToJson(emptyHostConfigInputV2());
+    expect("unauthorizedChallenge" in doc).toBe(false);
+    expect("unauthorizedChallengeTrigger" in doc).toBe(false);
+    expect("toolResultAuthChallenge" in doc).toBe(false);
+    expect("toolResultAuthChallengeTrigger" in doc).toBe(false);
+  });
+
+  it("surfaces and re-applies stored values", () => {
+    const draft: HostConfigInputV2 = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "resource-metadata",
+        toolResultAuthChallenge: "prompt",
+        toolResultAuthChallengeTrigger: "any",
+      },
+    };
+    const doc = protocolToJson(draft);
+    expect(doc.unauthorizedChallenge).toBe("notify");
+    expect(doc.unauthorizedChallengeTrigger).toBe("resource-metadata");
+    expect(doc.toolResultAuthChallenge).toBe("prompt");
+    expect(doc.toolResultAuthChallengeTrigger).toBe("any");
+
+    const applied = applyJsonToDraft(doc, emptyHostConfigInputV2());
+    expect(applied).not.toBeNull();
+    expect(applied!.mcpProfile).toMatchObject({
+      unauthorizedChallenge: "notify",
+      unauthorizedChallengeTrigger: "resource-metadata",
+      toolResultAuthChallenge: "prompt",
+      toolResultAuthChallengeTrigger: "any",
+    });
+  });
+
+  it("clears a knob deleted from the document", () => {
+    // Parsed-authoritative, like the sibling knobs: deleting the key in the
+    // JSON must clear it rather than keep the previous value.
+    const prev: HostConfigInputV2 = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: { profileVersion: 1, toolResultAuthChallenge: "prompt" },
+    };
+    const applied = applyJsonToDraft(
+      protocolToJson(emptyHostConfigInputV2()),
+      prev,
+    );
+    expect(applied).not.toBeNull();
+    expect(applied!.mcpProfile).toBeUndefined();
+  });
+
+  it("collapses unknown literals to undefined instead of failing the save", () => {
+    const applied = applyJsonToDraft(
+      {
+        ...protocolToJson(emptyHostConfigInputV2()),
+        unauthorizedChallenge: "redirect",
+        unauthorizedChallengeTrigger: "bearer",
+        toolResultAuthChallenge: true,
+        toolResultAuthChallengeTrigger: "oauth2",
+      } as unknown as ReturnType<typeof protocolToJson>,
+      emptyHostConfigInputV2(),
+    );
+    // Assert the save SURVIVED first: a rejected document also reads as
+    // `undefined` below.
+    expect(applied).not.toBeNull();
+    expect(applied!.mcpProfile).toBeUndefined();
   });
 });

@@ -6,7 +6,13 @@ import {
   PROTOCOL_VERSION_META_KEY,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { wrapFetchForHttpErrors } from "../src/mcp-client-manager/http-error-fetch.js";
+import {
+  authChallengeOperationKey,
+  wrapFetchForHttpErrors,
+  type AuthChallengeRecorder,
+} from "../src/mcp-client-manager/http-error-fetch.js";
+import { MCPClientManager } from "../src/mcp-client-manager/MCPClientManager.js";
+import { extractAuthChallenge } from "../src/mcp-client-manager/errors.js";
 
 const url = new URL("https://example.test/mcp");
 const challenge =
@@ -92,11 +98,211 @@ describe("Streamable HTTP error diagnostics", () => {
     expect(error).toBeInstanceOf(SdkHttpError);
     expect(error.status).toBe(401);
     expect(error.statusText).toBe("Unauthorized");
-    expect(error.code).toBe(SdkErrorCode.ClientHttpNotImplemented);
-    expect(error.data).toMatchObject({ status: 401, text: "" });
+    expect(error.code).toBe(SdkErrorCode.ClientHttpAuthentication);
+    expect(error.data).toMatchObject({
+      status: 401,
+      text: "",
+      authChallenge: {
+        source: "http_401",
+        resourceMetadataUrl:
+          "https://example.test/.well-known/oauth-protected-resource/mcp",
+        facets: {
+          challengeHeader: "bearer",
+          hasResourceMetadata: true,
+          hasScope: false,
+          hasErrorParams: false,
+        },
+      },
+    });
     expect(error.message).toContain("HTTP 401 Unauthorized");
     expect(error.message).toContain("(empty body)");
     expect(error.message).toContain(`WWW-Authenticate: ${challenge}`);
+  });
+
+  it.each(["resources/read", "prompts/get"])(
+    "preserves a 401 challenge on %s, which the transport would drop",
+    async (method) => {
+      const transport = transportFor(
+        vi.fn(
+          async () =>
+            new Response(null, {
+              status: 401,
+              headers: {
+                "WWW-Authenticate": 'Bearer scope="orders:read"',
+              },
+            })
+        ) as typeof fetch
+      );
+      const error = await transport
+        .send({ ...request, method, params: { uri: "orders://recent" } })
+        .catch((error) => error);
+      expect(error).toBeInstanceOf(SdkHttpError);
+      expect(error.status).toBe(401);
+      expect(error.data.authChallenge).toMatchObject({
+        source: "http_401",
+        requiredScope: "orders:read",
+        facets: { challengeHeader: "bearer", hasScope: true },
+      });
+    }
+  );
+
+  it.each([
+    [undefined, "none"],
+    ["Bearer", "bearer"],
+    ['Basic realm="x"', "other-scheme"],
+  ])(
+    "recognizes a 401 with WWW-Authenticate %j as a challenge",
+    async (header, challengeHeader) => {
+      const transport = transportFor(
+        vi.fn(
+          async () =>
+            new Response(null, {
+              status: 401,
+              headers: header ? { "WWW-Authenticate": header } : {},
+            })
+        ) as typeof fetch
+      );
+      const error = await transport.send(request).catch((error) => error);
+      expect(error.data.authChallenge).toMatchObject({
+        source: "http_401",
+        facets: { challengeHeader },
+      });
+    }
+  );
+
+  it("classifies a non-insufficient-scope 403 as forbidden, with no sign-in challenge", async () => {
+    const transport = transportFor(
+      vi.fn(
+        async () =>
+          new Response("no", {
+            status: 403,
+            headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' },
+          })
+      ) as typeof fetch
+    );
+    const error = await transport.send(request).catch((error) => error);
+    expect(error.code).toBe(SdkErrorCode.ClientHttpForbidden);
+    expect(error.data).not.toHaveProperty("authChallenge");
+  });
+
+  it("records the challenge for the auth-provider path, which drops the header", async () => {
+    const recorder: AuthChallengeRecorder = {};
+    const response = new Response(null, {
+      status: 401,
+      headers: { "WWW-Authenticate": challenge },
+    });
+    const wrapped = wrapFetchForHttpErrors(
+      vi.fn(async () => response) as typeof fetch,
+      true,
+      recorder
+    );
+    expect(
+      await wrapped(url, { method: "POST", body: JSON.stringify(request) })
+    ).toBe(response);
+    expect(recorder.last).toMatchObject({
+      status: 401,
+      challenge: { source: "http_401", facets: { challengeHeader: "bearer" } },
+    });
+  });
+
+  it("does not record a 401 on initialize, which is a connect-time sign-in", async () => {
+    const recorder: AuthChallengeRecorder = {};
+    const response = new Response(null, {
+      status: 401,
+      headers: { "WWW-Authenticate": challenge },
+    });
+    const wrapped = wrapFetchForHttpErrors(
+      vi.fn(async () => response) as typeof fetch,
+      true,
+      recorder
+    );
+    expect(
+      await wrapped(url, {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {},
+        }),
+      })
+    ).toBe(response);
+    expect(recorder.last).toBeUndefined();
+  });
+
+  it("keeps each operation's 401 apart, so concurrent calls never swap challenges", async () => {
+    const recorder: AuthChallengeRecorder = {};
+    const challengeFor = (tool: string) =>
+      `Bearer resource_metadata="https://example.test/${tool}", scope="${tool}:read"`;
+    // B's refusal lands after A's, as when both calls are in flight.
+    const wrapped = wrapFetchForHttpErrors(
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        const tool = JSON.parse(String(init?.body)).params.name;
+        return new Response(null, {
+          status: 401,
+          headers: { "WWW-Authenticate": challengeFor(tool) },
+        });
+      }) as typeof fetch,
+      true,
+      recorder
+    );
+    const callFor = (tool: string) => ({
+      method: "POST",
+      body: JSON.stringify({ ...request, params: { name: tool, arguments: {} } }),
+    });
+    await wrapped(url, callFor("a"));
+    await wrapped(url, callFor("b"));
+
+    expect(
+      recorder.byOperation?.get(authChallengeOperationKey("tools/call", "a"))
+        ?.challenge.requiredScope
+    ).toBe("a:read");
+    expect(
+      recorder.byOperation?.get(authChallengeOperationKey("tools/call", "b"))
+        ?.challenge.requiredScope
+    ).toBe("b:read");
+  });
+
+  it("attaches only the failing operation's own challenge", () => {
+    const manager = new MCPClientManager();
+    const startedAt = Date.now();
+    const recorded = (scope: string) => ({
+      status: 401 as const,
+      at: startedAt,
+      challenge: {
+        source: "http_401" as const,
+        requiredScope: scope,
+        facets: {
+          challengeHeader: "bearer" as const,
+          hasResourceMetadata: false,
+          hasScope: true,
+          hasErrorParams: false,
+        },
+      },
+    });
+    const keyA = authChallengeOperationKey("tools/call", "a");
+    const keyB = authChallengeOperationKey("tools/call", "b");
+    (manager as any).liveClientStates.set("srv", {
+      authChallengeRecorder: {
+        // B was refused last; A must still get A's challenge.
+        byOperation: new Map([
+          [keyA, recorded("a:read")],
+          [keyB, recorded("b:read")],
+        ]),
+        last: recorded("b:read"),
+      },
+    });
+    const unauthorized = () =>
+      Object.assign(new Error("Unauthorized"), { name: "UnauthorizedError" });
+
+    const errorA = unauthorized();
+    (manager as any).attachRecordedAuthChallenge("srv", errorA, startedAt, keyA);
+    expect(extractAuthChallenge(errorA)?.requiredScope).toBe("a:read");
+
+    // An operation with no key of its own is never handed another's.
+    const unkeyed = unauthorized();
+    (manager as any).attachRecordedAuthChallenge("srv", unkeyed, startedAt, undefined);
+    expect(extractAuthChallenge(unkeyed)).toBeUndefined();
   });
 
   it("preserves a non-empty response body even without a reason phrase", async () => {

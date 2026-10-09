@@ -91,6 +91,7 @@ import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import {
   isSuspendedScopeStepUpOutputChunk,
   resumeScopeStepUpBeforeDirectTurn,
+  type SettleSuspendedToolCall,
 } from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
@@ -178,6 +179,8 @@ export interface OrgModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** Forwarded; see `MCPJamHandlerOptions.settleSuspendedHistoryToolCall`. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   /**
    * Extra body fields merged into the per-step Convex `/stream/org` POST.
    * Swarm runs use this to thread `journeyRunId` so the backend BYOK writer
@@ -355,6 +358,8 @@ export interface OrgLocalModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** History settlement for calls a sign-in suspended. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
   suspendedToolCallId?: () => string | undefined;
   /**
@@ -653,6 +658,7 @@ export function handleLocalOrgChatModel(
         writer,
         messageHistory: messages,
         resume: options.scopeStepUpResume,
+        settleSuspendedToolCall: options.settleSuspendedHistoryToolCall,
       });
       if (!shouldRunModel) return;
 
@@ -1076,6 +1082,12 @@ export async function handleHostedOrgChatModel(
     heartbeatIntervalMs: options.heartbeatIntervalMs,
     maxSteps: options.maxSteps,
     scopeStepUpResume: options.scopeStepUpResume,
+    ...(options.settleSuspendedHistoryToolCall
+      ? {
+          settleSuspendedHistoryToolCall:
+            options.settleSuspendedHistoryToolCall,
+        }
+      : {}),
     progressivePlan: options.progressivePlan,
     discoveryState: options.discoveryState,
     failureReporter: options.failureReporter,

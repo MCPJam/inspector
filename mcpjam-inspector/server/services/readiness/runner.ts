@@ -35,6 +35,8 @@ import {
   type ClaudeReadinessResult,
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
   type DirectoryObservationState,
   type MuseReadinessResult,
   type OpenAIReadinessResult,
@@ -84,14 +86,25 @@ export interface RunReadinessOptions {
   fetchFn: typeof fetch;
   /** The DECLARED submission shape. Required for OpenAI, absent for Claude. */
   submissionMode?: OpenAISubmissionMode;
-  /** Headers the target needs, e.g. a saved server's credential. */
-  headers?: Record<string, string>;
+  /**
+   * Headers the MCP endpoint needs, e.g. a saved server's credential. The SDK
+   * sends them only on MCP requests to the endpoint, never on discovery.
+   */
+  mcpHeaders?: Record<string, string>;
   /** Cancellation. A cancelled run must stop dialling somebody else's server. */
   signal?: AbortSignal;
   /** Absent ⇒ this run cannot request observations and cannot spend. */
   requestObservations?: ObservationRequester;
   /** Per-request budget. The caller owns the run-level deadline. */
   timeoutMs?: number;
+  /**
+   * Arm the lazy-auth probe. The SDK builds the probe's requests from the
+   * target and `fetchFn` alone, so `mcpHeaders` never reach them — the same
+   * header split discovery uses.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /** Features the submitter claims. */
+  claimedFeatures?: DirectoryFeatureClaim[];
   now?: () => Date;
 }
 
@@ -377,11 +390,17 @@ export async function runDirectoryReadiness(
       mode,
       fetchFn: options.fetchFn,
       timeoutMs: options.timeoutMs,
-      headers: options.headers,
+      mcpHeaders: options.mcpHeaders,
       // Threaded IN, not merely checked between steps: a cancelled run has to
       // stop the request in flight, because the traffic being stopped is aimed
       // at somebody else's server.
       signal: options.signal,
+      ...(options.lazyAuthProbe !== undefined
+        ? { lazyAuthProbe: options.lazyAuthProbe }
+        : {}),
+      ...(options.claimedFeatures !== undefined
+        ? { claimedFeatures: options.claimedFeatures }
+        : {}),
       now: options.now,
     });
     assertNotCancelled(options.signal);
@@ -410,9 +429,15 @@ export async function runDirectoryReadiness(
     enteredUrl: options.target,
     fetchFn: options.fetchFn,
     timeoutMs: options.timeoutMs,
-    headers: options.headers,
+    mcpHeaders: options.mcpHeaders,
     // Threaded IN, not merely checked between steps — see the OpenAI branch.
     signal: options.signal,
+    ...(options.lazyAuthProbe !== undefined
+      ? { lazyAuthProbe: options.lazyAuthProbe }
+      : {}),
+    ...(options.claimedFeatures !== undefined
+      ? { claimedFeatures: options.claimedFeatures }
+      : {}),
     now: options.now,
   });
   assertNotCancelled(options.signal);

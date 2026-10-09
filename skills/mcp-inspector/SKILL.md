@@ -19,6 +19,7 @@ When the user wants to connect to a server and use it:
 1. Probe the server first: `server probe --url <url> --quiet --format json`.
   - Use the probe to learn auth posture, resource metadata, authorization-server metadata, and registration strategies before assuming the connected surface is public.
 2. If the probe shows `oauth_required`, authenticate with `oauth login --credentials-out <path>` or run `oauth conformance --credentials-out <path>` when the task is specifically to test the OAuth flow.
+  - A `ready` probe does not mean every tool is public. A server can allow the connection and ask for sign-in only when a protected tool is called (lazy authentication). If a later call fails with `AUTH_REQUIRED`, run the `oauth login` command in `error.details.hint`, then retry with `--credentials-file <path>`.
 3. Discover tools: `tools list --url <url> --credentials-file <path> --quiet --format json`.
   - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI.
   - For a specific tool, check `toolsMetadata.<toolName>._meta.ui.resourceUri`, `toolsMetadata.<toolName>._meta["ui/resourceUri"]`, or `toolsMetadata.<toolName>["openai/outputTemplate"]`.
@@ -50,6 +51,7 @@ When the user asks to investigate, audit, or triage, use the Investigation workf
 2. If the command may fail, you want a reusable handoff artifact, or CI should retain evidence, add `--debug-out <path>` to `server probe`, `server validate`, `tools call`, or `oauth login`.
 3. If the probe shows `oauth_required` and the task is to inspect the server surface, continue with `oauth login` or another supported auth flow to obtain reusable credentials before judging post-auth behavior. For multi-command connected sessions, use `--credentials-out <path>` on `oauth login`, `oauth conformance`, or `oauth conformance-suite` to persist tokens and `--credentials-file <path>` on later commands; read `references/cli-surface-notes.md` for access-token-only exceptions. When a token is already available (CI, M2M, env var), prefer a credentials file when possible and pass `--access-token` or `--oauth-access-token` only as an escape hatch.
 4. After successful auth, inspect the connected surface with direct commands such as `server info`, `server capabilities`, `tools list`, `resources list/read/templates`, and `prompts list/get`.
+  - The CLI never starts a sign-in on its own. A call that hits a mid-session sign-in challenge reports it: an HTTP 401 fails the command with `AUTH_REQUIRED` and `error.details.challenge`, a 403 `insufficient_scope` fails with `INSUFFICIENT_SCOPE`, and a ChatGPT-style `isError` result carrying `_meta["mcp/www_authenticate"]` comes back unchanged with a CLI-added `_authChallenge` beside it. Each carries a `hint` naming the `oauth login` command to run.
 5. Use `server doctor --out <path>` when you need one breadth-first snapshot instead of several single-purpose command outputs.
 6. If the output came from `server doctor` or a `--debug-out` artifact, split it into primary command evidence, probe evidence, and connected-sweep evidence.
 7. If the claim is specifically about MCP Apps tool metadata or `ui://` resources, start with `apps conformance --quiet --format json` before dropping to `tools list` or `resources read`.
@@ -97,6 +99,7 @@ Treat the Phase 1 auth signal as provisional until behavior confirms it.
   - classify exposed tools as read-only, write, or side-effect
   - call representative public tools unauth
   - check whether gated tools fail with a clean auth challenge instead of silent empty data or partial data
+  - a clean challenge is an HTTP 401 with `WWW-Authenticate: Bearer` (`AUTH_REQUIRED` in the CLI) or, ChatGPT style, an `isError` result with `_meta["mcp/www_authenticate"]` carrying both `error` and `error_description` on a tool whose `securitySchemes` include `oauth2` (`_authChallenge` in the CLI). Note which shape the server uses: hosts differ on which one they act on, so a server that only sends one is an interop note, not a security finding
 - Anonymous tiers, rate limits, or degraded public access are posture notes, not a separate posture class.
 - Reclassify to one of `no-auth`, `full-auth`, `mixed-auth`, or `unknown` once Phase 2 behavior is clear. If Phase 2 contradicts Phase 1, update the posture and rerun the relevant checks instead of forcing the old classification.
 - Input-validation hits from Phase 2 cap at `medium` security severity until Phase 3 proves attacker benefit.
@@ -177,6 +180,8 @@ For each claimed security-review finding, return:
 - Never skip `tools list` discovery when the user names a server but not a specific tool.
 - Never infer prompt support from an empty prompts list unless you have raw RPC evidence that `prompts/list` was actually sent and answered by the server.
 - Never stop at `oauth_required` when the user asked to inspect the authenticated server surface and the CLI can complete login. Authenticate and continue with post-login commands when feasible.
+- Never report `AUTH_REQUIRED` on one tool call as a broken server or a bad MCPJam key. It means the server allowed the connection and asked for sign-in on that call. `UNAUTHORIZED` is the code for a bad MCPJam API key.
+- Never treat `_authChallenge` as server output. The CLI adds it beside a result that carries `_meta["mcp/www_authenticate"]`; the server's result is unchanged.
 - Never treat a passing `apps conformance` result as full SEP-1865 conformance. The current command is server-side only and does not prove host lifecycle, sandbox proxy, or postMessage bridge behavior.
 - Never treat missing optional metadata such as `outputSchema`, content annotations, `scopes_supported`, or `scope` hints as a hard failure without a `MUST`.
 - Separate OAuth RFC violations from MCP profile preferences.

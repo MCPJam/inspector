@@ -252,12 +252,47 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
+  extractAuthChallenge,
+  attachAuthChallenge,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { InsufficientScopeChallenge } from "./mcp-client-manager/index.js";
+// Mid-session sign-in ("lazy authentication") challenges.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+} from "./mcp-client-manager/auth-challenge.js";
+export type {
+  AuthChallengeAction,
+  AuthChallengeDecision,
+  AuthChallengeDecisionReason,
+  AuthChallengeEffectiveAuth,
+  AuthChallengeFacets,
+  AuthChallengePolicy,
+  AuthChallengeSignal,
+  AuthChallengeSource,
+  ToolResultAuthChallengeTrigger,
+  ToolSecurityScheme,
+  ToolSecuritySchemeResolution,
+  ToolSecuritySchemeSource,
+  UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,
@@ -436,6 +471,7 @@ export type {
   LocalEvalRunReport,
   McpjamInferenceConnection,
   RunSuiteFileOptions,
+  SuiteFileAuthRequired,
   SuiteFileCaseRun,
   SuiteFileImportApproval,
   SuiteFileInferenceMode,
@@ -660,6 +696,7 @@ export {
   dialInitialize,
   dialMcpServer,
   dialResourceListing,
+  dialToolCall,
   dialToolListing,
 } from "./directory-readiness/mcp-dial.js";
 export type {
@@ -670,8 +707,31 @@ export type {
   DirectoryInitializeEvidence,
   DirectoryListingEvidence,
   DirectoryResourceEvidence,
+  DirectoryToolCallEvidence,
   DirectoryToolEvidence,
 } from "./directory-readiness/mcp-dial.js";
+// Lazy authentication: the gate, the claims and the evidence shape are pure;
+// the probe dials, so it is Node-only like the dial above.
+export {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+  isDirectoryFeatureClaim,
+  lazyAuthRediscoveryTrigger,
+  normalizeFeatureClaims,
+  resolveLazyAuthProbeMode,
+  selectLazyAuthProbeTools,
+} from "./directory-readiness/lazy-auth.js";
+export type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthCallOutcome,
+  DirectoryLazyAuthProbeConfig,
+  DirectoryLazyAuthProbeEvidence,
+  DirectoryLazyAuthProbeMode,
+  DirectoryLazyAuthRediscovery,
+  DirectoryLazyAuthToolCall,
+} from "./directory-readiness/lazy-auth.js";
+export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.js";
+export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing
@@ -682,6 +742,7 @@ export * from "./claude-readiness/index.js";
 // that importing the result model can never pull a transport in with it.
 export {
   discoverClaudeAuthEvidence,
+  discoverClaudeAuthMetadata,
   traceConnectorRedirects,
 } from "./claude-readiness/discovery.js";
 export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
@@ -695,6 +756,11 @@ export type { GatherClaudeReadinessEvidenceOptions } from "./claude-readiness/ga
 export {
   probeDynamicRegistration,
   probeRefreshRotation,
+  probeStepUpChallenge,
+} from "./claude-readiness/intrusive-probes.js";
+export type {
+  ClaudeIntrusiveProbeOptions,
+  ClaudeStepUpProbeOptions,
 } from "./claude-readiness/intrusive-probes.js";
 
 // OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
@@ -729,6 +795,7 @@ export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather
 // that importing the result model can never pull a transport in with it.
 export {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIAuthMetadata,
   discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,

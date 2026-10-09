@@ -79,14 +79,15 @@ import {
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
+import { markPendingChatScopeStepUpCancelled } from "@/lib/scope-step-up-pending";
+import { cancelPendingDirectScopeStepUpReplay } from "@/lib/scope-step-up-replay";
+import { registerScopeStepUpHostBridge } from "@/lib/scope-step-up";
 import {
-  markPendingChatScopeStepUpCancelled,
-  markPendingChatScopeStepUpReady,
-} from "@/lib/scope-step-up-pending";
-import {
-  cancelPendingDirectScopeStepUpReplay,
-  markPendingDirectScopeStepUpReplayReady,
-} from "@/lib/scope-step-up-replay";
+  noteSignInCallbackFailed,
+  registerAuthChallengeHostProfile,
+  settleSignInCallback,
+} from "@/lib/auth-challenge-lifecycle";
+import { connectionIntentForBinding } from "@/lib/scope-step-up-credential";
 import { HOSTED_MODE } from "@/lib/config";
 import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import {
@@ -1126,16 +1127,26 @@ export function useServerState({
       }
 
       const stepUp = readPendingChatScopeStepUp();
-      const connectionIntent =
-        params.connectionIntent ??
-        (stepUp?.event.connectionId &&
+      const stepUpForThisServer =
+        stepUp &&
         (stepUp.event.serverId === params.serverId ||
           stepUp.event.serverName === params.serverName)
-          ? {
-              kind: "replace" as const,
-              credentialId: stepUp.event.connectionId,
-            }
-          : undefined);
+          ? stepUp
+          : undefined;
+      // A pending step-up decides how its sign-in attaches its credential
+      // (see `scope-step-up-credential`): reauthorize the user's own
+      // credential in place, but never replace a shared or another user's
+      // one. A marker without a recorded binding keeps the older default.
+      const connectionIntent =
+        params.connectionIntent ??
+        (stepUpForThisServer?.credentialBinding
+          ? connectionIntentForBinding(stepUpForThisServer.credentialBinding)
+          : stepUpForThisServer?.event.connectionId
+            ? {
+                kind: "replace" as const,
+                credentialId: stepUpForThisServer.event.connectionId,
+              }
+            : undefined);
       const returnPath = captureCurrentReturnPath();
       const organizationId =
         effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
@@ -1165,6 +1176,73 @@ export function useServerState({
       isAuthenticated,
       currentUserId,
     ],
+  );
+
+  // The step-up lifecycle is module-level code; it reaches the project state
+  // a hosted redirect needs through this bridge (see `scope-step-up`).
+  useEffect(
+    () =>
+      registerScopeStepUpHostBridge({
+        resolveCredentialBinding: async (server, connectionId) => {
+          if (!connectionId) return { kind: "none" };
+          // Local credentials live on this machine and belong to its user.
+          if (!HOSTED_MODE) return { kind: "owned", credentialId: connectionId };
+          const projectId = effectiveActiveProjectIdRef.current;
+          const serverId = activeProjectServersFlatRef.current?.find(
+            (remote) => remote.name === server.name
+          )?._id;
+          if (!projectId || !serverId) {
+            return { kind: "shared", credentialId: connectionId };
+          }
+          // Only a credential listed as the user's own (not the project's
+          // shared one) is reauthorized in place.
+          const rows = await listOAuthConnections(projectId, serverId);
+          return !rows.shared &&
+            rows.connections.some(
+              (connection) => connection.connectionId === connectionId
+            )
+            ? { kind: "owned", credentialId: connectionId }
+            : { kind: "shared", credentialId: connectionId };
+        },
+        hasExistingGrant: async (server) => {
+          // Local grants are the browser's own tokens, read directly.
+          if (!HOSTED_MODE) return false;
+          const projectId = effectiveActiveProjectIdRef.current;
+          const serverId = activeProjectServersFlatRef.current?.find(
+            (remote) => remote.name === server.name
+          )?._id;
+          if (!projectId || !serverId) return false;
+          const rows = await listOAuthConnections(projectId, serverId);
+          return rows.shared || rows.connections.length > 0;
+        },
+        prepareRedirect: (server, connectionIntent) => {
+          if (!HOSTED_MODE) return;
+          const serverUrl = (server.config as { url?: unknown })?.url;
+          prepareHostedProjectOAuthRedirect({
+            serverId: activeProjectServersFlatRef.current?.find(
+              (remote) => remote.name === server.name
+            )?._id,
+            serverName: server.name,
+            serverUrl:
+              typeof serverUrl === "string"
+                ? serverUrl
+                : serverUrl instanceof URL
+                  ? serverUrl.toString()
+                  : undefined,
+            ...(connectionIntent ? { connectionIntent } : {}),
+          });
+        },
+      }),
+    [prepareHostedProjectOAuthRedirect]
+  );
+
+  // Mid-session sign-in decides per call, from the host the user is
+  // emulating right now (the same active host chat reads).
+  const activeMcpProfileRef = useRef(activeMcpProfile);
+  activeMcpProfileRef.current = activeMcpProfile;
+  useEffect(
+    () => registerAuthChallengeHostProfile(() => activeMcpProfileRef.current),
+    []
   );
 
   const activeProject = useMemo(() => {
@@ -3083,6 +3161,18 @@ export function useServerState({
             if (existing)
               await guardedReconnectServer(result.serverName, existing.config);
           }
+          // A step-up or sign-in that was waiting on this connection settles
+          // here too. This branch used to return first, so a saved call never
+          // resumed after a hosted connection-intent callback.
+          const settledServerName =
+            result.serverName ?? hostedCallbackContext.serverName;
+          if (settledServerName) {
+            const notRetried = await settleSignInCallback(settledServerName, {
+              state,
+              credentialId: result.credentialId,
+            });
+            if (notRetried) toast.info(notRetried);
+          }
           notifyOAuthConnectionsChanged();
           if (!suppressSuccessToast) {
             toast.success("Account connected");
@@ -3234,8 +3324,11 @@ export function useServerState({
                 oauthTrace: result.oauthTrace,
               });
               logger.info("OAuth connection successful", { serverName });
-              markPendingChatScopeStepUpReady(serverName);
-              markPendingDirectScopeStepUpReplayReady(serverName);
+              const notRetried = await settleSignInCallback(serverName, {
+                state,
+                credentialId: result.credentialId,
+              });
+              if (notRetried) toast.info(notRetried);
               if (!suppressSuccessToast) {
                 toast.success(
                   `OAuth connection successful! Connected to ${serverName}.`,
@@ -3255,6 +3348,7 @@ export function useServerState({
                   "The server could not reconnect after authorization.",
               );
               cancelPendingDirectScopeStepUpReplay(serverName);
+              noteSignInCallbackFailed(serverName);
               dispatch({
                 type: "CONNECT_FAILURE",
                 name: serverName,
@@ -3282,6 +3376,7 @@ export function useServerState({
               "The server could not reconnect after authorization.",
             );
             cancelPendingDirectScopeStepUpReplay(serverName);
+            noteSignInCallbackFailed(serverName);
             const errorMessage =
               connectionError instanceof Error
                 ? connectionError.message
@@ -3334,6 +3429,7 @@ export function useServerState({
         if (failedServerName) {
           markPendingChatScopeStepUpCancelled(failedServerName, errorMessage);
           cancelPendingDirectScopeStepUpReplay(failedServerName);
+          noteSignInCallbackFailed(failedServerName);
           logger.warn("Marked pending OAuth connection as failed", {
             serverName: failedServerName,
             error: errorMessage,
@@ -3538,6 +3634,7 @@ export function useServerState({
         errorMessage,
       );
       cancelPendingDirectScopeStepUpReplay(failedServerName ?? undefined);
+      if (failedServerName) noteSignInCallbackFailed(failedServerName);
       logger.warn("OAuth authorization failed before callback completion", {
         serverName: failedServerName,
         error,

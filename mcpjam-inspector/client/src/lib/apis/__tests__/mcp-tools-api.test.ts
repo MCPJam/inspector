@@ -50,11 +50,12 @@ describe("parseInsufficientScopeChallenge (SEP-2350)", () => {
     });
   });
 
-  it("returns undefined when no challenge field is a string", () => {
-    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toBeUndefined();
+  it("returns undefined only when there is no challenge object", () => {
     expect(parseInsufficientScopeChallenge(undefined)).toBeUndefined();
     expect(parseInsufficientScopeChallenge("nope")).toBeUndefined();
-    expect(parseInsufficientScopeChallenge({})).toBeUndefined();
+    // A bare insufficient_scope is still a challenge.
+    expect(parseInsufficientScopeChallenge({})).toEqual({});
+    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toEqual({});
   });
 });
 

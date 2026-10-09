@@ -27,9 +27,11 @@ import {
 } from "./checks/apps.js";
 import {
   CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
+  CLAUDE_LAZY_AUTH_PROBE_INPUT,
   runClaudeAuthChecks,
   type ClaudeAuthEvidence,
 } from "./checks/auth.js";
+import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
 import {
   runClaudeEndpointChecks,
   type ClaudeEndpointEvidence,
@@ -126,6 +128,16 @@ export interface ClaudeReadinessInput {
   intrusiveObservations?: ClaudeIntrusiveObservations;
 
   /**
+   * The lazy-auth probe's two unauthenticated calls, when a caller armed it.
+   *
+   * Feeds two things: the lazy-authentication badge, graded against Claude's
+   * own trigger (HTTP 401 with `WWW-Authenticate`), and the 401 contract for a
+   * server that serves the anonymous `initialize` — whose challenge lives on
+   * a protected call. Part of the evidence, so a replay regrades identically.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeEvidence;
+
+  /**
    * The model-observation axis, whatever happened on it.
    *
    * PART OF THE EVIDENCE rather than an argument to the grader, so a replayed
@@ -220,16 +232,32 @@ export function gradeClaudeReadiness(
   // whenever no profile was supplied, which graded a preregistered-client
   // connector as a runtime failure it does not have. Handing the two modules
   // different views of the same field was the second half of the same bug.
+  const lazyAuthProbe = input.lazyAuthProbe ?? input.auth.lazyAuthProbe;
+  // THE STEP-UP PROBE'S CHALLENGE IS ALSO THE ONE WHOSE SHAPE IS GRADED. The
+  // shape check reads `insufficientScopeChallenge`, and the probe is the only
+  // ordinary way one is ever observed — so a 403 it recorded is handed over
+  // here rather than leaving the shape check unevaluated beside it.
+  const stepUp = input.intrusiveObservations?.stepUp;
+  const stepUpChallenge =
+    input.auth.insufficientScopeChallenge === undefined &&
+    stepUp?.attempted === true &&
+    stepUp.status === 403 &&
+    stepUp.wwwAuthenticate
+      ? { header: stepUp.wwwAuthenticate }
+      : undefined;
   const authEvidence = {
     ...input.auth,
     declaredAuthMode:
       parsedProfile.profile?.declaredAuthMode ?? input.auth.declaredAuthMode,
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
+    ...(stepUpChallenge ? { insufficientScopeChallenge: stepUpChallenge } : {}),
   };
   const auth = runClaudeAuthChecks(authEvidence, stamp);
   const optional = runClaudeOptionalFeatureChecks(
     {
       auth: authEvidence,
       claimedFeatures: input.claimedFeatures,
+      lazyAuthProbe,
     },
     stamp,
   );
@@ -373,6 +401,7 @@ export const CLAUDE_READINESS_INPUTS = {
   appsResult: CLAUDE_APPS_RESULT_INPUT,
   authorizationRequests: CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   intrusive: "intrusive",
+  lazyAuthProbe: CLAUDE_LAZY_AUTH_PROBE_INPUT,
 } as const;
 
 /**
@@ -385,4 +414,8 @@ export const CLAUDE_READINESS_INPUTS = {
  */
 export const CLAUDE_GATED_INPUTS: readonly string[] = [
   CLAUDE_READINESS_INPUTS.intrusive,
+  // Not side-effecting — no credentials, read-only tools, two calls — but it
+  // still CALLS TOOLS on the target, so it is the owner's decision to make
+  // and not a line of advice in a summary.
+  CLAUDE_READINESS_INPUTS.lazyAuthProbe,
 ];

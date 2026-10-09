@@ -270,6 +270,22 @@ describe("normalizeSdkEvalHostConfigForWire — public HostJson acceptance", () 
     expect(out.mcpProfile?.mrtrSupport).toBe("none");
   });
 
+  it("projects toolListChanged from HostJson.mcp to mcpProfile", () => {
+    // Fed a HostJson directly: the normalizer's own hostMcpToProfile copy
+    // loops CONFORMANCE_PROFILE_KEYS, which used to omit this knob, so an
+    // SDK eval silently reported a host that listens and re-fetches.
+    const json: HostJson = {
+      ...new Host({ style: "mcpjam", model: "test-model" }).toJSON(),
+      mcp: { toolListChanged: { listens: false, refetches: false } },
+    };
+
+    const out = normalizeSdkEvalHostConfigForWire(json);
+    expect(out.mcpProfile?.toolListChanged).toEqual({
+      listens: false,
+      refetches: false,
+    });
+  });
+
   it("strips public-shape per-server overrides too", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
       .requireServer("a")
@@ -280,6 +296,31 @@ describe("normalizeSdkEvalHostConfigForWire — public HostJson acceptance", () 
     const out = normalizeSdkEvalHostConfigForWire(json);
     expect(out.serverConnectionOverrides).toBeUndefined();
     expect((out as Record<string, unknown>).serverOverrides).toBeUndefined();
+  });
+
+  it("projects the mid-session sign-in knobs from HostJson.mcp to mcpProfile", async () => {
+    const policy = {
+      unauthorizedChallenge: "notify",
+      unauthorizedChallengeTrigger: "bearer-header",
+      toolResultAuthChallenge: "prompt",
+      toolResultAuthChallengeTrigger: "any",
+    } as const;
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    Object.assign(host.mcp, policy);
+
+    const out = normalizeSdkEvalHostConfigForWire(host.toJSON());
+    expect(out.mcpProfile).toMatchObject(policy);
+    // And the wire hash is the one the canonical-shape caller computes.
+    expect(await computeHostConfigHashV2(out)).toBe(
+      await computeHostConfigHashV2(
+        baseInput({
+          hostStyle: "mcpjam",
+          modelId: "test-model",
+          systemPrompt: "",
+          mcpProfile: { profileVersion: 1, ...policy },
+        })
+      )
+    );
   });
 });
 

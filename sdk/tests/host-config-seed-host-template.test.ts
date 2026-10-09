@@ -46,6 +46,43 @@ describe("seedHostTemplate", () => {
     );
   });
 
+  // Mid-session sign-in knobs are written ONLY where a host's published docs
+  // differ from the absent value, and every other persona leaves all four
+  // absent. Values come from docs, not a probe, so re-check them when a
+  // manual measurement pass lands.
+  it("seeds the documented sign-in knobs, and only on Claude, Claude Code and ChatGPT", () => {
+    const KEYS = [
+      "unauthorizedChallenge",
+      "unauthorizedChallengeTrigger",
+      "toolResultAuthChallenge",
+      "toolResultAuthChallengeTrigger",
+    ] as const;
+    const expected: Partial<Record<HostTemplateId, Record<string, string>>> = {
+      claude: { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-desktop": { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-code": {
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
+      },
+      chatgpt: { toolResultAuthChallenge: "prompt" },
+    };
+    for (const id of ALL_IDS) {
+      const seeded = seedHostTemplate(id);
+      const written: Record<string, unknown> = {};
+      for (const key of KEYS) {
+        const value = seeded.mcpProfile?.[key];
+        if (value !== undefined) written[key] = value;
+      }
+      expect({ id, written }).toEqual({ id, written: expected[id] ?? {} });
+      // And the canonicalizer stores them as written.
+      const canonical = canonicalizeHostConfigV2(seeded as never).mcpProfile as
+        Record<string, unknown> | undefined;
+      for (const [key, value] of Object.entries(written)) {
+        expect(canonical?.[key]).toBe(value);
+      }
+    }
+  });
+
   it("seeds a usable config for every template id and theme", () => {
     for (const id of ALL_IDS) {
       for (const theme of ["light", "dark"] as const) {

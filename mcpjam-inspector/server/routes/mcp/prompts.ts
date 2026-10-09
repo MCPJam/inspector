@@ -11,6 +11,10 @@ import {
 } from "../../utils/route-handlers.js";
 import { jsonError } from "../../utils/mcp-error-serialize.js";
 import {
+  connectionEffectiveAuth,
+  stampErrorAuthChallenge,
+} from "../../utils/connection-effective-auth.js";
+import {
   toServedFromCache,
   withCacheEventCapture,
 } from "../../utils/cache-events.js";
@@ -117,6 +121,7 @@ prompts.post("/list-multi", async (c) => {
 
 // Get prompt endpoint
 prompts.post("/get", async (c) => {
+  let promptServerId: string | undefined;
   try {
     const body = (await c.req.json()) as {
       serverId?: string;
@@ -129,6 +134,7 @@ prompts.post("/get", async (c) => {
     if (!body.name) {
       return c.json({ success: false, error: "Prompt name is required" }, 400);
     }
+    promptServerId = body.serverId;
 
     return c.json(
       await getPrompt(c.mcpClientManager, {
@@ -145,7 +151,13 @@ prompts.post("/get", async (c) => {
     });
     // SEP-2350: surface a 403 `insufficient_scope` challenge (on
     // `mcpError.insufficientScope`) so the client can drive the union-scope
-    // step-up re-authorization; ordinary errors keep the 500 fallback.
+    // step-up re-authorization; ordinary errors keep the 500 fallback. A
+    // sign-in challenge rides on `mcpError.authChallenge`, stamped with the
+    // connection's effective auth method.
+    stampErrorAuthChallenge(
+      error,
+      connectionEffectiveAuth(c.mcpClientManager, promptServerId),
+    );
     return jsonError(c, error, 500);
   }
 });

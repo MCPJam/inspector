@@ -186,6 +186,46 @@ const inputs = [
       },
     },
   },
+  // ── Mid-session sign-in knobs (same enum discipline as above) ──
+  // Absent is omitted; the absent-value literals are stored and hash
+  // distinctly. For the `_meta` pair the absent ACTION is "passthrough".
+  {
+    // Claude Code's seeded pair: notify, and only on a Bearer 401.
+    label: "mcp-profile-auth-challenge-unauthorized-notify-bearer-header",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
+      },
+    },
+  },
+  {
+    label: "mcp-profile-auth-challenge-tool-result-prompt-any",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        toolResultAuthChallenge: "prompt",
+        toolResultAuthChallengeTrigger: "any",
+      },
+    },
+  },
+  {
+    label: "mcp-profile-auth-challenge-absent-value-literals",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallenge: "prompt",
+        unauthorizedChallengeTrigger: "any",
+        toolResultAuthChallenge: "passthrough",
+        toolResultAuthChallengeTrigger: "oauth2-scheme+error-params",
+      },
+    },
+  },
   {
     label: "sandbox-csp-restrictto-sorted-plus-directives",
     input: {

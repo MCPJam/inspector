@@ -39,8 +39,12 @@ import {
   gradeMuseReadiness,
   gradeOpenAIReadiness,
   xmldomParseXml,
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
   OPENAI_SUBMISSION_MODES,
   OPENAI_SUBMISSION_MODE_SHAPES,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 import { readFile, stat } from "node:fs/promises";
@@ -92,7 +96,117 @@ interface ReadinessCheckOptions {
   header?: string[];
   timeout?: number;
   reporter?: string;
+  claim?: string[];
+  lazyAuthProbe?: boolean;
+  lazyAuthTool?: string;
+  lazyAuthPublicTool?: string;
   submissionProfile?: string;
+}
+
+/** Commander collector for a repeatable option. */
+function collectRepeated(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+/**
+ * `--claim` values, validated. An unknown claim is a usage error rather than
+ * a silent drop: `lazy-auth` read as "nothing claimed" would report the
+ * feature `not-evaluated` while the submitter believes they claimed it.
+ */
+export function parseFeatureClaims(
+  values: readonly string[] | undefined,
+): DirectoryFeatureClaim[] | undefined {
+  if (!values || values.length === 0) return undefined;
+  if (values.length > LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims) {
+    throw usageError(
+      `At most ${LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims} --claim values may be given.`,
+    );
+  }
+  const claims = new Set<DirectoryFeatureClaim>();
+  for (const raw of values) {
+    const value = raw.trim();
+    if (!(DIRECTORY_FEATURE_CLAIMS as readonly string[]).includes(value)) {
+      throw usageError(
+        `Unknown --claim "${raw}". One of: ${DIRECTORY_FEATURE_CLAIMS.join(", ")}.`,
+      );
+    }
+    claims.add(value as DirectoryFeatureClaim);
+  }
+  return [...claims].sort();
+}
+
+function readProbeToolName(
+  value: string | undefined,
+  flag: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const name = value.trim();
+  if (!name) throw usageError(`${flag} needs a tool name.`);
+  if (name.length > LAZY_AUTH_PROBE_LIMITS.toolNameMaxChars) {
+    throw usageError(
+      `${flag} is longer than ${LAZY_AUTH_PROBE_LIMITS.toolNameMaxChars} characters.`,
+    );
+  }
+  return name;
+}
+
+/**
+ * The lazy-auth probe config, armed by its OWN flags.
+ *
+ * Not behind an `--intrusive` switch, and the reason is the gate model rather
+ * than convenience. The SDK's intrusive gate exists for probes that register
+ * clients and spend grants; this probe does neither. It sends no credentials
+ * at all — not even the `--access-token` this command was given — calls only
+ * tools annotated `readOnlyHint: true`, and makes at most two calls. The SDK
+ * gives it its own gate (`enabled: true`, literally), and naming a tool here
+ * is the explicit opt-in that gate asks for.
+ */
+export function lazyAuthProbeFromOptions(
+  options: Pick<
+    ReadinessCheckOptions,
+    "lazyAuthProbe" | "lazyAuthTool" | "lazyAuthPublicTool"
+  >,
+): DirectoryLazyAuthProbeConfig | undefined {
+  const toolName = readProbeToolName(options.lazyAuthTool, "--lazy-auth-tool");
+  const publicToolName = readProbeToolName(
+    options.lazyAuthPublicTool,
+    "--lazy-auth-public-tool",
+  );
+  if (!options.lazyAuthProbe && !toolName && !publicToolName) return undefined;
+  if (toolName !== undefined && toolName === publicToolName) {
+    throw usageError(
+      "--lazy-auth-tool and --lazy-auth-public-tool name the same tool; one call cannot be both the public and the protected one.",
+    );
+  }
+  return {
+    enabled: true,
+    ...(toolName ? { toolName } : {}),
+    ...(publicToolName ? { publicToolName } : {}),
+  };
+}
+
+/** The flags both local checks share for lazy authentication and claims. */
+function addLazyAuthOptions(command: Command): Command {
+  return command
+    .option(
+      "--claim <feature>",
+      `Declare a feature the server offers, so the report shows it as claimed: ${DIRECTORY_FEATURE_CLAIMS.join(
+        " | ",
+      )}. Repeat to claim several.`,
+      collectRepeated,
+    )
+    .option(
+      "--lazy-auth-probe",
+      "Verify lazy authentication: call one public and one protected read-only tool WITHOUT credentials (at most two calls, readOnlyHint tools only), picked by their securitySchemes",
+    )
+    .option(
+      "--lazy-auth-tool <name>",
+      "The protected read-only tool the lazy-auth probe calls without credentials. Implies --lazy-auth-probe.",
+    )
+    .option(
+      "--lazy-auth-public-tool <name>",
+      "The public read-only tool the lazy-auth probe calls without credentials. Implies --lazy-auth-probe.",
+    );
 }
 
 function getFormat(
@@ -123,7 +237,11 @@ function resolveAccessToken(
   return options.accessToken?.trim() || undefined;
 }
 
-function requestHeaders(
+/**
+ * Headers for MCP requests to the server. The SDK never sends them on
+ * discovery.
+ */
+function mcpRequestHeaders(
   options: ReadinessCheckOptions,
   target: string,
 ): Record<string, string> | undefined {
@@ -216,6 +334,10 @@ async function runClaudeCheck(
 ): Promise<void> {
   const reporter = parseReporterFormat(options.reporter);
   const format = getFormat(command, reporter);
+  // Validated before anything dials, so a typo is a usage error rather than a
+  // run that silently graded without the probe.
+  const claimedFeatures = parseFeatureClaims(options.claim);
+  const lazyAuthProbe = lazyAuthProbeFromOptions(options);
 
   const evidence = await gatherClaudeReadinessEvidence({
     enteredUrl: target,
@@ -224,8 +346,10 @@ async function runClaudeCheck(
     // the developer's own machine, where pinning would only stop them from
     // grading a server on their own network.
     fetchFn: fetch,
-    headers: requestHeaders(options, target),
+    mcpHeaders: mcpRequestHeaders(options, target),
     timeoutMs: options.timeout,
+    ...(claimedFeatures ? { claimedFeatures } : {}),
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
   });
 
   const result = gradeClaudeReadiness(evidence);
@@ -265,6 +389,13 @@ async function runOpenAICheck(
   }
   const mode = options.submissionMode as OpenAISubmissionMode;
   assertModeInputs(mode, target, options.package);
+  const claimedFeatures = parseFeatureClaims(options.claim);
+  const lazyAuthProbe = lazyAuthProbeFromOptions(options);
+  if (lazyAuthProbe && !target) {
+    throw usageError(
+      "The lazy-auth probe calls tools on an MCP server; this submission mode has none.",
+    );
+  }
 
   const pkg = options.package ? await openPackage(options.package) : undefined;
 
@@ -276,7 +407,7 @@ async function runOpenAICheck(
     // Absent for a package-only run, and absent means "dialled nothing" rather
     // than "found nothing" — the wire lanes report their gaps.
     fetchFn: target ? fetch : undefined,
-    headers: target ? requestHeaders(options, target) : undefined,
+    mcpHeaders: target ? mcpRequestHeaders(options, target) : undefined,
     timeoutMs: options.timeout,
     packageSource: pkg?.source,
     archive: pkg?.archive,
@@ -284,6 +415,8 @@ async function runOpenAICheck(
     // graded, so it is passed even when no package is supplied — costing
     // nothing and removing one way to produce a quietly weaker grade.
     parseXml: xmldomParseXml,
+    ...(claimedFeatures ? { claimedFeatures } : {}),
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
   });
 
   const result = gradeOpenAIReadiness(evidence);
@@ -326,7 +459,7 @@ async function runMuseCheck(
     enteredUrl: target,
     // The global fetch — see `runClaudeCheck`.
     fetchFn: fetch,
-    headers: requestHeaders(options, target),
+    headers: mcpRequestHeaders(options, target),
     timeoutMs: options.timeout,
     submissionProfile: options.submissionProfile
       ? await readSubmissionProfile(options.submissionProfile)
@@ -359,18 +492,21 @@ export function registerReadinessCommands(program: Command): void {
     .command("check")
     .description("Grade locally, without a MCPJam account (free)");
 
-  check
+  const checkClaude = check
     .command("claude")
     .description("Grade an MCP server against Anthropic's connector directory")
     .argument("<url>", "MCP server URL")
-    .option("--access-token <token>", "Bearer access token for the server")
+    .option(
+      "--access-token <token>",
+      "Bearer access token, sent on MCP requests, never on discovery",
+    )
     .option(
       "--credentials-file <path>",
       "Load the access token from a file written by oauth login",
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent on MCP requests, never on discovery. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
@@ -382,12 +518,14 @@ export function registerReadinessCommands(program: Command): void {
     .option(
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
-    )
-    .action(async (url: string, options: ReadinessCheckOptions, command) => {
+    );
+  addLazyAuthOptions(checkClaude).action(
+    async (url: string, options: ReadinessCheckOptions, command) => {
       await runClaudeCheck(url, options, command);
-    });
+    },
+  );
 
-  check
+  const checkOpenAI = check
     .command("openai")
     .description("Grade a server or plugin against OpenAI's app directory")
     .argument(
@@ -399,14 +537,17 @@ export function registerReadinessCommands(program: Command): void {
       `Declared submission shape: ${OPENAI_SUBMISSION_MODES.join(" | ")}`,
     )
     .option("--package <path>", "Plugin package directory or .zip to grade")
-    .option("--access-token <token>", "Bearer access token for the server")
+    .option(
+      "--access-token <token>",
+      "Bearer access token, sent on MCP requests, never on discovery",
+    )
     .option(
       "--credentials-file <path>",
       "Load the access token from a file written by oauth login",
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent on MCP requests, never on discovery. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
@@ -418,16 +559,16 @@ export function registerReadinessCommands(program: Command): void {
     .option(
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
-    )
-    .action(
-      async (
-        url: string | undefined,
-        options: ReadinessCheckOptions,
-        command,
-      ) => {
-        await runOpenAICheck(url, options, command);
-      },
     );
+  addLazyAuthOptions(checkOpenAI).action(
+    async (
+      url: string | undefined,
+      options: ReadinessCheckOptions,
+      command,
+    ) => {
+      await runOpenAICheck(url, options, command);
+    },
+  );
 
   check
     .command("muse")
@@ -491,6 +632,40 @@ interface HostedStartOptions extends PlatformOptions {
   submissionMode: HostedSubmissionMode;
   aiObservations?: boolean;
   idempotencyKey?: string;
+  claim?: string[];
+  lazyAuthProbe?: boolean;
+  lazyAuthTool?: string;
+  lazyAuthPublicTool?: string;
+}
+
+/**
+ * The lazy-auth and claim fields of a hosted start, present only when given.
+ *
+ * Absent rather than `undefined` so a start that asked for neither sends the
+ * same body it sent before these existed. The hosted probe is the same
+ * credential-free probe as the local one: the platform never sends the saved
+ * server's credential on its calls.
+ */
+function hostedLazyAuthFields(options: HostedStartOptions): {
+  lazyAuthProbe?: { enabled: true; toolName?: string; publicToolName?: string };
+  claimedFeatures?: DirectoryFeatureClaim[];
+} {
+  const probe = lazyAuthProbeFromOptions(options);
+  const claims = parseFeatureClaims(options.claim);
+  return {
+    ...(probe
+      ? {
+          lazyAuthProbe: {
+            enabled: true as const,
+            ...(probe.toolName ? { toolName: probe.toolName } : {}),
+            ...(probe.publicToolName
+              ? { publicToolName: probe.publicToolName }
+              : {}),
+          },
+        }
+      : {}),
+    ...(claims ? { claimedFeatures: claims } : {}),
+  };
 }
 
 /** The two shapes a hosted run can grade; the package pair is CLI-local. */
@@ -514,15 +689,17 @@ function registerHostedReadinessCommands(readiness: Command): void {
     .description("Start a hosted readiness run against a saved server");
 
   const startClaude = addProjectOption(
-    start
-      .command("claude")
-      .description("Grade a saved server against Anthropic's directory")
-      .requiredOption("--server <idOrName>", "Saved server to grade")
-      .option(
-        "--ai-observations",
-        "Add optional model observations. CONSUMES MCPJam credits.",
-      )
-      .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    addLazyAuthOptions(
+      start
+        .command("claude")
+        .description("Grade a saved server against Anthropic's directory")
+        .requiredOption("--server <idOrName>", "Saved server to grade")
+        .option(
+          "--ai-observations",
+          "Add optional model observations. CONSUMES MCPJam credits.",
+        )
+        .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    ),
   );
   bindOperation<HostedStartOptions, StartClaudeReadinessInput>(
     startClaude,
@@ -534,23 +711,26 @@ function registerHostedReadinessCommands(readiness: Command): void {
       ...(options.idempotencyKey
         ? { idempotencyKey: options.idempotencyKey }
         : {}),
+      ...hostedLazyAuthFields(options),
     }),
   );
 
   const startOpenAI = addProjectOption(
-    start
-      .command("openai")
-      .description("Grade a saved server against OpenAI's directory")
-      .requiredOption("--server <idOrName>", "Saved server to grade")
-      .requiredOption(
-        "--submission-mode <mode>",
-        "Declared submission shape: mcp-only | mcp-imported-skills. Never inferred. Package shapes run locally — see `readiness check openai`.",
-      )
-      .option(
-        "--ai-observations",
-        "Add optional model observations. CONSUMES MCPJam credits.",
-      )
-      .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    addLazyAuthOptions(
+      start
+        .command("openai")
+        .description("Grade a saved server against OpenAI's directory")
+        .requiredOption("--server <idOrName>", "Saved server to grade")
+        .requiredOption(
+          "--submission-mode <mode>",
+          "Declared submission shape: mcp-only | mcp-imported-skills. Never inferred. Package shapes run locally — see `readiness check openai`.",
+        )
+        .option(
+          "--ai-observations",
+          "Add optional model observations. CONSUMES MCPJam credits.",
+        )
+        .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    ),
   );
   bindOperation<HostedStartOptions, StartOpenAIReadinessInput>(
     startOpenAI,
@@ -563,6 +743,7 @@ function registerHostedReadinessCommands(readiness: Command): void {
       ...(options.idempotencyKey
         ? { idempotencyKey: options.idempotencyKey }
         : {}),
+      ...hostedLazyAuthFields(options),
     }),
   );
 

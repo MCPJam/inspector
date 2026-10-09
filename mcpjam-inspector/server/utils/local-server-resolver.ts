@@ -91,6 +91,7 @@ import {
   retainPluginLease,
 } from "../services/plugins/local-stdio.js";
 import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
+import { recordConnectionEffectiveAuth } from "./connection-effective-auth.js";
 import {
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
@@ -1950,6 +1951,13 @@ async function executeLocalServerConnectAttempt(
   try {
     signal.throwIfAborted();
     owned.add(serverDisplayName);
+    // Recorded BEFORE connecting, so a challenge raised by the very first
+    // request on this connection is stamped too.
+    recordConnectionEffectiveAuth(
+      mcpClientManager,
+      serverDisplayName,
+      resolved.effectiveAuth,
+    );
     await mcpClientManager.connectToServer(serverDisplayName, connectConfig, {
       signal,
     });

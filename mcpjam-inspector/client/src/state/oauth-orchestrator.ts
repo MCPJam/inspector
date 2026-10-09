@@ -1,6 +1,8 @@
 import {
   clearOAuthData,
+  clearOAuthFlowState,
   initiateOAuth,
+  readStoredDiscoveryScopes,
   readStoredOAuthConfig,
   resolveStoredIssuer,
 } from "@/lib/oauth/mcp-oauth";
@@ -13,9 +15,11 @@ import {
   selectStoredResourceUrl,
   type BuiltOAuthRequest,
 } from "@/lib/oauth/oauth-request";
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   describeAsSlug,
   resolveStepUpAction,
+  type AuthChallengeSignal,
   type NormalizedError,
   type StepUpAction,
   type StepUpAuthMode,
@@ -312,11 +316,28 @@ export async function ensureAuthorizedForReconnect(
      * re-deriving from the server URL. `undefined` keeps today's behavior.
      */
     resourceMetadataUrl?: string;
+    /**
+     * Keep the server's existing tokens, client registration and discovery
+     * until the callback succeeds, clearing only the previous attempt's flow
+     * state. Set by a mid-session sign-in for one call: abandoning it must
+     * not break every other tool on an already-authorized server.
+     */
+    preserveExistingAuthorization?: boolean;
+    /**
+     * Skip the client-side "this server does not use OAuth" shortcuts. Set
+     * only after the SERVER stamped the connection's effective auth method as
+     * `discover` or `oauth` on a sign-in challenge: the stamp is
+     * authoritative, and a stale client mirror must not swallow the user's
+     * explicit Connect click.
+     */
+    forceInteractiveFlow?: boolean;
+    /** See `MCPOAuthOptions.onAuthorizationRedirect`. */
+    onAuthorizationRedirect?: (flow: { state?: string }) => void | Promise<void>;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
   // This handles the case where a server was saved with "No Authentication"
-  if (server.useOAuth === false) {
+  if (server.useOAuth === false && options?.forceInteractiveFlow !== true) {
     // Also clear any lingering OAuth data in localStorage
     clearOAuthData(server.name);
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
@@ -324,7 +345,11 @@ export async function ensureAuthorizedForReconnect(
 
   // If useOAuth is not explicitly true and there are no OAuth tokens,
   // skip OAuth (handles legacy servers and non-OAuth connections)
-  if (server.useOAuth !== true && !server.oauthTokens) {
+  if (
+    server.useOAuth !== true &&
+    !server.oauthTokens &&
+    options?.forceInteractiveFlow !== true
+  ) {
     // Clear any lingering OAuth data that might cause confusion
     clearOAuthData(server.name);
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
@@ -381,9 +406,17 @@ export async function ensureAuthorizedForReconnect(
             : "Failed to build the OAuth request",
       };
     }
-    clearOAuthData(server.name);
+    if (options?.preserveExistingAuthorization) {
+      clearOAuthFlowState(server.name);
+    } else {
+      clearOAuthData(server.name);
+    }
     options?.beforeRedirect?.(opts);
-    const init = await initiateOAuth(opts);
+    const init = await initiateOAuth(
+      options?.onAuthorizationRedirect
+        ? { ...opts, onAuthorizationRedirect: options.onAuthorizationRedirect }
+        : opts,
+    );
     if (init.success && init.serverConfig) {
       return {
         kind: "ready",
@@ -833,6 +866,12 @@ export async function applyToolCallStepUp(
     onTraceUpdate?: (trace: OAuthTrace) => void;
     beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
     /**
+     * Told the digest of the authorization request's `state` right before the
+     * redirect, so a saved call can be bound to this flow. See
+     * `authorizationFlowDigest`.
+     */
+    onAuthorizationFlow?: (flow: { digest: string }) => void;
+    /**
      * Exact MCP operation whose retry budget this challenge consumes.
      * Defaults to a server-wide tools/call bucket only for compatibility with
      * old call sites; production surfaces pass a concrete operation.
@@ -893,10 +932,23 @@ export async function applyToolCallStepUp(
   // intent-preserving step-up (and is not a no-op — discovery, AS, and token
   // audience can all change). If the corrected metadata still resolves to the
   // same insufficient scopes, the bounded retry stops the loop by design.
+  //
+  // A BARE challenge (neither a scope nor a pointer) has nothing to widen to
+  // and nothing to rediscover from, so it uses discovery's own scope choice:
+  // the protected resource's `scopes_supported`, else the authorization
+  // server's, unioned with what was requested before. That is the selection
+  // the MCP authorization spec describes and Claude applies; the scopes the
+  // first sign-in actually requested (including a discovery-time challenge
+  // scope) are already in the previously-requested set.
+  const scopesToWiden =
+    challengedScopes ??
+    (resourceMetadataUrl
+      ? undefined
+      : readStoredDiscoveryScopes(server.name, serverUrl));
   const decision = resolveInsufficientScopeStepUp({
     serverName: server.name,
     issuer,
-    challengedScopes,
+    challengedScopes: scopesToWiden,
     originalScopes: readOriginalOAuthScopes(server),
     authMode: options?.authMode ?? "interactive",
     maxRetries: options?.maxRetries,
@@ -924,6 +976,7 @@ export async function applyToolCallStepUp(
       resourceMetadataUrl,
       onTraceUpdate: options?.onTraceUpdate,
       beforeRedirect: options?.beforeRedirect,
+      onAuthorizationRedirect: flowDigestHook(options?.onAuthorizationFlow),
     });
   } catch (error) {
     writeStepUpAttempts(
@@ -996,4 +1049,377 @@ export function resetToolCallStepUp(
         }
       : undefined,
   );
+}
+
+// ===========================================================================
+// Mid-session sign-in ("lazy authentication")
+// ===========================================================================
+//
+// A server that let the client connect anonymously refuses one protected call
+// with a sign-in challenge (an HTTP 401, or a `_meta` challenge on a tool
+// result). This is step-up starting from an empty scope set, plus three things
+// step-up does not need:
+//
+//   1. CONSENT before the first redirect. Presenting the challenge has no side
+//      effects; only an explicit Connect click (`confirmed: true`) writes the
+//      ledger and starts OAuth.
+//   2. A GATE on the server-stamped effective auth method. Only a tokenless
+//      Auto server (`discover`) or an OAuth server may start sign-in; `none`,
+//      `bearer` and `xaa` get a hint. The browser never computes the method.
+//   3. TOKENS KEPT until the callback succeeds, so abandoning Connect does not
+//      break every other tool on an already-authorized server.
+
+const AUTH_CHALLENGE_LEDGER_PREFIX = "mcp-auth-challenge-ledger-v1-";
+
+/**
+ * One sign-in attempt per operation per live window.
+ *
+ * - `awaiting_callback`: a Connect click redirected and no callback has come
+ *   back. Seeing that on a NEW click means the user came back with the Back
+ *   button; the entry is cleared and the click retries.
+ * - `signed_in`: a callback completed for this server since the click. A
+ *   challenge now is a repeat after sign-in, and is permanent for this window.
+ */
+type AuthChallengeLedgerEntry = {
+  serverName: string;
+  operation: StepUpOperationKey;
+  phase: "awaiting_callback" | "signed_in";
+  /**
+   * A digest of the authorization request's `state`, once the redirect
+   * started (never the state itself; see `authorizationFlowDigest`).
+   */
+  flowDigest?: string;
+  expiresAt: number;
+};
+
+/**
+ * The `onAuthorizationRedirect` hook that turns the flow's `state` into its
+ * digest before anything sees it. Awaited by the OAuth flow, so the digest is
+ * recorded before the browser leaves.
+ */
+function flowDigestHook(
+  onFlow: ((flow: { digest: string }) => void) | undefined,
+): ((flow: { state?: string }) => Promise<void>) | undefined {
+  if (!onFlow) return undefined;
+  return async ({ state }) => {
+    const digest = await authorizationFlowDigest(state);
+    if (digest) onFlow({ digest });
+  };
+}
+
+function authChallengeLedgerKey(operation: StepUpOperationKey): string {
+  return `${AUTH_CHALLENGE_LEDGER_PREFIX}${encodeURIComponent(
+    serializeStepUpOperationKey(normalizeStepUpOperationKey(operation)),
+  )}`;
+}
+
+function readAuthChallengeLedger(
+  operation: StepUpOperationKey,
+): AuthChallengeLedgerEntry | undefined {
+  try {
+    const store = stepUpAttemptsStore();
+    const key = authChallengeLedgerKey(operation);
+    const raw = store?.getItem(key);
+    if (!raw) return undefined;
+    const entry = JSON.parse(raw) as Partial<AuthChallengeLedgerEntry>;
+    if (
+      typeof entry.serverName !== "string" ||
+      (entry.phase !== "awaiting_callback" && entry.phase !== "signed_in") ||
+      typeof entry.expiresAt !== "number" ||
+      !entry.operation ||
+      entry.expiresAt <= Date.now()
+    ) {
+      store?.removeItem(key);
+      return undefined;
+    }
+    return entry as AuthChallengeLedgerEntry;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeAuthChallengeLedger(entry: AuthChallengeLedgerEntry): void {
+  try {
+    stepUpAttemptsStore()?.setItem(
+      authChallengeLedgerKey(entry.operation),
+      JSON.stringify(entry),
+    );
+  } catch {
+    // Best-effort: losing the entry can allow one extra prompt, never a
+    // redirect without a click.
+  }
+}
+
+function clearAuthChallengeLedger(operation: StepUpOperationKey): void {
+  try {
+    stepUpAttemptsStore()?.removeItem(authChallengeLedgerKey(operation));
+  } catch {
+    // Best-effort.
+  }
+}
+
+function authChallengeOperationKey(
+  server: ServerWithName,
+  operation: ToolCallStepUpOperation,
+): StepUpOperationKey {
+  return {
+    resourceUrl: canonicalizeStepUpResourceUrl(
+      readServerUrlForStepUp(server) ?? "",
+    ),
+    method: operation.method,
+    operation: operation.operation,
+  };
+}
+
+function forEachAuthChallengeLedgerEntry(
+  visit: (
+    entry: AuthChallengeLedgerEntry,
+    key: string,
+    store: Storage,
+  ) => void,
+): void {
+  const store = stepUpAttemptsStore();
+  if (!store) return;
+  for (let index = store.length - 1; index >= 0; index -= 1) {
+    const key = store.key(index);
+    if (!key?.startsWith(AUTH_CHALLENGE_LEDGER_PREFIX)) continue;
+    const raw = store.getItem(key);
+    if (!raw) continue;
+    let entry: AuthChallengeLedgerEntry;
+    try {
+      entry = JSON.parse(raw) as AuthChallengeLedgerEntry;
+    } catch {
+      store.removeItem(key);
+      continue;
+    }
+    if (typeof entry.expiresAt !== "number" || entry.expiresAt <= Date.now()) {
+      store.removeItem(key);
+      continue;
+    }
+    visit(entry, key, store);
+  }
+}
+
+/**
+ * A completed OAuth callback for `serverName`. Every attempt awaiting it moves
+ * to `signed_in`, so a repeat challenge on the same call is permanent.
+ * Returns how many attempts it completed.
+ *
+ * When the callback's flow digest is known, only the attempt that started
+ * that flow completes. An attempt that recorded no digest (the redirect never
+ * reported a `state`) completes on any callback for the server.
+ */
+export function markAuthChallengeSignedIn(
+  serverName: string,
+  callbackDigest?: string,
+): number {
+  let completed = 0;
+  try {
+    forEachAuthChallengeLedgerEntry((entry, key, store) => {
+      if (
+        entry.serverName !== serverName ||
+        entry.phase !== "awaiting_callback"
+      ) {
+        return;
+      }
+      if (
+        callbackDigest &&
+        entry.flowDigest &&
+        entry.flowDigest !== callbackDigest
+      ) {
+        return;
+      }
+      store.setItem(key, JSON.stringify({ ...entry, phase: "signed_in" }));
+      completed += 1;
+    });
+  } catch {
+    // Best-effort.
+  }
+  return completed;
+}
+
+/** Whether a sign-in for `serverName` redirected and has not come back. */
+export function hasAuthChallengeAwaitingCallback(serverName: string): boolean {
+  let awaiting = false;
+  try {
+    forEachAuthChallengeLedgerEntry((entry) => {
+      if (
+        entry.serverName === serverName &&
+        entry.phase === "awaiting_callback"
+      ) {
+        awaiting = true;
+      }
+    });
+  } catch {
+    // Best-effort.
+  }
+  return awaiting;
+}
+
+/** Forget a server's attempts after a SUCCESSFUL protected call. */
+export function resetAuthChallenge(
+  server: ServerWithName,
+  operation: ToolCallStepUpOperation,
+): void {
+  clearAuthChallengeLedger(authChallengeOperationKey(server, operation));
+}
+
+export type AuthChallengeGate =
+  | { kind: "allowed" }
+  | {
+      kind: "blocked";
+      reason: "none" | "bearer" | "xaa" | "unknown";
+      hint: string;
+    };
+
+/**
+ * May this challenge start an interactive sign-in at all? Read from the
+ * server-stamped effective auth method, never from a browser-side parse.
+ */
+export function gateAuthChallenge(
+  effectiveAuth: AuthChallengeSignal["effectiveAuth"],
+): AuthChallengeGate {
+  switch (effectiveAuth) {
+    case "discover":
+    case "oauth":
+      return { kind: "allowed" };
+    case "none":
+      return {
+        kind: "blocked",
+        reason: "none",
+        hint: "This server asked for sign-in, but its authentication is set to None. Switch it to Auto or OAuth to sign in.",
+      };
+    case "bearer":
+      return {
+        kind: "blocked",
+        reason: "bearer",
+        hint: "This server rejected the static credential it was given. Update the server's bearer token or headers.",
+      };
+    case "xaa":
+      return {
+        kind: "blocked",
+        reason: "xaa",
+        hint: "This server uses enterprise-managed (Cross-App Access) authorization, so MCPJam does not start an interactive sign-in for it. Check the server's XAA configuration.",
+      };
+    default:
+      return {
+        kind: "blocked",
+        reason: "unknown",
+        hint: "MCPJam could not confirm how this server authenticates, so it will not start sign-in. Reconnect the server and try again.",
+      };
+  }
+}
+
+export type AuthChallengeOutcome =
+  | ({ kind: "blocked" } & Extract<AuthChallengeGate, { kind: "blocked" }>)
+  /** Presented, not acted on: render the Connect card. No side effects. */
+  | { kind: "pendingConnect" }
+  /** A repeat challenge after sign-in. Permanent for this window. */
+  | { kind: "permanent" }
+  | {
+      kind: "started";
+      reauthorization: OAuthResult;
+      /** The scopes requested, or `undefined` when discovery decides. */
+      scopes?: string[];
+    };
+
+/**
+ * Handle a mid-session sign-in challenge on one operation.
+ *
+ * Without `confirmed: true` this has NO side effects: it gates and reports
+ * whether a Connect card applies. A confirmed click writes the one-attempt
+ * ledger and starts OAuth; the caller saves anything it will replay BEFORE
+ * calling, and binds it to the flow through `onAuthorizationFlow`.
+ */
+export async function applyToolCallAuthChallenge(
+  server: ServerWithName,
+  signal: AuthChallengeSignal,
+  options: {
+    operation: ToolCallStepUpOperation;
+    confirmed: boolean;
+    beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
+    /** Told the digest of the flow's `state`; see `authorizationFlowDigest`. */
+    onAuthorizationFlow?: (flow: { digest: string }) => void;
+    onTraceUpdate?: (trace: OAuthTrace) => void;
+    /**
+     * The server already has a grant the browser cannot see: a hosted
+     * credential. Its scopes are kept, exactly as for browser tokens.
+     */
+    existingGrant?: boolean;
+  },
+): Promise<AuthChallengeOutcome> {
+  const gate = gateAuthChallenge(signal.effectiveAuth);
+  if (gate.kind === "blocked") return gate;
+
+  const operationKey = authChallengeOperationKey(server, options.operation);
+  const ledger = readAuthChallengeLedger(operationKey);
+  if (ledger?.phase === "signed_in") return { kind: "permanent" };
+  if (!options.confirmed) return { kind: "pendingConnect" };
+
+  // A click that finds an attempt still awaiting its callback: the user came
+  // back with the Back button. The old attempt can never complete, so it is
+  // cleared and this click retries instead of being refused for the window.
+  if (ledger?.phase === "awaiting_callback") {
+    clearAuthChallengeLedger(operationKey);
+  }
+
+  // Scopes: the challenge's `scope` when it named one, unioned with what
+  // this server's existing grant requested; otherwise nothing, and discovery
+  // decides. Never widen a first sign-in by guessing.
+  const serverUrl = readServerUrlForStepUp(server);
+  const issuer = resolveStoredIssuer(server.name, serverUrl);
+  const challengedScopes = parseOAuthScopes(signal.requiredScope);
+  const hasExistingGrant =
+    Boolean(server.oauthTokens) || options.existingGrant === true;
+  const scopes = challengedScopes
+    ? hasExistingGrant
+      ? stepUpScopeUnion(
+          server.name,
+          issuer,
+          challengedScopes,
+          readOriginalOAuthScopes(server),
+        )
+      : challengedScopes
+    : undefined;
+
+  writeAuthChallengeLedger({
+    serverName: server.name,
+    operation: normalizeStepUpOperationKey(operationKey),
+    phase: "awaiting_callback",
+    expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
+  });
+
+  let reauthorization: OAuthResult;
+  try {
+    reauthorization = await ensureAuthorizedForReconnect(server, {
+      allowInteractiveOAuthFlow: true,
+      interactiveOAuthConfirmed: true,
+      forceInteractiveFlow: true,
+      preserveExistingAuthorization: true,
+      ...(scopes ? { stepUpScopes: scopes } : {}),
+      resourceMetadataUrl: validResourceMetadataUrlHint(
+        signal.resourceMetadataUrl,
+      ),
+      onTraceUpdate: options.onTraceUpdate,
+      beforeRedirect: options.beforeRedirect,
+      onAuthorizationRedirect: flowDigestHook((flow) => {
+        const current = readAuthChallengeLedger(operationKey);
+        if (current?.phase === "awaiting_callback") {
+          writeAuthChallengeLedger({ ...current, flowDigest: flow.digest });
+        }
+        options.onAuthorizationFlow?.(flow);
+      }),
+    });
+  } catch (error) {
+    clearAuthChallengeLedger(operationKey);
+    throw error;
+  }
+  // Nothing navigated and nothing was granted: the click is not spent.
+  if (
+    reauthorization.kind === "error" ||
+    reauthorization.kind === "reauth_required"
+  ) {
+    clearAuthChallengeLedger(operationKey);
+  }
+  return { kind: "started", reauthorization, scopes };
 }

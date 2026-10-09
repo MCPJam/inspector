@@ -138,11 +138,30 @@ import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import {
   buildHostedScopeStepUpCancellation,
   buildHostedScopeStepUpResume,
+  cancelHostedContinuationForNewMessage,
+  createHostedAuthChallengeContinuation,
   createHostedScopeStepUpContinuation,
+  settleHostedAuthChallengeHistoryCall,
 } from "./hosted-scope-step-up-continuation.js";
-import type {
-  ScopeStepUpCancelRequest,
-  ScopeStepUpResumeRequest,
+import type { AuthChallengePolicy } from "@mcpjam/sdk";
+import { authChallengeCancelledText } from "@/shared/auth-challenge";
+import {
+  endsWithNewUserMessage,
+  type SettleSuspendedToolCall,
+} from "./direct-chat-scope-step-up.js";
+import {
+  toolReadOnlyHint,
+  type AuthChallengeChatObserver,
+} from "./auth-challenge-chat.js";
+import {
+  challengedToolSecuritySchemes,
+  connectionEffectiveAuth,
+} from "./connection-effective-auth.js";
+import {
+  SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+  SCOPE_STEP_UP_VERSION,
+  type ScopeStepUpCancelRequest,
+  type ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
 import type { ChatRewind } from "@/shared/chat-v2";
 import {
@@ -580,6 +599,16 @@ export interface WebChatTurnRuntime {
     cancelRequest?: ScopeStepUpCancelRequest;
   };
   /**
+   * Mid-session sign-in (lazy authentication). Present only on the
+   * interactive chat route, which reads `policy` per turn from the
+   * server-resolved host config (absent = spec defaults). Every other caller
+   * leaves it out, so its tool errors and results pass through exactly as
+   * before and nothing it runs can offer a sign-in. Suspending a call also
+   * needs `scopeStepUp` and a chat session; without them a Connect card is
+   * display-only.
+   */
+  authChallenge?: { policy?: AuthChallengePolicy };
+  /**
    * One-time notices about this conversation's ephemeral sandbox, PEEKED from
    * the control plane by the caller (chat-v2 provisions before the stream
    * exists, so it cannot emit them itself).
@@ -1014,6 +1043,19 @@ export async function streamWebChatTurn(
       persist.selectedServerNames,
     ) ?? {};
   let suspendedScopeStepUpToolCallId: string | undefined;
+  // The client splices its cancel into the user's next message when the user
+  // moves on without clicking Connect. That cancel is settled with the
+  // history (see `settleSuspendedHistoryToolCall`) instead of driven as a
+  // resume leg, so the new message runs; a bare cancel keeps the step-up
+  // re-drive path unchanged.
+  const splicedScopeStepUpCancel =
+    runtime.authChallenge &&
+    !persist.harness &&
+    persist.chatSessionId &&
+    runtime.scopeStepUp?.cancelRequest &&
+    endsWithNewUserMessage(modelMessages)
+      ? runtime.scopeStepUp.cancelRequest
+      : undefined;
   const scopeStepUpResume =
     runtime.scopeStepUp?.resumeRequest && persist.chatSessionId
       ? buildHostedScopeStepUpResume({
@@ -1028,12 +1070,13 @@ export async function streamWebChatTurn(
           modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
           abortSignal: runtime.abortSignal,
         })
-      : runtime.scopeStepUp?.cancelRequest
+      : runtime.scopeStepUp?.cancelRequest && !splicedScopeStepUpCancel
       ? buildHostedScopeStepUpCancellation({
           request: runtime.scopeStepUp.cancelRequest,
           bearer: runtime.scopeStepUp.bearer,
           messages: modelMessages,
           tools: preparedTools,
+          serverNameFor: (serverId) => scopeStepUpServerNamesById[serverId],
         })
       : undefined;
   const createScopeStepUpContinuation =
@@ -1068,6 +1111,120 @@ export async function streamWebChatTurn(
           });
           suspendedScopeStepUpToolCallId = event.toolCallId;
           return event;
+        }
+      : undefined;
+
+  // Mid-session sign-in. Never on a harness turn (its MCP tools run out of
+  // process and must not start sign-in); scenario and share-link visitors
+  // get the host's model-facing behavior but never a Connect card. A call is
+  // saved for replay only where a step-up could be (a chat session and the
+  // continuation store); otherwise the card is display-only.
+  const scopeStepUpRuntime = runtime.scopeStepUp;
+  const hostedChatSession = persist.chatSessionId;
+  const authChallengeObserver: AuthChallengeChatObserver | undefined =
+    runtime.authChallenge && !persist.harness
+      ? {
+          ...(runtime.authChallenge.policy
+            ? { policy: runtime.authChallenge.policy }
+            : {}),
+          interactive: persist.sourceType !== "scenario",
+          effectiveAuthFor: (serverId) =>
+            connectionEffectiveAuth(manager, serverId),
+          securitySchemesFor: (serverId, toolName) =>
+            challengedToolSecuritySchemes(manager, serverId, toolName),
+          readOnlyFor: (serverId, toolName) =>
+            toolReadOnlyHint(manager, serverId, toolName),
+          serverNameFor: (serverId) => scopeStepUpServerNamesById[serverId],
+          connectionIdFor: (toolName, toolInput, toolCallId) =>
+            toolConnectionAttribution(
+              preparedTools[toolName],
+              toolInput,
+              toolCallId,
+            )?.connectionId,
+          ...(scopeStepUpRuntime && hostedChatSession
+            ? {
+                createContinuation: (saved) =>
+                  createHostedAuthChallengeContinuation({
+                    bearer: scopeStepUpRuntime.bearer,
+                    authPrincipal: scopeStepUpRuntime.authPrincipal,
+                    projectId: persist.projectId,
+                    chatSessionId: hostedChatSession,
+                    manager,
+                    serverId: saved.serverId,
+                    ...(saved.serverName
+                      ? { serverName: saved.serverName }
+                      : {}),
+                    ...(saved.connectionId
+                      ? { connectionId: saved.connectionId }
+                      : {}),
+                    toolCallId: saved.toolCallId,
+                    toolName: saved.toolName,
+                    toolInput: saved.toolInput,
+                    ...(runtime.abortSignal
+                      ? { abortSignal: runtime.abortSignal }
+                      : {}),
+                  }),
+              }
+            : {}),
+          onSuspend: (toolCallId) => {
+            suspendedScopeStepUpToolCallId = toolCallId;
+          },
+        }
+      : undefined;
+
+  // A call a sign-in suspended can come back unresolved: the user sent
+  // another message instead of signing in. Its continuation is cancelled and
+  // the call answered with the cancel copy rather than as an unapproved one
+  //. The id is derived from the call, so no browser input is trusted.
+  const settleSuspendedHistoryToolCall: SettleSuspendedToolCall | undefined =
+    authChallengeObserver && scopeStepUpRuntime && hostedChatSession
+      ? async ({ toolCallId, toolName }) => {
+          const serverId = (
+            preparedTools[toolName] as { _serverId?: unknown } | undefined
+          )?._serverId;
+          if (splicedScopeStepUpCancel?.toolCallId === toolCallId) {
+            // Answered whether or not the store still holds it waiting.
+            const { cancelled, isSignIn } =
+              await cancelHostedContinuationForNewMessage({
+                bearer: scopeStepUpRuntime.bearer,
+                continuationId: splicedScopeStepUpCancel.continuationId,
+              });
+            if (cancelled && typeof serverId === "string") {
+              scopeChallengeWriter?.write({
+                type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+                data: {
+                  version: SCOPE_STEP_UP_VERSION,
+                  continuationId: splicedScopeStepUpCancel.continuationId,
+                  serverId,
+                  operation: { method: "tools/call", operation: toolName },
+                  outcome: "cancelled",
+                },
+                transient: true,
+              } as unknown as UIMessageChunk);
+            }
+            return isSignIn
+              ? authChallengeCancelledText(
+                  typeof serverId === "string"
+                    ? scopeStepUpServerNamesById[serverId] ?? serverId
+                    : "unknown",
+                  toolName,
+                )
+              : "Authorization was not completed, so the tool was not retried.";
+          }
+          // Only an MCP tool can have been suspended for sign-in.
+          if (typeof serverId !== "string") return undefined;
+          const settled = await settleHostedAuthChallengeHistoryCall({
+            bearer: scopeStepUpRuntime.bearer,
+            authPrincipal: scopeStepUpRuntime.authPrincipal,
+            chatSessionId: hostedChatSession,
+            toolCallId,
+          });
+          return settled
+            ? authChallengeCancelledText(
+                scopeStepUpServerNamesById[serverId] ?? serverId,
+                toolName,
+              )
+            : undefined;
         }
       : undefined;
 
@@ -1136,6 +1293,9 @@ export async function streamWebChatTurn(
                 toolInput,
               }),
           }
+        : {}),
+      ...(authChallengeObserver
+        ? { authChallenge: authChallengeObserver }
         : {}),
     },
   );
@@ -1611,6 +1771,9 @@ export async function streamWebChatTurn(
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
         ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+        ...(settleSuspendedHistoryToolCall
+          ? { settleSuspendedHistoryToolCall }
+          : {}),
         shouldPauseAfterStep: () =>
           suspendedScopeStepUpToolCallId !== undefined,
         suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
@@ -1669,6 +1832,9 @@ export async function streamWebChatTurn(
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
       ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+      ...(settleSuspendedHistoryToolCall
+        ? { settleSuspendedHistoryToolCall }
+        : {}),
       abortSignal: runtime.abortSignal,
     });
   }
@@ -1815,6 +1981,9 @@ export async function streamWebChatTurn(
     // driven result, and resumes the loop to a final assistant message.
     ...(runtime.mrtrResume ? { mrtrResume: runtime.mrtrResume } : {}),
     ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+    ...(settleSuspendedHistoryToolCall
+      ? { settleSuspendedHistoryToolCall }
+      : {}),
     ...(persist.harness && createScopeStepUpContinuation
       ? {
           createHarnessScopeStepUpContinuation: createScopeStepUpContinuation,

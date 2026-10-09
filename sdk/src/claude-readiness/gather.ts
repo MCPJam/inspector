@@ -29,12 +29,23 @@
  * Node entry only — exported from `sdk/src/index.ts`, never from `browser.ts`.
  */
 
+import { resolveMcpHeaders } from "../directory-readiness/discovery.js";
 import {
+  DIRECTORY_DIAL_PROTOCOL_VERSION,
   dialMcpServer,
   type DirectoryDialOptions,
   type DirectoryResourceEvidence,
   type DirectoryToolEvidence,
 } from "../directory-readiness/mcp-dial.js";
+import {
+  lazyAuthRediscoveryTrigger,
+  normalizeFeatureClaims,
+  refusedLazyAuthProbe,
+  resolveLazyAuthProbeMode,
+  type DirectoryLazyAuthProbeConfig,
+  type DirectoryLazyAuthProbeEvidence,
+} from "../directory-readiness/lazy-auth.js";
+import { probeLazyAuthentication } from "../directory-readiness/lazy-auth-probe.js";
 import {
   claudeAppResourceEvidenceFrom,
   claudeAppToolEvidenceFrom,
@@ -45,13 +56,18 @@ import {
 import type { ClaudeAuthEvidence } from "./checks/auth.js";
 import {
   discoverClaudeAuthEvidence,
+  discoverClaudeAuthMetadata,
   traceConnectorRedirects,
   type ClaudeDiscoveryOptions,
 } from "./discovery.js";
 import { CLAUDE_APP_HTML_MIME } from "./profile.js";
 import type { ClaudeReadinessInput } from "./runner.js";
-import type { ClaudeIntrusiveConfig } from "./intrusive.js";
-import type { ClaudeIntrusiveObservations } from "./intrusive.js";
+import {
+  probeStepUpChallenge,
+  resolveClaudeIntrusiveMode,
+  type ClaudeIntrusiveConfig,
+  type ClaudeIntrusiveObservations,
+} from "./intrusive.js";
 import type { ClaudeObservationState } from "./observations.js";
 import type {
   ClaudeReadinessAuthMode,
@@ -94,8 +110,25 @@ export interface GatherClaudeReadinessEvidenceOptions
   tools?: DirectoryToolEvidence[];
 
   submissionProfile?: unknown;
-  claimedFeatures?: ClaudeReadinessInput["claimedFeatures"];
+  /**
+   * Features the submitter claims: the grader's own record shape, or the
+   * claim names every surface sends (`"lazy-authentication"`,
+   * `"enterprise-managed-auth"`). Unknown names are ignored here; surfaces
+   * refuse them before they arrive.
+   */
+  claimedFeatures?: ClaudeReadinessInput["claimedFeatures"] | readonly string[];
   observedAuthMode?: string;
+  /**
+   * Arm the lazy-auth probe: at most two unauthenticated calls to read-only
+   * tools — one public, one protected — in a session of the probe's own.
+   *
+   * It sends NO credentials, whatever `mcpHeaders` holds. When the protected
+   * call is refused with a 401, Protected Resource Metadata and the first
+   * authorization server are discovered again from THAT challenge — the
+   * request Claude would follow — and the auth lanes are graded on what it
+   * finds.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
   /** Authorization requests only the caller that drove the flow can have seen. */
   authExtras?: Parameters<typeof discoverClaudeAuthEvidence>[1];
 
@@ -116,6 +149,25 @@ export interface GatherClaudeReadinessEvidenceOptions
    * that two runs over the same inputs produce the same one.
    */
   now?: () => Date;
+}
+
+/** Claim names, or the record, into the record the grader reads. */
+function claudeClaimedFeatures(
+  value: GatherClaudeReadinessEvidenceOptions["claimedFeatures"],
+): ClaudeReadinessInput["claimedFeatures"] {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    return value as ClaudeReadinessInput["claimedFeatures"];
+  }
+  const { claims } = normalizeFeatureClaims(value);
+  return {
+    ...(claims.includes("lazy-authentication")
+      ? { lazyAuthentication: true }
+      : {}),
+    ...(claims.includes("enterprise-managed-auth")
+      ? { enterpriseManagedAuth: true }
+      : {}),
+  };
 }
 
 /** Read one dialled resource into the shape the apps checks grade. */
@@ -154,12 +206,12 @@ export async function gatherClaudeReadinessEvidence(
         fetchFn: options.fetchFn,
         timeoutMs: options.timeoutMs,
         maxRedirects: options.maxRedirects,
-        headers: options.headers,
+        mcpHeaders: resolveMcpHeaders(options),
         signal: options.signal,
       }
     : undefined;
 
-  const [endpoint, auth] = discovery
+  const [endpoint, initialAuth] = discovery
     ? await Promise.all([
         traceConnectorRedirects(discovery),
         discoverClaudeAuthEvidence(discovery, options.authExtras),
@@ -168,6 +220,7 @@ export async function gatherClaudeReadinessEvidence(
         { enteredUrl: options.enteredUrl },
         { enteredUrl: options.enteredUrl } as ClaudeAuthEvidence,
       ];
+  let auth: ClaudeAuthEvidence = initialAuth;
 
   // THE DIAL. Skipped entirely when the caller supplied both halves, because
   // then there is nothing left for it to establish.
@@ -226,6 +279,79 @@ export async function gatherClaudeReadinessEvidence(
         }
       : undefined;
 
+  // ── The lazy-auth probe ──────────────────────────────────────────────
+  // After the dial, so a named tool an anonymous session cannot see can
+  // still be found in the listing the dial already holds. A probe that was
+  // requested and refused by its gate is recorded with the reason.
+  let lazyAuthProbe: DirectoryLazyAuthProbeEvidence | undefined;
+  if (options.lazyAuthProbe !== undefined && discovery) {
+    const mode = resolveLazyAuthProbeMode(options.lazyAuthProbe);
+    if (!mode.enabled) {
+      lazyAuthProbe = refusedLazyAuthProbe(
+        mode.reason,
+        DIRECTORY_DIAL_PROTOCOL_VERSION,
+      );
+    } else {
+      lazyAuthProbe = await probeLazyAuthentication({
+        // Field by field: the probe must never see `mcpHeaders`.
+        enteredUrl: discovery.enteredUrl,
+        fetchFn: discovery.fetchFn,
+        timeoutMs: discovery.timeoutMs,
+        signal: discovery.signal,
+        mode,
+        knownTools: tools,
+      });
+      // RE-DISCOVER FROM THE 401, and only the 401: Claude follows an HTTP
+      // challenge and nothing else, so metadata named only in a tool result's
+      // `_meta` is metadata Claude never finds.
+      const trigger = lazyAuthRediscoveryTrigger(lazyAuthProbe.protectedCall, [
+        "http_401",
+      ]);
+      if (trigger) {
+        const rediscovered = await discoverClaudeAuthMetadata(
+          discovery,
+          trigger.pointer,
+        );
+        auth = { ...auth, ...rediscovered };
+        lazyAuthProbe.rediscovery = {
+          trigger: trigger.trigger,
+          source: trigger.source,
+          prmFound: rediscovered.prm?.discoveredVia !== "not-found",
+          ...(rediscovered.prm?.url ? { prmUrl: rediscovered.prm.url } : {}),
+          ...(rediscovered.prm?.discoveredVia
+            ? { discoveredVia: rediscovered.prm.discoveredVia }
+            : {}),
+        };
+      }
+    }
+  }
+
+  // ── The step-up probe ────────────────────────────────────────────────
+  // Only for an ARMED intrusive mode that declared its tool, and only when
+  // the caller did not already hand the observation in. It uses the run's own
+  // credential — the caller's token, which is the one that lacks the scope —
+  // and the probe refuses a tool not annotated read-only.
+  let intrusiveObservations = options.intrusiveObservations;
+  const authMode = options.authMode ?? "headless";
+  const intrusiveMode = resolveClaudeIntrusiveMode(options.intrusive, {
+    hasBorrowedAccessToken: authMode === "provided-token",
+  });
+  if (
+    intrusiveMode.enabled &&
+    intrusiveMode.protectedToolName &&
+    intrusiveObservations?.stepUp === undefined &&
+    discovery
+  ) {
+    const stepUp = await probeStepUpChallenge(intrusiveMode, {
+      enteredUrl: discovery.enteredUrl,
+      fetchFn: discovery.fetchFn,
+      timeoutMs: discovery.timeoutMs,
+      signal: discovery.signal,
+      mcpHeaders: discovery.mcpHeaders ?? {},
+    });
+    intrusiveObservations = { ...intrusiveObservations, stepUp };
+  }
+
   const finishedAt = now();
 
   return {
@@ -251,10 +377,11 @@ export async function gatherClaudeReadinessEvidence(
       : dialled?.tools?.complete,
     toolListingError: hasSuppliedTools ? undefined : dialled?.tools?.error,
     submissionProfile: options.submissionProfile,
-    claimedFeatures: options.claimedFeatures,
+    claimedFeatures: claudeClaimedFeatures(options.claimedFeatures),
     observedAuthMode: options.observedAuthMode,
     intrusive: options.intrusive,
-    intrusiveObservations: options.intrusiveObservations,
+    intrusiveObservations,
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
     llmObservations: options.llmObservations,
     evidenceSources: options.evidenceSources,
   };

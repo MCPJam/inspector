@@ -193,9 +193,23 @@ import {
   claimCancelledChatScopeStepUp,
   claimPendingChatScopeStepUp,
   clearPendingChatScopeStepUp,
+  isPendingChatAuthRequired,
+  markPendingChatAuthRequiredClicked,
+  markPendingChatScopeStepUpCancelled,
   readPendingChatScopeStepUp,
   savePendingChatScopeStepUp,
 } from "@/lib/scope-step-up-pending";
+import {
+  isAuthChallengeNoticeDataPart,
+  isAuthRequiredDataPart,
+  type AuthRequiredEvent,
+} from "@/shared/auth-challenge";
+import {
+  clearChatAuthChallengeCard,
+  presentChatAuthRequired,
+  useAuthChallengeNoticeStore,
+} from "@/lib/auth-challenge-lifecycle";
+import { parseToolResultAuthChallenge } from "@mcpjam/sdk/browser";
 import {
   getTraceSpansDurationMs,
   mergeLiveChatTraceUsage,
@@ -1358,7 +1372,12 @@ export function shouldAutoSendCompletedClientToolCalls(
 export function isSuccessfulRpcResponse(message: unknown): boolean {
   if (!message || typeof message !== "object") return false;
   const m = message as Record<string, unknown>;
-  return "result" in m && !("error" in m);
+  if (!("result" in m) || "error" in m) return false;
+  // A result carrying a sign-in challenge (`isError` with
+  // `_meta["mcp/www_authenticate"]`) is a refusal, not a success: resetting
+  // the budget on it would let a server that alternates challenge and refusal
+  // loop the user through sign-in.
+  return parseToolResultAuthChallenge(m.result) === undefined;
 }
 
 // SEP-2350: the JSON-RPC `id` correlating a request with its response. Only
@@ -2470,6 +2489,68 @@ export function useChatSession(
     [],
   );
 
+  // Mid-session sign-in: show the Connect card for a `data-auth-required`
+  // part, saving a resumable call's marker as `awaiting_click` first.
+  const presentedSignInCardsRef = useRef(new Set<string>());
+  const presentChatAuthRequiredEvent = useCallback(
+    (event: AuthRequiredEvent) => {
+      presentedSignInCardsRef.current.add(event.toolCallId);
+      const server = resolveScopeStepUpServer(appState, {
+        serverId: event.serverId,
+        serverName: event.serverName,
+        projectId: hostedProjectId,
+      });
+      if (!server) return;
+      const sessionId = chatSessionIdRef.current;
+      const resumable =
+        event.action === "prompt" &&
+        typeof event.continuationId === "string" &&
+        Boolean(sessionId);
+      if (resumable && sessionId) {
+        savePendingChatScopeStepUp({
+          event: event as AuthRequiredEvent & { continuationId: string },
+          serverName: server.name,
+          chatSessionId: sessionId,
+          phase: "awaiting_click",
+        });
+      }
+      void presentChatAuthRequired({
+        server,
+        // Without a session the call cannot resume: sign in only.
+        event: resumable ? event : { ...event, continuationId: undefined },
+        ...(resumable && event.continuationId
+          ? {
+              onConnect: () =>
+                markPendingChatAuthRequiredClicked(
+                  event.continuationId as string,
+                ),
+            }
+          : {}),
+      }).then((presentation) => {
+        if (presentation.kind !== "notice") return;
+        useAuthChallengeNoticeStore.getState().add({
+          version: 1,
+          kind: "auth_challenge_notice",
+          serverId: event.serverId,
+          ...(event.serverName ? { serverName: event.serverName } : {}),
+          toolCallId: event.toolCallId,
+          operation: event.operation,
+          source: event.source,
+          action: event.action,
+          reason:
+            presentation.reason === "permanent"
+              ? "repeat-after-sign-in"
+              : presentation.reason === "blocked"
+                ? "auth-method-blocked"
+                : "honored",
+          effectiveAuth: event.effectiveAuth,
+          explanation: presentation.message,
+        });
+      });
+    },
+    [appState, hostedProjectId],
+  );
+
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
@@ -2517,8 +2598,19 @@ export function useChatSession(
               });
               resetScopeStepUp(server, event.operation);
             }
+            clearChatAuthChallengeCard(pending.event.toolCallId);
             clearPendingChatScopeStepUp(event.continuationId);
           }
+        } else if (isAuthRequiredDataPart(part)) {
+          // A mid-session sign-in. Showing the card has no side effects; the
+          // marker is saved now (`awaiting_click`) so a send without clicking,
+          // or a reload, can still settle the suspended call. Scenario and
+          // share-link turns resolve no server and stay inert, as for step-up.
+          presentChatAuthRequiredEvent(part.data);
+        } else if (isAuthChallengeNoticeDataPart(part)) {
+          // Display-only: explains why the emulated host did not prompt.
+          // Nothing starts a sign-in from it.
+          useAuthChallengeNoticeStore.getState().add(part.data);
         } else if (isScopeStepUpDataPart(part)) {
           const event = part.data;
           const server = resolveScopeStepUpServer(appState, {
@@ -2820,6 +2912,7 @@ export function useChatSession(
       hostedPresentationHostId,
       appState,
       handleMrtrInputRequired,
+      presentChatAuthRequiredEvent,
     ],
   );
 
@@ -3985,6 +4078,11 @@ export function useChatSession(
   // prevents the generic tool-output rule from recursively submitting the
   // same one-shot continuation descriptor.
   const scopeStepUpResumeInFlightRef = useRef(false);
+  /** Sign-in replays of a write tool the user confirmed with "Run again". */
+  const confirmedSignInReplaysRef = useRef(new Set<string>());
+  /** Sign-in replays already asked about, so the prompt shows once. */
+  const promptedSignInReplaysRef = useRef(new Set<string>());
+  const [signInReplayTick, setSignInReplayTick] = useState(0);
 
   // useChat hook
   const {
@@ -4279,6 +4377,40 @@ export function useChatSession(
       if (!server || server.connectionStatus !== "connected") {
         return;
       }
+      // A call that may change something is never re-run on its own after a
+      // sign-in: the user confirms it first, or it is cancelled.
+      const continuationId = pending.event.continuationId;
+      if (
+        isPendingChatAuthRequired(pending) &&
+        !pending.event.readOnly &&
+        !confirmedSignInReplaysRef.current.has(continuationId)
+      ) {
+        if (!promptedSignInReplaysRef.current.has(continuationId)) {
+          promptedSignInReplaysRef.current.add(continuationId);
+          toast(`Signed in. Run ${pending.event.operation.operation} again?`, {
+            id: `auth-challenge-run-again:${continuationId}`,
+            duration: Infinity,
+            action: {
+              label: "Run again",
+              onClick: () => {
+                confirmedSignInReplaysRef.current.add(continuationId);
+                setSignInReplayTick((tick) => tick + 1);
+              },
+            },
+            cancel: {
+              label: "Not now",
+              onClick: () => {
+                markPendingChatScopeStepUpCancelled(
+                  pending.serverName,
+                  "Signed in, but the user chose not to run the call again.",
+                );
+                setSignInReplayTick((tick) => tick + 1);
+              },
+            },
+          });
+        }
+        return;
+      }
     }
     const claimed =
       pending.phase === "ready"
@@ -4319,7 +4451,33 @@ export function useChatSession(
       .finally(() => {
         scopeStepUpResumeInFlightRef.current = false;
       });
-  }, [appState, baseSendMessage, hostedProjectId, messages, status]);
+  }, [
+    appState,
+    baseSendMessage,
+    hostedProjectId,
+    messages,
+    status,
+    signInReplayTick,
+  ]);
+
+  // A reload while a sign-in card was showing: rebuild the card from the
+  // saved marker, not from the transient stream part.
+  useEffect(() => {
+    const sessionId = chatSessionIdRef.current;
+    if (!sessionId) return;
+    const pending = readPendingChatScopeStepUp();
+    if (
+      !pending ||
+      pending.phase !== "awaiting_click" ||
+      pending.chatSessionId !== sessionId ||
+      !isPendingChatAuthRequired(pending) ||
+      presentedSignInCardsRef.current.has(pending.event.toolCallId) ||
+      !hasChatToolCall(messagesRef.current, pending.event.toolCallId)
+    ) {
+      return;
+    }
+    presentChatAuthRequiredEvent(pending.event);
+  }, [messages, presentChatAuthRequiredEvent]);
 
   /**
    * Resume a suspended hosted MRTR operation (§12.5) by re-driving a chat turn
@@ -4941,28 +5099,54 @@ export function useChatSession(
           const extra = {
             metadata: timestampedMetadata,
           } as { metadata: unknown };
+          // A message sent while a sign-in card is unanswered (or its
+          // redirect never came back) cancels that suspended call in the same
+          // request, so the model sees it was not run instead of the turn
+          // failing on an unresolved tool call.
+          const pendingSignIn = readPendingChatScopeStepUp();
+          const cancelSignIn =
+            pendingSignIn &&
+            isPendingChatAuthRequired(pendingSignIn) &&
+            pendingSignIn.chatSessionId === sessionAtSend &&
+            (pendingSignIn.phase === "awaiting_click" ||
+              pendingSignIn.phase === "awaiting_oauth")
+              ? {
+                  continuationId: pendingSignIn.event.continuationId,
+                  toolCallId: pendingSignIn.event.toolCallId,
+                }
+              : undefined;
+          if (cancelSignIn) {
+            clearPendingChatScopeStepUp(cancelSignIn.continuationId);
+            clearChatAuthChallengeCard(cancelSignIn.toolCallId);
+          }
+          const requestOptions = cancelSignIn
+            ? { body: { scopeStepUpCancel: cancelSignIn } }
+            : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
           if (pluginMessage) {
             baseSendMessage(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
-              { body: { pluginMessage } },
+              { body: { pluginMessage, ...requestOptions?.body } },
             );
           } else if (pluginMentions?.length) {
-            baseSendMessage({
-              parts: [
-                ...buildMentionContextMessages(pluginMentions).flatMap(
-                  (message) => message.parts,
-                ),
-                { type: "text", text },
-                ...(files ?? []),
-              ],
-              ...extra,
-            });
+            baseSendMessage(
+              {
+                parts: [
+                  ...buildMentionContextMessages(pluginMentions).flatMap(
+                    (message) => message.parts,
+                  ),
+                  { type: "text", text },
+                  ...(files ?? []),
+                ],
+                ...extra,
+              },
+              requestOptions,
+            );
           } else if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
-            baseSendMessage({ text, files, ...extra });
+            baseSendMessage({ text, files, ...extra }, requestOptions);
           } else {
-            baseSendMessage({ text, ...extra });
+            baseSendMessage({ text, ...extra }, requestOptions);
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;

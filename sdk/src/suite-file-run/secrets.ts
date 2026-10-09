@@ -244,7 +244,8 @@ export function addServerConfigSecrets(
 /**
  * One iteration's evidence with its observed text scrubbed: the execution
  * error, tool-call argument values (never their keys) and raw argument text,
- * evaluator reasons and predicate reasons. Everything else is identity or a closed vocabulary.
+ * evaluator reasons, predicate reasons and a sign-in challenge's fields.
+ * Everything else is identity or a closed vocabulary.
  */
 export function scrubIterationEvidence(
   scrubber: SecretScrubber,
@@ -269,6 +270,15 @@ export function scrubIterationEvidence(
     ),
     ...(evidence.stage
       ? { stage: scrubStagePredicateReasons(scrubber, evidence.stage) }
+      : {}),
+    // Server text, but a server can echo what it was sent.
+    ...(evidence.authRequired
+      ? {
+          authRequired: {
+            ...evidence.authRequired,
+            challenge: scrubber.scrubDeep(evidence.authRequired.challenge),
+          },
+        }
       : {}),
   };
 }

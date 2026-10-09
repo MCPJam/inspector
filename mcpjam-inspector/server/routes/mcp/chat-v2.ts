@@ -64,7 +64,10 @@ import {
 } from "../../utils/selection-rail.js";
 import { backendModelSelection } from "../../utils/model-resolution-local.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
-import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
+import {
+  authChallengeFromMcpProfile,
+  toolCallCancellationFromMcpProfile,
+} from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { getRequestLogger } from "../../utils/request-logger";
@@ -208,14 +211,34 @@ import {
   type ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
 import {
+  AUTH_CHALLENGE_REPEATED_REASON,
+  cancelLocalContinuationForNewMessage,
   cancelLocalScopeStepUpContinuation,
   cancelLocalScopeStepUpContinuationForRequest,
   claimLocalScopeStepUpContinuation,
   completeLocalScopeStepUpContinuation,
+  createLocalAuthChallengeContinuation,
   createLocalScopeStepUpContinuation,
   failLocalScopeStepUpContinuation,
+  hasRecentLocalAuthSignIn,
   markLocalScopeStepUpWireStarted,
+  settleLocalAuthChallengeHistoryCall,
 } from "../../utils/scope-step-up-continuation.js";
+import {
+  AUTH_CHALLENGE_REASON,
+  authChallengeCancelledText,
+} from "@/shared/auth-challenge";
+import {
+  authChallengeInfoFromToolError,
+  emitRepeatedSignInNotice,
+  toolReadOnlyHint,
+  type AuthChallengeChatObserver,
+} from "../../utils/auth-challenge-chat.js";
+import {
+  challengedToolSecuritySchemes,
+  connectionEffectiveAuth,
+} from "../../utils/connection-effective-auth.js";
+import { parseToolResultAuthChallenge } from "@mcpjam/sdk";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
 import { ranTurnSelection } from "../../utils/session-model-selection";
 import type {
@@ -223,8 +246,10 @@ import type {
   MrtrEngineResume,
 } from "../../utils/mrtr-hosted-chat.js";
 import {
+  endsWithNewUserMessage,
   isSuspendedScopeStepUpOutputChunk,
   resumeScopeStepUpBeforeDirectTurn,
+  type SettleSuspendedToolCall,
 } from "../../utils/direct-chat-scope-step-up.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
@@ -346,7 +371,8 @@ function readProtectedResourceUrl(
   return undefined;
 }
 
-function buildLocalScopeStepUpResume(input: {
+/** Exported for the continuation tests; the route is its only caller. */
+export function buildLocalScopeStepUpResume(input: {
   request: ScopeStepUpResumeRequest;
   bindingKey: string;
   tools: ToolSet;
@@ -397,18 +423,49 @@ function buildLocalScopeStepUpResume(input: {
       }
 
       let replayError: unknown;
+      let replayResult: unknown;
       const execute = originalTool.execute.bind(originalTool);
       const replayTool = {
         ...originalTool,
         execute: async (toolInput: unknown, options: unknown) => {
           markLocalScopeStepUpWireStarted(claimed.continuationId);
           try {
-            return await execute(toolInput, options);
+            replayResult = await execute(toolInput, options);
+            return replayResult;
           } catch (error) {
             replayError = error;
             throw error;
           }
         },
+      };
+      // A sign-in the server refuses again right after the user signed in is
+      // permanent: the model gets the repeat copy, no second card.
+      const repeatedSignIn = (
+        signal: Parameters<typeof emitRepeatedSignInNotice>[1]["signal"],
+      ): MrtrChatResumeResolution => {
+        failLocalScopeStepUpContinuation(
+          claimed.continuationId,
+          AUTH_CHALLENGE_REPEATED_REASON,
+        );
+        const repeatText = emitRepeatedSignInNotice(
+          { write },
+          {
+            serverId: claimed.serverId,
+            serverName: claimed.serverName,
+            toolCallId: claimed.toolCallId,
+            toolName: claimed.toolName,
+            signal,
+          },
+        );
+        return {
+          kind: "recover",
+          reason: AUTH_CHALLENGE_REPEATED_REASON,
+          toolResultMessage: buildScopeStepUpErrorToolResult(
+            claimed.toolCallId,
+            claimed.toolName,
+            repeatText,
+          ),
+        };
       };
       const replayHistory: ModelMessage[] = [
         {
@@ -442,6 +499,17 @@ function buildLocalScopeStepUpResume(input: {
           serverId: claimed.serverId,
           toolCallId: claimed.toolCallId,
         });
+        const repeatedAuthChallenge =
+          claimed.reason === AUTH_CHALLENGE_REASON && !repeatedChallenge
+            ? authChallengeInfoFromToolError({
+                error: replayError,
+                serverId: claimed.serverId,
+                toolCallId: claimed.toolCallId,
+              })
+            : undefined;
+        if (repeatedAuthChallenge) {
+          return repeatedSignIn(repeatedAuthChallenge.signal);
+        }
         if (repeatedChallenge) {
           failLocalScopeStepUpContinuation(
             claimed.continuationId,
@@ -482,6 +550,23 @@ function buildLocalScopeStepUpResume(input: {
           reason: "tool replay returned no result",
         };
       }
+      // A challenged result is a refusal, not a success: it must not settle
+      // the continuation as completed.
+      const resultChallenge = parseToolResultAuthChallenge(replayResult);
+      if (resultChallenge) {
+        if (claimed.reason === AUTH_CHALLENGE_REASON) {
+          return repeatedSignIn(resultChallenge);
+        }
+        failLocalScopeStepUpContinuation(
+          claimed.continuationId,
+          "the retried call returned a sign-in challenge",
+        );
+        return {
+          kind: "recover",
+          reason: "the retried call returned a sign-in challenge",
+          toolResultMessage: resultMessage,
+        };
+      }
       completeLocalScopeStepUpContinuation(claimed.continuationId);
       write({
         type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
@@ -502,7 +587,8 @@ function buildLocalScopeStepUpResume(input: {
   };
 }
 
-function buildLocalScopeStepUpCancellation(input: {
+/** Exported for the continuation tests; the route is its only caller. */
+export function buildLocalScopeStepUpCancellation(input: {
   request: ScopeStepUpCancelRequest;
   bindingKey: string;
 }): MrtrEngineResume {
@@ -530,6 +616,20 @@ function buildLocalScopeStepUpCancellation(input: {
           },
           transient: true,
         } as unknown as UIMessageChunk);
+        if (cancelled.reason === AUTH_CHALLENGE_REASON) {
+          return {
+            kind: "recover",
+            reason: "sign-in was not completed",
+            toolResultMessage: buildScopeStepUpErrorToolResult(
+              input.request.toolCallId,
+              cancelled.toolName,
+              authChallengeCancelledText(
+                cancelled.serverName ?? cancelled.serverId,
+                cancelled.toolName,
+              ),
+            ),
+          };
+        }
         return {
           kind: "recover",
           reason: "authorization was not completed",
@@ -547,6 +647,75 @@ function buildLocalScopeStepUpCancellation(input: {
         };
       }
     },
+  };
+}
+
+/**
+ * History settlement for the local engines, plus a cancel the client
+ * spliced into the user's next message.
+ *
+ * The spliced cancel is settled here instead of driving a resume leg: the
+ * named call is answered with the reason-aware copy and the user's message
+ * then runs as a normal turn. Its continuation is cancelled when it still
+ * waits; when it is unknown or already expired the call is answered all the
+ * same, so the message is never dropped. Every other call a sign-in suspended
+ * is answered from the store. Exported for tests.
+ */
+export function buildLocalSuspendedCallSettlement(input: {
+  bindingKey: string;
+  splicedCancel?: ScopeStepUpCancelRequest;
+  tools: ToolSet;
+  getWriter: () => { write: (chunk: UIMessageChunk) => void } | null;
+}): SettleSuspendedToolCall {
+  return ({ toolCallId, toolName }) => {
+    if (input.splicedCancel?.toolCallId === toolCallId) {
+      const cancelled = cancelLocalContinuationForNewMessage({
+        continuationId: input.splicedCancel.continuationId,
+        toolCallId,
+        bindingKey: input.bindingKey,
+      });
+      if (cancelled.cancelled && cancelled.serverId) {
+        input.getWriter()?.write({
+          type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+          data: {
+            version: SCOPE_STEP_UP_VERSION,
+            continuationId: input.splicedCancel.continuationId,
+            serverId: cancelled.serverId,
+            operation: {
+              method: "tools/call",
+              operation: cancelled.toolName ?? toolName,
+            },
+            outcome: "cancelled",
+          },
+          transient: true,
+        } as unknown as UIMessageChunk);
+      }
+      // A step-up the store still knows keeps its own copy; anything else the
+      // client cancelled was a sign-in it was showing.
+      if (cancelled.found && cancelled.reason !== AUTH_CHALLENGE_REASON) {
+        return "Authorization was not completed, so the tool was not retried.";
+      }
+      // Local server ids are the display names.
+      const serverName =
+        cancelled.serverName ??
+        cancelled.serverId ??
+        (input.tools as Record<string, { _serverId?: unknown }>)[toolName]
+          ?._serverId;
+      return authChallengeCancelledText(
+        typeof serverName === "string" ? serverName : "unknown",
+        cancelled.toolName ?? toolName,
+      );
+    }
+    const settled = settleLocalAuthChallengeHistoryCall({
+      bindingKey: input.bindingKey,
+      toolCallId,
+    });
+    return settled
+      ? authChallengeCancelledText(
+          settled.serverName ?? settled.serverId,
+          settled.toolName,
+        )
+      : undefined;
   };
 }
 
@@ -600,6 +769,8 @@ function streamDirectChatWithLiveTrace(options: {
   /** Session this stream persists to; required to attribute a persist receipt. */
   chatSessionId?: string;
   scopeStepUpResume?: MrtrEngineResume;
+  /** History settlement for calls a sign-in suspended. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
   suspendedToolCallId?: () => string | undefined;
 }): Response {
@@ -610,6 +781,7 @@ function streamDirectChatWithLiveTrace(options: {
     onPersist,
     chatSessionId: receiptChatSessionId,
     scopeStepUpResume,
+    settleSuspendedHistoryToolCall,
     shouldPauseAfterStep,
     suspendedToolCallId,
     ...turnOptions
@@ -661,6 +833,7 @@ function streamDirectChatWithLiveTrace(options: {
         writer,
         messageHistory: turnOptions.messageHistory,
         resume: scopeStepUpResume,
+        settleSuspendedToolCall: settleSuspendedHistoryToolCall,
       });
       if (!shouldRunModel) return;
       handle = runDirectChatTurn({
@@ -2370,6 +2543,105 @@ chatV2.post("/", async (c) => {
       suspendedScopeStepUpToolCallId = event.toolCallId;
       return event;
     };
+    // Mid-session sign-in (lazy authentication). The host's reaction is read
+    // per turn from the server-resolved host config, like cancellation above;
+    // no host means the spec defaults. A harness turn never gets it: its MCP
+    // tools run out of process and must not start sign-in. Scenario and
+    // share-link visitors get the host's model-facing behavior but never a
+    // Connect card.
+    const authChallengeObserver: AuthChallengeChatObserver | undefined =
+      resolvedExecution.harness
+        ? undefined
+        : {
+            policy: hostRuntimeConfig
+              ? authChallengeFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                )
+              : undefined,
+            interactive: !isScenarioSession,
+            effectiveAuthFor: (serverId) =>
+              connectionEffectiveAuth(mcpClientManager, serverId),
+            securitySchemesFor: (serverId, toolName) =>
+              challengedToolSecuritySchemes(
+                mcpClientManager,
+                serverId,
+                toolName,
+              ),
+            readOnlyFor: (serverId, toolName) =>
+              toolReadOnlyHint(mcpClientManager, serverId, toolName),
+            // Local server ids are the display names.
+            serverNameFor: (serverId) => serverId,
+            connectionIdFor: (toolName, toolInput, toolCallId) =>
+              toolConnectionAttribution(
+                preparedTools[toolName],
+                toolInput,
+                toolCallId,
+              )?.connectionId,
+            hasRecentSignIn: ({ serverId, toolName }) =>
+              hasRecentLocalAuthSignIn({
+                bindingKey: scopeStepUpBindingKey,
+                serverId,
+                toolName,
+              }),
+            createContinuation: (saved) => {
+              const resourceUrl = readProtectedResourceUrl(
+                mcpClientManager,
+                saved.serverId,
+              );
+              return createLocalAuthChallengeContinuation({
+                bindingKey: scopeStepUpBindingKey,
+                serverId: saved.serverId,
+                ...(saved.serverName ? { serverName: saved.serverName } : {}),
+                ...(saved.connectionId
+                  ? { connectionId: saved.connectionId }
+                  : {}),
+                ...(resourceUrl ? { resourceUrl } : {}),
+                toolCallId: saved.toolCallId,
+                toolName: saved.toolName,
+                toolInput: saved.toolInput,
+                challenge: {
+                  serverId: saved.serverId,
+                  toolCallId: saved.toolCallId,
+                  ...(saved.signal.requiredScope
+                    ? { requiredScope: saved.signal.requiredScope }
+                    : {}),
+                  ...(saved.signal.resourceMetadataUrl
+                    ? { resourceMetadataUrl: saved.signal.resourceMetadataUrl }
+                    : {}),
+                  ...(saved.signal.errorDescription
+                    ? { errorDescription: saved.signal.errorDescription }
+                    : {}),
+                },
+              });
+            },
+            onSuspend: (toolCallId) => {
+              suspendedScopeStepUpToolCallId = toolCallId;
+            },
+          };
+    // A call a sign-in suspended can come back unresolved: the user sent
+    // another message instead of signing in. Every engine answers it with the
+    // cancel copy rather than failing or running it.
+    // The client splices its cancel into the user's next message when the
+    // user moves on without clicking Connect. That is settled with the
+    // history below rather than driven as a resume leg, so the new message
+    // runs. A cancel with no new message keeps the step-up re-drive path.
+    const splicedScopeStepUpCancel =
+      authChallengeObserver &&
+      scopeStepUpCancelRequest &&
+      endsWithNewUserMessage(messages)
+        ? scopeStepUpCancelRequest
+        : undefined;
+    const settleSuspendedHistoryToolCall: SettleSuspendedToolCall | undefined =
+      authChallengeObserver
+        ? buildLocalSuspendedCallSettlement({
+            bindingKey: scopeStepUpBindingKey,
+            ...(splicedScopeStepUpCancel
+              ? { splicedCancel: splicedScopeStepUpCancel }
+              : {}),
+            tools: preparedTools,
+            getWriter: () => scopeChallengeWriter,
+          })
+        : undefined;
     const allTools = wrapToolsWithScopeStepUp(
       preparedTools,
       () => scopeChallengeWriter,
@@ -2380,6 +2652,9 @@ chatV2.post("/", async (c) => {
             toolName,
             toolInput,
           }),
+        ...(authChallengeObserver
+          ? { authChallenge: authChallengeObserver }
+          : {}),
       },
     );
     /**
@@ -2405,7 +2680,7 @@ chatV2.post("/", async (c) => {
           tools: preparedTools,
           modelVisibleMcpToolResults,
         })
-      : scopeStepUpCancelRequest
+      : scopeStepUpCancelRequest && !splicedScopeStepUpCancel
       ? buildLocalScopeStepUpCancellation({
           request: scopeStepUpCancelRequest,
           bindingKey: scopeStepUpBindingKey,
@@ -2507,6 +2782,9 @@ chatV2.post("/", async (c) => {
         ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(scopeStepUpEngineResume
           ? { scopeStepUpResume: scopeStepUpEngineResume }
+          : {}),
+        ...(settleSuspendedHistoryToolCall
+          ? { settleSuspendedHistoryToolCall }
           : {}),
         ...(resolvedExecution.harness
           ? {
@@ -2798,6 +3076,7 @@ chatV2.post("/", async (c) => {
           serverIds: hostConfigServerIds,
           requireToolApproval,
           scopeStepUpResume: scopeStepUpEngineResume,
+          settleSuspendedHistoryToolCall,
           shouldPauseAfterStep: () =>
             suspendedScopeStepUpToolCallId !== undefined,
           suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
@@ -2844,6 +3123,7 @@ chatV2.post("/", async (c) => {
         // step and the tools it needs exist only from the next.
         ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
         scopeStepUpResume: scopeStepUpEngineResume,
+        settleSuspendedHistoryToolCall,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
         // Same invariant as the local-org call above: attach the bridge
@@ -2940,6 +3220,7 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
       scopeStepUpResume: scopeStepUpEngineResume,
+      settleSuspendedHistoryToolCall,
       shouldPauseAfterStep: () => suspendedScopeStepUpToolCallId !== undefined,
       suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
       abortSignal: inboundAbortSignalDirect,

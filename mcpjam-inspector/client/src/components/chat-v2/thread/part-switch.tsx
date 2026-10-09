@@ -56,6 +56,9 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { resolveScopeStepUpServer } from "@/lib/scope-step-up";
+import { presentWidgetAuthChallenge } from "@/lib/auth-challenge-lifecycle";
+import { authChallengeFromError } from "@/lib/apis/insufficient-scope";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
@@ -791,8 +794,37 @@ function LivePartSwitch({
               onSendFollowUp={interactive ? onSendFollowUp : undefined}
               onCallTool={
                 interactive
-                  ? (toolName, params) =>
-                      callTool(serverId ?? "offline-view", toolName, params)
+                  ? (toolName, params) => {
+                      // A sign-in challenge on the widget's own call shows a
+                      // Connect card in host chrome under this tool call; the
+                      // iframe still gets its result or error unchanged.
+                      const widgetServer = serverId
+                        ? resolveScopeStepUpServer(appState, { serverId })
+                        : undefined;
+                      return callTool(
+                        serverId ?? "offline-view",
+                        toolName,
+                        params,
+                        {
+                          onResultAuthChallenge: (challenge, schemes) =>
+                            presentWidgetAuthChallenge({
+                              server: widgetServer,
+                              signal: challenge,
+                              toolName,
+                              toolCallId: toolInfo.toolCallId,
+                              schemes,
+                            }),
+                        },
+                      ).catch((error: unknown) => {
+                        presentWidgetAuthChallenge({
+                          server: widgetServer,
+                          signal: authChallengeFromError(error),
+                          toolName,
+                          toolCallId: toolInfo.toolCallId,
+                        });
+                        throw error;
+                      });
+                    }
                   : undefined
               }
               onAppToolInvocationChange={onAppToolInvocationChange}

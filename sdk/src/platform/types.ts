@@ -6025,6 +6025,28 @@ export interface PlatformReadinessStartBody {
    * `billing_limit_reached`.
    */
   includeLlmObservations?: boolean;
+  /**
+   * Verify lazy authentication: the run calls at most two tools annotated
+   * `readOnlyHint: true` — one public, one protected — WITHOUT credentials,
+   * and grades how the protected call is refused. It never sends the saved
+   * server's credential. Omit to run no tool calls at all.
+   */
+  lazyAuthProbe?: PlatformReadinessLazyAuthProbe;
+  /**
+   * Features the submitter claims, e.g. `"lazy-authentication"`. A claim is
+   * reported as `claimed`; it is never itself evidence.
+   */
+  claimedFeatures?: string[];
+}
+
+/** The lazy-auth probe's request: explicit opt-in, and optional tool names. */
+export interface PlatformReadinessLazyAuthProbe {
+  /** Literal `true` to arm the probe. */
+  enabled: boolean;
+  /** The protected read-only tool to call without credentials. */
+  toolName?: string;
+  /** The public read-only tool to call without credentials. */
+  publicToolName?: string;
 }
 
 export interface PlatformOpenAIReadinessStartBody

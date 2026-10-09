@@ -1,0 +1,192 @@
+---
+title: "Mid-session sign-in"
+description: "Test servers that let you connect without signing in and ask for sign-in only when a protected call needs it"
+icon: "log-in"
+---
+
+Some MCP servers let a client connect, list tools, and call public tools without a token. They ask for sign-in only when a call needs it. This pattern is often called **lazy authentication**.
+
+MCPJam recognizes these sign-in challenges. Depending on the host you are emulating, it shows a **Connect** card, signs you in, and runs the call again, or it reports the challenge the way that host would.
+
+## What a sign-in challenge looks like
+
+Hosts accept two different signals.
+
+### HTTP 401 with `WWW-Authenticate`
+
+The server answers the protected request with `401 Unauthorized` and a `WWW-Authenticate: Bearer` header. This is the signal the [MCP authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization) defines.
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp", scope="files.read"
+```
+
+Anthropic's [lazy authentication guide](https://claude.com/docs/connectors/building/lazy-authentication) asks for the same signal. It says Claude starts sign-in only when the HTTP request itself fails with `401 Unauthorized` and a `WWW-Authenticate` header, so return the 401 before the request reaches your MCP handler. Per the same guide, a `200` result with `isError: true` is passed to the model as an ordinary tool failure.
+
+### A tool result with `_meta["mcp/www_authenticate"]` (ChatGPT style)
+
+OpenAI's [Apps SDK authentication guide](https://developers.openai.com/plugins/build/auth) uses a different shape. The call completes with HTTP 200, and the tool result carries `isError: true` and the challenge in `_meta["mcp/www_authenticate"]`.
+
+```json
+{
+  "isError": true,
+  "content": [{ "type": "text", "text": "Sign in to see your files." }],
+  "_meta": {
+    "mcp/www_authenticate": [
+      "Bearer resource_metadata=\"https://api.example.com/.well-known/oauth-protected-resource/mcp\", error=\"insufficient_scope\", error_description=\"Sign in to see your files\""
+    ]
+  }
+}
+```
+
+That guide requires both of these before ChatGPT shows its sign-in UI:
+
+- The tool declares `securitySchemes` that include `oauth2`. A tool that declares both `noauth` and `oauth2` can be called anonymously and asks for sign-in to unlock more.
+- The challenge has both an `error` and an `error_description` parameter.
+
+This challenge is not part of the MCP specification. A client that does not know it treats the result as an ordinary tool error.
+
+<Note>
+  A `403` with `WWW-Authenticate: Bearer error="insufficient_scope"` asks for
+  more scopes on an existing sign-in. MCPJam handles it with the
+  [scope step-up](/inspector/tools-prompts-resources#oauth-scope-step-up-on-tool-calls)
+  flow, not with the settings below.
+</Note>
+
+## Per-host settings
+
+How a host reacts to each signal is a setting on the client you are emulating. Open **Clients**, select a client, and find **Mid-session sign-in** in the **MCP Protocol** card. Each signal has an action and a trigger.
+
+| Setting | Options | Default |
+| --- | --- | --- |
+| **On HTTP 401** | Prompt to sign in, Notify, Pass through | Prompt to sign in |
+| **What counts as a 401 challenge** | Any 401, Needs `WWW-Authenticate: Bearer`, Needs `resource_metadata` | Any 401 |
+| **On tool-result `_meta` challenge (ChatGPT style)** | Prompt to sign in, Notify, Pass through | Pass through |
+| **What counts as a `_meta` challenge** | Any, Tool declares `oauth2`, `oauth2` + `error` and `error_description` | `oauth2` + `error` and `error_description` |
+
+The actions:
+
+- **Prompt to sign in**: MCPJam shows a Connect card. After you sign in, it runs the call again.
+- **Notify**: the call fails with a sign-in message and is not run again. You can still sign in from the card and then run the call yourself.
+- **Pass through**: the challenge is an ordinary error.
+
+A trigger only narrows its action, so it has no effect while that action is **Pass through**. The defaults follow the MCP specification: any 401 counts as a challenge, because the specification falls back to well-known discovery when the header is missing, and the `_meta` challenge is not acted on.
+
+The settings are read on every call, so a change applies to the next call without reconnecting the server.
+
+In the **MCP Protocol** JSON editor, the same settings are these keys. Leave a key out to use its default.
+
+| Key | Values |
+| --- | --- |
+| `unauthorizedChallenge` | `prompt`, `notify`, `passthrough` |
+| `unauthorizedChallengeTrigger` | `any`, `bearer-header`, `resource-metadata` |
+| `toolResultAuthChallenge` | `prompt`, `notify`, `passthrough` |
+| `toolResultAuthChallengeTrigger` | `any`, `oauth2-scheme`, `oauth2-scheme+error-params` |
+
+### Preset values
+
+The host presets set these values from each vendor's published documentation. MCPJam has not yet measured them against the live hosts.
+
+| Preset | Values that differ from the defaults | Source |
+| --- | --- | --- |
+| Claude, Claude Desktop | 401 trigger: Needs `WWW-Authenticate: Bearer` | Anthropic's lazy authentication guide |
+| Claude Code | On HTTP 401: Notify. 401 trigger: Needs `WWW-Authenticate: Bearer` | Anthropic's lazy authentication guide, which says Claude Code tells you to re-authenticate with `/mcp` instead of showing a Connect card, and does not retry the call |
+| ChatGPT | On tool-result `_meta` challenge: Prompt to sign in | OpenAI's Apps SDK authentication guide |
+
+Every other preset uses the defaults.
+
+### Why the host did not prompt
+
+When the emulated host does not start sign-in for a challenge, MCPJam explains why and what the server could send instead. For example, with a Claude preset and a `_meta` challenge, the note says the host ignores `_meta["mcp/www_authenticate"]` and that the server should return HTTP 401 with a `WWW-Authenticate: Bearer` header instead. The note appears with the error, and under **Details** on a Connect card. It is for you; it is never sent to the model.
+
+## The Connect card
+
+When the action is **Prompt to sign in** or **Notify**, MCPJam shows a card in place of the failed call:
+
+> **my-server** (https://api.example.com) needs you to sign in to use **list_files**.
+>
+> **Connect** · **Not now** · Details
+
+- **Nothing happens until you click Connect.** MCPJam does not open the sign-in page or fetch the server's authorization metadata before your click. A script, an inspector command, or an app widget cannot click it for you.
+- **The card names only the MCP server's origin.** The authorization server's own sign-in page tells you who it is.
+- **The card expires after 10 minutes.** It counts down while it is open. After that, sign in and run the call again yourself.
+- **Not now** hides the card and does not offer it again for that server for the rest of the browser session. Later calls show a short notice instead. To sign in after that, reconnect the server with OAuth.
+- **Details** shows the requested scope, the server's message, and how the emulated host handles the challenge. Text from the server is always shown as plain text.
+
+### After you sign in
+
+- A tool marked `readOnlyHint: true` runs again automatically.
+- **Any other tool is not run again on its own**, because it might change something. MCPJam asks **Signed in. Run ‹tool› again?** and runs it only when you click **Run again**.
+- If the server still asks for sign-in right after you signed in, MCPJam does not retry. The call fails with a message saying the server still asked for sign-in. Your account may not have access to that tool.
+
+## Which servers can sign in
+
+Whether MCPJam can start a sign-in depends on the server's authentication setting:
+
+| Authentication | What happens on a challenge |
+| --- | --- |
+| **Auto**, connected without a token | Connect card, sign-in, then the call runs again |
+| **OAuth** | Connect card, sign-in, then the call runs again |
+| **No Authentication** | No sign-in. A hint says the server asked for sign-in but its authentication is set to None; switch it to Auto or OAuth |
+| **Bearer Token** | No sign-in. A hint says the server rejected the static credential; update the token or headers |
+| Enterprise-managed (XAA) | No interactive sign-in. A hint asks you to check the server's XAA configuration |
+
+### Shared connections
+
+In a hosted project, a server can use a connection someone else set up. Signing in never replaces that shared credential. You sign in with your own account, and MCPJam does not re-run the earlier call with it. Instead it says: "Signed in with your own account. Run the tool again to use it; the earlier call was not retried."
+
+## The CLI, tests, and evals never sign in
+
+Non-interactive surfaces never start a sign-in, whatever the client's settings say. This covers the CLI, `mcpjam test`, and evals. They report the challenge so you can sign in yourself.
+
+A 401 challenge fails the command with `AUTH_REQUIRED`. The details carry the parsed challenge and the command that signs in:
+
+```json
+{
+  "error": {
+    "code": "AUTH_REQUIRED",
+    "message": "...",
+    "details": {
+      "challenge": { "source": "http_401", "requiredScope": "files.read" },
+      "hint": "Sign in with `mcpjam oauth login --url <server-url> --scopes \"files.read\" --credentials-out <file>`, then retry with `--credentials-file <file>`."
+    }
+  }
+}
+```
+
+`--scopes` appears only when the challenge named a scope. A 403 `insufficient_scope` challenge reports `INSUFFICIENT_SCOPE` with the same kind of hint.
+
+`mcpjam test` keeps running when a tool call asks for sign-in. The affected case gets an `AUTHORIZATION_REQUIRED` issue, its iterations record the parsed challenge, and the command prints the `mcpjam oauth login` command for each server that asked, with where to put the credentials it saves. The exit code is unchanged. Evals record the challenge on the iteration with a remediation, for example connecting the server with OAuth in the eval environment.
+
+A `_meta` challenge is a completed result, so `mcpjam tools call` prints the result unchanged and adds `_authChallenge` next to it, with the parsed challenge and the same hint. The CLI adds `_authChallenge`; it is not part of the server's result.
+
+The [public API](/reference/public-api#errors) reports the same challenges: `AUTH_REQUIRED` (HTTP 403) with `details.authChallenge` for a 401, and an `authChallenge` field next to a `_meta`-challenged tool result.
+
+## Test your server with the CLI
+
+1. Check that the anonymous surface works. The probe sends an unauthenticated `initialize`, so a lazy-auth server reports `ready`, not `oauth_required`:
+
+   ```bash
+   mcpjam server probe --url https://your-server.com/mcp --format json
+   mcpjam tools list --url https://your-server.com/mcp --format json
+   ```
+
+2. Call a protected tool without credentials, and check that the challenge is the one you meant to send:
+
+   ```bash
+   mcpjam tools call --url https://your-server.com/mcp \
+     --tool-name list_files --tool-args '{}' --format json
+   ```
+
+   - For a 401 challenge, expect `AUTH_REQUIRED` with `details.challenge`.
+   - For a `_meta` challenge, expect the `isError` result with `_authChallenge` next to it.
+
+3. Sign in, then call the tool again with the saved credentials:
+
+   ```bash
+   mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json
+   mcpjam tools call --url https://your-server.com/mcp \
+     --tool-name list_files --tool-args '{}' --credentials-file creds.json
+   ```
+
+To see what a specific host would do, connect the server in the inspector with **Auto** authentication, select the Claude or ChatGPT preset client, and run the protected tool from the **Tools** tab.

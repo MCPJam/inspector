@@ -13,6 +13,13 @@
  * scopes, bounded per session). Treat every field as untrusted when rendering.
  */
 
+import {
+  parseAuthChallengeSignal,
+  type AuthChallengeSignal,
+} from "@mcpjam/sdk/browser";
+
+export type { AuthChallengeSignal };
+
 /** The `WWW-Authenticate` step-up challenge surfaced on a failed MCP request. */
 export type InsufficientScopeChallenge = {
   requiredScope?: string;
@@ -38,35 +45,27 @@ export function parseInsufficientScopeChallenge(
     typeof r.resourceMetadataUrl === "string" ? r.resourceMetadataUrl : undefined;
   const errorDescription =
     typeof r.errorDescription === "string" ? r.errorDescription : undefined;
-  if (!requiredScope && !resourceMetadataUrl && !errorDescription) {
-    return undefined;
-  }
+  // An empty object is a bare `insufficient_scope` (no scope, no pointer):
+  // the server sends one only for a real step-up challenge.
   return { requiredScope, resourceMetadataUrl, errorDescription };
 }
 
 /**
- * Whether a parsed challenge can actually DRIVE a step-up re-authorization.
- * Actionable when it names a non-empty `requiredScope` (the scope to fold into
- * the re-auth union) OR a non-empty `resourceMetadataUrl` — a protected-
- * resource-metadata pointer the OAuth flow now consumes to discover the
- * server's authoritative scopes/AS at a non-default location (SEP-2350
- * follow-up to #3427). An `errorDescription`-only challenge stays display-only:
- * there is nothing to re-authorize with, so redirecting for it would burn the
- * bounded one-attempt budget. Every surface gates the ACTION on this predicate
- * while still surfacing the underlying error text for the user/model.
+ * Whether a parsed challenge can DRIVE a step-up re-authorization.
+ *
+ * Every `insufficient_scope` challenge is actionable. One naming a
+ * `requiredScope` folds it into the re-auth union; one carrying a
+ * `resourceMetadataUrl` lets discovery find the server's authoritative scopes;
+ * one with neither (a bare `Bearer error="insufficient_scope"`, or only an
+ * `error_description`) re-authorizes with the previously requested scopes
+ * unioned with discovery's `scopes_supported`, which is the scope selection the
+ * MCP authorization spec and Claude use. The bounded one-attempt budget still
+ * applies, so a server that keeps refusing cannot loop the user.
  */
 export function isActionableStepUpChallenge(
   challenge: InsufficientScopeChallenge | undefined,
 ): challenge is InsufficientScopeChallenge {
-  // Trim before the non-empty check: a whitespace-only `requiredScope` (e.g.
-  // `"   "`) is truthy but parses to zero scopes downstream (the orchestrator
-  // splits on `[,\s]+` and drops empties), so treating it as actionable would
-  // burn the bounded step-up budget on a redirect that widens nothing. The
-  // same trim guards a whitespace-only `resourceMetadataUrl`. Such values are
-  // display-only, like an `errorDescription`.
-  return Boolean(
-    challenge?.requiredScope?.trim() || challenge?.resourceMetadataUrl?.trim(),
-  );
+  return challenge !== undefined;
 }
 
 /**
@@ -79,20 +78,51 @@ export function isActionableStepUpChallenge(
  */
 export class McpRequestError extends Error {
   insufficientScope?: InsufficientScopeChallenge;
+  /** The typed sign-in challenge, stamped server-side with the auth method. */
+  authChallenge?: AuthChallengeSignal;
   status?: number;
 
   constructor(
     message: string,
     opts?: {
       insufficientScope?: InsufficientScopeChallenge;
+      authChallenge?: AuthChallengeSignal;
       status?: number;
     },
   ) {
     super(message);
     this.name = "McpRequestError";
     this.insufficientScope = opts?.insufficientScope;
+    this.authChallenge = opts?.authChallenge;
     this.status = opts?.status;
   }
+}
+
+/**
+ * Narrow an untrusted wire `authChallenge` to the typed signal. The server
+ * puts it on `mcpError.authChallenge` (local), `details.authChallenge`
+ * (hosted), or beside a completed result.
+ */
+export function parseAuthChallenge(
+  raw: unknown,
+): AuthChallengeSignal | undefined {
+  return parseAuthChallengeSignal(raw);
+}
+
+/**
+ * Pull a sign-in challenge off a caught error regardless of transport shape:
+ * an `McpRequestError.authChallenge` (local throw path) or a hosted
+ * `WebApiError`'s `details.authChallenge`.
+ */
+export function authChallengeFromError(
+  error: unknown,
+): AuthChallengeSignal | undefined {
+  if (error instanceof McpRequestError && error.authChallenge) {
+    return parseAuthChallenge(error.authChallenge);
+  }
+  const details = (error as { details?: { authChallenge?: unknown } })
+    ?.details;
+  return parseAuthChallenge(details?.authChallenge);
 }
 
 /**

@@ -26,8 +26,14 @@ import {
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
+  peekPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
 } from "@/lib/scope-step-up-replay";
+import {
+  clearAuthChallengeCards,
+  presentAuthChallenge,
+} from "@/lib/auth-challenge-lifecycle";
+import { toast } from "sonner";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import {
   mcpCallToolResultToModelOutput,
@@ -71,6 +77,11 @@ export interface UseToolExecutionOptions {
   setToolOutput: (output: unknown) => void;
   setToolResponseMetadata: (meta: Record<string, unknown> | null) => void;
   modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
+  /**
+   * The listed tools, read for `readOnlyHint`: only a read-only call is run
+   * again on its own after a mid-session sign-in.
+   */
+  tools?: Record<string, { annotations?: unknown }>;
 }
 
 /**
@@ -128,6 +139,11 @@ export interface ExecuteToolInvocationOptions {
   serverName?: string;
   /** Internal: the one post-OAuth replay must never start another redirect. */
   scopeStepUpReplay?: boolean;
+  /**
+   * The call comes from an inspector command or an agent, not a click. It
+   * never offers sign-in: a challenge is reported to the caller instead.
+   */
+  fromCommand?: boolean;
 }
 
 export interface InjectToolResultOptions {
@@ -225,6 +241,7 @@ export function useToolExecution({
   setToolOutput,
   setToolResponseMetadata,
   modelVisibleMcpToolResults,
+  tools,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
   // Pending execution to inject into chat thread
   const [pendingExecution, setPendingExecution] =
@@ -241,12 +258,58 @@ export function useToolExecution({
   const sharedAppState = useOptionalSharedAppState();
   const resetStepUpOnSuccess = useCallback(
     (name: string | undefined, toolName: string) => {
-      resetScopeStepUp(name ? sharedAppState?.servers[name] : undefined, {
+      const liveServer = name ? sharedAppState?.servers[name] : undefined;
+      resetScopeStepUp(liveServer, {
         method: "tools/call",
         operation: toolName,
       });
+      if (liveServer) clearAuthChallengeCards(liveServer.name);
     },
     [sharedAppState],
+  );
+
+  // A mid-session sign-in challenge on this call: a Connect card in the
+  // tools rail, or the reason there is none. Returns whether the response
+  // carried one (a challenged result is not a success).
+  const presentAuthChallengeFromResponse = useCallback(
+    (
+      name: string,
+      toolName: string,
+      parameters: Record<string, unknown>,
+      response: ToolExecutionResponse,
+    ): boolean => {
+      const signal =
+        "authChallenge" in response ? response.authChallenge : undefined;
+      if (!signal || signal.source === "http_403_insufficient_scope") {
+        return false;
+      }
+      const annotations = tools?.[toolName]?.annotations as
+        | { readOnlyHint?: unknown }
+        | undefined;
+      void presentAuthChallenge({
+        server: sharedAppState?.servers[name],
+        signal,
+        surface: "playground",
+        operation: { method: "tools/call", operation: toolName },
+        readOnly: annotations?.readOnlyHint === true,
+        ...("toolSecuritySchemes" in response && response.toolSecuritySchemes
+          ? { schemes: response.toolSecuritySchemes }
+          : {}),
+        replay: {
+          kind: "tool",
+          surface: "playground",
+          serverName: name,
+          toolName,
+          parameters,
+        },
+      }).then((presentation) => {
+        if (presentation.kind === "notice") {
+          setExecutionError(presentation.message);
+        }
+      });
+      return true;
+    },
+    [sharedAppState, setExecutionError, tools],
   );
 
   const driveStepUpFromResponse = useCallback(
@@ -279,6 +342,12 @@ export function useToolExecution({
             toolName,
             parameters,
           },
+          // A call that may change something asks "Run again?" after the
+          // re-authorization instead of replaying its saved arguments.
+          requiresConfirmation:
+            (tools?.[toolName]?.annotations as
+              | { readOnlyHint?: unknown }
+              | undefined)?.readOnlyHint !== true,
         });
       }
       driveScopeStepUpFromChallenge(
@@ -287,7 +356,7 @@ export function useToolExecution({
         { method: "tools/call", operation: toolName },
       );
     },
-    [sharedAppState],
+    [sharedAppState, tools],
   );
 
   const storeCompletedToolResult = useCallback(
@@ -402,6 +471,14 @@ export function useToolExecution({
               response,
             );
           }
+          if (!options?.scopeStepUpReplay && !options?.fromCommand) {
+            presentAuthChallengeFromResponse(
+              effectiveServerName,
+              effectiveToolName,
+              params,
+              response,
+            );
+          }
           return {
             ok: false,
             toolName: effectiveToolName,
@@ -460,8 +537,21 @@ export function useToolExecution({
           success: true,
         });
 
-        // SEP-2350: a successful call clears the bounded step-up counter.
-        resetStepUpOnSuccess(effectiveServerName, effectiveToolName);
+        // SEP-2350: a successful call clears the bounded step-up counter. A
+        // result carrying a sign-in challenge is a refusal, not a success,
+        // and the one post-sign-in replay never prompts again.
+        if (response.authChallenge) {
+          if (!options?.scopeStepUpReplay && !options?.fromCommand) {
+            presentAuthChallengeFromResponse(
+              effectiveServerName,
+              effectiveToolName,
+              params,
+              response,
+            );
+          }
+        } else {
+          resetStepUpOnSuccess(effectiveServerName, effectiveToolName);
+        }
 
         return {
           ok: true,
@@ -507,6 +597,7 @@ export function useToolExecution({
       storeCompletedToolResult,
       modelVisibleMcpToolResults,
       driveStepUpFromResponse,
+      presentAuthChallengeFromResponse,
       resetStepUpOnSuccess,
     ]
   );
@@ -515,6 +606,46 @@ export function useToolExecution({
     if (!serverName) return;
     const liveServer = sharedAppState?.servers[serverName];
     if (liveServer?.connectionStatus !== "connected") return;
+    // A call that may change something is never re-run on its own after a
+    // sign-in: the user confirms it first.
+    const waiting = peekPendingDirectScopeStepUpReplay();
+    if (
+      waiting?.phase === "ready" &&
+      waiting.requiresConfirmation &&
+      waiting.descriptor.kind === "tool" &&
+      waiting.descriptor.serverName === serverName &&
+      waiting.descriptor.surface === "playground"
+    ) {
+      const toolName = waiting.descriptor.toolName;
+      toast(`Signed in. Run ${toolName} again?`, {
+        id: `auth-challenge-run-again:${serverName}`,
+        duration: Infinity,
+        action: {
+          label: "Run again",
+          onClick: () => {
+            const claimed = claimPendingDirectScopeStepUpReplay({
+              serverName,
+              surface: "playground",
+            });
+            if (!claimed || claimed.descriptor.kind !== "tool") return;
+            const descriptor = claimed.descriptor;
+            void executeTool({
+              serverName: descriptor.serverName,
+              toolName: descriptor.toolName,
+              parameters: descriptor.parameters,
+              scopeStepUpReplay: true,
+            }).finally(() => {
+              clearPendingDirectScopeStepUpReplay();
+            });
+          },
+        },
+        cancel: {
+          label: "Not now",
+          onClick: () => clearPendingDirectScopeStepUpReplay(),
+        },
+      });
+      return;
+    }
     const pending = claimPendingDirectScopeStepUpReplay({
       serverName,
       surface: "playground",
