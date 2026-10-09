@@ -9,7 +9,7 @@ import { useActorKey } from "@/hooks/use-actor-key";
 
 /**
  * The person properties that name a human. Withheld from members of an
- * organization that opted out of session recording.
+ * organization with enterprise privacy.
  */
 const IDENTIFYING_PERSON_PROPERTIES = [
   "email",
@@ -25,16 +25,18 @@ const IDENTIFYING_PERSON_PROPERTIES = [
  * guests. Reset only on a true identity switch away from an authed user, so
  * the same browser revisiting as a guest keeps a stable distinct_id.
  *
- * `identityOptOut` is `resolveIdentityOptOut` over the user's organizations.
- * Name, email and occupation are sent only when it is exactly `false`: while
- * the list is still loading (`undefined`) the actor is identified by id
- * alone, and the rest follows once it is known — so a member of an opted-out
- * organization never has them sent, not even on the first load.
+ * `enterprisePrivacyMember` is `resolveEnterprisePrivacyMember` over the
+ * user's organizations. Name, email and occupation are sent only when it is
+ * exactly `false`: while the list is still loading (`undefined`) the actor is
+ * identified by id alone, and the rest follows once it is known — so a member
+ * of an organization with enterprise privacy never has them sent, not even
+ * on the first load. This is independent of the session's replay level: a
+ * desktop session is replayed `masked` but identifies as before.
  */
 export function usePostHogIdentify({
-  identityOptOut,
+  enterprisePrivacyMember,
 }: {
-  identityOptOut: boolean | undefined;
+  enterprisePrivacyMember: boolean | undefined;
 }) {
   const posthog = usePostHog();
   const { user, getAccessToken } = useAuth();
@@ -92,7 +94,7 @@ export function usePostHogIdentify({
     let personProperties: Record<string, string | null | undefined> = {
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     };
-    if (isAuthedActor && user && identityOptOut === false) {
+    if (isAuthedActor && user && enterprisePrivacyMember === false) {
       personProperties = {
         ...personProperties,
         email: user.email,
@@ -115,13 +117,13 @@ export function usePostHogIdentify({
     posthog.identify(actorKey, personProperties);
     if (
       isAuthedActor &&
-      identityOptOut === true &&
+      enterprisePrivacyMember === true &&
       identityUnsetForActorRef.current !== actorKey
     ) {
       // Person properties outlive the page: someone identified before their
-      // organization opted out still carries a name and email on their
-      // PostHog person. Clear them once per actor per load — after identify,
-      // so a first-time merge has already landed on the real person.
+      // organization turned on enterprise privacy still carries a name and
+      // email on their PostHog person. Clear them once per actor per load —
+      // after identify, so a first-time merge has landed on the real person.
       identityUnsetForActorRef.current = actorKey;
       posthog.unsetPersonProperties?.(IDENTIFYING_PERSON_PROPERTIES);
     }
@@ -136,5 +138,5 @@ export function usePostHogIdentify({
         getAccessToken: getAccessTokenRef.current,
       });
     }
-  }, [posthog, actorKey, user, convexUser, identityOptOut]);
+  }, [posthog, actorKey, user, convexUser, enterprisePrivacyMember]);
 }

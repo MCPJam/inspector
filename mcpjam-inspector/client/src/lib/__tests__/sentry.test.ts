@@ -4,12 +4,14 @@ const init = vi.fn();
 const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
+const addIntegration = vi.fn();
 
 vi.mock("@sentry/react", () => ({
   init,
   replayIntegration,
   browserTracingIntegration,
   getClient,
+  addIntegration,
 }));
 
 /** Stand in for the Replay integration instance the client hands back. */
@@ -116,15 +118,17 @@ describe("client sentry init", () => {
 
     initSentry();
     const config = init.mock.calls[0][0];
-    // The integration must not even LOAD — zero rates alone would still ship
-    // the recorder and open its buffers.
     expect(replayIntegration).not.toHaveBeenCalled();
     expect(browserTracingIntegration).toHaveBeenCalled();
     expect(config.integrations).toHaveLength(1);
   });
 
-  it("records replays and wires both integrations on hosted", async () => {
+  it("sets hosted sample rates but leaves the recorder to the privacy level", async () => {
+    // Constructing it here and stopping it later would not do:
+    // `replay.stop()` FLUSHES the buffered segment, which is exactly what a
+    // `pending` session or a `/results/<token>` page must keep out.
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.resetModules();
     const { initSentry } = await import("../sentry");
 
@@ -132,56 +136,50 @@ describe("client sentry init", () => {
     const config = init.mock.calls[0][0];
     expect(config.replaysSessionSampleRate).toBe(0.1);
     expect(config.replaysOnErrorSampleRate).toBe(1.0);
-    expect(replayIntegration).toHaveBeenCalled();
-    expect(config.integrations).toHaveLength(2);
-  });
-
-  it("never starts a replay for a session that LOADS on /results/", async () => {
-    // The runtime guard cannot rescue this case: `replay.stop()` FLUSHES the
-    // buffered segment, and that segment is the token-bearing page. The only
-    // safe answer is to never construct the recorder for this session.
-    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-    vi.stubGlobal("location", {
-      hostname: "app.mcpjam.com",
-      origin: "https://app.mcpjam.com",
-      pathname: "/results/super-secret-token",
-    });
-    vi.resetModules();
-    const { initSentry } = await import("../sentry");
-
-    initSentry();
-    const config = init.mock.calls[0][0];
     expect(replayIntegration).not.toHaveBeenCalled();
-    expect(config.replaysSessionSampleRate).toBe(0);
     expect(config.integrations).toHaveLength(1);
   });
 
-  it("never starts a replay for a load after an opted-out organization was in view", async () => {
-    // Same reason as /results/: the organization list arrives after init,
-    // and stopping then would flush what was already buffered.
-    window.localStorage.setItem("mcpjam:session-recording-org-opt-out", "1");
+  it("scrubs the replay event's URL list short of full", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.resetModules();
+    const handlers: Record<string, (event: Record<string, unknown>) => void> =
+      {};
+    getClient.mockReturnValue({
+      on: (hook: string, fn: (event: Record<string, unknown>) => void) => {
+        handlers[hook] = fn;
+      },
+    });
     const { initSentry } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    initSentry();
 
-    try {
-      initSentry();
-      const config = init.mock.calls[0][0];
-      expect(replayIntegration).not.toHaveBeenCalled();
-      expect(config.replaysSessionSampleRate).toBe(0);
-      expect(config.integrations).toHaveLength(1);
-    } finally {
-      window.localStorage.removeItem("mcpjam:session-recording-org-opt-out");
-    }
+    const replayEvent = () => ({
+      type: "replay_event",
+      urls: ["https://app.mcpjam.com/servers/acme"],
+    });
+    setSessionPrivacy("masked");
+    const masked = replayEvent();
+    handlers.preprocessEvent(masked);
+    expect(masked.urls).toEqual(["https://app.mcpjam.com/servers/[name]"]);
+
+    setSessionPrivacy("full");
+    const full = replayEvent();
+    handlers.preprocessEvent(full);
+    expect(full.urls).toEqual(["https://app.mcpjam.com/servers/acme"]);
   });
 });
 
-describe("syncSentryReplayForPath", () => {
+describe("syncSentryReplay", () => {
   beforeEach(() => {
     vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
     vi.stubGlobal("__BUILD_SURFACE__", "npm");
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     getClient.mockReset();
+    addIntegration.mockReset();
+    replayIntegration.mockClear();
     vi.resetModules();
   });
 
@@ -191,15 +189,72 @@ describe("syncSentryReplayForPath", () => {
     vi.resetModules();
   });
 
+  /** `../sentry` with the session already at `level`. */
+  async function loadAt(
+    level: import("../session-privacy").SessionPrivacy | null,
+  ) {
+    const privacy = await import("../session-privacy");
+    if (level) privacy.setSessionPrivacy(level);
+    return { ...(await import("../sentry")), ...privacy };
+  }
+
+  describe("constructing the recorder", () => {
+    function clientWithoutReplay() {
+      getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    }
+
+    it("never while the level is pending", async () => {
+      clientWithoutReplay();
+      const { syncSentryReplay } = await loadAt(null);
+
+      syncSentryReplay("/servers");
+      expect(addIntegration).not.toHaveBeenCalled();
+    });
+
+    it("once the level allows it, with the masking options", async () => {
+      clientWithoutReplay();
+      const { syncSentryReplay, SENTRY_REPLAY_OPTIONS } = await loadAt("full");
+
+      syncSentryReplay("/servers");
+      syncSentryReplay("/tools");
+
+      expect(replayIntegration).toHaveBeenCalledTimes(1);
+      expect(replayIntegration).toHaveBeenCalledWith(SENTRY_REPLAY_OPTIONS);
+      expect(addIntegration).toHaveBeenCalledTimes(1);
+    });
+
+    it("not on a hard load onto /results/, only after leaving it", async () => {
+      clientWithoutReplay();
+      const { syncSentryReplay } = await loadAt("masked");
+
+      syncSentryReplay("/results/secret-token");
+      expect(addIntegration).not.toHaveBeenCalled();
+
+      syncSentryReplay("/servers");
+      expect(addIntegration).toHaveBeenCalledTimes(1);
+    });
+
+    it("never on an off surface", async () => {
+      vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "true");
+      vi.resetModules();
+      clientWithoutReplay();
+      const { syncSentryReplay, currentSessionPrivacy } = await loadAt(null);
+
+      expect(currentSessionPrivacy()).toBe("off");
+      syncSentryReplay("/servers");
+      expect(addIntegration).not.toHaveBeenCalled();
+    });
+  });
+
   it("stops an active replay on the way into /results/ and resumes it on the way out", async () => {
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(true);
 
-    syncSentryReplayForPath("/results/secret-token");
+    syncSentryReplay("/results/secret-token");
     expect(replay.stop).toHaveBeenCalledTimes(1);
     expect(replay.start).not.toHaveBeenCalled();
 
-    syncSentryReplayForPath("/servers");
+    syncSentryReplay("/servers");
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
 
@@ -207,15 +262,15 @@ describe("syncSentryReplayForPath", () => {
     // `stop()` clears the replay id, so re-reading it on the second
     // credential path would disarm the resume and the eventual exit would
     // never restart the recording.
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(true);
     replay.stop.mockImplementation(() =>
       replay.getReplayId.mockReturnValue(undefined),
     );
 
-    syncSentryReplayForPath("/results/token-a");
-    syncSentryReplayForPath("/results/token-b");
-    syncSentryReplayForPath("/servers");
+    syncSentryReplay("/results/token-a");
+    syncSentryReplay("/results/token-b");
+    syncSentryReplay("/servers");
 
     expect(replay.stop).toHaveBeenCalledTimes(2);
     expect(replay.start).toHaveBeenCalledTimes(1);
@@ -225,95 +280,64 @@ describe("syncSentryReplayForPath", () => {
     // `start()` bypasses `replaysSessionSampleRate`, so resuming what this
     // guard did not stop would record 100% of the sessions that ever touched
     // a results link.
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(false);
 
-    syncSentryReplayForPath("/results/secret-token");
-    syncSentryReplayForPath("/servers");
+    syncSentryReplay("/results/secret-token");
+    syncSentryReplay("/servers");
 
     expect(replay.stop).toHaveBeenCalledTimes(1);
     expect(replay.start).not.toHaveBeenCalled();
   });
 
   it("never starts a replay on an ordinary navigation", async () => {
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
     const replay = stubReplay(true);
 
-    syncSentryReplayForPath("/servers");
-    syncSentryReplayForPath("/tools");
+    syncSentryReplay("/servers");
+    syncSentryReplay("/tools");
 
     expect(replay.start).not.toHaveBeenCalled();
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
-  describe("organization opt-out", () => {
-    afterEach(() => {
-      window.localStorage.removeItem("mcpjam:session-recording-org-opt-out");
-    });
+  it("needs no restart between full and masked: it masks at both", async () => {
+    const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
+    const replay = stubReplay(true);
 
-    it("stops an active replay while an opted-out organization is in view and resumes it on a switch", async () => {
-      const { syncSentryReplayForPath } = await import("../sentry");
-      const { setOrganizationRecordingOptOut } =
-        await import("../PosthogUtils");
-      const replay = stubReplay(true);
-      replay.stop.mockImplementation(() =>
-        replay.getReplayId.mockReturnValue(undefined),
-      );
+    syncSentryReplay("/servers");
+    setSessionPrivacy("masked");
+    syncSentryReplay("/servers");
+    setSessionPrivacy("full");
+    syncSentryReplay("/servers");
 
-      setOrganizationRecordingOptOut(true);
-      syncSentryReplayForPath("/servers");
-      syncSentryReplayForPath("/tools");
-      expect(replay.stop).toHaveBeenCalledTimes(2);
-      expect(replay.start).not.toHaveBeenCalled();
+    expect(replay.stop).not.toHaveBeenCalled();
+    expect(replay.start).not.toHaveBeenCalled();
+  });
 
-      setOrganizationRecordingOptOut(false);
-      syncSentryReplayForPath("/tools");
-      expect(replay.start).toHaveBeenCalledTimes(1);
-    });
+  it("holds the replay stopped while the level drops back to pending", async () => {
+    const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
+    const replay = stubReplay(true);
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
 
-    it("does not resume a replay that was never running", async () => {
-      // `start()` bypasses `replaysSessionSampleRate`: an organization switch
-      // must not record a session sampling never selected.
-      const { syncSentryReplayForPath } = await import("../sentry");
-      const { setOrganizationRecordingOptOut } =
-        await import("../PosthogUtils");
-      const replay = stubReplay(false);
+    setSessionPrivacy("pending");
+    syncSentryReplay("/servers");
+    expect(replay.stop).toHaveBeenCalledTimes(1);
 
-      setOrganizationRecordingOptOut(true);
-      syncSentryReplayForPath("/servers");
-      setOrganizationRecordingOptOut(false);
-      syncSentryReplayForPath("/servers");
-
-      expect(replay.start).not.toHaveBeenCalled();
-    });
-
-    it("leaving /results/ does not resume while the organization still opts out", async () => {
-      const { syncSentryReplayForPath } = await import("../sentry");
-      const { setOrganizationRecordingOptOut } =
-        await import("../PosthogUtils");
-      const replay = stubReplay(true);
-      replay.stop.mockImplementation(() =>
-        replay.getReplayId.mockReturnValue(undefined),
-      );
-
-      syncSentryReplayForPath("/results/secret-token");
-      setOrganizationRecordingOptOut(true);
-      syncSentryReplayForPath("/servers");
-      expect(replay.start).not.toHaveBeenCalled();
-
-      setOrganizationRecordingOptOut(false);
-      syncSentryReplayForPath("/servers");
-      expect(replay.start).toHaveBeenCalledTimes(1);
-    });
+    setSessionPrivacy("masked");
+    syncSentryReplay("/servers");
+    expect(replay.start).toHaveBeenCalledTimes(1);
   });
 
   it("is a no-op on a self-hosted build", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
     vi.resetModules();
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt(null);
     const replay = stubReplay(true);
 
-    syncSentryReplayForPath("/results/secret-token");
+    syncSentryReplay("/results/secret-token");
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
@@ -321,14 +345,17 @@ describe("syncSentryReplayForPath", () => {
     // Deliberately on the hosted surface: with HOSTED_MODE off the function
     // returns at its first guard and never reaches `getClient()`, so the
     // assertion would pass no matter what the client guard did.
-    const { syncSentryReplayForPath } = await import("../sentry");
+    const { syncSentryReplay } = await loadAt("full");
 
     getClient.mockReturnValue(undefined);
-    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
+    expect(() => syncSentryReplay("/results/x")).not.toThrow();
+    expect(() => syncSentryReplay("/servers")).not.toThrow();
 
     getClient.mockReturnValue({ getIntegrationByName: () => undefined });
-    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
-    expect(() => syncSentryReplayForPath("/servers")).not.toThrow();
+    addIntegration.mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(() => syncSentryReplay("/servers")).not.toThrow();
 
     // posthog-js is not the only ad-block target; a client that throws on
     // lookup must not take the render down either.
@@ -337,7 +364,7 @@ describe("syncSentryReplayForPath", () => {
         throw new Error("blocked");
       },
     });
-    expect(() => syncSentryReplayForPath("/results/x")).not.toThrow();
+    expect(() => syncSentryReplay("/results/x")).not.toThrow();
   });
 });
 

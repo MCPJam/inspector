@@ -11,7 +11,7 @@ const mockState = vi.hoisted(() => ({
     unsetPersonProperties: vi.fn(),
     updateFlags: vi.fn(),
   },
-  identityOptOut: false as boolean | undefined,
+  enterprisePrivacyMember: false as boolean | undefined,
   auth: {
     user: null as {
       id: string;
@@ -59,9 +59,11 @@ vi.mock("@/hooks/use-actor-key", () => ({
   useActorKey: () => mockState.actorKey,
 }));
 
-/** Reads the opt-out on every render, so a test can flip it between renders. */
+/** Reads membership on every render, so a test can flip it between renders. */
 const identify = () =>
-  usePostHogIdentify({ identityOptOut: mockState.identityOptOut });
+  usePostHogIdentify({
+    enterprisePrivacyMember: mockState.enterprisePrivacyMember,
+  });
 
 describe("usePostHogIdentify", () => {
   beforeEach(() => {
@@ -71,7 +73,7 @@ describe("usePostHogIdentify", () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.convexUser = null;
     mockState.actorKey = null;
-    mockState.identityOptOut = false;
+    mockState.enterprisePrivacyMember = false;
     mockState.detectPlatform.mockReturnValue("mac");
   });
 
@@ -315,7 +317,7 @@ describe("usePostHogIdentify", () => {
     });
   });
 
-  describe("organizations that opt out of session recording", () => {
+  describe("members of an organization with enterprise privacy", () => {
     beforeEach(() => {
       mockState.auth.user = {
         id: "user_123",
@@ -329,7 +331,7 @@ describe("usePostHogIdentify", () => {
     });
 
     it("identifies by id alone until the organizations have loaded, then sends the rest", () => {
-      mockState.identityOptOut = undefined;
+      mockState.enterprisePrivacyMember = undefined;
 
       const { rerender } = renderHook(identify);
 
@@ -342,7 +344,7 @@ describe("usePostHogIdentify", () => {
         user_id: "user_123",
       });
 
-      mockState.identityOptOut = false;
+      mockState.enterprisePrivacyMember = false;
       rerender();
 
       expect(mockState.posthog.identify).toHaveBeenLastCalledWith("user_123", {
@@ -356,11 +358,11 @@ describe("usePostHogIdentify", () => {
       expect(mockState.posthog.unsetPersonProperties).not.toHaveBeenCalled();
     });
 
-    it("never sends name, email or occupation for a member of an opted-out organization", () => {
-      mockState.identityOptOut = undefined;
+    it("never sends name, email or occupation for a member", () => {
+      mockState.enterprisePrivacyMember = undefined;
 
       const { rerender } = renderHook(identify);
-      mockState.identityOptOut = true;
+      mockState.enterprisePrivacyMember = true;
       rerender();
 
       for (const [, properties] of mockState.posthog.identify.mock.calls) {
@@ -368,8 +370,8 @@ describe("usePostHogIdentify", () => {
       }
     });
 
-    it("clears identity sent before the organization opted out, once per actor", () => {
-      mockState.identityOptOut = true;
+    it("clears identity sent before enterprise privacy was on, once per actor", () => {
+      mockState.enterprisePrivacyMember = true;
 
       const { rerender } = renderHook(identify);
       rerender();
@@ -395,7 +397,7 @@ describe("usePostHogIdentify", () => {
       mockState.auth.user = null;
       mockState.convexAuth.isAuthenticated = false;
       mockState.actorKey = "guest_abc";
-      mockState.identityOptOut = true;
+      mockState.enterprisePrivacyMember = true;
 
       renderHook(identify);
 
@@ -406,7 +408,7 @@ describe("usePostHogIdentify", () => {
     });
 
     it("does not throw against a posthog-js without unsetPersonProperties", () => {
-      mockState.identityOptOut = true;
+      mockState.enterprisePrivacyMember = true;
       const { unsetPersonProperties } = mockState.posthog;
       // A partial stand-in, or a host pinning an older posthog-js.
       Reflect.deleteProperty(mockState.posthog, "unsetPersonProperties");

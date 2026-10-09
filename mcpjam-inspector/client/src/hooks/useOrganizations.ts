@@ -29,12 +29,13 @@ export interface Organization {
    */
   isPersonal?: boolean;
   /**
-   * The organization opted out of session recording: no replay (PostHog or
-   * Sentry) while it is in view, and its members are identified to analytics
-   * by id alone. Hand-mirrored from the organization row, which
-   * `getMyOrganizations` returns whole. See `resolveOrganizationRecordingOptOut`.
+   * Enterprise privacy: sessions with this organization in view are replayed
+   * `masked`, and its members are identified to analytics by id alone (see
+   * lib/session-privacy.ts). On automatically for Enterprise organizations;
+   * an explicit `false` turns it off. Hand-mirrored from the organization
+   * row, which `getMyOrganizations` returns whole.
    */
-  sessionRecordingOptOut?: boolean;
+  enterprisePrivacy?: boolean;
 }
 
 export const ORGANIZATION_CREATION_LIMIT = 1;

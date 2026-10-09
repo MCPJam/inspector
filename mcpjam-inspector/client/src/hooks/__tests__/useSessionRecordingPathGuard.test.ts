@@ -1,22 +1,18 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-  usePostHog,
-  getAppRouter,
-  syncSessionRecordingForPath,
-  syncSentryReplayForPath,
-} = vi.hoisted(() => ({
-  usePostHog: vi.fn(),
-  getAppRouter: vi.fn(),
-  syncSessionRecordingForPath: vi.fn(),
-  syncSentryReplayForPath: vi.fn(),
-}));
+const { usePostHog, getAppRouter, syncSessionRecording, syncSentryReplay } =
+  vi.hoisted(() => ({
+    usePostHog: vi.fn(),
+    getAppRouter: vi.fn(),
+    syncSessionRecording: vi.fn(),
+    syncSentryReplay: vi.fn(),
+  }));
 
 vi.mock("posthog-js/react", () => ({ usePostHog }));
 vi.mock("@/router-ref", () => ({ getAppRouter }));
-vi.mock("@/lib/PosthogUtils", () => ({ syncSessionRecordingForPath }));
-vi.mock("@/lib/sentry", () => ({ syncSentryReplayForPath }));
+vi.mock("@/lib/session-privacy", () => ({ syncSessionRecording }));
+vi.mock("@/lib/sentry", () => ({ syncSentryReplay }));
 
 import { useSessionRecordingPathGuard } from "../useSessionRecordingPathGuard";
 
@@ -34,13 +30,11 @@ describe("useSessionRecordingPathGuard", () => {
 
     renderHook(() => useSessionRecordingPathGuard());
 
-    expect(syncSessionRecordingForPath).toHaveBeenCalledWith(
+    expect(syncSessionRecording).toHaveBeenCalledWith(
       posthogClient,
       "/results/secret-token",
     );
-    expect(syncSentryReplayForPath).toHaveBeenCalledWith(
-      "/results/secret-token",
-    );
+    expect(syncSentryReplay).toHaveBeenCalledWith("/results/secret-token");
   });
 
   it("still guards Sentry Replay when PostHog is unavailable", () => {
@@ -52,10 +46,8 @@ describe("useSessionRecordingPathGuard", () => {
 
     renderHook(() => useSessionRecordingPathGuard());
 
-    expect(syncSessionRecordingForPath).not.toHaveBeenCalled();
-    expect(syncSentryReplayForPath).toHaveBeenCalledWith(
-      "/results/secret-token",
-    );
+    expect(syncSessionRecording).not.toHaveBeenCalled();
+    expect(syncSentryReplay).toHaveBeenCalledWith("/results/secret-token");
   });
 
   it.each([
@@ -74,18 +66,18 @@ describe("useSessionRecordingPathGuard", () => {
     renderHook(() => useSessionRecordingPathGuard());
     notify?.({ location: { pathname: "/results/another-token" } });
 
-    expect(syncSentryReplayForPath).toHaveBeenNthCalledWith(
+    expect(syncSentryReplay).toHaveBeenNthCalledWith(
       2,
       "/results/another-token",
     );
     if (client) {
-      expect(syncSessionRecordingForPath).toHaveBeenNthCalledWith(
+      expect(syncSessionRecording).toHaveBeenNthCalledWith(
         2,
         client,
         "/results/another-token",
       );
     } else {
-      expect(syncSessionRecordingForPath).not.toHaveBeenCalled();
+      expect(syncSessionRecording).not.toHaveBeenCalled();
     }
   });
 
