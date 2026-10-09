@@ -3268,7 +3268,7 @@ function ToolResultNumberFields<
               }
               availableTools={availableTools}
               readOnly={readOnly}
-              label="Only count this tool (optional)"
+              label="Only count this tool"
             />
           </details>
         ) : null}
@@ -3303,7 +3303,7 @@ function ToolResultNumberFields<
         onChange={(toolName) => onChange(withToolName(predicate, toolName))}
         availableTools={availableTools}
         readOnly={readOnly}
-        label={field === "count" ? "Only count this tool (optional)" : undefined}
+        label={field === "count" ? "Only count this tool" : undefined}
       />
     </div>
   );
