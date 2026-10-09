@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-09
+
+#### Changed
+
+- **Step-by-step case editor: "Expect a tool call" under every prompt** — in the Evaluate step-by-step editor (behind `evaluate-observe-first`), each prompt now offers an **Expect a tool call** button even when that prompt has no tool yet. Clicking it opens that prompt's tool picker and writes the chosen tool into that prompt's own steps, so the assertion grades that prompt's turn. Previously, adding a tool expectation to a later prompt required going through the generic assertion drawer. The button is not shown on a case that says no tool is called, on a pinned-first case, in a read-only view, or before the draft has a prompt step.
+
 ### 2026-10-07
 
 #### Added

@@ -345,6 +345,10 @@ function EvaluateTabContent({
   const handleRerunWithQuota = useCallback(
     async (...args: Parameters<typeof handlers.handleRerun>) => {
       if (!guardEvalIterationQuota()) {
+        if (args[1]?.throwOnFailure)
+          throw new Error(
+            evalRunsDisabledReason ?? "Eval iteration limit reached.",
+          );
         return;
       }
       const launch = await handlers.handleRerun(...args);
@@ -359,7 +363,7 @@ function EvaluateTabContent({
       }
       return launch;
     },
-    [guardEvalIterationQuota, handlers],
+    [guardEvalIterationQuota, handlers, evalRunsDisabledReason],
   );
 
   const handleRunTestCaseWithQuota = useCallback(

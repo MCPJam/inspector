@@ -1,3 +1,4 @@
+import type { CaseRunLaunchOptions } from "./types";
 import { useRunGroupSummaries } from "./use-run-group-summaries";
 import { useSelectedRun } from "./use-selected-run";
 import { JudgeInstructionsEditor } from "./judge-instructions-editor";
@@ -545,6 +546,8 @@ export function SuiteIterationsView({
       iterationOverride?: number;
       caseIds?: string[];
       skipJudge?: boolean;
+      ephemeralEnvironment?: boolean;
+      throwOnFailure?: boolean;
     },
   ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRunListItem) => void;
@@ -882,6 +885,7 @@ export function SuiteIterationsView({
         matchOptionsOverride?: EvalMatchOptions;
         iterationOverride?: number;
         ephemeralEnvironment?: boolean;
+        throwOnFailure?: boolean;
         caseIds?: string[];
         skipJudge?: boolean;
       },
@@ -900,9 +904,13 @@ export function SuiteIterationsView({
   const onRunCase = useCallback(
     async (
       caseId: string,
-      opts?: { iterationOverride?: number; skipJudge?: boolean },
+      opts?: CaseRunLaunchOptions,
     ) => {
-      await onRerunWithOverride(suite, { ...opts, caseIds: [caseId] });
+      const { suiteOverride, ...options } = opts ?? {};
+      await onRerunWithOverride(suiteOverride ?? suite, {
+        ...options,
+        caseIds: [caseId],
+      });
     },
     [onRerunWithOverride, suite],
   );
@@ -2177,6 +2185,15 @@ export function SuiteIterationsView({
                   simpleCaseEditor={evaluateCaseEditor}
                   observeFirst={evaluateObserveFirst}
                   onRunCase={onRunCase}
+                  launchReview={{
+                    projectId,
+                    suite,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}

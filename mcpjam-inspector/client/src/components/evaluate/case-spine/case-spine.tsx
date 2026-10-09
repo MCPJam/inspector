@@ -25,7 +25,7 @@ import { afterTheRunRows } from "./case-spine-model";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
-import { Target } from "lucide-react";
+import { Target, Wrench } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -34,6 +34,7 @@ import {
   newStepId,
   stepTurnIndices,
   type AssertStep,
+  type SpineAction,
   type TestStep,
 } from "@/shared/steps";
 import { blankPredicate } from "@/shared/predicate-kinds";
@@ -218,6 +219,12 @@ export function CaseSpine({
   const [pendingDelete, setPendingDelete] = useState<
     (DeleteActionPlan & { stepId: string }) | null
   >(null);
+  /**
+   * The prompt whose tool picker "Expect a tool call" opened. A prompt with no
+   * tool yet has no block to show one in, so the block is drawn once the author
+   * asks for it and stays for as long as the prompt has a tool.
+   */
+  const [toolPickerFor, setToolPickerFor] = useState<string | null>(null);
 
   const card = useMemo(
     () =>
@@ -461,6 +468,47 @@ export function CaseSpine({
     );
   };
 
+  // ── which prompt draws a tools block ───────────────────────────────────────
+
+  const routeKind = card.route.route?.kind;
+  // "Expect a tool call" needs somewhere to write. A negative case forbids the
+  // call, a pinned-first one has no model turn for it, and an empty draft has
+  // no prompt step yet for a tool to follow.
+  const canExpectTool =
+    !readOnly &&
+    steps.length > 0 &&
+    routeKind !== "noTool" &&
+    routeKind !== "locked";
+  const firstBlockShown = (action: SpineAction) =>
+    action.ordinal === 1 &&
+    (view.tools.length > 0 ||
+      toolsChoice === "noTool" ||
+      routeKind === "locked" ||
+      (canExpectTool && toolPickerFor === action.step.id));
+  const laterBlockShown = (action: SpineAction) =>
+    action.ordinal > 1 &&
+    ((laterTools.has(action.step.id) && routeKind === "tools") ||
+      (canExpectTool && toolPickerFor === action.step.id));
+  /** A later prompt's tools block, drawn from the case's route or, when the
+   * case has no tool yet, from an empty one. */
+  const laterRow = (action: SpineAction) => {
+    const tools = laterTools.get(action.step.id) ?? [];
+    const route = card.route.route;
+    return {
+      ...card.route,
+      key: `${card.route.key}:${action.step.id}`,
+      route:
+        route?.kind === "tools"
+          ? { ...route, tools }
+          : {
+              kind: "tools" as const,
+              tools,
+              matchMode: "capability" as const,
+              resolvedMatch: resolvedMatch,
+            },
+    };
+  };
+
   // ── the spine ──────────────────────────────────────────────────────────────
 
   return (
@@ -622,13 +670,32 @@ export function CaseSpine({
               <div className="flex justify-end">{defaultChecks}</div>
             ) : null}
 
+            {/* Every prompt can expect a tool call. The block that holds them
+                is drawn only for a prompt that already has one, so a prompt
+                without one offers the way in. */}
+            {action.step.kind === "prompt" &&
+            canExpectTool &&
+            !firstBlockShown(action) &&
+            !laterBlockShown(action) ? (
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 border-dashed text-xs"
+                  data-testid="spine-expect-tool"
+                  onClick={() => setToolPickerFor(action.step.id)}
+                >
+                  <Wrench className="size-3.5" aria-hidden />
+                  Expect a tool call
+                </Button>
+              </div>
+            ) : null}
+
             {/* The route question belongs to the action that opens the model
                 turn it grades — the first prompt, or the pinned call on a
                 model-free case. */}
-            {action.ordinal === 1 &&
-            (view.tools.length > 0 ||
-              toolsChoice === "noTool" ||
-              card.route.route?.kind === "locked") ? (
+            {firstBlockShown(action) ? (
               <ul className="space-y-1.5">
                 {results?.get(card.route.key) ? (
                   <TrialScorecardRow row={results.get(card.route.key)!} />
@@ -646,7 +713,10 @@ export function CaseSpine({
                     }
                     onChooseNoTool={chooseNoTool}
                     onChooseTools={chooseTools}
-                    onAddTool={addTool}
+                    onAddTool={(toolName) => {
+                      setToolPickerFor(null);
+                      addTool(toolName);
+                    }}
                     onSetKind={setKind}
                   />
                 )}
@@ -655,20 +725,11 @@ export function CaseSpine({
 
             {/* A later prompt's own tools, under that prompt: the runner grades
                 them against its turn. */}
-            {action.ordinal > 1 &&
-            laterTools.has(action.step.id) &&
-            card.route.route?.kind === "tools" ? (
+            {laterBlockShown(action) ? (
               <ul className="space-y-1.5">
                 <RouteRow
                   turnScoped
-                  row={{
-                    ...card.route,
-                    key: `${card.route.key}:${action.step.id}`,
-                    route: {
-                      ...card.route.route,
-                      tools: laterTools.get(action.step.id)!,
-                    },
-                  }}
+                  row={laterRow(action)}
                   availableTools={availableTools.map((tool) => tool.name)}
                   toolsStatus={toolsStatus}
                   onRetryTools={onRetryTools}
@@ -681,7 +742,7 @@ export function CaseSpine({
                       replaceActionTools(
                         steps,
                         action.step.id,
-                        laterTools.get(action.step.id)!,
+                        laterTools.get(action.step.id) ?? [],
                         next,
                       ),
                     )
@@ -689,7 +750,8 @@ export function CaseSpine({
                   onAddTool={(toolName) => {
                     const name = toolName.trim();
                     if (readOnly || !name) return;
-                    const current = laterTools.get(action.step.id)!;
+                    const current = laterTools.get(action.step.id) ?? [];
+                    setToolPickerFor(null);
                     onStepsChange(
                       replaceActionTools(steps, action.step.id, current, [
                         ...current,

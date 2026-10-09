@@ -147,6 +147,9 @@ vi.mock("../eval-target-matrix", () => ({
       <output data-testid="matrix">
         {JSON.stringify(modelSelectionsByHost)}
       </output>
+      <button disabled={disabled} onClick={() => onModelSelectionChange("mcpjam", {
+        includeClientDefaults: false, explicitTargets: [{ modelId: "sonnet" }],
+      })}>Add second client</button>
       <button
         disabled={disabled}
         onClick={() =>
@@ -1259,4 +1262,25 @@ it("finds or creates environments ten at a time, in order", async () => {
   expect(run.mock.calls.map(([batch]) => batch.length)).toEqual([10, 2]);
   await expect(inEnvironmentBatches([], run)).resolves.toEqual([]);
   expect(run).toHaveBeenCalledTimes(2);
+});
+
+it("uses the same ephemeral matrix for a single case across clients", async () => {
+  capabilities.value = { environmentDerivation: true };
+  mutation.mockResolvedValue([{ environment: { environmentId: "second-client-env" } }]);
+  const onStart = vi.fn();
+  render(<SuiteRunReview projectId="project" suite={suite} cases={cases}
+    caseTitle="Find my account" initialIterations={3} environments={environments}
+    hostNamesById={new Map()} onStart={onStart} onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add second client" }));
+  fireEvent.click(screen.getByRole("button", { name: "Run test case" }));
+  await waitFor(() => expect(onStart).toHaveBeenCalledWith(
+    expect.objectContaining({ environmentIds: ["env", "second-client-env"] }),
+    { iterationOverride: 3, ephemeralEnvironment: true, throwOnFailure: true },
+  ));
+  expect(mutation).toHaveBeenCalledWith("projectEnvironments:deriveEnvironments", {
+    projectId: "project", derivations: [expect.objectContaining({
+      sourceEnvironmentId: "env", overrides: expect.objectContaining({ hostId: "mcpjam", modelId: "sonnet" }),
+    })],
+  });
+  expect(suite.environmentIds).toEqual(["env"]);
 });

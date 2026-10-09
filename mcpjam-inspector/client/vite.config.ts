@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import posthogSourcemaps from "@posthog/rollup-plugin";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
@@ -329,6 +330,19 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_SHA__: JSON.stringify(
+        (() => {
+          try {
+            return execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: fileURLToPath(new URL(".", import.meta.url)),
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            }).trim();
+          } catch {
+            return "unknown";
+          }
+        })(),
+      ),
       __BUILD_SURFACE__: JSON.stringify(buildSurface),
       __MCPJAM_SDK_VERSION__: JSON.stringify(sdkVersion),
     },
