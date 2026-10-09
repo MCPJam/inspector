@@ -54,6 +54,7 @@ function GatedInner({
                   .getState()
                   .notifyLimitHit({
                     organizationId: organizationId ?? undefined,
+                    userInitiated: true,
                   })
             : onTopUp
           : undefined

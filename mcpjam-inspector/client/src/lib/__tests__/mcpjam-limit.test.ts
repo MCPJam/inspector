@@ -22,6 +22,8 @@ beforeEach(() => {
     hasPendingLimit: false,
     outOfCreditsHit: false,
     outOfCreditsOrganizationId: null,
+    outOfCreditsDismissed: false,
+    outOfCreditsDismissedOrganizationId: null,
     isOpen: false,
     intent: null,
     organizationId: null,
@@ -620,6 +622,95 @@ describe("credits held by in-flight requests", () => {
       }),
     ).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+});
+
+describe("a dismissed out-of-credits dialog", () => {
+  const EXHAUSTED =
+    "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+  const exhausted = (organizationId?: string) =>
+    notifyMCPJamLimitError({
+      code: "user_rate_limit",
+      message: EXHAUSTED,
+      ...(organizationId ? { organizationId } : {}),
+    });
+  const store = useMCPJamLimitDialogStore;
+  const dismissFirst = (organizationId?: string) => {
+    store.getState().setAuthStatus("signedIn");
+    exhausted(organizationId);
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().dismiss();
+  };
+
+  it("stays closed for the next blocked send, but still locks the models", () => {
+    dismissFirst();
+    store.getState().clearOutOfCreditsHit();
+
+    exhausted();
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().outOfCreditsHit).toBe(true);
+  });
+
+  it("does not hold a notice while auth loads, to open it at sign-in", () => {
+    dismissFirst();
+    store.getState().setAuthStatus("loading");
+
+    exhausted();
+    store.getState().setAuthStatus("signedIn");
+    expect(store.getState().isOpen).toBe(false);
+  });
+
+  it("still opens for a shortfall, which is about one request", () => {
+    dismissFirst();
+
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    expect(store.getState().isOpen).toBe(true);
+    expect(store.getState().shortfall).toEqual({
+      creditsRemaining: 23,
+      creditsRequired: 30,
+    });
+  });
+
+  it("still opens when the user asks for it", () => {
+    dismissFirst();
+
+    store.getState().notifyLimitHit({ userInitiated: true });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once a purchase begins", () => {
+    dismissFirst("org-a");
+    store.getState().forgetNotifiedWaves("org-a");
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once credits come back", () => {
+    dismissFirst("org-a");
+    store.getState().clearOutOfCreditsDismissed("org-a");
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("still opens for another organization", () => {
+    dismissFirst("org-a");
+
+    exhausted("org-b");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("is not set by closing a shortfall, or by a close the user did not make", () => {
+    store.getState().setAuthStatus("signedIn");
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    store.getState().dismiss();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
+
+    store.getState().close();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
   });
 });
 

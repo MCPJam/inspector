@@ -102,6 +102,10 @@ import {
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
   createInspectorCommandClientError,
@@ -419,6 +423,8 @@ interface TestTemplateEditorProps {
   >;
   /** Shared quota, sandbox, or launch-in-progress block from the suite view. */
   evalRunsDisabledReason?: string | null;
+  /** The org's out-of-credits wording, with its reset time, from the suite view. */
+  outOfCreditsReason?: string | null;
   /**
    * Launch a run of THIS case only, as a suite run.
    *
@@ -1039,6 +1045,7 @@ export function TestTemplateEditor({
   onRunCase,
   launchReview,
   evalRunsDisabledReason: evalRunsDisabledReasonProp,
+  outOfCreditsReason = null,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -2305,6 +2312,12 @@ export function TestTemplateEditor({
     return { promptChars, stepCount: Math.max(1, stepCount) };
   }, [editForm?.steps]);
 
+  // Out of credits, a run of only locked MCPJam models could only be refused.
+  const runOutOfCredits = allModelsOutOfCredits(
+    draftRunEstimateModels.map((item) => item.model),
+    availableModels,
+  );
+
   const runPrimaryDisabled =
     isDraft ||
     // A model-free render check has no editor quick-run path — it runs with the
@@ -2312,6 +2325,7 @@ export function TestTemplateEditor({
     // Run for it with an explanatory tooltip instead of letting it fail.
     casePinnedOnly ||
     selectedModelValues.length === 0 ||
+    runOutOfCredits ||
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid ||
@@ -2330,6 +2344,9 @@ export function TestTemplateEditor({
     }
     if (selectedModelValues.length === 0) {
       return "Select at least one model to run.";
+    }
+    if (runOutOfCredits) {
+      return outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON;
     }
     if (!canRun) {
       return "Configure suite servers before running.";
@@ -2367,6 +2384,8 @@ export function TestTemplateEditor({
     ensureServersReady,
     isDraft,
     simpleToolsBlock,
+    runOutOfCredits,
+    outOfCreditsReason,
   ]);
 
   // Bulk replace of all steps — the flat StepListEditor edits the `TestStep[]`

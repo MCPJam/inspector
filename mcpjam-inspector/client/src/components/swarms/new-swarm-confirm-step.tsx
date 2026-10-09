@@ -11,6 +11,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { Loader2, Minus, Plus, Trash2 } from "lucide-react";
@@ -32,10 +33,18 @@ import {
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useSwarmFundingPreview } from "@/hooks/use-swarm-funding-preview";
+import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
+import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
 import {
   fundingPreviewRuns,
   fundingSplitOf,
+  launchOutOfCreditsReason,
   withChosenIterations,
 } from "@/components/swarms/swarm-funding-plan";
 import {
@@ -877,6 +886,23 @@ function ReusedPersonaCard({
   );
 }
 
+/** Continue blocked by credits says why on hover. A disabled button gets no
+ * hover, so a span carries the tooltip; unblocked, the button is left as is. */
+function withLaunchTooltip(
+  reason: string | null,
+  button: ReactElement,
+): ReactElement {
+  if (!reason) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent variant="muted">{reason}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function NewSwarmConfirmStep({
   proposed,
   onProposedChange,
@@ -1187,6 +1213,18 @@ export function NewSwarmConfirmStep({
   // wording. Before any goal exists the launch's own check covers this, and a
   // preview that never settles must not be able to stop a first launch.
   const previewSettling = structureLocked && fundingState.status === "loading";
+  // Out of credits, a launch with no sponsored conversation could only be
+  // refused, so Continue says so before the click.
+  const outOfCreditsReason = useOutOfCreditsReason();
+  const sponsorshipAllowance = useSwarmSponsorshipAllowance(
+    outOfCreditsReason !== null,
+  );
+  const launchBlockedReason = launchOutOfCreditsReason({
+    outOfCreditsReason,
+    split: shownSplit,
+    pendingGoals,
+    allowanceRemaining: sponsorshipAllowance?.remaining,
+  });
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1705,33 +1743,40 @@ export function NewSwarmConfirmStep({
           >
             Back
           </Button>
-          <Button
-            type="button"
-            disabled={!canLaunch || previewSettling}
-            data-testid="new-swarm-launch"
-            onClick={() =>
-              onLaunch({
-                rubric: [],
-                reusedTargets: activeReusedTargets,
-                reusedGrading: [],
-                funding: {
-                  shownSponsored:
-                    shownSplit && pendingGoals === 0
-                      ? shownSplit.sponsored
-                      : null,
-                },
-              })
-            }
-          >
-            {launching ? (
-              <>
-                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Launching…
-              </>
-            ) : (
-              "Continue"
-            )}
-          </Button>
+          {withLaunchTooltip(
+            launchBlockedReason,
+            <Button
+              type="button"
+              disabled={
+                !canLaunch ||
+                previewSettling ||
+                launchBlockedReason !== null
+              }
+              data-testid="new-swarm-launch"
+              onClick={() =>
+                onLaunch({
+                  rubric: [],
+                  reusedTargets: activeReusedTargets,
+                  reusedGrading: [],
+                  funding: {
+                    shownSponsored:
+                      shownSplit && pendingGoals === 0
+                        ? shownSplit.sponsored
+                        : null,
+                  },
+                })
+              }
+            >
+              {launching ? (
+                <>
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                  Launching…
+                </>
+              ) : (
+                "Continue"
+              )}
+            </Button>,
+          )}
         </div>
       </div>
     </div>

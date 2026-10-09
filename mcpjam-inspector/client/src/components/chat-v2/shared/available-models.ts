@@ -77,6 +77,27 @@ export function applyOutOfCreditsLocks(
   });
 }
 
+/**
+ * Whether every model a run would use is locked by {@link applyOutOfCreditsLocks},
+ * so the run could only be refused. No known model, or any model still usable
+ * (a BYOK one), keeps the run available.
+ */
+export function allModelsOutOfCredits(
+  modelIds: readonly string[],
+  availableModels: readonly Pick<ModelDefinition, "id" | "disabledReason">[]
+): boolean {
+  return (
+    modelIds.length > 0 &&
+    modelIds.every((modelId) =>
+      availableModels.some(
+        (model) =>
+          String(model.id) === modelId &&
+          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+      )
+    )
+  );
+}
+
 export const FREE_TIER_MODEL_REASON = "Sign in to use this model";
 
 /**
