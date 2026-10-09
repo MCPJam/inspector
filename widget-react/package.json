@@ -33,7 +33,7 @@
     "react-dom": "^19.0.0"
   },
   "dependencies": {
-    "@mcp-ui/client": "^5.9.0",
+    "@mcp-ui/client": "^7.1.1",
     "@mcpjam/sdk": "^9.0.0",
     "@modelcontextprotocol/client": "2.2.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
