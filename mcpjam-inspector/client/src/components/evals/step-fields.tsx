@@ -9,6 +9,7 @@
  * `StepListEditor` now imports them.
  */
 
+import { useId } from "react";
 import {
   CheckCircle2,
   Gavel,
@@ -195,42 +196,85 @@ export function InteractActionFields({
   value,
   onChange,
   readOnly = false,
+  paper = false,
 }: {
   value: InteractAction;
   onChange: (next: InteractAction) => void;
   readOnly?: boolean;
+  paper?: boolean;
 }) {
+  const id = useId();
+  const labelClass = "text-sm font-medium leading-[18px]";
+  const fieldClass = paper ? "h-9 text-sm md:text-sm" : "h-7 text-[11px]";
+  const targetFields =
+    value.kind === "click" || value.kind === "type" ? (
+      <div className={paper ? "space-y-1.5" : undefined}>
+        {paper ? <div className={labelClass}>Target</div> : null}
+        <div
+          role={paper ? "group" : undefined}
+          aria-label={paper ? "Target" : undefined}
+          className={
+            paper
+              ? "[&_input]:h-9 [&_input]:text-sm [&_[data-slot=select-trigger]]:h-9 [&_[data-slot=select-trigger]]:text-sm"
+              : undefined
+          }
+        >
+          <LocatorFields
+            value={value.target}
+            onChange={(target) => onChange({ ...value, target })}
+            readOnly={readOnly}
+          />
+        </div>
+      </div>
+    ) : null;
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className={paper ? "flex flex-col gap-2" : "flex flex-col gap-1.5"}>
+      {paper ? (
+        <Label htmlFor={`${id}-kind`} className={labelClass}>
+          Action
+        </Label>
+      ) : null}
       <Select
         value={value.kind}
+        disabled={readOnly}
         onValueChange={(next) =>
           onChange(defaultInteractAction(next as InteractAction["kind"]))
         }
       >
         <SelectTrigger
+          id={`${id}-kind`}
           aria-label="Interaction type"
-          className="h-7 w-[120px] text-[11px]"
+          className={
+            paper
+              ? "h-9 w-full text-sm font-normal"
+              : "h-7 w-[120px] text-[11px]"
+          }
         >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {INTERACT_ACTION_KINDS.map((k) => (
-            <SelectItem key={k} value={k} className="text-[11px]">
+            <SelectItem
+              key={k}
+              value={k}
+              className={paper ? "text-sm" : "text-[11px]"}
+            >
               {k}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
       {value.kind === "click" ? (
-        <div className="flex flex-col gap-1.5">
-          <LocatorFields
-            value={value.target}
-            onChange={(target) => onChange({ ...value, target })}
-            readOnly={readOnly}
-          />
+        <div className={paper ? "space-y-2" : "flex flex-col gap-1.5"}>
+          {targetFields}
+          {paper ? (
+            <Label htmlFor={`${id}-click`} className={labelClass}>
+              Click type
+            </Label>
+          ) : null}
           <Select
             value={value.clickType ?? "left"}
+            disabled={readOnly}
             onValueChange={(next) =>
               onChange({
                 ...value,
@@ -238,7 +282,15 @@ export function InteractActionFields({
               })
             }
           >
-            <SelectTrigger className="h-7 w-[120px] text-[11px]">
+            <SelectTrigger
+              id={`${id}-click`}
+              aria-label="Click type"
+              className={
+                paper
+                  ? "h-9 w-full text-sm font-normal"
+                  : "h-7 w-[120px] text-[11px]"
+              }
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -250,37 +302,65 @@ export function InteractActionFields({
         </div>
       ) : null}
       {value.kind === "type" ? (
-        <div className="flex flex-col gap-1.5">
-          <LocatorFields
-            value={value.target}
-            onChange={(target) => onChange({ ...value, target })}
-            readOnly={readOnly}
-          />
+        <div className={paper ? "space-y-2" : "flex flex-col gap-1.5"}>
+          {targetFields}
+          {paper ? (
+            <Label htmlFor={`${id}-text`} className={labelClass}>
+              Text
+            </Label>
+          ) : null}
           <Input
+            id={`${id}-text`}
+            aria-label="Text to type"
             value={value.text}
+            readOnly={readOnly}
             onChange={(e) => onChange({ ...value, text: e.target.value })}
             placeholder="text to type…"
-            className="h-7 text-[11px]"
+            className={fieldClass}
           />
         </div>
       ) : null}
       {value.kind === "key" ? (
-        <Input
-          value={value.key}
-          onChange={(e) => onChange({ ...value, key: e.target.value })}
-          placeholder="Enter, Tab, ArrowDown…"
-          className="h-7 w-[180px] text-[11px]"
-        />
+        <div className={paper ? "space-y-1.5" : undefined}>
+          {paper ? (
+            <Label htmlFor={`${id}-key`} className={labelClass}>
+              Key
+            </Label>
+          ) : null}
+          <Input
+            id={`${id}-key`}
+            aria-label="Key"
+            value={value.key}
+            readOnly={readOnly}
+            onChange={(e) => onChange({ ...value, key: e.target.value })}
+            placeholder="Enter, Tab, ArrowDown…"
+            className={paper ? fieldClass : "h-7 w-[180px] text-[11px]"}
+          />
+        </div>
       ) : null}
       {value.kind === "scroll" ? (
-        <div className="flex items-center gap-1.5">
+        <div className={paper ? "space-y-2" : "flex items-center gap-1.5"}>
+          {paper ? (
+            <Label htmlFor={`${id}-direction`} className={labelClass}>
+              Direction
+            </Label>
+          ) : null}
           <Select
             value={value.direction}
+            disabled={readOnly}
             onValueChange={(next) =>
               onChange({ ...value, direction: next as "up" | "down" })
             }
           >
-            <SelectTrigger className="h-7 w-[92px] text-[11px]">
+            <SelectTrigger
+              id={`${id}-direction`}
+              aria-label="Direction"
+              className={
+                paper
+                  ? "h-9 w-full text-sm font-normal"
+                  : "h-7 w-[92px] text-[11px]"
+              }
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -288,8 +368,16 @@ export function InteractActionFields({
               <SelectItem value="up">up</SelectItem>
             </SelectContent>
           </Select>
+          {paper ? (
+            <Label htmlFor={`${id}-amount`} className={labelClass}>
+              Amount (optional)
+            </Label>
+          ) : null}
           <Input
+            id={`${id}-amount`}
+            aria-label="Scroll amount"
             type="number"
+            readOnly={readOnly}
             value={value.amount ?? ""}
             onChange={(e) =>
               onChange({
@@ -298,18 +386,43 @@ export function InteractActionFields({
               })
             }
             placeholder="amount"
-            className="h-7 w-[100px] text-[11px]"
+            className={
+              paper
+                ? "h-6 w-20 text-xs md:text-xs"
+                : "h-7 w-[100px] text-[11px]"
+            }
           />
         </div>
       ) : null}
       {value.kind === "wait" ? (
-        <Input
-          type="number"
-          value={value.ms}
-          onChange={(e) => onChange({ ...value, ms: Number(e.target.value) })}
-          placeholder="ms"
-          className="h-7 w-[120px] text-[11px]"
-        />
+        <div className={paper ? "space-y-1.5" : undefined}>
+          {paper ? (
+            <Label htmlFor={`${id}-wait`} className={labelClass}>
+              Duration
+            </Label>
+          ) : null}
+          <div
+            className={paper ? "flex items-center gap-1.5 text-sm" : undefined}
+          >
+            <Input
+              id={`${id}-wait`}
+              aria-label="Wait duration"
+              type="number"
+              readOnly={readOnly}
+              value={value.ms}
+              onChange={(e) =>
+                onChange({ ...value, ms: Number(e.target.value) })
+              }
+              placeholder="ms"
+              className={
+                paper
+                  ? "h-6 w-20 text-xs md:text-xs"
+                  : "h-7 w-[120px] text-[11px]"
+              }
+            />
+            {paper ? <span>ms</span> : null}
+          </div>
+        </div>
       ) : null}
     </div>
   );

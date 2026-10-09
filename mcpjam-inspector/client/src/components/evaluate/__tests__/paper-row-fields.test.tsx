@@ -9,7 +9,6 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
-import type { InteractAction } from "@/shared/steps";
 import {
   CheckRow,
   CheckDraftBoundary,
@@ -21,11 +20,6 @@ import { PaperCheckRow } from "../case-spine/paper-check-row";
 import { WidgetAssertionFields, defaultWidgetAssertion } from "@/components/evals/step-fields";
 import { SpineCheckRow } from "../case-spine/spine-check-row";
 import { PinnedToolCallFields } from "@/components/evals/pinned-tool-call-fields";
-import {
-  InteractCommandField,
-  interactionCommand,
-  parseInteractionCommand,
-} from "../case-spine/interact-command";
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 afterEach(cleanup);
 
@@ -332,66 +326,6 @@ it("disables Required for an advisory-only check", async () => {
     screen.getByRole("menuitemcheckbox", { name: /Required check/ }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByText("This check can only warn.")).toBeVisible();
-});
-
-const click: InteractAction = {
-  kind: "click",
-  target: { text: "Generate diagram" },
-};
-describe("short interaction commands", () => {
-  it.each([
-    "Click Generate diagram",
-    'Type "API Gateway" into Name',
-    "Press Enter",
-    "Scroll down 200",
-    "Wait 500 ms",
-  ])("writes an executable action for %s", (text) => {
-    expect(parseInteractionCommand(text, click)).not.toBeNull();
-  });
-  it.each([
-    "",
-    "Click",
-    'Type "\\q" into Name',
-    "Scroll down 0",
-    "Wait 40000 ms",
-    "Do everything",
-  ])("rejects %s without crashing", (text) => {
-    expect(parseInteractionCommand(text, click)).toBeNull();
-  });
-  it("preserves recorded selectors and click options when the command stays the same", () => {
-    const action: InteractAction = {
-      kind: "click",
-      target: { testId: "generate", nth: 1 },
-      clickType: "double",
-    };
-    expect(parseInteractionCommand(interactionCommand(action), action)).toEqual(
-      action,
-    );
-  });
-  it("blocks invalid text until it is corrected", () => {
-    const onChange = vi.fn(),
-      onValidityChange = vi.fn();
-    render(
-      <CheckDraftBoundary onValidityChange={onValidityChange}>
-        <InteractCommandField
-          action={click}
-          onChange={onChange}
-          readOnly={false}
-        />
-      </CheckDraftBoundary>,
-    );
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Interaction command" }),
-      { target: { value: "Do everything" } },
-    );
-    expect(onChange).not.toHaveBeenCalled();
-    expect(onValidityChange).toHaveBeenLastCalledWith(true);
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Interaction command" }),
-      { target: { value: "Press Enter" } },
-    );
-    expect(onChange).toHaveBeenLastCalledWith({ kind: "key", key: "Enter" });
-  });
 });
 
 

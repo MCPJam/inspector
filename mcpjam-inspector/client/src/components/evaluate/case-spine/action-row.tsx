@@ -1,5 +1,4 @@
 import { useSpineDrag } from "./spine-drag";
-import { InteractCommandField } from "./interact-command";
 /**
  * One numbered action, with everything that grades it underneath.
  *
@@ -36,7 +35,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { RemoteServer } from "@/hooks/useProjects";
-import type { InteractStep, TestStep } from "@/shared/steps";
+import type { TestStep } from "@/shared/steps";
 import {
   InteractActionFields,
   invokableTools,
@@ -361,67 +360,61 @@ export function ActionRow({
 
         {open && step.kind === "interact" ? (
           <fieldset disabled={readOnly} className="contents">
-            <div className="space-y-2">
-              <InteractCommandField
-                action={step.action}
-                onChange={(action) => onUpdate({ ...step, action })}
+            <div className="space-y-2 text-card-foreground">
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor={`action-view-${step.id}`}
+                  className="text-sm font-medium leading-[18px]"
+                >
+                  View (tool)
+                </Label>
+                {invokableTools(availableTools).length > 0 ? (
+                  <Select
+                    value={step.toolName || undefined}
+                    disabled={readOnly}
+                    onValueChange={(toolName) => onUpdate({ ...step, toolName })}
+                  >
+                    <SelectTrigger
+                      id={`action-view-${step.id}`}
+                      className="h-9 w-full text-sm font-normal"
+                      aria-label={`View tool for step ${action.ordinal}`}
+                      aria-invalid={!readOnly && !step.toolName.trim()}
+                    >
+                      <SelectValue placeholder="Pick a view tool…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[
+                        ...new Set(
+                          invokableTools(availableTools).map((tool) => tool.name),
+                        ),
+                      ].map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id={`action-view-${step.id}`}
+                    className="h-9 text-sm md:text-sm"
+                    aria-label={`View tool for step ${action.ordinal}`}
+                    value={step.toolName}
+                    placeholder="View tool name…"
+                    readOnly={readOnly}
+                    aria-invalid={!readOnly && !step.toolName.trim()}
+                    onChange={(event) =>
+                      onUpdate({ ...step, toolName: event.target.value })
+                    }
+                  />
+                )}
+              </div>
+              <InteractActionFields
+                paper
+                value={step.action}
+                onChange={(next) => onUpdate({ ...step, action: next })}
                 readOnly={readOnly}
               />
-              <details className="text-xs text-card-foreground">
-                <summary className="cursor-pointer">Detailed settings</summary>
-                <div className="space-y-2 pt-2">
-                  <Label htmlFor={`action-view-${step.id}`} className="text-xs">
-                    View (tool)
-                  </Label>
-                  {invokableTools(availableTools).length > 0 ? (
-                    <Select
-                      value={step.toolName || undefined}
-                      disabled={readOnly}
-                      onValueChange={(toolName) =>
-                        onUpdate({ ...step, toolName })
-                      }
-                    >
-                      <SelectTrigger
-                        id={`action-view-${step.id}`}
-                        aria-label={`View tool for step ${action.ordinal}`}
-                        aria-invalid={!readOnly && !step.toolName.trim()}
-                      >
-                        <SelectValue placeholder="Pick a view tool…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {[
-                          ...new Set(
-                            invokableTools(availableTools).map(
-                              (tool) => tool.name,
-                            ),
-                          ),
-                        ].map((name) => (
-                          <SelectItem key={name} value={name}>
-                            {name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input
-                      id={`action-view-${step.id}`}
-                      aria-label={`View tool for step ${action.ordinal}`}
-                      value={step.toolName}
-                      placeholder="View tool name…"
-                      readOnly={readOnly}
-                      aria-invalid={!readOnly && !step.toolName.trim()}
-                      onChange={(event) =>
-                        onUpdate({ ...step, toolName: event.target.value })
-                      }
-                    />
-                  )}
-                  <InteractActionFields
-                    value={(step as InteractStep).action}
-                    onChange={(next) => onUpdate({ ...step, action: next })}
-                    readOnly={readOnly}
-                  />
-                </div>
-              </details>
             </div>
           </fieldset>
         ) : null}

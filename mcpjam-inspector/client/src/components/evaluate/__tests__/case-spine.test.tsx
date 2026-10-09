@@ -1082,7 +1082,8 @@ it.each(["click", "type", "key", "scroll", "wait"] as const)(
       screen.getByRole("button", { name: "Add assertion or action" }),
     );
     await user.click(screen.getByTestId("add-step-item-interact"));
-    await user.click(screen.getByText("Detailed settings"));
+    expect(screen.queryByText("Detailed settings")).toBeNull();
+    expect(screen.queryByLabelText("Interaction command")).toBeNull();
     await user.click(
       screen.getByRole("combobox", { name: "Interaction type" }),
     );
@@ -1111,7 +1112,6 @@ it("edits the view tool and text for a newly added typing action", async () => {
     screen.getByRole("button", { name: "Add assertion or action" }),
   );
   await user.click(screen.getByTestId("add-step-item-interact"));
-  await user.click(screen.getByText("Detailed settings"));
   await user.click(screen.getByRole("combobox", { name: "Interaction type" }));
   await user.click(screen.getByRole("option", { name: "type", exact: true }));
   await user.type(screen.getByLabelText("View tool for step 2"), "cart_view");
