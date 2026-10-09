@@ -1470,6 +1470,35 @@ export function ToolCalledWithFields({
   // back to free-text keys.
   const argProperties = toolArgSchemas?.[predicate.toolName];
   const contextPaper = useContext(PaperFieldsContext);
+  const minimumMatchingCalls = (
+    <div className="space-y-1">
+      <Label htmlFor={minCountId} className="text-[11px]">
+        Minimum matching calls (optional)
+      </Label>
+      <Input
+        id={minCountId}
+        type="number"
+        min={1}
+        step={1}
+        value={predicate.minCount ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            const next = { ...predicate };
+            delete next.minCount;
+            onChange(next);
+            return;
+          }
+          const n = Number(raw);
+          if (!Number.isFinite(n)) return;
+          onChange({ ...predicate, minCount: Math.floor(n) });
+        }}
+        placeholder="1"
+        className="h-8 w-32 text-xs"
+        disabled={readOnly}
+      />
+    </div>
+  );
   if (paper || contextPaper)
     return (
       <PaperFieldsContext.Provider value="toolCalledWith">
@@ -1497,17 +1526,18 @@ export function ToolCalledWithFields({
           )}
           <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">Argument settings</summary>
-            <div className="pt-2">
-              <PaperFieldsContext.Provider value={null}>
-                <ToolCalledWithFields
-                  predicate={predicate}
-                  onChange={onChange}
-                  availableTools={availableTools}
-                  toolArgSchemas={toolArgSchemas}
-                  readOnly={readOnly}
-                  compact
-                />
-              </PaperFieldsContext.Provider>
+            <div className="space-y-3 pt-2">
+              <ArgumentMatchingField
+                value={predicate.args.argumentMatching ?? "partial"}
+                onChange={(argumentMatching) =>
+                  onChange({
+                    ...predicate,
+                    args: { ...predicate.args, argumentMatching },
+                  })
+                }
+                readOnly={readOnly}
+              />
+              {minimumMatchingCalls}
             </div>
           </details>
         </div>
@@ -1539,33 +1569,7 @@ export function ToolCalledWithFields({
         open={predicate.minCount != null}
         label={`Call count${predicate.minCount != null ? ` · ${predicate.minCount}` : ""}`}
       >
-        <div className="space-y-1">
-          <Label htmlFor={minCountId} className="text-[11px]">
-            Minimum matching calls (optional)
-          </Label>
-          <Input
-            id={minCountId}
-            type="number"
-            min={1}
-            step={1}
-            value={predicate.minCount ?? ""}
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === "") {
-                const next = { ...predicate };
-                delete next.minCount;
-                onChange(next);
-                return;
-              }
-              const n = Number(raw);
-              if (!Number.isFinite(n)) return;
-              onChange({ ...predicate, minCount: Math.floor(n) });
-            }}
-            placeholder="1"
-            className="h-8 w-32 text-xs"
-            disabled={readOnly}
-          />
-        </div>
+        {minimumMatchingCalls}
       </CompactFieldDetails>
     </div>
   );
@@ -1591,6 +1595,45 @@ function argsAreFlat(args: Record<string, unknown>): boolean {
     if (isNestedContainer(v)) return false;
   }
   return true;
+}
+
+function ArgumentMatchingField({
+  value,
+  onChange,
+  readOnly,
+}: {
+  value: ArgMatchMode;
+  onChange: (next: ArgMatchMode) => void;
+  readOnly: boolean;
+}) {
+  const modeId = useId();
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={modeId} className="text-[11px]">
+        Argument matching
+      </Label>
+      <Select
+        value={value}
+        onValueChange={(next) => onChange(next as ArgMatchMode)}
+        disabled={readOnly}
+      >
+        <SelectTrigger id={modeId} className="h-8 w-full text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="partial" className="text-xs">
+            Partial (extras ok)
+          </SelectItem>
+          <SelectItem value="exact" className="text-xs">
+            Exact (deep equal)
+          </SelectItem>
+          <SelectItem value="ignore" className="text-xs">
+            Ignore (only tool name matters)
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
 }
 
 /**
@@ -1636,33 +1679,13 @@ function ArgMatcherSubform({
   return (
     <div className="space-y-2">
       <div className="space-y-2">
-        <div className="space-y-1">
-          <Label htmlFor={modeId} className="text-[11px]">
-            Argument matching
-          </Label>
-          <Select
-            value={mode}
-            onValueChange={(next) =>
-              onChange({ ...value, argumentMatching: next as ArgMatchMode })
-            }
-            disabled={readOnly}
-          >
-            <SelectTrigger id={modeId} className="h-8 w-full text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="partial" className="text-xs">
-                Partial (extras ok)
-              </SelectItem>
-              <SelectItem value="exact" className="text-xs">
-                Exact (deep equal)
-              </SelectItem>
-              <SelectItem value="ignore" className="text-xs">
-                Ignore (only tool name matters)
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <ArgumentMatchingField
+          value={mode}
+          onChange={(argumentMatching) =>
+            onChange({ ...value, argumentMatching })
+          }
+          readOnly={readOnly}
+        />
         {/* Per-row "Raw JSON" toggle so power users can author nested
             shapes the structured editor can't express. Disabled in
             ignore mode (args aren't compared anyway). */}

@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { fireEvent, render, screen, cleanup } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  cleanup,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
@@ -98,9 +104,54 @@ it("keeps exact matching and minimum call count behind the argument settings", a
   });
   await user.click(screen.getByText("Argument settings"));
   expect(screen.getByLabelText("Argument matching")).toBeVisible();
-  expect(
-    screen.getByLabelText("Minimum matching calls (optional)"),
-  ).toHaveValue(2);
+  const settings = within(screen.getByText("Argument settings").parentElement!);
+  expect(settings.getAllByRole("combobox")).toHaveLength(1);
+  expect(settings.getAllByRole("spinbutton")).toHaveLength(1);
+  expect(settings.queryByLabelText("Tool")).toBeNull();
+  expect(settings.queryByLabelText("Arguments")).toBeNull();
+  expect(settings.queryByText("Raw JSON")).toBeNull();
+  expect(settings.queryByText("Add argument")).toBeNull();
+  expect(screen.getAllByLabelText("Tool")).toHaveLength(1);
+  expect(screen.getAllByLabelText("Arguments")).toHaveLength(1);
+
+  const minimum = settings.getByLabelText("Minimum matching calls (optional)");
+  expect(minimum).toHaveValue(2);
+  fireEvent.change(minimum, { target: { value: "3" } });
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    toolName: "list_services",
+    args: { args: { service: "products" }, argumentMatching: "exact" },
+    minCount: 3,
+  });
+
+  for (const [option, mode] of [
+    ["Partial (extras ok)", "partial"],
+    ["Ignore (only tool name matters)", "ignore"],
+    ["Exact (deep equal)", "exact"],
+  ]) {
+    await user.click(
+      settings.getByRole("combobox", { name: "Argument matching" }),
+    );
+    await user.click(screen.getByRole("option", { name: option, exact: true }));
+    expect(onChange.mock.lastCall?.[0]).toMatchObject({
+      args: { args: { service: "products" }, argumentMatching: mode },
+      minCount: 3,
+    });
+    if (mode === "ignore") {
+      expect(screen.queryByLabelText("Arguments")).toBeNull();
+    } else {
+      expect(
+        JSON.parse(
+          (screen.getByLabelText("Arguments") as HTMLTextAreaElement).value,
+        ),
+      ).toEqual({ service: "products" });
+    }
+  }
+
+  fireEvent.change(minimum, { target: { value: "" } });
+  expect(onChange.mock.lastCall?.[0]).not.toHaveProperty("minCount");
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    args: { args: { service: "products" }, argumentMatching: "exact" },
+  });
 });
 
 it.each([
