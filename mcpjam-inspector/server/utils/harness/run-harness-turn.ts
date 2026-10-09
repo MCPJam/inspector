@@ -191,6 +191,15 @@ import {
   type ExternalAccountCredentialPlan,
 } from "./external-account-credentials.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
+import {
+  HOSTED_HARNESS_ATTACHMENTS_DIR,
+  buildHarnessAttachmentNote,
+  computerQuotaReserver,
+  saveHarnessAttachments,
+  takeHarnessPromptAttachments,
+  unsavedHarnessAttachments,
+  withHarnessAttachmentNote,
+} from "./harness-attachments.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import {
   composeLivePlusSkills,
@@ -1365,6 +1374,16 @@ export async function runHarnessTurn(
           messages: messages as never,
         });
       const isApprovalResume = approvalContinuations.length > 0;
+      // Composer attachments come OUT of the prompt here (no adapter takes a
+      // file part), land on the session's disk in `onSandboxSession`, and reach
+      // `stream()` as a note naming each path (`harness-attachments.ts`). A
+      // resume carries no new prompt, so it has nothing to take.
+      const promptAttachments = isApprovalResume
+        ? { messages, attachments: [] }
+        : takeHarnessPromptAttachments(messages);
+      let attachmentOutcomes = unsavedHarnessAttachments(
+        promptAttachments.attachments,
+      );
 
       // Phase timing — log where a turn spends its wall-clock (claim / box
       // wake / broker start / session connect / model stream / finalize) so
@@ -3025,6 +3044,28 @@ export async function runHarnessTurn(
               }
             }
           }
+          // Composer attachments onto the disk the runtime is about to start
+          // on. Hosted: the box's attachments bucket. Local: the session's
+          // private state, never the workspace (the user's own checkout).
+          // Fail-soft per file (the note says which ones didn't land), and
+          // safe to re-enter: a failed resume calls this again with a fresh
+          // session, and the names were chosen once, so it overwrites.
+          if (promptAttachments.attachments.length > 0) {
+            attachmentOutcomes = await saveHarnessAttachments({
+              session,
+              dir:
+                localPrepared?.attachmentsDir.writeDir ??
+                HOSTED_HARNESS_ATTACHMENTS_DIR,
+              ...(localPrepared
+                ? { agentDir: localPrepared.attachmentsDir.agentDir }
+                : {}),
+              attachments: promptAttachments.attachments,
+              ...(uploadQuotaComputerId
+                ? { reserveBytes: computerQuotaReserver(uploadQuotaComputerId) }
+                : {}),
+              ...(abortSignal ? { abortSignal } : {}),
+            });
+          }
           // Stream the workdir to the client (transient) so the Playground Shell
           // can open a terminal here instead of the box's home. The client keys
           // the cached path by project + host (it knows both); we only need the
@@ -3253,8 +3294,11 @@ export async function runHarnessTurn(
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
         // `session` is REQUIRED — agent.stream() reads options.session in
         // _startTurn (session.promptTurn); omitting it throws "Cannot read
-        // properties of undefined (reading 'promptTurn')". `_resolveTurnInput`
-        // accepts `messages` and uses the last role:"user" entry as the prompt.
+        // properties of undefined (reading 'promptTurn')".
+        // `_resolvePromptTurnInput` accepts `messages` and uses the last
+        // role:"user" entry as the prompt, whole: its file parts are already
+        // out (see `promptAttachments`), and the note naming where they landed
+        // rides as one more text part.
         // WS3: a resume carries no new user prompt — feed the approval decision
         // into the in-flight turn via continueStream (the adapter collapses
         // `messages` to the last user message, so stream() would re-prompt).
@@ -3269,7 +3313,10 @@ export async function runHarnessTurn(
             } as unknown as Parameters<typeof agent.continueStream>[0])
           : await agent.stream({
               session,
-              messages,
+              messages: withHarnessAttachmentNote(
+                promptAttachments.messages,
+                buildHarnessAttachmentNote(attachmentOutcomes),
+              ),
               // Hand the harness the combined abort signal so a user cancel OR a
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,
