@@ -1235,11 +1235,14 @@ export function PlaygroundMain({
   // previewed host actually attaches a computer (honesty rule — no computer, no
   // sandbox upload; attachments stay inline-only exactly as before) AND the
   // resolved engine is cloud — the upload targets the CLOUD box, so on "This
-  // machine" it would wake a sandbox the local bash tool can't see.
+  // machine" it would wake a sandbox the local bash tool can't see. Never for a
+  // harness host: its files ride inline and the server lands them on the box
+  // the turn actually runs on.
   const computerAttachmentsActive = isComputerAttachmentUploadActive({
     computersEnabled: computersEnabled === true,
     isAuthenticated: isConvexAuthenticated,
     hostHasComputer: !!previewedHost?.config?.computer,
+    hostHasHarness: !!previewedHost?.config?.harness,
     engine: playgroundComputerEngine.engine,
   });
 

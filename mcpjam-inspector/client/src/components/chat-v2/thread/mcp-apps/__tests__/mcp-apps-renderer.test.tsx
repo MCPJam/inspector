@@ -1429,6 +1429,37 @@ describe("MCPAppsRenderer tool input streaming", () => {
       const { state } = mountChat("thread");
       await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
     });
+
+    it("opens an entrypoint whose App declares only inline, in the fullscreen the host chose", async () => {
+      const owned = handle as unknown as { widgetContent: unknown };
+      const original = owned.widgetContent;
+      owned.widgetContent = {
+        html: "<html><body>inline-only fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: {
+          preferredDisplayMode: "inline",
+          availableDisplayModes: ["inline"],
+        },
+      };
+      try {
+        const { state } = mountChat("global");
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        mockBridge.getAppCapabilities.mockReturnValue({
+          availableDisplayModes: ["inline"],
+        });
+        await act(async () => {
+          triggerReady();
+          await Promise.resolve();
+        });
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        expect(
+          screen.queryByText(/This App has no supported display mode/),
+        ).toBeNull();
+      } finally {
+        owned.widgetContent = original;
+        mockBridge.getAppCapabilities.mockReturnValue(undefined);
+      }
+    });
   });
 
   it("applies resource preference before the first bridge and narrows after init without remounting", async () => {

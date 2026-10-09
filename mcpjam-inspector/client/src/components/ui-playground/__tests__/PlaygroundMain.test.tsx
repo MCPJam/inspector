@@ -191,6 +191,29 @@ vi.mock("posthog-js/react", () => ({
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// COMP-14 composer upload. Off (the real flag, which PostHog above reports
+// off) for every test but the attachment ones, which turn it on.
+const mockComputersFlag = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/hooks/useComputersEnabled", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/useComputersEnabled")
+  >();
+  return {
+    ...actual,
+    useComputersEnabled: () => {
+      const real = actual.useComputersEnabled();
+      return mockComputersFlag.enabled || real;
+    },
+  };
+});
+const mockUploadAttachments = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/useComputerAttachmentUpload", () => ({
+  useComputerAttachmentUpload: () => ({
+    available: true,
+    uploadAttachments: mockUploadAttachments,
+  }),
+}));
+
 // Mock PosthogUtils
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: vi.fn().mockReturnValue("test"),
@@ -4561,4 +4584,101 @@ describe("multi-model columns", () => {
     }
   });
 });
+
+  describe("composer attachments on a computer host", () => {
+    // Convex-shaped, so the real `useHost` queries it (see the edit tests).
+    const HOST_ID = "hlk3m9x2q7v5b8n1t4r6s0dc";
+    const UPLOADED_PATH = "/home/user/attachments/ab12cd34-report.csv";
+
+    function previewComputerHost(extra: Record<string, unknown>) {
+      localStorage.setItem(
+        "mcp-previewed-host-id",
+        JSON.stringify({ "project-1": HOST_ID })
+      );
+      mockHostQueryState.result = {
+        hostId: HOST_ID,
+        name: "Computer host",
+        config: {
+          id: "config-1",
+          modelId: "",
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+          serverIds: [],
+          optionalServerIds: [],
+          computer: { kind: "personal" },
+          ...extra,
+        },
+      };
+    }
+
+    async function sendWithAttachment() {
+      render(<PlaygroundMain {...defaultProps} activeProjectId="project-1" />);
+      const file = new File(["region,total\nwest,12\n"], "report.csv", {
+        type: "text/csv",
+      });
+      await act(async () => {
+        (
+          mockChatInputProps.mock.calls.at(-1)?.[0] as {
+            onChangeFileAttachments: (next: unknown[]) => void;
+          }
+        ).onChangeFileAttachments([{ id: "attachment-1", file }]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "how many rows?" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      await waitFor(() =>
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1)
+      );
+      return mockUseChatSession.sendMessage.mock.calls[0]![0] as {
+        text: string;
+        files?: unknown[];
+      };
+    }
+
+    beforeEach(() => {
+      mockConvexAuthState.isAuthenticated = true;
+      mockComputersFlag.enabled = true;
+      mockUploadAttachments.mockResolvedValue([
+        { name: "report.csv", path: UPLOADED_PATH },
+      ]);
+    });
+
+    afterEach(() => {
+      mockComputersFlag.enabled = false;
+    });
+
+    it("a harness host never uploads to the personal computer and sends the file as a file part", async () => {
+      // The harness runs on the conversation's own box; the server writes the
+      // file there from this part.
+      mockHarnessState.harnessId = "claude-code";
+      previewComputerHost({ harness: "claude-code" });
+
+      const sent = await sendWithAttachment();
+
+      expect(mockUploadAttachments).not.toHaveBeenCalled();
+      expect(sent.text).toBe("how many rows?");
+      expect(sent.files).toEqual([
+        expect.objectContaining({
+          type: "file",
+          mediaType: "text/csv",
+          filename: "report.csv",
+          url: expect.stringMatching(/^data:text\/csv;base64,/),
+        }),
+      ]);
+    });
+
+    it("a non-harness computer host still uploads and notes the path, as before", async () => {
+      previewComputerHost({});
+
+      const sent = await sendWithAttachment();
+
+      expect(mockUploadAttachments).toHaveBeenCalledTimes(1);
+      expect(sent.text).toContain(`- report.csv: ${UPLOADED_PATH}`);
+      expect(sent.files).toHaveLength(1);
+    });
+  });
 });

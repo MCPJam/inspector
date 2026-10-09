@@ -1,3 +1,5 @@
+import { authRefusalDiagnostics } from "../auth/auth-refusal-diagnostics";
+import { guestTabRecovery } from "../auth/guest-tab-recovery";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexReactClient } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -53,6 +55,26 @@ describe("traced watches", () => {
   beforeEach(() => {
     vi.mocked(reportCaught).mockReset();
     resetSessionRevokedForTests();
+    authRefusalDiagnostics.dispose();
+    guestTabRecovery.setGuest(null);
+  });
+  it("still handles revocation when diagnostics throw", () => {
+    const handler = vi.fn(); setSessionRevokedHandler(handler);
+    const diagnostic = vi.spyOn(authRefusalDiagnostics, "record").mockImplementation(() => { throw Error("logging failed"); });
+    const f = fixture();
+    f.set(undefined, new ConvexError({ kind: "session_revoked", message: "Authentication required" }));
+    f.client.watchQuery(query, {}).onUpdate(() => {});
+    expect(handler).toHaveBeenCalledOnce();
+    diagnostic.mockRestore();
+  });
+  it("does not sign WorkOS out for a stale guest watch", () => {
+    guestTabRecovery.setGuest("old-guest");
+    const handler = vi.fn(); setSessionRevokedHandler(handler);
+    const f = fixture(); const watch = f.client.watchQuery(query, {});
+    guestTabRecovery.setGuest(null);
+    f.set(undefined, new ConvexError({ kind: "session_revoked", message: "Authentication required" }));
+    watch.onUpdate(() => {});
+    expect(handler).not.toHaveBeenCalled();
   });
   it("preserves args, options, results, other watch methods and cleanup", () => {
     const f = fixture();

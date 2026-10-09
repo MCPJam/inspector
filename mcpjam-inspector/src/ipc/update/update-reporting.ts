@@ -1,3 +1,4 @@
+import { updateDiagnosticSnapshot } from "./update-diagnostics.js";
 import * as Sentry from "@sentry/electron/main";
 import { sentryUserId } from "../../../shared/sentry-identity.js";
 import log from "electron-log";
@@ -37,6 +38,12 @@ export function reportUpdateFailure(
     update_notification: recovered ? "outcome" : "failure",
   };
   try {
+    const diagnostics = updateDiagnosticSnapshot(attempt.id);
+    try {
+      log.info("Desktop update diagnostics", diagnostics);
+    } catch {
+      /* Continue reporting if the local log fails. */
+    }
     // Deliberately construct the event rather than forwarding a native error:
     // those can contain signed feed URLs and paths inside the user's home.
     Sentry.withScope((scope) => {
@@ -46,6 +53,7 @@ export function reportUpdateFailure(
         ...event,
         breadcrumbs: [],
         user: sentryUserId(event.user),
+        server_name: undefined,
         request: undefined,
         extra: undefined,
         tags: {
@@ -55,6 +63,7 @@ export function reportUpdateFailure(
             : {}),
         },
         contexts: {
+          update_diagnostics: diagnostics,
           update: event.contexts?.update,
           update_shutdown: event.contexts?.update_shutdown,
         },
@@ -66,6 +75,7 @@ export function reportUpdateFailure(
         fingerprint: ["desktop-update", attempt.phase, reason],
         tags,
         contexts: {
+          update_diagnostics: diagnostics,
           ...(shutdown ? { update_shutdown: updateShutdownSnapshot() } : {}),
           update: {
             attempt_id: attempt.id,

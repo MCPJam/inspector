@@ -4,6 +4,7 @@ import {
   DEFAULT_HOST_TEMPLATE_ID,
   seedHostTemplate,
 } from "@mcpjam/sdk/host-config/templates";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
   DEFAULT_SEEDED_HOST_MODEL_ID,
   emptyHostConfigInputV2,
@@ -46,6 +47,33 @@ describe("hostConfigInputsEqual", () => {
   });
   it("returns true for identical inputs", () => {
     expect(hostConfigInputsEqual(makeInput(), makeInput())).toBe(true);
+  });
+
+  it("compares a stored legacy selection without reading its fallback", () => {
+    // The DTO carries the backend's stored form, which for a model outside
+    // the hosted catalog is `{ source: "legacy", modelId }` with no
+    // `fallback` (INSPECTOR-CLIENT-2NB crashed the hosts page here).
+    const legacy = {
+      source: "legacy",
+      modelId: "ollama/llama3",
+    } as unknown as ModelSelection;
+    const saved = {
+      ...makeInput({ modelId: legacy.modelId }),
+      modelSelection: legacy,
+    };
+    // A second literal with the keys in wire order, so equality is
+    // structural rather than a shared object reference.
+    const reloaded = {
+      ...makeInput({ modelId: legacy.modelId }),
+      modelSelection: {
+        modelId: legacy.modelId,
+        source: "legacy",
+      } as unknown as ModelSelection,
+    };
+    expect(hostConfigInputsEqual(saved, reloaded)).toBe(true);
+    expect(
+      hostConfigInputsEqual(saved, makeInput({ modelId: legacy.modelId })),
+    ).toBe(false);
   });
 
   it("returns false when modelId differs", () => {

@@ -61,7 +61,13 @@ export function createThreadAppHost(
             availableDisplayModes: ["fullscreen"],
           },
     },
-    surface: { ...host.surface, playgroundCspMode: "widget-declared" },
+    surface: {
+      ...host.surface,
+      playgroundCspMode: "widget-declared",
+      // An entrypoint is fullscreen by the host's choice, so an App that
+      // declares only `inline` still opens rather than being refused.
+      ...(model ? {} : { fixedDisplayMode: "fullscreen" as const }),
+    },
     resolvers: {
       // window.openai follows the client's own "Inject window.openai" setting,
       // the same as in chat (`host.resolvers.resolveEffectiveCompatRuntime`).
