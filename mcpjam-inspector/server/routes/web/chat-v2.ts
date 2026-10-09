@@ -2254,6 +2254,7 @@ chatV2.post("/", async (c) => {
         ...(playgroundEnvironmentId
           ? { projectEnvironmentId: playgroundEnvironmentId }
           : {}),
+        harness: resolvedExecution.harness,
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (!acquired.ok) {
@@ -2267,7 +2268,7 @@ chatV2.post("/", async (c) => {
           playgroundBoxReason,
           acquired.refusal,
         );
-        throw new WebRouteError(
+        const refusalError = new WebRouteError(
           described.status,
           described.status === 429
             ? ErrorCode.RATE_LIMITED
@@ -2284,6 +2285,15 @@ chatV2.post("/", async (c) => {
             ...(described.code ? { code: described.code } : {}),
           },
         );
+        const retryAfterMs =
+          described.status === 429 || described.status === 503
+            ? acquired.refusal.retryAfterMs
+            : undefined;
+        throw retryAfterMs !== undefined
+          ? refusalError.withHeaders({
+              "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
+            })
+          : refusalError;
       }
       scenarioBox = acquired.box;
       // The model's own `bash` rides the same machine as the harness's Shell:
