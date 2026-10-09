@@ -16,9 +16,46 @@ import { WIDGET_ASSERTION_LABELS } from "@/shared/steps";
 import { EvalAddDrawer } from "@/components/evaluate/case-spine/assertion-drawer";
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 afterEach(cleanup);
+it("offers both matching assertions only in case authoring", () => {
+  const onSelect = vi.fn();
+  const { unmount } = render(<EvalAddDrawer onSelect={onSelect} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  expect(screen.queryByTestId("add-step-item-route:noTools")).toBeNull();
+  unmount();
+  render(<EvalAddDrawer onSelect={onSelect} allowRouteChecks />);
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  for (const kind of ["noTools", "exactOrder"]) {
+    const item = screen.getByTestId(`add-step-item-route:${kind}`);
+    expect(
+      screen.getByRole("region", { name: "Assertions · Selection" }),
+    ).toContainElement(item);
+    expect(item).toHaveTextContent("After the run");
+  }
+  fireEvent.click(screen.getByTestId("add-step-item-route:exactOrder"));
+  expect(onSelect).toHaveBeenCalledWith({
+    kind: "route-check",
+    routeKind: "exactOrder",
+  });
+});
+it("keeps the historical Prompt and Interact menu with the Paper action styling", () => {
+  render(<EvalAddDrawer onSelect={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  const actions = screen.getByRole("region", { name: "Actions" });
+  expect(
+    EVAL_ADD_CATALOG.filter((entry) => entry.choice.kind === "step").map(
+      (entry) => entry.label,
+    ),
+  ).toEqual(["User prompt", "Interact", "Call tool"]);
+  for (const key of ["prompt", "interact"]) {
+    const item = screen.getByTestId(`add-step-item-${key}`);
+    expect(actions).toContainElement(item);
+    expect(item).toHaveTextContent("After an action");
+    expect(item.querySelector("svg")).toHaveClass("text-info");
+  }
+});
 it("covers every predicate, widget assertion, action and outcome once, each with an icon", () => {
-  expect(EVAL_ADD_CATALOG).toHaveLength(45);
-  expect(new Set(EVAL_ADD_CATALOG.map((e) => e.key)).size).toBe(45);
+  expect(EVAL_ADD_CATALOG).toHaveLength(47);
+  expect(new Set(EVAL_ADD_CATALOG.map((e) => e.key)).size).toBe(47);
   expect(
     EVAL_ADD_CATALOG.filter((e) => e.choice.kind === "check")
       .map((e) => e.key)
@@ -39,7 +76,7 @@ it("covers every predicate, widget assertion, action and outcome once, each with
   );
   for (const entry of EVAL_ADD_CATALOG) expect(entry.Icon).toBeTruthy();
   expect(EVAL_ADD_CATALOG.filter((e) => e.scope === "whole-run")).toHaveLength(
-    18,
+    20,
   );
   for (const entry of EVAL_ADD_CATALOG.filter((e) => e.advisory)) {
     if (entry.choice.kind === "check")
@@ -63,6 +100,10 @@ it("files every assertion under the chain stage the contract reports it at", () 
   for (const entry of EVAL_ADD_CATALOG) {
     if (entry.choice.kind === "step") {
       expect(entry.section).toBe("Actions");
+      continue;
+    }
+    if (entry.choice.kind === "route-check") {
+      expect(entry.section).toBe(stageSection("selection"));
       continue;
     }
     if (entry.choice.kind !== "check") {

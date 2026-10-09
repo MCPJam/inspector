@@ -1,3 +1,10 @@
+import { useSpineDrag } from "./spine-drag";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@mcpjam/design-system/dropdown-menu";
 import type { JoinedScorecardRow } from "../case-scorecard/trial-results";
 import { TrialScorecardRow } from "../case-scorecard/trial-scorecard-row";
 /**
@@ -12,7 +19,7 @@ import { TrialScorecardRow } from "../case-scorecard/trial-scorecard-row";
  */
 
 import { useState } from "react";
-import { ChevronRight, Trash2 } from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
@@ -25,8 +32,6 @@ import {
 import { RoleChip } from "@/components/evals/scorer-role-control";
 import type { ScorecardRow } from "../case-scorecard/case-scorecard-model";
 import { ScorecardRowView } from "../case-scorecard/scorecard-row";
-import { ProvenanceChip } from "../case-scorecard/provenance-chip";
-import { RowMarker } from "../case-scorecard/row-marker";
 import { StatusDot } from "../simple-case/status-dot";
 
 export function SpineCheckRow({
@@ -41,6 +46,7 @@ export function SpineCheckRow({
   onChange,
   onRemove,
   onSelect,
+  newest = false,
 }: {
   trialRow?: JoinedScorecardRow;
   step: AssertStep;
@@ -54,6 +60,7 @@ export function SpineCheckRow({
   onChange: (next: AssertStep) => void;
   onRemove: () => void;
   onSelect?: () => void;
+  newest?: boolean;
 }) {
   if (!row) return null;
   if (trialRow) return <TrialScorecardRow row={trialRow} />;
@@ -74,6 +81,7 @@ export function SpineCheckRow({
         readOnly={readOnly}
         status={status}
         defaultOpen={defaultOpen}
+        newest={newest}
         onChange={onChange}
         onRemove={onRemove}
       />
@@ -88,6 +96,8 @@ export function SpineCheckRow({
       checkPolicy={checkPolicy}
       overlay={overlay}
       defaultOpen={defaultOpen}
+      paper={!readOnly}
+      newest={newest}
       onChangePredicate={(next: Predicate) =>
         onChange({ ...step, assertion: next })
       }
@@ -107,6 +117,7 @@ function WidgetCheckRow({
   defaultOpen,
   onChange,
   onRemove,
+  newest,
 }: {
   step: AssertStep;
   row: ScorecardRow;
@@ -117,62 +128,77 @@ function WidgetCheckRow({
   defaultOpen: boolean;
   onChange: (next: AssertStep) => void;
   onRemove: () => void;
+  newest: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(!readOnly || defaultOpen);
   const editable = row.editable && !readOnly;
+  const drag = useSpineDrag({
+    id: `step:${step.id}`,
+    phase: "steps",
+    kind: "assert",
+    disabled: !editable,
+  });
 
   return (
     <li
+      {...drag.rowProps}
       data-testid="case-scorecard-row"
       data-row-key={row.key}
       data-provenance="step"
       data-role={row.role}
       data-widget="yes"
       data-step-id={step.id}
-      className="rounded-md border border-border/60 bg-background/40"
+      data-newest={newest || undefined}
+      className={cn(
+        "relative bg-card py-2.5 pl-8 pr-11",
+        newest &&
+          "before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-primary",
+      )}
     >
-      <div className="flex items-center gap-2 px-2.5 py-1.5">
-        <RowMarker row={row} />
-        <ProvenanceChip provenance="step" />
+      <div className="flex items-center gap-2.5">
+        {drag.handle(row.kindLabel)}
         <button
           type="button"
           aria-expanded={open}
-          aria-label={`Edit ${row.label}`}
-          onClick={() => setOpen((value) => !value)}
+          aria-label={`Edit ${readOnly ? row.label : row.kindLabel}`}
+          onClick={() => setOpen(true)}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           title={row.tooltip}
         >
-          <ChevronRight
-            className={cn(
-              "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
-              open && "rotate-90",
-            )}
-          />
-          <span className="min-w-0 truncate text-xs text-foreground">
-            {row.label}
+          <span className="min-w-0 text-sm font-semibold leading-[18px] text-card-foreground">
+            {readOnly ? row.label : row.kindLabel}
           </span>
         </button>
         <StatusDot status={status} />
         {/* A DOM assertion carries no check policy, so the chip states the
             role rather than offering one that cannot be written. */}
-        <RoleChip role={row.role} />
+        {readOnly ? <RoleChip role={row.role} /> : null}
         {editable ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-            aria-label={`Remove ${row.label}`}
-            onClick={onRemove}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-2 top-2 size-7"
+                aria-label={`Options for ${row.kindLabel}`}
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onRemove}>
+                Remove {row.kindLabel}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
       </div>
       {open ? (
-        <div className="border-t border-border/60 px-2.5 py-2">
+        <div className="mt-1.5">
           <fieldset disabled={readOnly} className="contents">
             <WidgetAssertionFields
+              paper={!readOnly}
               value={assertion}
               onChange={(next) => onChange({ ...step, assertion: next })}
               availableTools={availableTools}

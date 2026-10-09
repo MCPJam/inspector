@@ -20,10 +20,15 @@ import {
 } from "@/components/evals/scorer-role-control";
 import { withPredicateRole } from "@/components/evals/suite-scorer-table-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
-import { StatusDot, type SimpleCaseOverlay, overlayStatus } from "../simple-case/status-dot";
+import {
+  StatusDot,
+  type SimpleCaseOverlay,
+  overlayStatus,
+} from "../simple-case/status-dot";
 import { ProvenanceChip } from "./provenance-chip";
 import { RowMarker } from "./row-marker";
 import type { ScorecardRow } from "./case-scorecard-model";
+import { PaperCheckRow } from "../case-spine/paper-check-row";
 
 export function ScorecardRowView({
   row,
@@ -36,8 +41,12 @@ export function ScorecardRowView({
   onRemove,
   onSelect,
   onOpenSuiteSettings,
+  paper = false,
+  newest = false,
+  dragId,
 }: {
   row: ScorecardRow;
+  dragId?: string;
   availableTools?: string[];
   readOnly: boolean;
   /**
@@ -52,11 +61,31 @@ export function ScorecardRowView({
   onRemove?: () => void;
   onSelect?: () => void;
   onOpenSuiteSettings?: () => void;
+  paper?: boolean;
+  newest?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const editable = row.editable && !readOnly;
   const canEditFields = editable && Boolean(onChangePredicate) && row.predicate;
-  const canRole = editable && checkPolicy && row.roleLock === "none" && row.predicate;
+  const canRole =
+    editable && checkPolicy && row.roleLock === "none" && row.predicate;
+
+  if (paper)
+    return (
+      <PaperCheckRow
+        dragId={dragId}
+        row={row}
+        newest={newest}
+        availableTools={availableTools}
+        readOnly={readOnly}
+        checkPolicy={checkPolicy}
+        overlay={overlay}
+        onChangePredicate={onChangePredicate}
+        onRemove={onRemove}
+        onSelect={onSelect}
+        onOpenSuiteSettings={onOpenSuiteSettings}
+      />
+    );
 
   return (
     <li
@@ -102,7 +131,9 @@ export function ScorecardRowView({
           </span>
         )}
 
-        {row.stepId ? <StatusDot status={overlayStatus(overlay, row.stepId)} /> : null}
+        {row.stepId ? (
+          <StatusDot status={overlayStatus(overlay, row.stepId)} />
+        ) : null}
 
         {row.provenance === "builtin" ? null : canRole && onChangePredicate ? (
           <RoleSegmentGroup

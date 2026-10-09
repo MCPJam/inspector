@@ -32,6 +32,7 @@ import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { useEvalsStartRecordingEnabled } from "@/hooks/useEvalsStartRecordingEnabled";
 import { mintCaseId } from "@mcpjam/sdk/contract";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
@@ -1035,7 +1036,6 @@ export function TestTemplateEditor({
   openCompareIterationId = null,
   trialChainEnabled = false,
   simpleCaseEditor = false,
-  observeFirst = false,
   onRunCase,
   launchReview,
   evalRunsDisabledReason: evalRunsDisabledReasonProp,
@@ -1069,6 +1069,7 @@ export function TestTemplateEditor({
     SimpleCaseTool[]
   >([]);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
+  const [hasInvalidFieldDraft, setHasInvalidFieldDraft] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   // Guards the first-Save insert of a prompt draft so a double-click can't
   // create the case twice while createTestCase is in flight.
@@ -1174,7 +1175,11 @@ export function TestTemplateEditor({
   // (EvalLiveChatPanel) so the user clicks live widgets instead of viewing a
   // frozen trace. No grading — the eval runner is out of this path. Past-run
   // review (`replayIteration`) still wins, so opening a run shows its trace.
-  const [liveRecordMode, setLiveRecordMode] = useState<boolean>(false);
+  const recordingEnabled = useEvalsStartRecordingEnabled();
+  const recordingEnabledRef = useRef(recordingEnabled);
+  recordingEnabledRef.current = recordingEnabled;
+  const [recordingRequested, setLiveRecordMode] = useState<boolean>(false);
+  const liveRecordMode = recordingEnabled && recordingRequested;
   const [inspectIterationId, setInspectIterationId] = useState<string | null>(
     null,
   );
@@ -1199,6 +1204,20 @@ export function TestTemplateEditor({
   // A pending assert-mode pick: the element the user clicked, awaiting a choice
   // of what to check. Null when the chooser is closed.
   const [pendingPick, setPendingPick] = useState<AssertPick | null>(null);
+  useEffect(() => {
+    if (!recordingEnabled) {
+      setLiveRecordMode(false);
+      setPendingPick(null);
+    }
+  }, [recordingEnabled]);
+  const handleStartRecording = useCallback(() => {
+    if (!recordingEnabled) return;
+    setReplayIteration(null);
+    setInspectIterationId(null);
+    setShowSpecOverride(false);
+    setCaptureMode("record");
+    setLiveRecordMode(true);
+  }, [recordingEnabled]);
   /** Concurrent compare `handleRunCompare` calls; used only for global `isRunningCompare`. */
   const compareHandlesInFlightRef = useRef(0);
   /**
@@ -1308,9 +1327,13 @@ export function TestTemplateEditor({
   const detailRunId = tracedRunId ?? recentIterations[0]?.suiteRunId ?? null;
   const detailRun = useSelectedRun(suiteId ?? "", detailRunId).run;
   const suiteRuns = useMemo(
-    () => detailRun
-      ? [detailRun, ...listedSuiteRuns.filter((run) => run._id !== detailRun._id)]
-      : listedSuiteRuns,
+    () =>
+      detailRun
+        ? [
+            detailRun,
+            ...listedSuiteRuns.filter((run) => run._id !== detailRun._id),
+          ]
+        : listedSuiteRuns,
     [detailRun, listedSuiteRuns],
   );
 
@@ -1965,7 +1988,7 @@ export function TestTemplateEditor({
    * a case cannot be half on it, because the gear's envelope writer and the
    * spine's would disagree about which surface owns `replace`.
    */
-  const useSpine = useWorkspace && observeFirst;
+  const useSpine = useWorkspace;
 
   /**
    * Whether this deployment accepts a role on a check.
@@ -2163,6 +2186,11 @@ export function TestTemplateEditor({
     }) => {
       const caseId = currentTestCase?._id;
       if (!onRunCase || !caseId || isDraft) return;
+      if (hasInvalidFieldDraft) {
+        if (launch)
+          throw new Error("Complete the highlighted fields before running.");
+        return;
+      }
       if (launch && evalRunsDisabledReason)
         throw new Error(evalRunsDisabledReason);
       setRunTestPending(true);
@@ -2192,6 +2220,7 @@ export function TestTemplateEditor({
       evalRunsDisabledReason,
       currentTestCase?._id,
       isDraft,
+      hasInvalidFieldDraft,
       hasUnsavedChanges,
       iterationOverride,
       editForm?.judgeConfigOverride?.goalCompletion?.enabled,
@@ -2235,6 +2264,7 @@ export function TestTemplateEditor({
   }, [useWorkspace, editForm]);
 
   const savePrimaryDisabled =
+    hasInvalidFieldDraft ||
     !arePromptTurnsValid ||
     !arePredicatesValid ||
     !areStepChecksValid ||
@@ -2243,6 +2273,8 @@ export function TestTemplateEditor({
     Boolean(simpleToolsBlock);
 
   const saveDisabledTooltip = useMemo(() => {
+    if (hasInvalidFieldDraft)
+      return "Complete the highlighted fields before saving.";
     if (!savePrimaryDisabled) {
       return null;
     }
@@ -2261,6 +2293,7 @@ export function TestTemplateEditor({
     return null;
   }, [
     savePrimaryDisabled,
+    hasInvalidFieldDraft,
     isRunningCompare,
     arePromptTurnsValid,
     arePredicatesValid,
@@ -2306,6 +2339,7 @@ export function TestTemplateEditor({
   }, [editForm?.steps]);
 
   const runPrimaryDisabled =
+    hasInvalidFieldDraft ||
     isDraft ||
     // A model-free render check has no editor quick-run path — it runs with the
     // full suite (the compare path below would abort on "no model"). Disable
@@ -2319,6 +2353,7 @@ export function TestTemplateEditor({
     Boolean(simpleToolsBlock);
 
   const runDisabledTooltip = useMemo(() => {
+    if (hasInvalidFieldDraft) return "Complete the highlighted fields before running.";
     if (!runPrimaryDisabled) {
       return null;
     }
@@ -2357,6 +2392,7 @@ export function TestTemplateEditor({
     return "Run is unavailable for this test right now.";
   }, [
     runPrimaryDisabled,
+    hasInvalidFieldDraft,
     casePinnedOnly,
     selectedModelValues.length,
     canRun,
@@ -2499,6 +2535,7 @@ export function TestTemplateEditor({
   // callback.
   const handleAssertPickConfirm = useCallback(
     (assertion: StepAssertion) => {
+      if (!recordingEnabledRef.current) return;
       setPendingPick((pick) => {
         if (!pick) return null;
         appendWidgetStepToTurn(pick.promptIndex, {
@@ -2518,6 +2555,7 @@ export function TestTemplateEditor({
   // is dropped (the user adds that prompt to the test first — Phase 2b).
   const handleRecorderStep = useCallback(
     (event: RecorderStepEvent) => {
+      if (!recordingEnabledRef.current) return;
       const turnIndex = event.promptIndex;
       const authoredTurns = groupStepsIntoTurns(
         editFormStepsRef.current,
@@ -2564,12 +2602,13 @@ export function TestTemplateEditor({
   // step; `handleRecorderStep` files it into the widget's turn. No armed target —
   // live mode records every widget in the session.
   const previewRecorder = useMemo<RecorderProps | undefined>(() => {
+    if (!recordingEnabled) return undefined;
     return {
       recordCapable: true,
       onRecorderStep: handleRecorderStep,
       onRecorderReady: handleRecorderReady,
     };
-  }, [handleRecorderStep, handleRecorderReady]);
+  }, [recordingEnabled, handleRecorderStep, handleRecorderReady]);
 
   // Pre-run Preview: render the forming spec through the SAME chat surface as a
   // real run (synthesized trace: prompt + expected tool calls), so the editor's
@@ -2663,6 +2702,10 @@ export function TestTemplateEditor({
   // can swap the `draft:<kind>` route for the real one.
   const handleCreateFromDraft = async () => {
     if (!editForm || isSavingDraft) return;
+    if (hasInvalidFieldDraft) {
+      toast.error("Complete the highlighted fields before saving.");
+      return false;
+    }
 
     if (simpleToolsBlock) {
       setSimpleValidationAttempted(true);
@@ -2729,6 +2772,10 @@ export function TestTemplateEditor({
    * looking at.
    */
   const handleSave = async (): Promise<boolean> => {
+    if (hasInvalidFieldDraft) {
+      toast.error("Complete the highlighted fields before saving.");
+      return false;
+    }
     if (readOnly) return false;
     if (isDraft) {
       await handleCreateFromDraft();
@@ -3085,7 +3132,9 @@ export function TestTemplateEditor({
   useEffect(() => {
     setPersistedTestCaseModelValue(
       selectedTestCaseId,
-      selectedModelValues[0] ? quickRunModelValue(selectedModelValues[0]) : null,
+      selectedModelValues[0]
+        ? quickRunModelValue(selectedModelValues[0])
+        : null,
     );
   }, [selectedModelValues, selectedTestCaseId]);
 
@@ -3163,6 +3212,8 @@ export function TestTemplateEditor({
     const runModelValues = (options?.modelValues ?? selectedModelValues).filter(
       Boolean,
     );
+    if (hasInvalidFieldDraft) { toast.error("Complete the highlighted fields before running."); return; }
+
     if (runModelValues.length === 0) {
       toast.error("Select at least one model to run.");
       return;
@@ -4160,7 +4211,8 @@ export function TestTemplateEditor({
     ?.suiteRunId
     ? (suiteRuns.find(
         (run): run is EvalSuiteRun =>
-          run._id === selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId &&
+          run._id ===
+            selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId &&
           "tests" in run.configSnapshot,
       ) ?? null)
     : null;
@@ -4307,6 +4359,7 @@ export function TestTemplateEditor({
           caseForm={
             <CaseSpine
               steps={editForm.steps}
+              onDraftValidityChange={setHasInvalidFieldDraft}
               onStepsChange={setSteps}
               matchOptions={editForm.matchOptions}
               onMatchOptionsChange={(next) =>
@@ -4407,81 +4460,86 @@ export function TestTemplateEditor({
                   className="mt-2"
                 />
               </div>
-              {!readOnly && <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                {/* First, as far as it can get from the primary run button:
+              {!readOnly && (
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  {/* First, as far as it can get from the primary run button:
                     a destructive action must not sit between two others. */}
-                {onDeleteCase && !isDraft && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        // Same outlined square as the settings gear beside it,
-                        // so the header reads as one set; red only on hover.
-                        variant="outline"
-                        size="sm"
-                        className="h-8 w-8 shrink-0 p-0 hover:bg-destructive/10 hover:text-destructive"
-                        aria-label="Delete test case"
-                        data-testid="case-header-delete"
-                        onClick={() => setDeleteCaseOpen(true)}
-                      >
-                        <Trash2 className="size-3.5" aria-hidden />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      Delete test case
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {onExportDraft && !useWorkspace ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 shrink-0"
-                    onClick={() => handleExport()}
-                    disabled={!editForm}
-                  >
-                    <Code2 className="mr-2 h-3.5 w-3.5" />
-                    Setup SDK
-                  </Button>
-                ) : null}
-                {hasUnsavedChanges ? (
-                  saveDisabledTooltip ? (
+                  {onDeleteCase && !isDraft && (
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <span className="inline-flex">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8"
-                            onClick={() => void handleSave()}
-                            disabled={savePrimaryDisabled}
-                          >
-                            <Save className="mr-2 h-3.5 w-3.5" />
-                            Save
-                          </Button>
-                        </span>
+                        <Button
+                          type="button"
+                          // Same outlined square as the settings gear beside it,
+                          // so the header reads as one set; red only on hover.
+                          variant="outline"
+                          size="sm"
+                          className="h-8 w-8 shrink-0 p-0 hover:bg-destructive/10 hover:text-destructive"
+                          aria-label="Delete test case"
+                          data-testid="case-header-delete"
+                          onClick={() => setDeleteCaseOpen(true)}
+                        >
+                          <Trash2 className="size-3.5" aria-hidden />
+                        </Button>
                       </TooltipTrigger>
                       <TooltipContent variant="muted" side="top" sideOffset={6}>
-                        {saveDisabledTooltip}
+                        Delete test case
                       </TooltipContent>
                     </Tooltip>
-                  ) : (
+                  )}
+                  {onExportDraft && !useWorkspace ? (
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-8"
-                      onClick={() => void handleSave()}
-                      disabled={savePrimaryDisabled}
+                      className="h-8 shrink-0"
+                      onClick={() => handleExport()}
+                      disabled={!editForm}
                     >
-                      <Save className="mr-2 h-3.5 w-3.5" />
-                      Save
+                      <Code2 className="mr-2 h-3.5 w-3.5" />
+                      Setup SDK
                     </Button>
-                  )
-                ) : null}
-                {/* The gear duplicated the whole check list and owned the one
+                  ) : null}
+                  {hasUnsavedChanges ? (
+                    saveDisabledTooltip ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => void handleSave()}
+                              disabled={savePrimaryDisabled}
+                            >
+                              <Save className="mr-2 h-3.5 w-3.5" />
+                              Save
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          variant="muted"
+                          side="top"
+                          sideOffset={6}
+                        >
+                          {saveDisabledTooltip}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        onClick={() => void handleSave()}
+                        disabled={savePrimaryDisabled}
+                      >
+                        <Save className="mr-2 h-3.5 w-3.5" />
+                        Save
+                      </Button>
+                    )
+                  ) : null}
+                  {/* The gear duplicated the whole check list and owned the one
                     control the spine did not have a home for (argument
                     matching). On the spine it is gone; `/evals` keeps it. */}
                 {editForm && !useSpine ? (
@@ -4614,279 +4672,284 @@ export function TestTemplateEditor({
                         }
                       : {})}
                   />
-                ) : quickRunHostOptions.length > 0 ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <label className="inline-flex cursor-pointer items-center">
-                        <span className="sr-only">Client</span>
-                        <span className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5">
-                          <HostChipLogo
-                            logoSrc={selectedQuickRunHostLogoSrc}
-                            name={selectedQuickRunHostOption?.label ?? "Client"}
-                            size="sm"
-                          />
+                  ) : quickRunHostOptions.length > 0 ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <label className="inline-flex cursor-pointer items-center">
+                          <span className="sr-only">Client</span>
+                          <span className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5">
+                            <HostChipLogo
+                              logoSrc={selectedQuickRunHostLogoSrc}
+                              name={
+                                selectedQuickRunHostOption?.label ?? "Client"
+                              }
+                              size="sm"
+                            />
+                            <select
+                              className="min-w-0 max-w-[5.5rem] truncate bg-transparent text-xs text-foreground outline-none"
+                              value={quickRunHostSelection ?? ""}
+                              onChange={(event) =>
+                                setQuickRunHostSelection(event.target.value)
+                              }
+                              aria-label="Client for the next run"
+                              disabled={isRunningCompare}
+                            >
+                              {quickRunHostOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </span>
+                        </label>
+                      </TooltipTrigger>
+                      <TooltipContent variant="muted" side="top" sideOffset={6}>
+                        Client for the next run
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    // Attachment-less suite: the run uses the suite's own host
+                    // config (defaulting to MCPJam). Show it read-only so the
+                    // host is always visible — never an empty/hostless state.
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5 text-xs text-foreground"
+                          aria-label="Client for the next run"
+                        >
+                          {suiteHostLogoSrc ? (
+                            <img
+                              src={suiteHostLogoSrc}
+                              alt=""
+                              className="size-3.5 shrink-0 object-contain"
+                            />
+                          ) : null}
+                          <span className="truncate">{suiteHostLabel}</span>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent variant="muted" side="top" sideOffset={6}>
+                        Client for the next run
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  {!useWorkspace && isEnvironmentSuite && projectId ? (
+                    // The server group the run's environments use — the same
+                    // picker as suite settings, defaulting to the group the
+                    // suite's environments share.
+                    <ServerPicker
+                      projectId={projectId}
+                      value={quickRunServerGroup}
+                      onChange={(serverAttachmentId) => {
+                        quickRunServerGroupPickedRef.current = true;
+                        setQuickRunServerGroup(serverAttachmentId);
+                      }}
+                      offerClear={false}
+                      disabled={isRunningCompare}
+                      emptyTriggerLabel="Pick a server group"
+                      triggerTestId="quick-run-server-group"
+                    />
+                  ) : null}
+                  {useWorkspace ? null : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <label className="inline-flex cursor-pointer items-center">
+                          <span className="sr-only">Iterations</span>
                           <select
-                            className="min-w-0 max-w-[5.5rem] truncate bg-transparent text-xs text-foreground outline-none"
-                            value={quickRunHostSelection ?? ""}
-                            onChange={(event) =>
-                              setQuickRunHostSelection(event.target.value)
+                            className="h-8 w-10 rounded-md border border-input/80 bg-background px-1 text-center text-xs text-foreground"
+                            value={iterationOverride}
+                            onChange={(e) =>
+                              setIterationOverride(Number(e.target.value))
                             }
-                            aria-label="Client for the next run"
+                            aria-label="Iterations for the next run"
                             disabled={isRunningCompare}
                           >
-                            {quickRunHostOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
+                            {Array.from({ length: 10 }, (_, i) => i + 1).map(
+                              (n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              ),
+                            )}
                           </select>
-                        </span>
-                      </label>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      Client for the next run
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  // Attachment-less suite: the run uses the suite's own host
-                  // config (defaulting to MCPJam). Show it read-only so the
-                  // host is always visible — never an empty/hostless state.
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span
-                        className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5 text-xs text-foreground"
-                        aria-label="Client for the next run"
-                      >
-                        {suiteHostLogoSrc ? (
-                          <img
-                            src={suiteHostLogoSrc}
-                            alt=""
-                            className="size-3.5 shrink-0 object-contain"
-                          />
-                        ) : null}
-                        <span className="truncate">{suiteHostLabel}</span>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      Client for the next run
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {!useWorkspace && isEnvironmentSuite && projectId ? (
-                  // The server group the run's environments use — the same
-                  // picker as suite settings, defaulting to the group the
-                  // suite's environments share.
-                  <ServerPicker
-                    projectId={projectId}
-                    value={quickRunServerGroup}
-                    onChange={(serverAttachmentId) => {
-                      quickRunServerGroupPickedRef.current = true;
-                      setQuickRunServerGroup(serverAttachmentId);
-                    }}
-                    offerClear={false}
-                    disabled={isRunningCompare}
-                    emptyTriggerLabel="Pick a server group"
-                    triggerTestId="quick-run-server-group"
-                  />
-                ) : null}
-                {useWorkspace ? null : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <label className="inline-flex cursor-pointer items-center">
-                        <span className="sr-only">Iterations</span>
-                        <select
-                          className="h-8 w-10 rounded-md border border-input/80 bg-background px-1 text-center text-xs text-foreground"
-                          value={iterationOverride}
-                          onChange={(e) =>
-                            setIterationOverride(Number(e.target.value))
-                          }
-                          aria-label="Iterations for the next run"
-                          disabled={isRunningCompare}
-                        >
-                          {Array.from({ length: 10 }, (_, i) => i + 1).map(
-                            (n) => (
-                              <option key={n} value={n}>
-                                {n}
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </label>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      Iterations for the next run
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {useWorkspace &&
-                  useSpine &&
-                  workspaceLeftView.kind !== "inspecting" && (
-                    <DefaultChecksReference
-                      onConfigureSuite={onOpenSuiteSettings}
-                      onOverride={onOpenCaseChecks}
-                    />
+                        </label>
+                      </TooltipTrigger>
+                      <TooltipContent variant="muted" side="top" sideOffset={6}>
+                        Iterations for the next run
+                      </TooltipContent>
+                    </Tooltip>
                   )}
-                {useWorkspace ? null : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant={liveRecordMode ? "secondary" : "outline"}
-                        size="sm"
-                        className="h-8"
-                        aria-pressed={liveRecordMode}
-                        onClick={() => {
-                          // Turning ON: leave the spec override so the live panel
-                          // shows. The preview gate keeps past-run review
-                          // (`replayIteration`) winning over Record mode.
-                          if (!liveRecordMode) setShowSpecOverride(false);
-                          setLiveRecordMode((v) => !v);
-                        }}
-                      >
-                        <Circle
-                          className={
-                            "size-3.5" +
-                            (liveRecordMode
-                              ? " fill-destructive text-destructive"
-                              : "")
-                          }
-                        />
-                        {liveRecordMode ? "Recording" : "Record"}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      {liveRecordMode
-                        ? "Live record mode — click widgets to interact (no grading)"
-                        : "Record: open a live playground to click widgets"}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {runDisabledTooltip ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-2">
+                  {useWorkspace &&
+                    useSpine &&
+                    workspaceLeftView.kind !== "inspecting" && (
+                      <DefaultChecksReference
+                        onConfigureSuite={onOpenSuiteSettings}
+                        onOverride={onOpenCaseChecks}
+                      />
+                    )}
+                  {useWorkspace || !recordingEnabled ? null : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
                         <Button
                           type="button"
-                          variant={isRunningCompare ? "secondary" : "default"}
+                          variant={liveRecordMode ? "secondary" : "outline"}
                           size="sm"
                           className="h-8"
-                          // While the run is going this IS the stop: a disabled
-                          // "Running…" pill spent the one button the eye lands on
-                          // saying what the spinner already said, and pushed the
-                          // only useful action into a second, quieter one.
-                          onClick={() =>
-                            isRunningCompare
-                              ? handleStopCompare()
-                              : useWorkspace
-                                ? setRunSetupOpen(true)
-                                : handlePrimaryRun()
-                          }
-                          disabled={
-                            isRunningCompare
-                              ? false
-                              : useWorkspace
-                                ? false
-                                : runPrimaryDisabled
-                          }
+                          aria-pressed={liveRecordMode}
+                          onClick={() => {
+                            // Turning ON: leave the spec override so the live panel
+                            // shows. The preview gate keeps past-run review
+                            // (`replayIteration`) winning over Record mode.
+                            if (!liveRecordMode) setShowSpecOverride(false);
+                            setLiveRecordMode((v) => !v);
+                          }}
                         >
-                          {isRunningCompare ? (
-                            <>
-                              <Square className="size-3.5" />
-                              Cancel
-                            </>
-                          ) : (
-                            <>
-                              <Play className="size-3.5 fill-current" />
-                              {useWorkspace
-                                ? "Setup Run"
-                                : selectedModelValues.length > 1
-                                  ? "Run compare"
-                                  : "Quick Run"}
-                            </>
-                          )}
+                          <Circle
+                            className={
+                              "size-3.5" +
+                              (liveRecordMode
+                                ? " fill-destructive text-destructive"
+                                : "")
+                            }
+                          />
+                          {liveRecordMode ? "Recording" : "Record"}
                         </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent variant="muted" side="top" sideOffset={6}>
-                      {runDisabledTooltip}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <span className="inline-flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant={isRunningCompare ? "secondary" : "default"}
-                      size="sm"
-                      className="h-8"
-                      // While the run is going this IS the stop: a disabled
-                      // "Running…" pill spent the one button the eye lands on
-                      // saying what the spinner already said, and pushed the
-                      // only useful action into a second, quieter one.
-                      onClick={() =>
-                        isRunningCompare
-                          ? handleStopCompare()
-                          : useWorkspace
-                            ? setRunSetupOpen(true)
-                            : handlePrimaryRun()
-                      }
-                      disabled={
-                        isRunningCompare
-                          ? false
-                          : useWorkspace
+                      </TooltipTrigger>
+                      <TooltipContent variant="muted" side="top" sideOffset={6}>
+                        {liveRecordMode
+                          ? "Live record mode — click widgets to interact (no grading)"
+                          : "Record: open a live playground to click widgets"}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  {runDisabledTooltip ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant={isRunningCompare ? "secondary" : "default"}
+                            size="sm"
+                            className="h-8"
+                            // While the run is going this IS the stop: a disabled
+                            // "Running…" pill spent the one button the eye lands on
+                            // saying what the spinner already said, and pushed the
+                            // only useful action into a second, quieter one.
+                            onClick={() =>
+                              isRunningCompare
+                                ? handleStopCompare()
+                                : useWorkspace
+                                  ? setRunSetupOpen(true)
+                                  : handlePrimaryRun()
+                            }
+                            disabled={
+                              isRunningCompare
+                                ? false
+                                : useWorkspace
+                                  ? false
+                                  : runPrimaryDisabled
+                            }
+                          >
+                            {isRunningCompare ? (
+                              <>
+                                <Square className="size-3.5" />
+                                Cancel
+                              </>
+                            ) : (
+                              <>
+                                <Play className="size-3.5 fill-current" />
+                                {useWorkspace
+                                  ? "Setup Run"
+                                  : selectedModelValues.length > 1
+                                    ? "Run compare"
+                                    : "Quick Run"}
+                              </>
+                            )}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent variant="muted" side="top" sideOffset={6}>
+                        {runDisabledTooltip}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <span className="inline-flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant={isRunningCompare ? "secondary" : "default"}
+                        size="sm"
+                        className="h-8"
+                        // While the run is going this IS the stop: a disabled
+                        // "Running…" pill spent the one button the eye lands on
+                        // saying what the spinner already said, and pushed the
+                        // only useful action into a second, quieter one.
+                        onClick={() =>
+                          isRunningCompare
+                            ? handleStopCompare()
+                            : useWorkspace
+                              ? setRunSetupOpen(true)
+                              : handlePrimaryRun()
+                        }
+                        disabled={
+                          isRunningCompare
                             ? false
-                            : runPrimaryDisabled
-                      }
-                    >
-                      {isRunningCompare ? (
-                        <>
-                          <Square className="size-3.5" />
-                          Cancel
-                        </>
-                      ) : (
-                        <>
-                          <Play className="size-3.5 fill-current" />
-                          {useWorkspace
-                            ? "Setup Run"
-                            : selectedModelValues.length > 1
-                              ? "Run compare"
-                              : "Quick Run"}
-                        </>
-                      )}
-                    </Button>
-                  </span>
-                )}
-                {/* Draft-run estimate: priced against the models the button will
+                            : useWorkspace
+                              ? false
+                              : runPrimaryDisabled
+                        }
+                      >
+                        {isRunningCompare ? (
+                          <>
+                            <Square className="size-3.5" />
+                            Cancel
+                          </>
+                        ) : (
+                          <>
+                            <Play className="size-3.5 fill-current" />
+                            {useWorkspace
+                              ? "Setup Run"
+                              : selectedModelValues.length > 1
+                                ? "Run compare"
+                                : "Quick Run"}
+                          </>
+                        )}
+                      </Button>
+                    </span>
+                  )}
+                  {/* Draft-run estimate: priced against the models the button will
                     execute and the CURRENT (possibly unsaved) prompt size.
                     Suppressed when the Run control can't run — an unsaved draft,
                     a render check, or no model selected. */}
-                <QuickCaseRunCostEstimateHint
-                  suiteId={suiteId}
-                  caseId={draftKind ? null : (currentTestCase?._id ?? null)}
-                  models={draftRunEstimateModels}
-                  runs={iterationOverride}
-                  draft={draftRunEstimateHeuristic}
-                  // Mirrors `runPrimaryDisabled` for its STRUCTURAL blockers —
-                  // unsaved draft, render check, no model, no suite servers,
-                  // invalid steps — each of which means this Run can't launch
-                  // as configured. `isRunningCompare` is deliberately excluded:
-                  // that's transient, and the estimate stays accurate for the
-                  // next run (same line drawn for the per-case controls, which
-                  // keep the hint while servers are merely disconnected).
-                  suppressed={
-                    isDraft ||
-                    casePinnedOnly ||
-                    draftRunEstimateModels.length === 0 ||
-                    !canRun ||
-                    // `canRun` lets a DIRECT GUEST through with zero servers,
-                    // but `handleRunCompare` still rejects with "No MCP servers
-                    // are configured for this suite." — so gate on the server
-                    // list itself, not just `canRun`.
-                    !hasConfiguredSuiteServers ||
-                    !arePromptTurnsValid
-                  }
-                  side="top"
-                />
-              </div>}
+                  {!useWorkspace && (
+                    <QuickCaseRunCostEstimateHint
+                      suiteId={suiteId}
+                      caseId={draftKind ? null : (currentTestCase?._id ?? null)}
+                      models={draftRunEstimateModels}
+                      runs={iterationOverride}
+                      draft={draftRunEstimateHeuristic}
+                      // Mirrors `runPrimaryDisabled` for its STRUCTURAL blockers —
+                      // unsaved draft, render check, no model, no suite servers,
+                      // invalid steps — each of which means this Run can't launch
+                      // as configured. `isRunningCompare` is deliberately excluded:
+                      // that's transient, and the estimate stays accurate for the
+                      // next run (same line drawn for the per-case controls, which
+                      // keep the hint while servers are merely disconnected).
+                      suppressed={
+                        isDraft ||
+                        casePinnedOnly ||
+                        draftRunEstimateModels.length === 0 ||
+                        !canRun ||
+                        // `canRun` lets a DIRECT GUEST through with zero servers,
+                        // but `handleRunCompare` still rejects with "No MCP servers
+                        // are configured for this suite." — so gate on the server
+                        // list itself, not just `canRun`.
+                        !hasConfiguredSuiteServers ||
+                        !arePromptTurnsValid
+                      }
+                      side="top"
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </div>
           {useWorkspace ? (
@@ -5030,6 +5093,7 @@ export function TestTemplateEditor({
                       }
                       key={`spine:${currentTestCase?._id ?? "none"}`}
                       steps={editForm.steps}
+                      onDraftValidityChange={setHasInvalidFieldDraft}
                       onStepsChange={setSteps}
                       matchOptions={editForm.matchOptions}
                       onMatchOptionsChange={(next) =>
@@ -5092,11 +5156,9 @@ export function TestTemplateEditor({
                       validationAttempted={simpleValidationAttempted}
                       recording={liveRecordMode}
                       recordEntryPrimary={draftKind === "record"}
-                      onStartRecording={() => {
-                        setShowSpecOverride(false);
-                        setCaptureMode("record");
-                        setLiveRecordMode(true);
-                      }}
+                      onStartRecording={
+                        recordingEnabled ? handleStartRecording : undefined
+                      }
                       onStopRecording={() => setLiveRecordMode(false)}
                       onAddCheck={() => setCaptureMode("assert")}
                       stepStatusById={workspaceStepStatusById}
@@ -5209,11 +5271,9 @@ export function TestTemplateEditor({
                       validationAttempted={simpleValidationAttempted}
                       recording={liveRecordMode}
                       recordEntryPrimary={draftKind === "record"}
-                      onStartRecording={() => {
-                        setShowSpecOverride(false);
-                        setCaptureMode("record");
-                        setLiveRecordMode(true);
-                      }}
+                      onStartRecording={
+                        recordingEnabled ? handleStartRecording : undefined
+                      }
                       onStopRecording={() => setLiveRecordMode(false)}
                       onAddCheck={() => setCaptureMode("assert")}
                       overlay={workspaceOverlay}
@@ -5295,6 +5355,8 @@ export function TestTemplateEditor({
                       workspacePaneView.kind === "recording" ||
                       workspaceLiveRecord?.status === "running"
                     }
+                    recording={workspacePaneView.kind === "recording"}
+                    onStopRecording={() => setLiveRecordMode(false)}
                     onSelect={(it) => {
                       setReplayIteration(
                         previewRecord?.status === "running" &&
@@ -5886,9 +5948,13 @@ export function TestTemplateEditor({
                           // While the run is going this IS the stop — same as the
                           // primary Run button.
                           onClick={() =>
-                            isRunningCompare ? handleStopCompare() : handlePrimaryRun()
+                            isRunningCompare
+                              ? handleStopCompare()
+                              : handlePrimaryRun()
                           }
-                          disabled={isRunningCompare ? false : runPrimaryDisabled}
+                          disabled={
+                            isRunningCompare ? false : runPrimaryDisabled
+                          }
                         >
                           {isRunningCompare ? (
                             <>
@@ -5922,7 +5988,9 @@ export function TestTemplateEditor({
                       // While the run is going this IS the stop — same as the
                       // primary Run button.
                       onClick={() =>
-                        isRunningCompare ? handleStopCompare() : void handleRunCompare()
+                        isRunningCompare
+                          ? handleStopCompare()
+                          : void handleRunCompare()
                       }
                       disabled={isRunningCompare ? false : runPrimaryDisabled}
                     >

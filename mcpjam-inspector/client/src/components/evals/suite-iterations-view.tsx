@@ -502,7 +502,6 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
-  evaluateObserveFirst = false,
   onGeneratingChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
@@ -669,8 +668,6 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
-  /** Observe-first authoring: the spine, Run test, and run-derived checks. */
-  evaluateObserveFirst?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
@@ -2183,7 +2180,6 @@ export function SuiteIterationsView({
                     evaluateDecisionSummary && projectId,
                   )}
                   simpleCaseEditor={evaluateCaseEditor}
-                  observeFirst={evaluateObserveFirst}
                   onRunCase={onRunCase}
                   launchReview={{
                     projectId,

@@ -1,3 +1,8 @@
+import { SpineDragProvider } from "./spine-drag";
+import { reorderSpineSteps, reorderRouteToolChecks } from "./case-spine-model";
+import { RouteCheckRow } from "./route-check-row";
+import type { DragEndEvent } from "@dnd-kit/core";
+import { CheckDraftBoundary } from "@/components/evals/checks-section";
 import { EvalAddDrawer } from "./assertion-drawer";
 import { isTurnScopablePredicateKind } from "@mcpjam/sdk/predicates";
 import { blankStepOfKind } from "@/components/evals/step-fields";
@@ -25,14 +30,24 @@ import { afterTheRunRows } from "./case-spine-model";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@mcpjam/design-system/dialog";
 import { Target } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   actionRows,
   insertStepAfter,
   newStepId,
   stepTurnIndices,
+  type SpineAction,
   type AssertStep,
   type TestStep,
 } from "@/shared/steps";
@@ -83,8 +98,10 @@ import {
   type DeleteActionPlan,
 } from "./case-spine-model";
 import { SuiteRowsDisclosure } from "../case-scorecard/suite-rows-disclosure";
+import { withCaseJudgeSkipped } from "../case-scorecard/case-scorecard-model";
 
 export type CaseSpineProps = {
+  onDraftValidityChange?: (invalid: boolean) => void;
   steps: TestStep[];
   onStepsChange: (next: TestStep[]) => void;
   matchOptions?: EvalMatchOptions;
@@ -140,6 +157,7 @@ export type CaseSpineProps = {
 };
 
 export function CaseSpine({
+  onDraftValidityChange,
   steps,
   onStepsChange,
   matchOptions,
@@ -164,6 +182,13 @@ export function CaseSpine({
   stashedTools: controlledStashedTools,
   onStashedToolsChange,
   judgeConfigOverride,
+  onJudgeConfigOverrideChange,
+  onOpenSuiteSettings,
+  recording = false,
+  onStartRecording,
+  onStopRecording,
+  onAddCheck,
+  recordEntryPrimary = false,
   suiteJudgeConfig,
   suiteJudgeRubric,
   capabilities,
@@ -201,6 +226,9 @@ export function CaseSpine({
     SimpleCaseTool[]
   >(() => view.tools);
   const stashedTools = controlledStashedTools ?? uncontrolledStashedTools;
+  const stashedToolChecks = useRef<{ step: AssertStep; preceding: string[] }[]>(
+    [],
+  );
   const setStashedTools = (next: SimpleCaseTool[]) => {
     setUncontrolledStashedTools(next);
     onStashedToolsChange?.(next);
@@ -215,6 +243,46 @@ export function CaseSpine({
 
   /** A newly added check opens expanded — a blank one has nothing to read. */
   const [addedKey, setAddedKey] = useState<string | null>(null);
+  // Local identities follow rows through reorders; they never enter saved predicates.
+  const caseDragIds = useRef<string[]>([]);
+  const predicateCount = predicates?.list.length ?? 0;
+  while (caseDragIds.current.length < predicateCount)
+    caseDragIds.current.push(`case-drag:${newStepId("row")}`);
+  caseDragIds.current.length = predicateCount;
+  const reorderRows = ({ active, over }: DragEndEvent) => {
+    if (
+      readOnly ||
+      !over ||
+      active.id === over.id ||
+      active.data.current?.phase !== over.data.current?.phase ||
+      active.data.current?.kind !== over.data.current?.kind
+    )
+      return;
+    if (active.data.current?.phase === "steps") {
+      const next = reorderSpineSteps(
+        steps,
+        String(active.id).slice(5),
+        String(over.id).slice(5),
+      );
+      if (next !== steps) onStepsChange(next);
+      return;
+    }
+    const from = caseDragIds.current.indexOf(String(active.id));
+    const to = caseDragIds.current.indexOf(String(over.id));
+    if (from < 0 || to < 0 || !predicates) return;
+    const list = [...predicates.list];
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved!);
+    const newestId = addedKey?.startsWith("case:")
+      ? caseDragIds.current[Number(addedKey.slice(5))]
+      : undefined;
+    const [id] = caseDragIds.current.splice(from, 1);
+    caseDragIds.current.splice(to, 0, id!);
+    if (newestId) setAddedKey(`case:${caseDragIds.current.indexOf(newestId)}`);
+    onPredicatesChange({ ...predicates, list });
+  };
+
+  const addedPromptRef = useRef<HTMLTextAreaElement>(null);
   const [pendingDelete, setPendingDelete] = useState<
     (DeleteActionPlan & { stepId: string }) | null
   >(null);
@@ -273,6 +341,13 @@ export function CaseSpine({
     [card.groups, trialIteration, trialChain, steps, stepStatusById],
   );
   const wholeCaseRows = afterTheRunRows(card);
+  const noToolsCheck = !readOnly && card.route.route?.kind === "noTool";
+  const exactOrderCheck =
+    !readOnly &&
+    !noToolsCheck &&
+    view.tools.length > 0 &&
+    resolvedMatch.toolCallOrder === "strict" &&
+    resolvedMatch.maxExtraToolCalls === 0;
   const ownWholeCaseRows = wholeCaseRows.filter(
     (row) => row.provenance !== "suite",
   );
@@ -356,6 +431,30 @@ export function CaseSpine({
   };
   const chooseNoTool = () => {
     if (readOnly) return;
+    if (
+      steps.some(
+        (step) =>
+          step.kind === "assert" &&
+          "type" in step.assertion &&
+          step.assertion.type === "toolCalledWith",
+      )
+    ) {
+      stashedToolChecks.current = steps.flatMap((step, index) =>
+        step.kind === "assert" &&
+        "type" in step.assertion &&
+        step.assertion.type === "toolCalledWith"
+          ? [
+              {
+                step,
+                preceding: steps
+                  .slice(0, index)
+                  .map((item) => item.id)
+                  .reverse(),
+              },
+            ]
+          : [],
+      );
+    }
     if (view.tools.length > 0) setStashedTools(view.tools);
     setToolsChoice("noTool");
     onStepsChange(
@@ -369,6 +468,21 @@ export function CaseSpine({
   const chooseTools = () => {
     if (readOnly) return;
     setToolsChoice("tools");
+    if (view.tools.length === 0 && stashedToolChecks.current.length > 0) {
+      const next = [...steps];
+      for (const { step, preceding } of stashedToolChecks.current) {
+        if (next.some((item) => item.id === step.id)) continue;
+        const anchor = preceding.find((id) =>
+          next.some((item) => item.id === id),
+        );
+        const index = anchor
+          ? next.findIndex((item) => item.id === anchor)
+          : next.findIndex((item) => item.kind === "prompt");
+        next.splice(index + 1, 0, step);
+      }
+      onStepsChange(next);
+      return;
+    }
     const restored = view.tools.length > 0 ? view.tools : stashedTools;
     onStepsChange(
       writeSimpleCase(steps, {
@@ -430,10 +544,22 @@ export function CaseSpine({
       );
     return (
       <ScorecardRowView
-        key={row.key}
+        key={
+          row.provenance === "case"
+            ? caseDragIds.current[row.predicateIndex!]
+            : row.key
+        }
+        dragId={
+          row.provenance === "case"
+            ? caseDragIds.current[row.predicateIndex!]
+            : undefined
+        }
         row={row}
         readOnly={readOnly}
         checkPolicy={checkPolicy}
+        onOpenSuiteSettings={onOpenSuiteSettings}
+        paper={!readOnly}
+        newest={addedKey === row.key}
         availableTools={availableTools.map((tool) => tool.name)}
         onChangePredicate={
           row.provenance === "case"
@@ -448,32 +574,290 @@ export function CaseSpine({
         }
         onRemove={
           row.provenance === "case"
-            ? () =>
+            ? () => {
+                const removed = row.predicateIndex!;
+                caseDragIds.current.splice(removed, 1);
+                if (addedKey?.startsWith("case:")) {
+                  const newestIndex = Number(addedKey.slice(5));
+                  if (newestIndex === removed) setAddedKey(null);
+                  else if (newestIndex > removed)
+                    setAddedKey(`case:${newestIndex - 1}`);
+                }
                 onPredicatesChange({
                   mode: predicates?.mode ?? "extend",
                   list: (predicates?.list ?? []).filter(
                     (_, index) => index !== row.predicateIndex,
                   ),
-                })
+                });
+              }
             : undefined
         }
       />
     );
   };
 
-  // ── the spine ──────────────────────────────────────────────────────────────
+  const renderAdd = (anchor: SpineAction, compact = false, filled = true) => (
+    <>
+      {readOnly ? null : (
+        <section
+          className={filled && !compact ? "border-t border-border" : undefined}
+          aria-label={`Assertions or actions after step ${anchor.ordinal}`}
+        >
+          <EvalAddDrawer
+            allowRouteChecks={card.route.route?.kind !== "locked"}
+            className={`${filled && !compact ? "h-12" : "h-9"} w-full rounded-none border-0 border-solid bg-card text-[13px] font-medium text-secondary-foreground shadow-none`}
+            triggerLabel="Add assertion or action"
+            onPromptFocus={() => addedPromptRef.current?.focus()}
+            authorableKinds={authorableKinds}
+            onOutcomeFocus={() => {
+              outcomeRef.current?.scrollIntoView?.({ block: "center" });
+              outcomeRef.current?.focus();
+            }}
+            onSelect={(choice) => {
+              if (choice.kind === "outcome") return;
+              if (choice.kind === "route-check") {
+                if (choice.routeKind === "noTools") {
+                  chooseNoTool();
+                  setAddedKey("route:noTools");
+                } else {
+                  if (toolsChoice === "noTool") chooseTools();
+                  setKind("regression");
+                  if (
+                    view.tools.length === 0 &&
+                    (toolsChoice !== "noTool" || stashedTools.length === 0)
+                  ) {
+                    addCheckAfter(
+                      rows.actions[0]?.step.id ?? emptyPromptId,
+                      blankPredicate("toolCalledWith"),
+                    );
+                  }
+                  setAddedKey("route:exactOrder");
+                }
+                return;
+              }
+              if (
+                choice.kind === "check" &&
+                !isTurnScopablePredicateKind(choice.predicateKind)
+              ) {
+                setAddedKey(`case:${predicates?.list.length ?? 0}`);
+                onPredicatesChange({
+                  mode: predicates?.mode ?? "extend",
+                  list: [
+                    ...(predicates?.list ?? []),
+                    blankPredicate(choice.predicateKind),
+                  ],
+                });
+                return;
+              }
+              if (choice.kind === "step") {
+                const step = blankStepOfKind(choice.stepKind, suiteServers);
+                setAddedKey(`action:${step.id}`);
+                const source = steps.length
+                  ? steps
+                  : [
+                      {
+                        id: emptyPromptId,
+                        kind: "prompt" as const,
+                        prompt: "",
+                      },
+                    ];
+                onStepsChange(insertStepAfter(source, anchor.step.id, step));
+              } else {
+                addCheckAfter(
+                  anchor.step.id,
+                  choice.kind === "check"
+                    ? blankPredicate(choice.predicateKind)
+                    : defaultWidgetAssertion(choice.widgetKind, ""),
+                );
+              }
+            }}
+          />
+        </section>
+      )}
+    </>
+  );
+  const renderGroupSettings = (action: SpineAction) => (
+    <>
+      {action.ordinal === 1 && defaultChecks ? (
+        <div className="flex justify-end">{defaultChecks}</div>
+      ) : null}
+    </>
+  );
+  const renderActionContents = (action: SpineAction) => (
+    <>
+      {/* The route question belongs to the action that opens the model
+                turn it grades — the first prompt, or the pinned call on a
+                model-free case. */}
+      {action.ordinal === 1 &&
+      (readOnly || card.route.route?.kind === "locked") &&
+      (view.tools.length > 0 ||
+        toolsChoice === "noTool" ||
+        card.route.route?.kind === "locked") ? (
+        <ul className="divide-y divide-border">
+          {results?.get(card.route.key) ? (
+            <TrialScorecardRow row={results.get(card.route.key)!} />
+          ) : (
+            <RouteRow
+              paper={!readOnly}
+              row={firstRoute}
+              newestStepId={
+                addedKey?.startsWith("step:") ? addedKey.slice(5) : undefined
+              }
+              availableTools={availableTools.map((tool) => tool.name)}
+              toolsStatus={toolsStatus}
+              onRetryTools={onRetryTools}
+              readOnly={readOnly}
+              showUnsetError={showUnsetError}
+              negativeContradiction={card.negativeContradiction}
+              onSetTools={(tools) => setTools([...tools, ...laterToolList])}
+              onChooseNoTool={chooseNoTool}
+              onChooseTools={chooseTools}
+              onAddTool={addTool}
+              onSetKind={setKind}
+            />
+          )}
+        </ul>
+      ) : null}
 
-  return (
-    <div className="space-y-5" data-testid="case-spine" data-state="spine">
-      {inspectHeader}
+      {/* A later prompt's own tools, under that prompt: the runner grades
+                them against its turn. */}
+      {readOnly &&
+      action.ordinal > 1 &&
+      laterTools.has(action.step.id) &&
+      card.route.route?.kind === "tools" ? (
+        <ul className="divide-y divide-border">
+          <RouteRow
+            paper={!readOnly}
+            turnScoped
+            newestStepId={
+              addedKey?.startsWith("step:") ? addedKey.slice(5) : undefined
+            }
+            row={{
+              ...card.route,
+              key: `${card.route.key}:${action.step.id}`,
+              route: {
+                ...card.route.route,
+                tools: laterTools.get(action.step.id)!,
+              },
+            }}
+            availableTools={availableTools.map((tool) => tool.name)}
+            toolsStatus={toolsStatus}
+            onRetryTools={onRetryTools}
+            readOnly={readOnly}
+            showUnsetError={false}
+            negativeContradiction={false}
+            onSetTools={(next) =>
+              !readOnly &&
+              onStepsChange(
+                replaceActionTools(
+                  steps,
+                  action.step.id,
+                  laterTools.get(action.step.id)!,
+                  next,
+                ),
+              )
+            }
+            onAddTool={(toolName) => {
+              const name = toolName.trim();
+              if (readOnly || !name) return;
+              const current = laterTools.get(action.step.id)!;
+              onStepsChange(
+                replaceActionTools(steps, action.step.id, current, [
+                  ...current,
+                  {
+                    id: newStepId("assert"),
+                    toolName: name,
+                    arguments: {},
+                  },
+                ]),
+              );
+            }}
+            onChooseNoTool={() => {}}
+            onChooseTools={() => {}}
+            onSetKind={setKind}
+          />
+        </ul>
+      ) : null}
 
-      {rows.leading.length > 0 ? (
-        <section className="space-y-1.5" data-testid="spine-leading-checks">
-          <h3 className="text-[11px] font-medium text-foreground">
-            Before the first step
-          </h3>
-          <ul className="space-y-1.5">
-            {rows.leading.map((child) => (
+      {action.checks.length > 0 ? (
+        <ul className="divide-y divide-border">
+          {action.checks.map((child) =>
+            !readOnly &&
+            "type" in child.step.assertion &&
+            child.step.assertion.type === "toolCalledWith" &&
+            card.route.route?.kind === "tools" ? (
+              <RouteRow
+                key={child.step.id}
+                paper
+                turnScoped
+                toolPredicate={child.step.assertion}
+                onChangeToolPredicate={(assertion) =>
+                  onStepsChange(
+                    steps.map((step) =>
+                      step.id === child.step.id
+                        ? { ...child.step, assertion }
+                        : step,
+                    ),
+                  )
+                }
+                newestStepId={
+                  addedKey?.startsWith("step:") ? addedKey.slice(5) : undefined
+                }
+                row={{
+                  ...card.route,
+                  key: `step:${child.step.id}`,
+                  route: {
+                    ...card.route.route,
+                    tools: [
+                      {
+                        id: child.step.id,
+                        toolName: child.step.assertion.toolName,
+                        arguments: child.step.assertion.args?.args ?? {},
+                      },
+                    ],
+                  },
+                }}
+                availableTools={availableTools.map((tool) => tool.name)}
+                toolsStatus={toolsStatus}
+                onRetryTools={onRetryTools}
+                readOnly={false}
+                showUnsetError={false}
+                negativeContradiction={false}
+                onSetTools={(next) => {
+                  const tool = next[0];
+                  if (!tool) {
+                    onStepsChange(removeStepById(steps, child.step.id));
+                    return;
+                  }
+                  onStepsChange(
+                    steps.map((step) => {
+                      if (
+                        step.id !== child.step.id ||
+                        step.kind !== "assert" ||
+                        !("type" in step.assertion) ||
+                        step.assertion.type !== "toolCalledWith"
+                      )
+                        return step;
+                      return {
+                        ...step,
+                        assertion: {
+                          ...step.assertion,
+                          toolName: tool.toolName,
+                          args: {
+                            ...step.assertion.args,
+                            args: tool.arguments ?? {},
+                          },
+                        },
+                      };
+                    }),
+                  );
+                }}
+                onChooseNoTool={chooseNoTool}
+                onChooseTools={chooseTools}
+                onAddTool={addTool}
+                onSetKind={setKind}
+              />
+            ) : (
               <SpineCheckRow
                 key={child.step.id}
                 step={child.step}
@@ -488,229 +872,194 @@ export function CaseSpine({
                   spineStatus({
                     stepId: child.step.id,
                     kind: "assert",
-                    turnIndex: turns[child.index] ?? 0,
+                    turnIndex: action.turnIndex,
                     byId: stepStatusById,
                     byTurn: stepStatusByTurn,
                   }).status
                 }
+                newest={addedKey === `step:${child.step.id}`}
                 defaultOpen={addedKey === `step:${child.step.id}`}
                 onChange={(next) =>
                   onStepsChange(
-                    updateStepCheck(
-                      steps,
-                      child.step.id,
-                      next.assertion as Predicate,
-                    ),
+                    steps.map((step) => (step.id === next.id ? next : step)),
                   )
                 }
                 onRemove={() =>
                   onStepsChange(removeStepById(steps, child.step.id))
                 }
+                onSelect={
+                  onSelectStep ? () => onSelectStep(child.step.id) : undefined
+                }
               />
-            ))}
-          </ul>
-        </section>
+            ),
+          )}
+        </ul>
       ) : null}
-
-      <ul className="space-y-2" data-testid="spine-actions">
-        {rows.actions.map((action) => (
-          <ActionRow
-            key={action.step.id}
-            action={action}
-            total={rows.actions.length}
-            status={
-              spineStatus({
-                stepId: action.step.id,
-                kind: action.step.kind,
-                turnIndex: action.turnIndex,
-                byId: stepStatusById,
-                byTurn: stepStatusByTurn,
-              }).status
-            }
-            isActive={syncedStepId === action.step.id}
-            readOnly={readOnly}
-            availableTools={availableTools}
-            suiteServers={suiteServers}
-            projectServers={projectServers}
-            evalValidationBorderClass={evalValidationBorderClass}
-            autoFocus={autoFocusPrompt && action.ordinal === 1}
-            promptAriaLabel={
-              action.ordinal === 1
-                ? "What does the user ask?"
-                : `Prompt for step ${action.ordinal}`
-            }
-            onUpdate={(next) => {
-              // Route through `writeSimpleCase` ONLY for a prompt that is
-              // genuinely `steps[0]` — that is the shape it was written for.
-              // Given any other list it treats the case as promptless and
-              // PREPENDS a freshly minted prompt, which on a case that opens
-              // with a leading check duplicates the prompt and reorders the
-              // document. Every other edit is in place, which is what an
-              // existing step's text change actually is.
-              if (
-                next.kind === "prompt" &&
-                action.index === 0 &&
-                (steps.length === 0 || isPromptFirst(steps))
-              ) {
-                setPrompt(next.prompt);
-                return;
-              }
-              onStepsChange(
-                steps.map((step) => (step.id === next.id ? next : step)),
-              );
-            }}
-            onMove={(dir) =>
-              onStepsChange(moveActionBlock(steps, action.step.id, dir))
-            }
-            canRemove={canRemoveAction(steps, action.step.id)}
-            onRemove={() => requestRemoveAction(action.step.id)}
-            onHover={onHoverStep}
-            onSelect={
-              onSelectStep ? () => onSelectStep(action.step.id) : undefined
-            }
-          >
-            {readOnly ? null : (
-              <EvalAddDrawer
-                className="w-full"
-                triggerLabel="Add assertion or action"
-                authorableKinds={authorableKinds}
-                onOutcomeFocus={() => {
-                  outcomeRef.current?.scrollIntoView?.({ block: "center" });
-                  outcomeRef.current?.focus();
-                }}
-                onSelect={(choice) => {
-                  if (choice.kind === "outcome") return;
-                  if (
-                    choice.kind === "check" &&
-                    !isTurnScopablePredicateKind(choice.predicateKind)
-                  ) {
-                    onPredicatesChange({
-                      mode: predicates?.mode ?? "extend",
-                      list: [
-                        ...(predicates?.list ?? []),
-                        blankPredicate(choice.predicateKind),
-                      ],
-                    });
-                    return;
-                  }
-                  if (choice.kind === "step") {
-                    const step = blankStepOfKind(choice.stepKind, suiteServers);
-                    const source = steps.length
-                      ? steps
-                      : [
-                          {
-                            id: emptyPromptId,
-                            kind: "prompt" as const,
-                            prompt: "",
-                          },
-                        ];
-                    onStepsChange(
-                      insertStepAfter(source, action.step.id, step),
-                    );
-                  } else {
-                    addCheckAfter(
-                      action.step.id,
-                      choice.kind === "check"
-                        ? blankPredicate(choice.predicateKind)
-                        : defaultWidgetAssertion(choice.widgetKind, ""),
-                    );
-                  }
-                }}
-              />
-            )}
-            {action.ordinal === 1 && defaultChecks ? (
-              <div className="flex justify-end">{defaultChecks}</div>
-            ) : null}
-
-            {/* The route question belongs to the action that opens the model
-                turn it grades — the first prompt, or the pinned call on a
-                model-free case. */}
-            {action.ordinal === 1 &&
-            (view.tools.length > 0 ||
-              toolsChoice === "noTool" ||
-              card.route.route?.kind === "locked") ? (
-              <ul className="space-y-1.5">
-                {results?.get(card.route.key) ? (
-                  <TrialScorecardRow row={results.get(card.route.key)!} />
+    </>
+  );
+  const renderAction = (
+    action: SpineAction,
+    following: SpineAction[] | null = null,
+  ): ReactNode => (
+    <ActionRow
+      key={action.step.id}
+      action={action}
+      total={rows.actions.length}
+      status={
+        spineStatus({
+          stepId: action.step.id,
+          kind: action.step.kind,
+          turnIndex: action.turnIndex,
+          byId: stepStatusById,
+          byTurn: stepStatusByTurn,
+        }).status
+      }
+      isActive={syncedStepId === action.step.id}
+      readOnly={readOnly}
+      availableTools={availableTools}
+      suiteServers={suiteServers}
+      projectServers={projectServers}
+      evalValidationBorderClass={evalValidationBorderClass}
+      autoFocus={autoFocusPrompt && action.ordinal === 1}
+      promptRef={
+        addedKey === `action:${action.step.id}` ? addedPromptRef : undefined
+      }
+      newest={addedKey === `action:${action.step.id}`}
+      addAfter={renderAdd(action, true)}
+      defaultOpen={addedKey === `action:${action.step.id}`}
+      promptAriaLabel={
+        action.ordinal === 1
+          ? "What does the user ask?"
+          : `Prompt for step ${action.ordinal}`
+      }
+      onUpdate={(next) => {
+        // Route through `writeSimpleCase` ONLY for a prompt that is
+        // genuinely `steps[0]` — that is the shape it was written for.
+        // Given any other list it treats the case as promptless and
+        // PREPENDS a freshly minted prompt, which on a case that opens
+        // with a leading check duplicates the prompt and reorders the
+        // document. Every other edit is in place, which is what an
+        // existing step's text change actually is.
+        if (
+          next.kind === "prompt" &&
+          action.index === 0 &&
+          (steps.length === 0 || isPromptFirst(steps))
+        ) {
+          setPrompt(next.prompt);
+          return;
+        }
+        onStepsChange(steps.map((step) => (step.id === next.id ? next : step)));
+      }}
+      onMove={(dir) =>
+        onStepsChange(moveActionBlock(steps, action.step.id, dir))
+      }
+      canRemove={canRemoveAction(steps, action.step.id)}
+      onRemove={() => requestRemoveAction(action.step.id)}
+      onHover={onHoverStep}
+      onSelect={onSelectStep ? () => onSelectStep(action.step.id) : undefined}
+    >
+      {following !== null ? (
+        <section
+          className="space-y-2"
+          aria-label={`Assertions or actions after step ${action.ordinal}`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {" "}
+            <h3 className="text-base font-semibold leading-6 text-card-foreground">
+              Assertions or actions
+            </h3>{" "}
+            {action.ordinal === 1 && onStartRecording ? (
+              <div className="flex justify-end gap-2">
+                {recording ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={onAddCheck}
+                    >
+                      Add check
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={onStopRecording}
+                    >
+                      Stop
+                    </Button>
+                  </>
                 ) : (
-                  <RouteRow
-                    row={firstRoute}
-                    availableTools={availableTools.map((tool) => tool.name)}
-                    toolsStatus={toolsStatus}
-                    onRetryTools={onRetryTools}
-                    readOnly={readOnly}
-                    showUnsetError={showUnsetError}
-                    negativeContradiction={card.negativeContradiction}
-                    onSetTools={(tools) =>
-                      setTools([...tools, ...laterToolList])
-                    }
-                    onChooseNoTool={chooseNoTool}
-                    onChooseTools={chooseTools}
-                    onAddTool={addTool}
-                    onSetKind={setKind}
-                  />
+                  <Button
+                    type="button"
+                    variant={recordEntryPrimary ? "default" : "outline"}
+                    size="sm"
+                    disabled={!view.prompt.trim()}
+                    onClick={onStartRecording}
+                    data-testid="simple-case-start-recording"
+                  >
+                    Start recording
+                  </Button>
                 )}
+              </div>
+            ) : null}
+          </div>
+          <div
+            className="overflow-hidden rounded-xl border border-border bg-card"
+            data-testid="paper-action-group"
+          >
+            {renderActionContents(action)}
+            {following.length > 0 ? (
+              <ul className="divide-y divide-border border-t border-border">
+                {following.map((item) => renderAction(item))}
               </ul>
             ) : null}
+            {renderAdd(
+              following.at(-1) ?? action,
+              false,
+              action.checks.length > 0 || following.length > 0,
+            )}
+          </div>
+          {renderGroupSettings(action)}
+        </section>
+      ) : (
+        renderActionContents(action)
+      )}
+    </ActionRow>
+  );
+  const actionGroups: SpineAction[][] = [];
+  for (const action of rows.actions) {
+    if (action.step.kind === "prompt" || actionGroups.length === 0)
+      actionGroups.push([]);
+    actionGroups[actionGroups.length - 1]!.push(action);
+  }
 
-            {/* A later prompt's own tools, under that prompt: the runner grades
-                them against its turn. */}
-            {action.ordinal > 1 &&
-            laterTools.has(action.step.id) &&
-            card.route.route?.kind === "tools" ? (
-              <ul className="space-y-1.5">
-                <RouteRow
-                  turnScoped
-                  row={{
-                    ...card.route,
-                    key: `${card.route.key}:${action.step.id}`,
-                    route: {
-                      ...card.route.route,
-                      tools: laterTools.get(action.step.id)!,
-                    },
-                  }}
-                  availableTools={availableTools.map((tool) => tool.name)}
-                  toolsStatus={toolsStatus}
-                  onRetryTools={onRetryTools}
-                  readOnly={readOnly}
-                  showUnsetError={false}
-                  negativeContradiction={false}
-                  onSetTools={(next) =>
-                    !readOnly &&
-                    onStepsChange(
-                      replaceActionTools(
-                        steps,
-                        action.step.id,
-                        laterTools.get(action.step.id)!,
-                        next,
-                      ),
-                    )
-                  }
-                  onAddTool={(toolName) => {
-                    const name = toolName.trim();
-                    if (readOnly || !name) return;
-                    const current = laterTools.get(action.step.id)!;
-                    onStepsChange(
-                      replaceActionTools(steps, action.step.id, current, [
-                        ...current,
-                        {
-                          id: newStepId("assert"),
-                          toolName: name,
-                          arguments: {},
-                        },
-                      ]),
-                    );
-                  }}
-                  onChooseNoTool={() => {}}
-                  onChooseTools={() => {}}
-                  onSetKind={setKind}
-                />
-              </ul>
-            ) : null}
+  // ── the spine ──────────────────────────────────────────────────────────────
 
-            {action.checks.length > 0 ? (
+  return (
+    <SpineDragProvider
+      disabled={readOnly}
+      items={[
+        ...steps.map((step) => `step:${step.id}`),
+        ...caseDragIds.current,
+      ]}
+      onReorder={reorderRows}
+    >
+      <CheckDraftBoundary onValidityChange={onDraftValidityChange}>
+        <div
+          className="space-y-5 font-sans antialiased"
+          data-testid="case-spine"
+          data-state="spine"
+        >
+          {inspectHeader}
+
+          {rows.leading.length > 0 ? (
+            <section className="space-y-1.5" data-testid="spine-leading-checks">
+              <h3 className="text-[11px] font-medium text-foreground">
+                Before the first step
+              </h3>
               <ul className="space-y-1.5">
-                {action.checks.map((child) => (
+                {rows.leading.map((child) => (
                   <SpineCheckRow
                     key={child.step.id}
                     step={child.step}
@@ -725,112 +1074,199 @@ export function CaseSpine({
                       spineStatus({
                         stepId: child.step.id,
                         kind: "assert",
-                        turnIndex: action.turnIndex,
+                        turnIndex: turns[child.index] ?? 0,
                         byId: stepStatusById,
                         byTurn: stepStatusByTurn,
                       }).status
                     }
+                    newest={addedKey === `step:${child.step.id}`}
                     defaultOpen={addedKey === `step:${child.step.id}`}
                     onChange={(next) =>
                       onStepsChange(
-                        steps.map((step) =>
-                          step.id === next.id ? next : step,
+                        updateStepCheck(
+                          steps,
+                          child.step.id,
+                          next.assertion as Predicate,
                         ),
                       )
                     }
                     onRemove={() =>
                       onStepsChange(removeStepById(steps, child.step.id))
                     }
-                    onSelect={
-                      onSelectStep
-                        ? () => onSelectStep(child.step.id)
-                        : undefined
-                    }
                   />
                 ))}
               </ul>
-            ) : null}
-          </ActionRow>
-        ))}
-      </ul>
+            </section>
+          ) : null}
 
-      {/* One outcome for the whole case, not one per prompt. It sits AFTER
+          <ul className="space-y-5" data-testid="spine-actions">
+            {actionGroups.map(([first, ...following]) =>
+              renderAction(first!, following),
+            )}
+          </ul>
+
+          {/* One outcome for the whole case, not one per prompt. It sits AFTER
           the last action because the judge grades the end state of the run:
           rendering it under prompt 1 read as "prompt 1's outcome", and a
           second prompt then looked broken for having none. Per-step
           expectations are the checks under each action. */}
-      <section
-        className="space-y-2"
-        data-testid="spine-expected-outcome-section"
-      >
-        <div className="flex items-center gap-2">
-          <Label
-            className="text-lg font-semibold text-primary"
-            htmlFor="spine-expected-outcome"
+          <section
+            className="space-y-2"
+            data-testid="spine-expected-outcome-section"
           >
-            <Target className="size-4" aria-hidden="true" />
-            Expected Outcome
-          </Label>
-          <ProvenanceChip provenance="judge" />
-        </div>
-        <Textarea
-          id="spine-expected-outcome"
-          ref={outcomeRef}
-          value={expectedOutput ?? ""}
-          onChange={(event) => onExpectedOutputChange(event.target.value)}
-          rows={3}
-          readOnly={readOnly}
-          placeholder={
-            readOnly
-              ? "No expected outcome captured"
-              : "One sentence the judge scores against"
-          }
-          className={cnBorder(undefined)}
-        />
-      </section>
-
-      {wholeCaseRows.length > 0 && (
-        <section className="space-y-2" aria-label="Whole-case assertions">
-          <h3 className="text-sm font-semibold">Whole-case assertions</h3>
-          {ownWholeCaseRows.length > 0 ? (
-            <ul className="space-y-1.5">
-              {ownWholeCaseRows.map(renderWholeCaseRow)}
-            </ul>
-          ) : null}
-          {suiteWholeCaseRows.length > 0 ? (
-            <SuiteRowsDisclosure
-              rows={suiteWholeCaseRows}
-              defaultOpen={suiteRowFailed}
+            <div className="flex items-center gap-2">
+              <Label
+                className="text-lg leading-7 font-semibold text-card-foreground"
+                htmlFor="spine-expected-outcome"
+              >
+                <Target className="size-4" aria-hidden="true" />
+                Expected outcome
+              </Label>
+              <ProvenanceChip provenance="judge" />
+            </div>
+            <p
+              id="spine-expected-outcome-help"
+              className="text-sm leading-5 text-secondary-foreground dark:text-muted-foreground"
             >
-              <ul className="space-y-1.5">
-                {suiteWholeCaseRows.map(renderWholeCaseRow)}
-              </ul>
-            </SuiteRowsDisclosure>
-          ) : null}
-        </section>
-      )}
-      {pendingDelete ? (
-        <DeleteActionPrompt
-          plan={pendingDelete}
-          onCancel={() => setPendingDelete(null)}
-          onRemoveOnly={() => {
-            onStepsChange(removeStepById(steps, pendingDelete.stepId));
-            setPendingDelete(null);
-          }}
-          onRemoveWithChecks={() => {
-            onStepsChange(removeActionWithChecks(steps, pendingDelete.stepId));
-            setPendingDelete(null);
-          }}
-        />
-      ) : null}
-    </div>
-  );
-}
+              The result the reply is judged against.
+            </p>
+            <Textarea
+              id="spine-expected-outcome"
+              ref={outcomeRef}
+              value={expectedOutput ?? ""}
+              onChange={(event) => onExpectedOutputChange(event.target.value)}
+              rows={2}
+              aria-describedby="spine-expected-outcome-help"
+              readOnly={readOnly}
+              placeholder={
+                readOnly
+                  ? "No expected outcome captured"
+                  : "One sentence the judge scores against"
+              }
+              className="min-h-[72px] resize-y rounded-lg border-input bg-card px-3.5 py-3 font-sans text-[15px] leading-[22px] text-card-foreground md:text-[15px]"
+            />
+            {!readOnly &&
+            onJudgeConfigOverrideChange &&
+            card.judge.judge &&
+            card.judge.judge.suiteMode !== "off" ? (
+              <div className="flex items-center gap-2 pt-1">
+                <Switch
+                  id="case-judge-skip"
+                  checked={card.judge.judge.skippedForCase}
+                  onCheckedChange={(skipped) =>
+                    onJudgeConfigOverrideChange(
+                      withCaseJudgeSkipped(judgeConfigOverride, skipped),
+                    )
+                  }
+                  aria-label="Skip the judge for this case"
+                />
+                <Label
+                  htmlFor="case-judge-skip"
+                  className="text-xs font-normal text-foreground"
+                >
+                  Skip the judge for this case
+                </Label>
+              </div>
+            ) : null}
+          </section>
 
-function cnBorder(extra: string | undefined): string {
-  return ["resize-none bg-background text-foreground", extra ?? ""]
-    .filter(Boolean)
-    .join(" ");
+          {(wholeCaseRows.length > 0 || noToolsCheck || exactOrderCheck) && (
+            <section
+              className="space-y-2"
+              aria-label="After run checks"
+              data-testid="spine-after-run-checks"
+            >
+              <h3 className="text-base leading-6 font-semibold text-card-foreground">
+                After run checks
+              </h3>
+              {(noToolsCheck || exactOrderCheck) && (
+                <ul className="overflow-hidden rounded-xl border border-border bg-card">
+                  <RouteCheckRow
+                    kind={noToolsCheck ? "noTools" : "exactOrder"}
+                    tools={view.tools}
+                    newest={
+                      addedKey ===
+                      `route:${noToolsCheck ? "noTools" : "exactOrder"}`
+                    }
+                    onRemove={() => {
+                      if (noToolsCheck) chooseTools();
+                      else setKind("capability");
+                    }}
+                    onAddTool={() =>
+                      addCheckAfter(
+                        rows.actions[0]?.step.id ?? emptyPromptId,
+                        blankPredicate("toolCalledWith"),
+                      )
+                    }
+                    onToolChange={(id, toolName) =>
+                      onStepsChange(
+                        steps.map((step) => {
+                          if (
+                            step.id !== id ||
+                            step.kind !== "assert" ||
+                            !("type" in step.assertion) ||
+                            step.assertion.type !== "toolCalledWith"
+                          )
+                            return step;
+                          return {
+                            ...step,
+                            assertion: { ...step.assertion, toolName },
+                          };
+                        }),
+                      )
+                    }
+                    onToolRemove={(id) =>
+                      onStepsChange(removeStepById(steps, id))
+                    }
+                    onReorder={(from, to) =>
+                      onStepsChange(reorderRouteToolChecks(steps, from, to))
+                    }
+                  />
+                  {card.negativeContradiction && (
+                    <li className="px-8 py-2 text-xs text-destructive">
+                      This check conflicts with another check that requires a
+                      tool call.
+                    </li>
+                  )}
+                </ul>
+              )}
+              {ownWholeCaseRows.length > 0 ? (
+                <ul className="overflow-hidden rounded-xl border border-border bg-card divide-y divide-border">
+                  {ownWholeCaseRows.map(renderWholeCaseRow)}
+                </ul>
+              ) : null}
+              {suiteWholeCaseRows.length > 0 ? (
+                <SuiteRowsDisclosure
+                  rows={suiteWholeCaseRows}
+                  defaultOpen={suiteRowFailed}
+                >
+                  <ul className="space-y-1.5">
+                    {suiteWholeCaseRows.map(renderWholeCaseRow)}
+                  </ul>
+                </SuiteRowsDisclosure>
+              ) : null}
+            </section>
+          )}
+          {pendingDelete ? (
+            <DeleteActionPrompt
+              plan={pendingDelete}
+              onCancel={() => setPendingDelete(null)}
+              onRemoveOnly={() => {
+                onStepsChange(removeStepById(steps, pendingDelete.stepId));
+                setPendingDelete(null);
+              }}
+              onRemoveWithChecks={() => {
+                onStepsChange(
+                  removeActionWithChecks(steps, pendingDelete.stepId),
+                );
+                setPendingDelete(null);
+              }}
+            />
+          ) : null}
+        </div>
+      </CheckDraftBoundary>
+    </SpineDragProvider>
+  );
 }
 
 /**
@@ -852,46 +1288,51 @@ function DeleteActionPrompt({
   const moved = plan.movedChecks + plan.movedFollowers;
   const noun = moved === 1 ? "check" : "checks";
   return (
-    <div
-      role="alertdialog"
-      aria-label="Remove step"
-      data-testid="spine-delete-action"
-      className="space-y-2 rounded-md border border-border bg-muted/20 p-3 text-[11px]"
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
     >
-      <p className="text-foreground">
-        {plan.becomesLeading
-          ? `Remove this step? Its ${moved} ${noun} would run before any prompt.`
-          : `Remove this step? Its ${moved} ${noun} will move under step ${plan.reparentTo?.ordinal} and run after it instead.`}
-      </p>
-      <div className="flex flex-wrap gap-1.5">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={onRemoveOnly}
-        >
-          Remove step
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={onRemoveWithChecks}
-        >
-          Remove step and its {noun}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
+      <DialogContent role="alertdialog" data-testid="spine-delete-action">
+        <DialogHeader>
+          <DialogTitle>Remove step</DialogTitle>
+          <DialogDescription>
+            {plan.becomesLeading
+              ? `Remove this step? Its ${moved} ${noun} would run before any prompt.`
+              : `Remove this step? Its ${moved} ${noun} will move under step ${plan.reparentTo?.ordinal} and run after it instead.`}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-wrap">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onRemoveOnly}
+          >
+            Remove step
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onRemoveWithChecks}
+          >
+            Remove step and its {noun}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

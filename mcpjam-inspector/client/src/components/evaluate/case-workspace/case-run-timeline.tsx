@@ -65,6 +65,8 @@ export function CaseRunTimeline({
   openIterationId,
   onSelect,
   live = false,
+  recording = false,
+  onStopRecording,
   liveVerdict,
   pendingRun,
   onSelectLive,
@@ -80,6 +82,8 @@ export function CaseRunTimeline({
   openIterationId?: string | null;
   onSelect: (iteration: EvalIteration) => void;
   live?: boolean;
+  recording?: boolean;
+  onStopRecording?: () => void;
   liveVerdict?: "Running" | "Passed" | "Failed" | "No verdict";
   pendingRun?: { model: string; client?: string };
   onSelectLive?: () => void;
@@ -535,36 +539,48 @@ export function CaseRunTimeline({
           ) : null}
         </div>
       </div>
-      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+      <Sheet
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawerOpen(open);
+          if (!open && recording) onStopRecording?.();
+        }}
+      >
         <SheetContent
           side="right"
           className="w-full gap-0 sm:w-[min(960px,85vw)] sm:max-w-none"
         >
           <SheetHeader className="shrink-0 border-b border-border pr-12">
             <div className="flex flex-wrap items-center gap-2">
-              <SheetTitle>{runLabel(selected)}</SheetTitle>
+              <SheetTitle>
+                {recording ? "Record interactions" : runLabel(selected)}
+              </SheetTitle>
               <span
                 data-testid="case-run-status"
                 className={cn(
                   "inline-flex shrink-0 rounded px-2 py-1 text-[10px] font-semibold uppercase tracking-wide",
-                  verdict === "Passed"
-                    ? "bg-success/15 text-success"
-                    : verdict === "Failed" || verdict === "Timeout"
-                      ? "bg-destructive/15 text-destructive"
-                      : verdict === "Running"
-                        ? "bg-warning/30 text-foreground"
-                        : "bg-muted text-muted-foreground",
+                  recording
+                    ? "bg-muted text-muted-foreground"
+                    : verdict === "Passed"
+                      ? "bg-success/15 text-success"
+                      : verdict === "Failed" || verdict === "Timeout"
+                        ? "bg-destructive/15 text-destructive"
+                        : verdict === "Running"
+                          ? "bg-warning/30 text-foreground"
+                          : "bg-muted text-muted-foreground",
                 )}
               >
-                {verdict}
+                {recording ? "Recording" : verdict}
               </span>
             </div>
             <SheetDescription>
-              {selected
-                ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${
-                    selected.testCaseSnapshot?.model || UNKNOWN_MODEL
-                  }${selectedSuffix} · ${age(selected.createdAt)}`
-                : "Conversation, assertions, tool calls, trace, and replay."}
+              {recording
+                ? "Use the app to add Interact actions, or select Add assertions to check an element."
+                : selected
+                  ? `Run ${formatRunId(selected.suiteRunId ?? selected._id)} · ${
+                      selected.testCaseSnapshot?.model || UNKNOWN_MODEL
+                    }${selectedSuffix} · ${age(selected.createdAt)}`
+                  : "Conversation, assertions, tool calls, trace, and replay."}
             </SheetDescription>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">

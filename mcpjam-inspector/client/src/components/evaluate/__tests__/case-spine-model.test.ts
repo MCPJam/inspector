@@ -9,6 +9,8 @@ import {
   moveActionBlock,
   removeActionWithChecks,
   replaceActionTools,
+  reorderSpineSteps,
+  reorderRouteToolChecks,
   spineStatus,
   toolsByLaterAction,
 } from "../case-spine/case-spine-model";
@@ -28,6 +30,96 @@ const click = (id: string): TestStep => ({
   kind: "interact",
   toolName: "cart_view",
   action: { kind: "click", target: { testId: "x" } },
+});
+
+describe("reorderRouteToolChecks", () => {
+  it("reorders complete expected calls without moving other steps", () => {
+    const a: TestStep = {
+      id: "a",
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "a",
+        args: { args: { id: 1 }, argumentMatching: "exact" },
+        minCount: 2,
+      },
+    };
+    const b: TestStep = {
+      id: "b",
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "b",
+        args: { args: { id: 2 } },
+      },
+    };
+    const steps = [prompt("p"), a, check("c"), click("i"), b];
+    expect(reorderRouteToolChecks(steps, "a", "b")).toEqual([
+      steps[0],
+      b,
+      steps[2],
+      steps[3],
+      a,
+    ]);
+    expect(reorderRouteToolChecks(steps, "missing", "b")).toBe(steps);
+    expect(reorderRouteToolChecks(steps, "a", "a")).toBe(steps);
+  });
+});
+
+describe("reorderSpineSteps", () => {
+  it("moves checks in either direction without changing their data", () => {
+    const steps = [prompt("p"), check("a"), check("b"), check("c")];
+    const down = reorderSpineSteps(steps, "a", "c");
+    expect(down).toEqual([steps[0], steps[2], steps[3], steps[1]]);
+    expect(reorderSpineSteps(down, "a", "b")).toEqual(steps);
+    expect(down[3]).toBe(steps[1]);
+    expect(steps.map((step) => step.id)).toEqual(["p", "a", "b", "c"]);
+  });
+
+  it("moves an action together with its checks", () => {
+    const steps = [
+      prompt("p"),
+      check("a"),
+      click("i1"),
+      check("b"),
+      click("i2"),
+      check("c"),
+    ];
+    const moved = reorderSpineSteps(steps, "i2", "i1");
+    expect(moved.map((step) => step.id)).toEqual([
+      "p",
+      "a",
+      "i2",
+      "c",
+      "i1",
+      "b",
+    ]);
+    expect(reorderSpineSteps(moved, "i2", "i1")).toEqual(steps);
+  });
+
+  it("can explicitly move a check to a different action", () => {
+    const steps = [prompt("p"), check("a"), click("i1"), check("b")];
+    expect(reorderSpineSteps(steps, "a", "b").map((step) => step.id)).toEqual([
+      "p",
+      "i1",
+      "b",
+      "a",
+    ]);
+  });
+
+  it("keeps prompts anchored and ignores incompatible or missing targets", () => {
+    const steps = [prompt("p"), check("a"), click("i1"), check("b")];
+    for (const [from, to] of [
+      ["p", "i1"],
+      ["i1", "p"],
+      ["a", "i1"],
+      ["i1", "b"],
+      ["missing", "a"],
+      ["a", "a"],
+    ]) {
+      expect(reorderSpineSteps(steps, from!, to!)).toBe(steps);
+    }
+  });
 });
 
 describe("afterTheRunRows", () => {
