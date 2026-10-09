@@ -4,6 +4,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
 import {
   carryEffortToModel,
+  editableSelection,
   environmentsForModelCell,
   selectionReasoningEffort,
   setEffortForRow,
@@ -153,6 +154,36 @@ describe("setEffortForRow", () => {
         bareIds: "canonicalize",
       }),
     ).toEqual({ modelId: "gpt-5", selection: undefined });
+  });
+
+  it("mints a selection from the row for a stored legacy one, never settings on it", () => {
+    // What the host config DTO carries for an id outside the hosted catalog.
+    // The backend's legacy validator is closed, so `{ source: "legacy",
+    // settings }` would be refused on save.
+    const legacy = { source: "legacy", modelId: "gpt-5" } as const;
+    expect(editableSelection(legacy)).toBeUndefined();
+    expect(selectionReasoningEffort(legacy)).toBeUndefined();
+    const set = setEffortForRow({
+      ...args,
+      selection: legacy,
+      effort: "high",
+      bareIds: "canonicalize",
+    })!;
+    expect(set.modelId).toBe("openai/gpt-5");
+    expect(set.selection?.source).toBe("local");
+    expect(set.selection?.settings?.reasoningEffort).toBe("high");
+    // "keep-id" surfaces stay disabled, exactly as with no selection.
+    expect(
+      setEffortForRow({ ...args, selection: legacy, effort: "high" }),
+    ).toBeNull();
+    // The picker still resolves the legacy id to its own row.
+    expect(
+      findModelForStoredChoice(
+        { modelId: legacy.modelId, selection: legacy },
+        [gpt5, byokGpt5],
+        undefined,
+      ),
+    ).toBe(byokGpt5);
   });
 
   it("edits the existing selection of a hosted row in place", () => {

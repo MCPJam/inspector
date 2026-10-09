@@ -21,6 +21,7 @@ import { useMemo } from "react";
 import type {
   ModelSelection,
   ModelSelectionPurpose,
+  RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
@@ -30,6 +31,7 @@ import {
   reasoningEffortRouteForRow,
 } from "@/lib/reasoning-effort-options";
 import {
+  editableSelection,
   selectionReasoningEffort,
   setEffortForRow,
   withReasoningEffort,
@@ -47,7 +49,8 @@ export type SelectionEffortControlProps = Pick<
 > & {
   /** The picker row the config's model resolves to; undefined = unresolved. */
   row: ModelDefinition | undefined;
-  selection: ModelSelection | undefined;
+  /** The config's saved selection as stored (a legacy one reads as none). */
+  selection: RequestedModelSelection | undefined;
   purpose: ModelSelectionPurpose;
   /** The deployment stores selections (else there is nowhere to put it). */
   selectionsSupported?: boolean;
@@ -85,7 +88,8 @@ export function SelectionEffortControl({
         : [],
     [row, harness],
   );
-  const value = selectionReasoningEffort(selection);
+  const saved = editableSelection(selection);
+  const value = selectionReasoningEffort(saved);
   // The provider default for the row, unless the caller knows better.
   const captionLevel =
     defaultLevel ?? (row ? reasoningEffortDefaultForRow(row) : undefined);
@@ -121,10 +125,10 @@ export function SelectionEffortControl({
         if (!row) {
           // A saved effort can always be cleared, even when the model no
           // longer resolves to a row.
-          if (effort === undefined && selection) {
+          if (effort === undefined && saved) {
             onChange({
-              modelId: selection.modelId,
-              selection: withReasoningEffort(selection, undefined),
+              modelId: saved.modelId,
+              selection: withReasoningEffort(saved, undefined),
             });
           }
           return;

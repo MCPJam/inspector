@@ -56,6 +56,7 @@ import {
   type ModelConnectionRef,
   type ModelSelection,
   type ModelSelectionPurpose,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
 import {
@@ -320,7 +321,7 @@ export function storedModelChoice(
  * hosted rows first, exactly as the legacy read did.
  */
 export function findModelForStoredChoice(
-  choice: { modelId: string; selection?: ModelSelection | null },
+  choice: { modelId: string; selection?: RequestedModelSelection | null },
   models: readonly ModelDefinition[],
   orgConfig: OrgVisibleConfig | undefined,
 ): ModelDefinition | undefined {
