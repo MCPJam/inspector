@@ -1,3 +1,4 @@
+import { wrapModelToolsets, type ModelToolExecutor } from "./model-tool-executor.js";
 import {
   mergeConnectionToolsets,
   type ConnectionsByServerId,
@@ -26,8 +27,10 @@ import {
   type MintedDeclaredTool,
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { withinToolListingBudget } from "./within-budget.js";
 import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
   MCPClientManager,
@@ -672,6 +675,7 @@ export function buildWidgetInteractionContextSystemPrompt(
 }
 
 export interface PrepareChatV2Options {
+  modelToolExecutor?: ModelToolExecutor;
   connectionsByServerId?: ConnectionsByServerId;
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
@@ -710,6 +714,13 @@ export interface PrepareChatV2Options {
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
+  /**
+   * The reasoning effort this turn runs at. Under an effort the resolved
+   * temperature is omitted (a default temperature is not a request, and
+   * reasoning providers reject or ignore one); an EXPLICIT temperature is
+   * refused by the direct routes before it gets here.
+   */
+  reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
   /**
    * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering.
@@ -1296,41 +1307,6 @@ export interface PrepareChatV2Result {
 }
 
 /**
- * Races a tool listing against `timeoutMs`; with no budget it is the listing.
- *
- * The listing that loses is abandoned, not cancelled — the caller's manager
- * cleanup (`disconnectAllServers`) is what stops the stuck connect. Its
- * eventual rejection is swallowed here so it cannot surface as unhandled.
- */
-async function withinToolListingBudget<T>(
-  listing: Promise<T>,
-  timeoutMs: number | undefined,
-  describeServers: () => string,
-): Promise<T> {
-  if (timeoutMs === undefined) return listing;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      listing,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          listing.catch(() => {});
-          reject(
-            new Error(
-              `MCP server ${describeServers()} timed out: connecting and listing tools took longer than ${Math.round(timeoutMs / 1000)}s.`,
-            ),
-          );
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    // Leaving the timer live would hold the event loop open for the rest of
-    // the budget on every healthy turn.
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-/**
  * `"a", "b"` — the selected servers still not connected when the budget ran
  * out, by their host label. Falls back to every listed server when all of
  * them report connected (the listing itself is what hung).
@@ -1375,6 +1351,7 @@ export async function prepareChatV2(
     modelDefinition,
     systemPrompt,
     temperature,
+    reasoningEffort,
     requireToolApproval,
     respectToolVisibility,
     excludeMcpToolNames,
@@ -1448,7 +1425,7 @@ export async function prepareChatV2(
               mcpClientManager.getToolsForAiSdkByServer(
                 knownSelectedServers,
                 toolOptions,
-              ),
+              ).then((groups) => wrapModelToolsets(groups, options.modelToolExecutor)),
             ),
             selectedGroups,
             {
@@ -1458,7 +1435,11 @@ export async function prepareChatV2(
               },
             },
           )
-        : await listToolsWithinBudget(
+        : options.modelToolExecutor
+          ? Object.assign({}, ...Object.values(wrapModelToolsets(await listToolsWithinBudget(
+              mcpClientManager.getToolsForAiSdkByServer(knownSelectedServers, toolOptions)
+            ), options.modelToolExecutor)))
+          : await listToolsWithinBudget(
             mcpClientManager.getToolsForAiSdk(
               knownSelectedServers,
               toolOptions,
@@ -1979,11 +1960,11 @@ export async function prepareChatV2(
   //
   // The persisted `hostConfig.temperature` is unaffected and stays numeric:
   // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
-  const resolvedTemperature = modelDefinitionSupportsTemperature(
-    modelDefinition,
-  )
-    ? temperature
-    : undefined;
+  const resolvedTemperature =
+    reasoningEffort === undefined &&
+    modelDefinitionSupportsTemperature(modelDefinition)
+      ? temperature
+      : undefined;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>

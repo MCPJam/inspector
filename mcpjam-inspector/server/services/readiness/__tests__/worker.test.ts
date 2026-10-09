@@ -215,6 +215,41 @@ describe("a run that completes", () => {
       "submission-ready",
     ]);
   });
+
+  it("carries Muse's two rollups as stages, and never asks for observations", async () => {
+    // Muse reports its rollups as `technicalStatus` / `status` rather than a
+    // stage list; the row stores them as stages so one renderer reads both.
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "muse",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      // Even an opted-in run must not reach the broker: Muse has no catalogue.
+      includeLlmObservations: true,
+    });
+    expect(requestManagedObservations).not.toHaveBeenCalled();
+    const [, summary] = finalizeReadinessRun.mock.calls[0]!;
+    expect(summary.lanes.map((lane: any) => lane.lane)).toEqual([
+      "runtime-compatibility",
+      "tool-policy",
+      "submission-artifacts",
+      "experience-insights",
+    ]);
+    expect(summary.stages).toEqual([
+      expect.objectContaining({
+        stage: "technical-preflight",
+        lanes: ["runtime-compatibility", "tool-policy"],
+      }),
+      expect.objectContaining({
+        stage: "submission-ready",
+        // No submission profile on a hosted run, so the full verdict waits on it.
+        status: "incomplete",
+        lanes: ["runtime-compatibility", "tool-policy", "submission-artifacts"],
+      }),
+    ]);
+    expect(summary.authMode).toBe("headless");
+    expect(summary.llmObservationStatus).toBeUndefined();
+  });
 });
 
 describe("the observation opt-in", () => {

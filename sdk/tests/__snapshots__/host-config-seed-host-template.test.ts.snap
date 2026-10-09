@@ -182,6 +182,15 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "structuredContent": true,
           },
         },
+        "pluginExtensions": {
+          "capabilities": {
+            "fileResources": false,
+            "fileViewers": false,
+            "localFiles": false,
+            "mentions": false,
+          },
+          "enabled": true,
+        },
         "sandbox": {
           "browserStorage": {
             "indexedDB": true,
@@ -367,6 +376,15 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "structuredContent": true,
           },
+        },
+        "pluginExtensions": {
+          "capabilities": {
+            "fileResources": false,
+            "fileViewers": false,
+            "localFiles": false,
+            "mentions": false,
+          },
+          "enabled": true,
         },
         "sandbox": {
           "browserStorage": {
@@ -2080,6 +2098,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html+skybridge",
           ],
         },
+        "openai/elicitation": {
+          "form": {},
+        },
+        "openai/form": {},
       },
     },
     "computer": {
@@ -2175,6 +2197,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
+        },
+        "pluginExtensions": {
+          "enabled": true,
         },
         "sandbox": {
           "browserStorage": {
@@ -2270,6 +2295,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html+skybridge",
           ],
         },
+        "openai/elicitation": {
+          "form": {},
+        },
+        "openai/form": {},
       },
     },
     "computer": {
@@ -2365,6 +2394,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
+        },
+        "pluginExtensions": {
+          "enabled": true,
         },
         "sandbox": {
           "browserStorage": {

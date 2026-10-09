@@ -1,5 +1,7 @@
+import { projectWorkspaceTranscript, workspacePresentationHostConfig } from "../../shared/unattended-workspace";
 import { resolveEvalRunAttachments } from "../utils/computers/control-plane-client.js";
-import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities } from "../utils/harness/local/run-resources.js";
+import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, assertLocalHarnessCapabilities, localHarnessIdOf } from "../utils/harness/local/run-resources.js";
+import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
 import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
 import {
@@ -26,6 +28,7 @@ import {
   mergeToolCalls,
 } from "../../shared/eval-tool-call-projection";
 import {
+  copyUsageTotals,
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -43,8 +46,18 @@ import {
 } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
-import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
+import {
+  needsEphemeralEvalSandbox,
+  singleCaseHarnessBoxRefusal,
+} from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
+import { classifyEvalInfraError } from "./evals/infra-error-classification";
+import type { EvalInfraError } from "@/shared/eval-infra-error";
+import {
+  byokEndpointOwnership,
+  type InfraFailureEvidence,
+  type ModelEndpointOwnership,
+} from "../utils/infra-failure-evidence.js";
 import {
   buildLocalStepHandlers,
   buildHostedStepHandlers,
@@ -86,10 +99,14 @@ import {
   EVAL_BASH_TOOL_NAME,
 } from "../utils/built-in-tools/sandbox-bash.js";
 import {
-  isComputersDataPlaneConfigured,
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import {
+  acquireHarnessBox,
+  harnessBoxUnavailableReason,
+  type HarnessBox,
+} from "../utils/harness/harness-box.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import {
   collectHostedRecordingThenRelease,
@@ -124,8 +141,12 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import { isHostedModelDefinition } from "./hosted-model-catalog.js";
-import type { ModelSelection } from "@mcpjam/sdk";
+import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import {
+  decideTurnRail,
+  routingSelectionForModel,
+  withSelectionRouting,
+} from "../utils/selection-rail.js";
 import {
   backendModelSelection,
   ModelResolutionRefusalError,
@@ -227,6 +248,7 @@ import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
+import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -390,6 +412,15 @@ export type EvalTestCase = {
    * here (`readStoredModelSelection`).
    */
   selection?: ModelSelection;
+  /**
+   * A STORED legacy selection behind `model` (`{ source: "legacy" }`, written
+   * by a save of a bare id outside the hosted catalog, or by the backfill):
+   * "own key only". Read only when `selection` is absent. The case runs on the
+   * own-key path (org BYOK, else the request's keys) and NEVER on MCPJam
+   * credits, however the id looks. Absent with `selection` absent ⇒ an
+   * unlabelled row: today's hosted-first read, unchanged.
+   */
+  legacySelection?: LegacyModelSelection;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -764,7 +795,38 @@ export type EvalIterationOutcome = {
   iterationId?: string;
   policyBlockCount?: number;
   creditsExhausted?: boolean;
+  /**
+   * OUR infrastructure failed this trial. The run summary leaves it out of
+   * `total`/`passed`/`failed`, as the backend's legacy header does.
+   */
+  infraError?: EvalInfraError;
 };
+
+/**
+ * Did OUR infrastructure fail this iteration? Classifies the failed turn's
+ * structured evidence (`evals/infra-error-classification.ts`), stamping a
+ * model-call failure with who owns the endpoint this iteration called. Never
+ * for a timeout: a budget is the user's ceiling.
+ */
+export function resolveIterationInfraError(
+  result: {
+    iterationError?: string;
+    timeout?: unknown;
+    errorInfra?: InfraFailureEvidence;
+  },
+  modelEndpoint: ModelEndpointOwnership,
+): EvalInfraError | undefined {
+  if (!result.iterationError || result.timeout) return undefined;
+  const evidence = result.errorInfra;
+  return classifyEvalInfraError(
+    evidence &&
+      !evidence.endpoint &&
+      (evidence.source === "backend_model" ||
+        evidence.source === "provider_call")
+      ? { ...evidence, endpoint: modelEndpoint }
+      : evidence,
+  );
+}
 
 /**
  * D7: narrow a turn's full tool registry down to the subset the model was
@@ -1455,6 +1517,40 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   return flattened;
 }
 
+/**
+ * Refuses a launch whose tool snapshot could not list a server. Creating the
+ * run reserves iterations and charges `eval_step`, and the runner would then
+ * fail the same server in `getEvalToolsForAiSdkOrThrow` — so the caller gets
+ * that same setup error here, before anything is charged, not a failed run.
+ */
+export function throwIfEvalToolSnapshotFailed(args: {
+  toolSnapshot: ServerToolSnapshot;
+  mcpClientManager: MCPClientManager;
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+}): void {
+  const failures = args.toolSnapshot.servers.flatMap((server) => {
+    if (server.captureError === undefined) return [];
+    const connected =
+      args.mcpClientManager.getConnectionStatus(server.serverId) ===
+      "connected";
+    const phase: SetupPhase =
+      !connected || isMissingRuntimeServerError(server.captureError)
+        ? "connection"
+        : "discovery";
+    return [{ serverId: server.serverId, phase, error: server.captureError }];
+  });
+  // Same precedence as the runner: a connection failure is the one to report.
+  const chosen =
+    failures.find((failure) => failure.phase === "connection") ?? failures[0];
+  if (!chosen) return;
+  throwSetupPhaseError({
+    serverId: chosen.serverId,
+    phase: chosen.phase,
+    error: new Error(chosen.error),
+    environment: args.environment,
+  });
+}
+
 export function resolveConfiguredServerIds(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   mcpClientManager: MCPClientManager;
@@ -1553,6 +1649,26 @@ type ResolvedEvalTestCase = {
   expectedOutput?: string;
   advancedConfig?: Record<string, unknown>;
 };
+
+/**
+ * `advancedConfig.reasoningEffort` was a claim nothing ever applied (the runner
+ * reads only `temperature`), and the v1 API no longer accepts it. A value still
+ * stored on an older case is REFUSED rather than run as if it had been applied:
+ * the effort a case runs at is `models[].selection.settings.reasoningEffort`.
+ */
+export function assertNoStoredAdvancedReasoningEffort(
+  advancedConfig: Record<string, unknown> | undefined,
+): void {
+  if (advancedConfig?.reasoningEffort === undefined) return;
+  throw new ModelResolutionRefusalError([
+    {
+      code: "capability_missing",
+      reason:
+        "advancedConfig.reasoningEffort is not applied by the runner. Save the effort on the case's model instead (models[].selection.settings.reasoningEffort).",
+      evidence: { setting: "reasoningEffort", source: "advancedConfig" },
+    },
+  ]);
+}
 
 function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
   // Backend + route now emit `steps` (no promptTurns). The legacy per-turn
@@ -1816,6 +1932,8 @@ async function createIterationDirectly(
   params: {
     namedHostId?: string;
     runtimeVenue?: "hosted" | "local";
+    /** The harness this quick run executes locally, when it does. */
+    localHarnessId?: string | null;
     testCaseId?: string;
     testCaseSnapshot: {
       title: string;
@@ -1837,8 +1955,16 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
+    /**
+     * A hosted HARNESS iteration keys its disposable computer to this row, and
+     * a harness with no box falls back to the member's personal computer. So a
+     * failed record refuses the run, carrying the backend's reason, instead of
+     * being swallowed.
+     */
+    requireRecord?: boolean;
   },
 ): Promise<string | undefined> {
+  let iterationId: string | undefined;
   try {
     // ACTION, not the mutation — same starter-pool contention as the suite
     // path above, retried server-side.
@@ -1847,6 +1973,18 @@ async function createIterationDirectly(
       {
         ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
         ...(params.runtimeVenue ? { runtimeVenue: params.runtimeVenue } : {}),
+        // A local quick run declares the one harness it runs here, so the
+        // backend stamps it local exactly when this runner executes it locally
+        // (quick runs declared nothing before, which the backend reads as a
+        // runner for which "local" means Claude Code alone).
+        ...(params.runtimeVenue === "local" && params.localHarnessId
+          ? {
+              runnerCapabilities: [
+                ...runnerCapabilities(),
+                ...localHarnessCapabilities([params.localHarnessId]),
+              ],
+            }
+          : {}),
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
           snapshotWithStepsForConvex(params.testCaseSnapshot),
@@ -1856,13 +1994,38 @@ async function createIterationDirectly(
       },
     );
 
-    return result?.iterationId as string | undefined;
+    iterationId = result?.iterationId as string | undefined;
   } catch (error) {
     logger.error("[evals] Failed to create iteration:", error);
     if (params.namedHostId || params.runtimeVenue) throw new Error("Could not record this client's eval iteration. Update the backend before running it.", { cause: error });
+    if (params.requireRecord) {
+      throw new HarnessIterationRecordError(
+        `${HARNESS_ITERATION_RECORD_REQUIRED}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
     return undefined;
   }
+  if (!iterationId && params.requireRecord) {
+    throw new HarnessIterationRecordError(
+      `${HARNESS_ITERATION_RECORD_REQUIRED}: the backend returned no iteration id`,
+    );
+  }
+  return iterationId;
 }
+
+const HARNESS_ITERATION_RECORD_REQUIRED =
+  "Could not record this eval iteration, which a hosted harness run needs " +
+  "to provision its own computer, so the run was refused";
+
+/**
+ * Typed so the quick-run settle loop rethrows it: a run refused before it took
+ * a row has nothing of its own to answer with, and the route would otherwise
+ * report the case's latest iteration, another run's, as this one's result.
+ */
+class HarnessIterationRecordError extends Error {}
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -2498,8 +2661,10 @@ type EvalEffectiveSettings = EffectiveModelSettings & {
 /**
  * The settings a case with a saved selection runs with, resolved ONCE for
  * all of its iterations, on the route it takes. Precedence, highest first:
- * the case's own `advancedConfig` (per-run override) > the saved selection's
- * `settings` > the suite host's defaults. A setting the route cannot honour
+ * the case's own `advancedConfig` temperature (per-run override) > the saved
+ * selection's `settings` > the suite host's defaults. `advancedConfig` carries
+ * no effort: a stored `advancedConfig.reasoningEffort` is refused, and the
+ * effort is only ever the selection's `settings.reasoningEffort`. A setting the route cannot honour
  * throws the refusal (the case fails with that reason) instead of running a
  * different configuration.
  */
@@ -2512,6 +2677,7 @@ export function resolveEvalCaseSettings(args: {
   harnessRuntimeVenue?: "local" | "hosted";
 }): EvalEffectiveSettings {
   const { advancedConfig } = resolveEvalTestCase(args.test);
+  assertNoStoredAdvancedReasoningEffort(advancedConfig);
   const host = resolveExecutionContext({
     hostConfig: args.suiteHostConfig ?? null,
     precedence: "override-wins",
@@ -2693,7 +2859,14 @@ const runHostedIteration = async (
     const project = resolveOrgTargetForEval(params.test, params.orgModelConfigTarget);
     if (params.harnessRuntimeVenue === "local") {
       if (!project || !("projectId" in project)) throw new Error("Local harness evals require a project");
-      const resources = await prepareLocalHarnessRun({ bearer: params.convexAuthToken, projectId: project.projectId });
+      // The run is prepared for the harness the suite's host selects: each
+      // local harness has its own runtime, authorization and grant, and a
+      // target minted for one is never valid for another.
+      const resources = await prepareLocalHarnessRun({
+        bearer: params.convexAuthToken,
+        projectId: project.projectId,
+        harnessId: localHarnessIdOf(harnessOfHostConfig(params.suiteHostConfig)) ?? "claude-code",
+      });
       try { return await runHostedIterationWithBrowser({ ...params, harnessExecutionTarget: resources.target }, browser); }
       finally { await resources.cleanup(); }
     }
@@ -3393,17 +3566,33 @@ const executeTestCase = async (params: {
     forwardedSelection?.source === "hosted" ? forwardedSelection : undefined;
   const orgSelection =
     forwardedSelection?.source === "org" ? forwardedSelection : undefined;
-  const modelDefinition = selectionRoute?.modelDefinition ?? promotedModel;
+  // A stored legacy selection (own key only) for the model that runs. Same
+  // gate as `selectionRoute`: a promoted host model is not the case's.
+  const legacySelection =
+    !selectionRoute && promotedModel === caseModel
+      ? routingSelectionForModel(test.legacySelection, caseModel)
+      : undefined;
+  // `hosted: false` on a legacy one, so every check downstream (harness
+  // admission included) agrees it is not MCPJam-paid.
+  const modelDefinition =
+    selectionRoute?.modelDefinition ??
+    withSelectionRouting(promotedModel, legacySelection);
   const resolvedModelId = selectionRoute
     ? selectionRoute.wireModelId
     : getCanonicalModelId(String(modelDefinition.id), modelDefinition.provider);
+  // Who pays: the saved selection's rail; a legacy one is never `hosted`;
+  // without either, today's hosted-list check on the canonical id
+  // (`decideTurnRail` with no selection IS that check).
   const isJamModel = selectionRoute
     ? selectionRoute.rail === "hosted"
-    : isHostedModelDefinition({
-        id: resolvedModelId,
-        provider: modelDefinition.provider,
-        hosted: modelDefinition.hosted,
-      });
+    : decideTurnRail({
+        selection: legacySelection,
+        model: {
+          id: resolvedModelId,
+          provider: modelDefinition.provider,
+          hosted: modelDefinition.hosted,
+        },
+      }) === "hosted";
   const orgByokRuntime =
     isJamModel || selectionRoute?.rail === "local"
       ? undefined
@@ -3488,7 +3677,9 @@ const executeTestCase = async (params: {
       try {
         const iterationParams = {
           namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
           testCaseSnapshot: {
             title: test.title,
@@ -3860,7 +4051,8 @@ export const runEvalSuiteWithAiSdk = async ({
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), convexAuthToken,
-      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined) ? "local" : "hosted");
+      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -4392,7 +4584,10 @@ export const runEvalSuiteWithAiSdk = async ({
     for (const [resultIndex, result] of results.entries()) {
       if (result.status === "fulfilled") {
         const outcomes = result.value;
-        for (const { evaluation } of outcomes) {
+        for (const { evaluation, infraError } of outcomes) {
+          // An infra trial measured nothing about the server: in no count,
+          // matching the backend's legacy header.
+          if (infraError) continue;
           summary.total += 1;
           if (evaluation.passed) {
             summary.passed += 1;
@@ -4407,6 +4602,12 @@ export const runEvalSuiteWithAiSdk = async ({
           quickRunOutcomes.push(...outcomes);
         }
       } else {
+        if (
+          runId === null &&
+          result.reason instanceof HarnessIterationRecordError
+        ) {
+          throw result.reason;
+        }
         // Test failed entirely - log error but continue
         logger.error("[evals] Test case failed:", result.reason);
         // Count as one failed test
@@ -4642,6 +4843,16 @@ const runLocalIteration = async ({
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  // A stored effort matters only to a case that invokes a model: a pinned-only
+  // case never does, so a legacy value on it is inert, not refused.
+  if (
+    turnsNeedModel({
+      caseType: test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    })
+  ) {
+    assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
+  }
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
@@ -4810,7 +5021,9 @@ const runLocalIteration = async ({
   };
   const iterationParamsBase = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -4903,6 +5116,7 @@ const runLocalIteration = async ({
   // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
   const browser = await createBrowserSessionContext({
+    getWorkspacePresentation: () => projectWorkspaceTranscript(acc.conversationMessages, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)),
     // Model-free (pinned-only) iterations pass no model: no Computer Use, but
     // the harness still renders pinned widgets and records observations.
     ...(caseNeedsModel ? { model: test.model } : {}),
@@ -5047,11 +5261,10 @@ const runLocalIteration = async ({
         // and RELEASE needs a server-to-server credential — without them
         // releaseEvalSandbox silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
-        if (!isComputersDataPlaneConfigured()) {
-          throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-          );
-        }
+        const unavailable = harnessBoxUnavailableReason(
+          "This eval pins a reproducible computer environment",
+        );
+        if (unavailable) throw new Error(unavailable);
         const capacityBudgetMs = Math.min(
           EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
           Math.max(0, iterationDeadlineAt - Date.now()),
@@ -5522,11 +5735,7 @@ const runLocalIteration = async ({
       evaluation,
       turnCheckResults,
     );
-    const usageFinal: UsageTotals = {
-      inputTokens: acc.accumulatedUsage.inputTokens,
-      outputTokens: acc.accumulatedUsage.outputTokens,
-      totalTokens: acc.accumulatedUsage.totalTokens,
-    };
+    const usageFinal: UsageTotals = copyUsageTotals(acc.accumulatedUsage);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
@@ -5538,6 +5747,20 @@ const runLocalIteration = async ({
     // closure above still applies the prefix to LIVE SSE
     // `trace_snapshot` events for the test-runner UI (different
     // consumer than the stored transcript).
+    // OUR infrastructure (the model provider) failed the turn? Typed evidence
+    // only; a pinned setup failure is the server's, never infra.
+    const localInfraError = acc.pinnedSetupFailure
+      ? undefined
+      : resolveIterationInfraError(
+          {
+            iterationError: acc.iterationError,
+            timeout: acc.timeout,
+            errorInfra: acc.stepErrorEvidence,
+          },
+          // A direct call on the caller's own key: ours to exclude only when
+          // it reached a first-party hosted provider.
+          byokEndpointOwnership(modelDefinition.provider),
+        );
     const finishParams = buildIterationFinishParams({
       iterationId,
       // The layer that failed, when this driver could tell — the local twin of
@@ -5575,10 +5798,15 @@ const runLocalIteration = async ({
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
       // A model-free pinned setup failure (server not connected) records as
-      // `setup_failed` — it never reached the question; everything else
-      // completes (a failed verdict is still a completed run). Mirrors the
-      // former runIterationWithAiSdk.
-      status: acc.pinnedSetupFailure ? "setup_failed" : "completed",
+      // `setup_failed` — it never reached the question; an infra failure as
+      // `failed` + `infraError`; everything else completes (a failed verdict
+      // is still a completed run). Mirrors the former runIterationWithAiSdk.
+      status: acc.pinnedSetupFailure
+        ? "setup_failed"
+        : localInfraError
+          ? "failed"
+          : "completed",
+      ...(localInfraError ? { infraError: localInfraError } : {}),
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
       // via the failure-detection branch, surface it on the persisted
@@ -5671,6 +5899,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(localInfraError ? { infraError: localInfraError } : {}),
     };
   } catch (error) {
     // Rethrown, not swallowed: this iteration ran out of its own budget, and
@@ -5797,11 +6026,7 @@ const runLocalIteration = async ({
           actualToolCalls: extractToolCallsFromConversation({
             messages: failMessages,
           }),
-          usage: {
-            inputTokens: acc.accumulatedUsage.inputTokens,
-            outputTokens: acc.accumulatedUsage.outputTokens,
-            totalTokens: acc.accumulatedUsage.totalTokens,
-          },
+          usage: copyUsageTotals(acc.accumulatedUsage),
           prompts: promptTraceSummaries,
         }),
       );
@@ -5812,6 +6037,26 @@ const runLocalIteration = async ({
       });
     }
 
+    const failStatus =
+      iterationMetadataBase.timeout &&
+      typeof iterationMetadataBase.timeout === "object" &&
+      "clock" in iterationMetadataBase.timeout &&
+      iterationMetadataBase.timeout.clock === "sandboxCapacity"
+        ? ("setup_failed" as const)
+        : ("failed" as const);
+    // The throw already records `failed`; a typed provider failure also
+    // carries `infraError`, which is what excludes and refunds it.
+    const failInfraError =
+      failStatus === "failed"
+        ? resolveIterationInfraError(
+            {
+              iterationError: errorMessage ?? acc.iterationError,
+              timeout: iterationMetadataBase.timeout,
+              errorInfra: acc.stepErrorEvidence,
+            },
+            byokEndpointOwnership(modelDefinition.provider),
+          )
+        : undefined;
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
     // success path.
@@ -5829,11 +6074,7 @@ const runLocalIteration = async ({
       ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
-      usage: {
-        inputTokens: acc.accumulatedUsage.inputTokens,
-        outputTokens: acc.accumulatedUsage.outputTokens,
-        totalTokens: acc.accumulatedUsage.totalTokens,
-      },
+      usage: copyUsageTotals(acc.accumulatedUsage),
       messages: failMessages,
       // Gated exactly as on the success path: a model-free case carries a
       // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be
@@ -5850,13 +6091,8 @@ const runLocalIteration = async ({
       // PR 9: browser artifacts collected before the failure still persist.
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
-      status:
-        iterationMetadataBase.timeout &&
-        typeof iterationMetadataBase.timeout === "object" &&
-        "clock" in iterationMetadataBase.timeout &&
-        iterationMetadataBase.timeout.clock === "sandboxCapacity"
-          ? "setup_failed"
-          : "failed",
+      status: failStatus,
+      ...(failInfraError ? { infraError: failInfraError } : {}),
       startedAt: runStartedAt,
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
@@ -5923,6 +6159,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlockCount: toolPolicyGate.blocks.length }
         : {}),
+      ...(failInfraError ? { infraError: failInfraError } : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -6017,6 +6254,7 @@ const runHostedIterationWithBrowser = async (
   browser: BrowserSessionContext,
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  assertNoStoredAdvancedReasoningEffort(resolvedTest.advancedConfig);
   const toolPolicyGate = resolveEnforcementGate({
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
@@ -6123,6 +6361,7 @@ const runHostedIterationWithBrowser = async (
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
+  browser.setWorkspacePresentation?.(() => projectWorkspaceTranscript(messageHistory, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)));
   /**
    * The TRACE transcript — `messageHistory`'s evidence-enriched twin (see the
    * acc contract on `DriveHostedEvalTurnParams`). Persisted and gate-read in
@@ -6144,7 +6383,9 @@ const runHostedIterationWithBrowser = async (
 
   const iterationParams = {
     namedHostId: hostPolicy?.namedHostId,
-    ...(harnessRuntimeVenue === "local" ? { runtimeVenue: "local" as const } : {}),
+    ...(harnessRuntimeVenue === "local"
+      ? { runtimeVenue: "local" as const, localHarnessId: localHarnessIdOf(harnessOfHostConfig(suiteHostConfig)) }
+      : {}),
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
@@ -6172,7 +6413,13 @@ const runHostedIterationWithBrowser = async (
     ? precreatedIterationId
     : recorder
       ? await recorder.startIteration(iterationParams)
-      : await createIterationDirectly(convexClient, iterationParams);
+      : await createIterationDirectly(convexClient, {
+          ...iterationParams,
+          // A hosted harness box is keyed to this row (see the param).
+          ...(resolvedExecution.harness && !harnessExecutionTarget
+            ? { requireRecord: true }
+            : {}),
+        });
   if (iterationId) onIterationStarted?.(iterationId);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
@@ -6237,6 +6484,7 @@ const runHostedIterationWithBrowser = async (
     sandboxId: string;
     sandboxRowId: string;
     runtimeKind: "terminal" | "desktop-browser";
+    workdir?: string;
   }) => {
     // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
     // provisioned, never the project computer: an unattended run drives a
@@ -6384,8 +6632,7 @@ const runHostedIterationWithBrowser = async (
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
-  let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
-    null;
+  let evalBox: HarnessBox | null = null;
   /**
    * The video the hosted browser recorded, if this iteration used one.
    *
@@ -6395,22 +6642,24 @@ const runHostedIterationWithBrowser = async (
    * fires first — after the release there is nothing left to read.
    */
   let hostedRecording: HostedRecording | null = null;
+  const releaseEvalBox = async (sandboxRowId: string): Promise<void> => {
+    // Collect BEFORE the release — after it there is nothing left to read —
+    // and release REGARDLESS of how the collect went. Both facts live in the
+    // helper, which is where they are tested: a collector that throws or
+    // hangs past its bound yields no video and the box is released on the
+    // same schedule, because a box that outlives its iteration costs money
+    // until the GC cron reaps it and no video is worth that.
+    const collected = await collectHostedRecordingThenRelease({
+      sandboxRowId,
+      release: () => releaseEvalSandbox({ sandboxRowId }),
+    });
+    hostedRecording = hostedRecording ?? collected;
+  };
   const releaseEvalSandboxIfAny = async (): Promise<void> => {
-    if (evalSandbox?.ok) {
-      const { sandboxRowId } = evalSandbox.value;
-      evalSandbox = null;
-      // Collect BEFORE the release — after it there is nothing left to read —
-      // and release REGARDLESS of how the collect went. Both facts live in the
-      // helper, which is where they are tested: a collector that throws or
-      // hangs past its bound yields no video and the box is released on the
-      // same schedule, because a box that outlives its iteration costs money
-      // until the GC cron reaps it and no video is worth that.
-      const collected = await collectHostedRecordingThenRelease({
-        sandboxRowId,
-        release: () => releaseEvalSandbox({ sandboxRowId }),
-      });
-      hostedRecording = hostedRecording ?? collected;
-    }
+    const box = evalBox;
+    evalBox = null;
+    // Stops the turn heartbeat, then runs `releaseEvalBox` above.
+    await box?.release();
   };
   let prepared: PrepareChatV2Result;
   try {
@@ -6443,43 +6692,96 @@ const runHostedIterationWithBrowser = async (
       runId,
     });
     if (harnessExecutionTarget) {
-      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy });
+      assertLocalHarnessCapabilities({ builtInToolIds: resolvedExecution.builtInToolIds, computerEnvironmentId: pinnedEnvironmentId, browserToolPolicy: resolvedExecution.browserToolPolicy, harnessId: resolvedExecution.harness });
       if (runId) {
         const attachments = await resolveEvalRunAttachments({ bearer: convexAuthToken, runId: String(runId), signal: abortSignal });
         if (!attachments.ok) throw new Error("Could not verify this run's attachment requirements");
-        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0) });
+        assertLocalHarnessCapabilities({ hasAttachments: attachments.value.cases.some(entry => entry.attachments.length > 0), harnessId: resolvedExecution.harness });
       }
     }
     if (sandboxNeed.needed && !harnessExecutionTarget) {
-      if (!isComputersDataPlaneConfigured()) {
-        throw new Error(
-          sandboxNeed.runtimeKind === "desktop-browser"
-            ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : pinnedEnvironmentId
-              ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-              : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-        );
+      const unavailable = harnessBoxUnavailableReason(
+        sandboxNeed.runtimeKind === "desktop-browser"
+          ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration"
+          : pinnedEnvironmentId && runId
+            ? "This eval pins a reproducible computer environment"
+            : "This eval runs on a harness, which boots a disposable computer per iteration",
+      );
+      if (unavailable) throw new Error(unavailable);
+      if (!runId) {
+        // SINGLE-CASE: the box is keyed to the iteration row and is only ever
+        // a terminal, so refuse what it cannot carry before booting anything.
+        if (!iterationId) {
+          throw new Error(
+            "This single-case harness run has no iteration record to key its " +
+              "computer to, so it was refused rather than run on a personal " +
+              "computer.",
+          );
+        }
+        const singleCaseRefusal = singleCaseHarnessBoxRefusal({
+          builtInToolIds: resolvedExecution.builtInToolIds,
+          browserToolPolicy: resolvedExecution.browserToolPolicy,
+          hostedBrowserAvailable: hostedBrowserAdvertisable(),
+        });
+        if (singleCaseRefusal) throw new Error(singleCaseRefusal);
       }
       const capacityBudgetMs = Math.min(
         EVAL_SANDBOX_CAPACITY_POLICY.totalBudgetMs,
         Math.max(0, iterationDeadlineAt - Date.now()),
       );
       const capacityStartedAt = Date.now();
-      evalSandbox = await provisionEvalSandbox({
-        timeoutMs: capacityBudgetMs,
-        bearer: convexAuthToken,
-        runId: String(runId),
-        ...(iterationId ? { iterationId: String(iterationId) } : {}),
-        // Absent for a terminal box, so every request that predates desktops
-        // is byte-identical on the wire.
-        ...(sandboxNeed.runtimeKind === "desktop-browser"
-          ? { runtimeKind: "desktop-browser" as const }
-          : {}),
+      // The shared box holder: it keeps the box's idle clock running while the
+      // iteration's turns do, so a long harness turn cannot outlive its box.
+      const acquired = await acquireHarnessBox({
+        // A single-case run has no suite run; its box is keyed to the
+        // iteration, which `needsEphemeralEvalSandbox` only books for a
+        // harness (so terminal).
+        surface: runId ? "eval" : "single-case",
+        provision: async () => {
+          const result = await provisionEvalSandbox({
+            timeoutMs: capacityBudgetMs,
+            bearer: convexAuthToken,
+            ...(runId
+              ? {
+                  runId: String(runId),
+                  ...(iterationId ? { iterationId: String(iterationId) } : {}),
+                  // Absent for a terminal box, so every request that predates
+                  // desktops is byte-identical on the wire.
+                  ...(sandboxNeed.runtimeKind === "desktop-browser"
+                    ? { runtimeKind: "desktop-browser" as const }
+                    : {}),
+                }
+              : { iterationId: String(iterationId) }),
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
+          return result.ok
+            ? {
+                ok: true as const,
+                box: {
+                  sandboxRowId: result.value.sandboxRowId,
+                  sandboxId: result.value.sandboxId,
+                  // What ACTUALLY booted, read off the response rather than
+                  // off the request: a reuse answers with the row's own kind.
+                  ...(result.value.runtimeKind
+                    ? { runtimeKind: result.value.runtimeKind }
+                    : {}),
+                  ...(result.value.workdir
+                    ? { workdir: result.value.workdir }
+                    : {}),
+                },
+              }
+            : { ok: false as const, refusal: result };
+        },
+        release: releaseEvalBox,
+        // The ITERATION signal. Past its budget grace the iteration is
+        // abandoned and may never reach a release; the abort still stops the
+        // heartbeat, so the box goes idle and the reaper takes it.
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
-      if (!evalSandbox.ok) {
-        const error = new Error(describeEvalSandboxRefusal(evalSandbox));
-        if (evalSandbox.status === 503 && evalSandbox.code === "at_capacity") {
+      if (!acquired.ok) {
+        const refusal = acquired.refusal;
+        const error = new Error(describeEvalSandboxRefusal(refusal));
+        if (refusal.status === 503 && refusal.code === "at_capacity") {
           iterationMetadataBase.timeout = {
             clock: "sandboxCapacity",
             budgetMs: capacityBudgetMs,
@@ -6492,15 +6794,30 @@ const runHostedIterationWithBrowser = async (
         }
         throw error;
       }
+      evalBox = acquired.box;
+    }
+    // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
+    // falls through to `resolveHarnessSandbox`, the acting member's computer.
+    // Every path above boots one or throws; this is the last check before the
+    // first turn, so a future gap fails here instead of running there.
+    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+      throw new Error(
+        "This eval runs on a harness but no disposable computer was " +
+          "provisioned for it, so it was refused rather than run on a " +
+          "personal computer.",
+      );
     }
     const sandboxBinding =
-      evalSandbox?.ok && sandboxNeed.needed
+      evalBox && sandboxNeed.needed
         ? {
-            sandboxId: evalSandbox.value.sandboxId,
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            // What ACTUALLY booted, read off the response rather than off the
-            // request: a reuse answers with the row's own kind.
-            runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
+            sandboxId: evalBox.binding.sandboxId,
+            sandboxRowId: evalBox.binding.sandboxRowId,
+            runtimeKind: evalBox.binding.runtimeKind,
+            // `bash` roots at the box's workdir exactly as the harness does;
+            // dropping it ran the two in different directories.
+            ...(evalBox.binding.workdir
+              ? { workdir: evalBox.binding.workdir }
+              : {}),
           }
         : undefined;
     // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
@@ -6581,6 +6898,9 @@ const runHostedIterationWithBrowser = async (
     // `sandboxBinding` does.
     if (
       sandboxBinding &&
+      // Attachments resolve through the RUN (`/evals/sandbox/attachments`); a
+      // single-case run has none to resolve them through.
+      runId &&
       evalBoxFilesystemIsReachable({
         runtimeKind: sandboxBinding.runtimeKind,
         harness: resolvedExecution.harness,
@@ -6846,13 +7166,11 @@ const runHostedIterationWithBrowser = async (
     // harness as well: one box per iteration, never two. It rides the handler
     // options rather than the host config because the run's config snapshot is
     // member-readable, so a binding writable there would be forgeable.
-    ...(resolvedExecution.harness && evalSandbox?.ok
-      ? {
-          harnessSandboxBinding: {
-            sandboxRowId: evalSandbox.value.sandboxRowId,
-            sandboxId: evalSandbox.value.sandboxId,
-          },
-        }
+    //
+    // The whole binding, `workdir` included: dropping it rooted every eval
+    // harness Shell at whatever the turn fell back to instead of the box's.
+    ...(resolvedExecution.harness && evalBox
+      ? { harnessSandboxBinding: evalBox.binding }
       : {}),
     // How the sandbox reaches this inspector's MCP proxy. An eval run builds
     // an ephemeral authorized manager exactly as the hosted chat routes do, so
@@ -7041,6 +7359,22 @@ const runHostedIterationWithBrowser = async (
   // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
   // below, mirroring the local runner.
   const pinnedSetupFailure = result.setupFailure;
+  // Did OUR infrastructure fail the turn? Structured evidence only; a setup
+  // failure of the server under test is never re-labelled as infra.
+  const infraError = pinnedSetupFailure
+    ? undefined
+    : resolveIterationInfraError(
+        result,
+        // `/stream` runs on MCPJam's own keys; `/stream/org` on the org's
+        // connection, ours to exclude only for a first-party hosted provider.
+        endpointPath === "/stream/org"
+          ? byokEndpointOwnership(
+              typeof extraBodyFields?.providerKey === "string"
+                ? extraBodyFields.providerKey
+                : undefined,
+            )
+          : "platform",
+      );
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
   hostedStepScriptedFailures = buildStepScriptedCheckFailures(stepState);
@@ -7228,9 +7562,15 @@ const runHostedIterationWithBrowser = async (
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
     // A model-free pinned setup failure (server not connected) records as
-    // `setup_failed` — it never reached the question; everything else completes
-    // (a failed verdict is still a completed run). Mirrors the local runner.
-    status: pinnedSetupFailure ? "setup_failed" : "completed",
+    // `setup_failed` — it never reached the question; an infra failure as
+    // `failed` + `infraError`; everything else completes (a failed verdict is
+    // still a completed run). Mirrors the local runner.
+    status: pinnedSetupFailure
+      ? "setup_failed"
+      : infraError
+        ? "failed"
+        : "completed",
+    ...(infraError ? { infraError } : {}),
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
@@ -7312,6 +7652,7 @@ const runHostedIterationWithBrowser = async (
     ...(toolPolicyGate?.blocks.length
       ? { policyBlockCount: toolPolicyGate.blocks.length }
       : {}),
+    ...(infraError ? { infraError } : {}),
   };
 };
 
@@ -7325,7 +7666,8 @@ export const streamTestCase = async (
   const target = params.orgModelConfigTarget;
   const harnessRuntimeVenue = params.harnessRuntimeVenue ??
     (await shouldUseLocalHarness(harnessOfHostConfig(params.suiteHostConfig), params.convexAuthToken,
-      target && "projectId" in target ? target.projectId : undefined) ? "local" : "hosted");
+      target && "projectId" in target ? target.projectId : undefined,
+      { scope: "unattended" }) ? "local" : "hosted");
   const pinned = { ...params, harnessRuntimeVenue };
   return harnessRuntimeVenue === "local"
     ? withLocalHarnessSlot(() => executeCommittedTestCase(pinned), params.abortSignal)

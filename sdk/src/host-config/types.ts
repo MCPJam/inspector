@@ -322,6 +322,41 @@ export const CONFORMANCE_PROFILE_KEYS = [
   "toolResultAuthChallengeTrigger",
 ] as const;
 
+/**
+ * The OpenAI plugin extensions a client can offer, one toggle each, stored
+ * under `mcpProfile.apps.pluginExtensions.capabilities`. Order is the order
+ * the client editor lists them in; the canonical form sorts keys.
+ */
+export const PLUGIN_EXTENSION_CAPABILITY_KEYS = [
+  "sidebarApps",
+  "conversationPanels",
+  "fileViewers",
+  "fileResources",
+  "localFiles",
+  "settings",
+  "displayModes",
+  "deepLinks",
+  "modelContext",
+  "messages",
+  "mentions",
+  "forms",
+  "onboarding",
+] as const;
+export type PluginExtensionCapabilityKey =
+  (typeof PLUGIN_EXTENSION_CAPABILITY_KEYS)[number];
+
+/**
+ * Per-client "OpenAI plugin extensions" setting. `enabled` is the master
+ * switch. `capabilities` is sparse: an absent key means "on whenever the
+ * master switch is on", so only switched-off extensions need to be stored.
+ * The whole object absent means "use the client style's default" (on for
+ * ChatGPT and Codex, off for everything else).
+ */
+export type HostConfigPluginExtensionsV1 = {
+  enabled: boolean;
+  capabilities?: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
+};
+
 export type CspDomainSet = {
   connectDomains?: string[];
   resourceDomains?: string[];
@@ -510,6 +545,9 @@ export type HostConfigMcpProfileV1 = {
     // Sparse per-dimension override on the SEP-1865 MCP Apps `app.*`
     // spec-bridge matrix. Independent from `compatRuntime`.
     mcpAppsOverrides?: McpAppsCapabilities;
+    // OpenAI plugin extensions (sidebar Apps, file viewers, forms, …) this
+    // client offers. Absent → the client style's default.
+    pluginExtensions?: HostConfigPluginExtensionsV1;
   };
   extensions?: Record<string, unknown>;
 };

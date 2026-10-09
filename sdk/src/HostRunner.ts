@@ -47,6 +47,11 @@ function customProviderNameSet(
 }
 import type { CreateModelOptions } from "./model-factory.js";
 import { modelRejectsTemperature } from "./model-sampling-support.js";
+import type { ModelReasoningEffort } from "./host-config/model-selection.js";
+import {
+  reasoningEffortProviderOptions,
+  type ReasoningEffortProviderOptions,
+} from "./host-config/reasoning-effort.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
@@ -122,6 +127,18 @@ interface HostRunnerBaseConfig {
   systemPrompt?: string;
   /** Temperature for LLM responses (0-2). Overrides the host-derived value. Some models (e.g., reasoning models) don't support temperature. */
   temperature?: number;
+  /**
+   * Reasoning effort for the model, applied through the AI SDK provider's own
+   * option (`providerOptions`) — the same mapping the hosted runner uses. An
+   * effort REPLACES the sampling temperature: `temperature` is not sent while
+   * one is set. A model or provider with no effort control the installed AI
+   * SDK provider exposes REFUSES it (the constructor throws, before any spend)
+   * rather than running without it.
+   *
+   * A `host` snapshot carries no model selection, so a saved client's effort
+   * is passed here explicitly (`runWithClient` does this).
+   */
+  reasoningEffort?: ModelReasoningEffort;
   /** Maximum number of agentic steps/tool calls (default: 10) */
   maxSteps?: number;
   /** Custom providers registry for non-standard LLM providers */
@@ -270,10 +287,12 @@ type StartedToolCall = {
  * only `description`, never name, schema or execute.
  */
 function applyToolDescriptionOverridesToRecord<
-  T extends Record<string, { description?: string }>,
+  // `unknown`, not `string`: an AI SDK 7 tool's description may also be a
+  // function of the call context. An override always replaces it with a string.
+  T extends Record<string, { description?: unknown }>,
 >(tools: T, overrides: Readonly<Record<string, string>> | undefined): T {
   if (!overrides || Object.keys(overrides).length === 0) return tools;
-  const next: Record<string, { description?: string }> = { ...tools };
+  const next: Record<string, { description?: unknown }> = { ...tools };
   for (const [name, description] of Object.entries(overrides)) {
     // Own properties only: `next` is a plain object, so an override named
     // `toString` or `constructor` would otherwise find Object.prototype's
@@ -306,6 +325,10 @@ export class HostRunner implements HostExecutor {
   private readonly baseUrls?: CreateModelOptions["baseUrls"];
   private systemPrompt: string;
   private temperature: number | undefined;
+  private readonly reasoningEffort: ModelReasoningEffort | undefined;
+  private readonly reasoningProviderOptions:
+    | ReasoningEffortProviderOptions
+    | undefined;
   private readonly maxSteps: number;
   private readonly customProviders?:
     | Map<string, CustomProvider>
@@ -439,6 +462,25 @@ export class HostRunner implements HostExecutor {
         ? this.hostSnapshot.systemPrompt
         : "You are a helpful assistant.");
     this.temperature = config.temperature ?? this.hostSnapshot?.temperature;
+    const canonicalModel = resolvedModel.replace(/^mcpjam\//, "");
+    this.reasoningEffort = config.reasoningEffort;
+    if (this.reasoningEffort !== undefined) {
+      // Refuse now, not on the first prompt: a model with no effort control
+      // would otherwise run at its default and be reported as the requested
+      // configuration.
+      const providerKey = canonicalModel.split("/")[0] ?? "";
+      const options = reasoningEffortProviderOptions({
+        providerKey,
+        modelId: canonicalModel,
+        effort: this.reasoningEffort,
+      });
+      if (!options) {
+        throw new Error(
+          `HostRunner: reasoning effort "${this.reasoningEffort}" is not supported for "${resolvedModel}" (capability_missing). The model has no effort control this runner can apply; remove the effort or pick a model that supports it.`
+        );
+      }
+      this.reasoningProviderOptions = options;
+    }
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
     this.mcpClientManager = config.mcpClientManager;
@@ -806,7 +848,9 @@ export class HostRunner implements HostExecutor {
       toolDefinitions,
       systemPrompt: this.systemPrompt,
       model: this.model,
-      temperature: this.temperature,
+      // What was SENT: an effort replaces the temperature.
+      temperature:
+        this.reasoningEffort === undefined ? this.temperature : undefined,
       ...(unavailable.length ? { unavailable } : {}),
     };
     let totalMcpMs = 0;
@@ -816,7 +860,9 @@ export class HostRunner implements HostExecutor {
     const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
     const completedToolCalls: PromptToolCall[] = [];
     const pendingStepToolCalls: StartedToolCall[] = [];
-    let lastCompletedStepMessages: ModelMessage[] = [];
+    // Every completed step's response messages, in order. AI SDK 7's
+    // `step.response.messages` holds only that step's, so they accumulate here.
+    const completedStepMessages: ModelMessage[] = [];
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
     let lastCompletedStepText = "";
@@ -896,10 +942,16 @@ export class HostRunner implements HostExecutor {
         // Only include temperature if explicitly set (some models like reasoning
         // models don't support it), and never for a model that 400s on the field
         // being present at all — the key has to be absent, not undefined.
+        // An effort replaces the temperature: providers that take an effort
+        // reject (or ignore) a sampling temperature beside it.
         ...(this.temperature !== undefined &&
+          this.reasoningEffort === undefined &&
           !modelRejectsTemperature(this.model) && {
             temperature: this.temperature,
           }),
+        ...(this.reasoningProviderOptions !== undefined && {
+          providerOptions: this.reasoningProviderOptions,
+        }),
         ...(options?.abortSignal !== undefined && {
           abortSignal: options.abortSignal,
         }),
@@ -928,14 +980,10 @@ export class HostRunner implements HostExecutor {
             return;
           }
 
-          const stepMessages = stepResult.response?.messages
-            ? [...stepResult.response.messages]
-            : [];
-
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          lastCompletedStepMessages = stepMessages;
+          completedStepMessages.push(...(stepResult.response?.messages ?? []));
           const blocked = this.policyBlockedToolCallIds?.();
           completedToolCalls.push(
             ...stepResult.toolCalls
@@ -964,10 +1012,10 @@ export class HostRunner implements HostExecutor {
       const messages: ModelMessage[] = [];
       messages.push(userMessage);
 
-      // Add response messages (assistant + tool messages from agentic loop)
-      if (result.response?.messages) {
-        messages.push(...result.response.messages);
-      }
+      // Add response messages (assistant + tool messages from agentic loop).
+      // `responseMessages` spans every step; in AI SDK 7 `response` is only
+      // the final step's.
+      messages.push(...(result.responseMessages ?? []));
 
       const recordedSpans = spanIntegration.getSpans();
       patchEvalSpansMessageRangesFromSteps(
@@ -1014,7 +1062,7 @@ export class HostRunner implements HostExecutor {
       spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },
-        ...lastCompletedStepMessages,
+        ...completedStepMessages,
         ...this.buildPartialAssistantMessages(pendingStepToolCalls),
       ];
       const blockedAtFailure = this.policyBlockedToolCallIds?.();
@@ -1131,6 +1179,10 @@ export class HostRunner implements HostExecutor {
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
       systemPrompt: nextSystemPrompt,
       temperature: nextTemperature,
+      // Carried with the model. A clone that changes the MODEL revalidates it
+      // against the new model (and refuses), rather than dropping it.
+      reasoningEffort:
+        options.reasoningEffort ?? (carryParent ? this.reasoningEffort : undefined),
       injectOpenAiCompat: nextInjectOpenAiCompat,
       toolDescriptionOverrides:
         options.toolDescriptionOverrides ?? this.toolDescriptionOverrides,
@@ -1192,6 +1244,14 @@ export class HostRunner implements HostExecutor {
    */
   getTemperature(): number | undefined {
     return this.temperature;
+  }
+
+  /**
+   * The reasoning effort this runner applies (undefined means none). While one
+   * is set the temperature is not sent.
+   */
+  getReasoningEffort(): ModelReasoningEffort | undefined {
+    return this.reasoningEffort;
   }
 
   /**

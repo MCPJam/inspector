@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { composeAbortSignals } from "@/lib/compose-abort-signals";
 import { serverCheckQueue } from "@/lib/server-check-queue";
 import { tryGetHostedServerDisplayName } from "./context";
 import { webPost } from "./base";
@@ -182,7 +183,9 @@ export async function validateHostedServer(
     );
   const execute = async (checkSignal: AbortSignal) => {
     // Browser waiting has no timeout. Once dispatched, allow the backend's
-    // 30-second queue window plus the existing 20-second connection budget.
+    // 30-second queue window plus a 20-second connection budget. The server
+    // answers within `WEB_SERVER_CHECK_DEADLINE_MS` (45 s) of the request's
+    // arrival, so its reason arrives before this gives up.
     const deadline = new AbortController();
     const timeout = setTimeout(
       () =>
@@ -199,11 +202,10 @@ export async function validateHostedServer(
       intent: "manual" as const,
     };
     const promotionDone = new AbortController();
-    const promotionSignal = AbortSignal.any([
-      checkSignal,
-      deadline.signal,
-      promotionDone.signal,
-    ]);
+    const { signal: promotionSignal, dispose: disposePromotion } =
+      composeAbortSignals([checkSignal, deadline.signal, promotionDone.signal]);
+    const { signal: requestSignal, dispose: disposeRequest } =
+      composeAbortSignals([checkSignal, deadline.signal]);
     const detachPromotion = serverCheckQueue.bindPromotion(
       checkSignal,
       async () => {
@@ -231,11 +233,13 @@ export async function validateHostedServer(
       return await webPost<typeof request, HostedServerValidateResponse>(
         "/api/web/servers/validate",
         { ...request, _serverCheck: metadata },
-        { signal: AbortSignal.any([checkSignal, deadline.signal]) },
+        { signal: requestSignal },
       );
     } finally {
       promotionDone.abort();
       detachPromotion();
+      disposePromotion();
+      disposeRequest();
       clearTimeout(timeout);
     }
   };

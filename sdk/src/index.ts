@@ -105,11 +105,13 @@ export {
   MCP_LINKED_RESOURCE_MAX_READS,
   MCP_PRESERVE_RAW_RESULT_FOR_UI,
   mcpCallToolResultToModelOutput,
+  readModelOutputImage,
   mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaFromToolResult,
   scrubMetaAndStructuredContentFromToolResult,
   type McpModelOutputContent,
   type McpModelOutputContentPart,
+  type McpModelOutputImagePart,
   type McpModelOutputOptions,
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
@@ -780,6 +782,12 @@ export {
 // is banned from the browser entry's import graph, so the Node fallback lives
 // behind this entry and is passed in as `parseXml`.
 export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// Muse (Meta) connector readiness. The barrel is pure data and grading; the
+// gatherer dials, so it is exported only from this Node entry.
+export * from "./muse-readiness/index.js";
+export { gatherMuseReadinessEvidence } from "./muse-readiness/gather.js";
+export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather.js";
 
 // The OpenAI readiness modules that touch the network, exported only from the
 // Node entry. They are deliberately absent from `openai-readiness/index.ts` so
@@ -1769,7 +1777,13 @@ export {
   reasoningEffortProviderOptions,
   selectionConfigKey,
   selectionIfMatches,
+  isDefaultSelection,
+  comparisonKey,
+  executionVariantSelectionKey,
+  selectionDistinguishers,
+  defaultReasoningEffort,
   supportedReasoningEfforts,
+  harnessReasoningEfforts,
 } from "./host-config/index.js";
 export type {
   ReasoningEffortProviderOptions,

@@ -92,6 +92,22 @@ describe("prepareChatV2", () => {
     expect(result.resolvedTemperature).toBe(0.5);
   });
 
+  it("omits the resolved temperature under a reasoning effort", async () => {
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+      reasoningEffort: "high",
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
   it("leaves an omitted temperature omitted instead of substituting 0.7", async () => {
     // A caller that expressed no preference gets the provider's default. The
     // chat UI always sends its slider value, so this covers the SDK, the API
@@ -1944,7 +1960,7 @@ describe("account routing snapshots", () => {
     });
     await result.allTools.search.execute!(
       { link_id: b.connectionId },
-      { toolCallId: "b-call", messages: [] },
+      { toolCallId: "b-call", messages: [], context: {} },
     );
     expect(executeA).not.toHaveBeenCalled();
     expect(executeB).toHaveBeenCalledOnce();

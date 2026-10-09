@@ -6,8 +6,10 @@ import {
   harnessToolApprovalRefusalReason,
   readReasoningEffort,
   selectionReasoningEffort,
+  turnReasoningEffortOf,
 } from "../harness-availability";
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
+import { MODEL_REASONING_EFFORTS } from "@mcpjam/sdk/browser";
 import { registeredHarnessIds } from "../registry";
 import { getHarnessAdapter, type HarnessId } from "../registry";
 
@@ -183,13 +185,17 @@ describe("checkHarnessRuntimeAvailable", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("still blocks an approval host on Codex (no native approval)", () => {
+  it("admits an approval host on Codex (the app-server adapter pauses)", () => {
     setFullyAvailable();
-    const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", requireToolApproval: true }),
-    );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/tool approval/);
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          requireToolApproval: true,
+          model: { id: "openai/gpt-5-nano", provider: "openai" },
+        }),
+      ),
+    ).toEqual({ ok: true });
   });
 
   it("names the harness in its message (capability-driven, not hardcoded)", () => {
@@ -217,21 +223,20 @@ describe("checkHarnessRuntimeAvailable", () => {
     ).toEqual({ ok: true });
   });
 
-  it("still blocks a Codex approval host with MCP servers (approval can't be honored)", () => {
-    // Advertise = enforce: Codex's MCP tools run on MCPJam's server as
-    // host-executed tools, and Codex declares no host-executed tool approval.
-    // Delivering the servers must NOT quietly turn approval into a no-op.
+  it("admits a Codex approval host with MCP servers (host-executed tools pause)", () => {
+    // Codex's MCP tools run on MCPJam's server as host-executed tools, and the
+    // framework gates them there before `execute`.
     setFullyAvailable();
-    const r = checkHarnessRuntimeAvailable(
-      args({
-        harnessId: "codex",
-        hasSelectedMcpServers: true,
-        requireToolApproval: true,
-        model: { id: "openai/gpt-5-nano", provider: "openai" },
-      }),
-    );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.kind).toBe("tool-approval");
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          hasSelectedMcpServers: true,
+          requireToolApproval: true,
+          model: { id: "openai/gpt-5-nano", provider: "openai" },
+        }),
+      ),
+    ).toEqual({ ok: true });
   });
 
   it("allows a Claude Code host with selected MCP servers (it delivers them)", () => {
@@ -582,28 +587,69 @@ describe("harnessToolApprovalRefusalReason", () => {
     },
   );
 
-  // The gap this closes: Codex's NATIVE tools can't pause either, and its
-  // built-in host-executed tools (web_search) are not approval-gated because
-  // `supportsHostExecutedToolApproval` is false. Conditioning the refusal on
-  // there being MCP servers would let a zero-server eval run them unapproved.
-  it("refuses Codex under approval even with NO servers selected", () => {
+  // An eval or swarm has nobody to answer, so a runtime that CAN pause is
+  // refused there too: admitted, it failed at its first gated call (evals) or
+  // parked a pause nobody resumed (swarms).
+  it.each(["claude-code", "codex"] as const)(
+    "refuses %s under approval in an unattended run, servers or not",
+    (harnessId) => {
+      for (const hasSelectedMcpServers of [false, true]) {
+        expect(
+          harnessToolApprovalRefusalReason({
+            adapter: getHarnessAdapter(harnessId),
+            requireToolApproval: true,
+            hasSelectedMcpServers,
+            unattended: true,
+          }),
+        ).toMatch(/can't pause for tool approval in an unattended run/);
+      }
+    },
+  );
+
+  it("leaves an unattended run with approval off alone", () => {
     expect(
       harnessToolApprovalRefusalReason({
-        adapter: codex,
+        adapter: claudeCode,
+        requireToolApproval: false,
+        hasSelectedMcpServers: true,
+        unattended: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("still admits Claude Code under approval when someone can answer", () => {
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: claudeCode,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  // A runtime whose NATIVE tools can't pause is unsound under approval whether
+  // or not servers are attached: conditioning the refusal on servers would let
+  // a zero-server run execute its own tools unapproved.
+  it("refuses a runtime that can't pause, even with NO servers selected", () => {
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: { ...codex, supportsNativeToolApproval: false } as typeof codex,
         requireToolApproval: true,
         hasSelectedMcpServers: false,
       }),
     ).toMatch(/doesn't support interactive tool approval/);
   });
 
-  it("refuses Codex under approval with servers selected", () => {
-    expect(
-      harnessToolApprovalRefusalReason({
-        adapter: codex,
-        requireToolApproval: true,
-        hasSelectedMcpServers: true,
-      }),
-    ).toBeDefined();
+  it("allows Codex under approval, servers or not", () => {
+    for (const hasSelectedMcpServers of [false, true]) {
+      expect(
+        harnessToolApprovalRefusalReason({
+          adapter: codex,
+          requireToolApproval: true,
+          hasSelectedMcpServers,
+        }),
+      ).toBeUndefined();
+    }
   });
 
   // Claude Code pauses on its own native tools (WS3), so approval alone is
@@ -663,18 +709,24 @@ describe("harnessToolApprovalRefusalReason", () => {
   // now TRUE on the other adapter) would have looked like the right check.
   it("reads the capability for the surface each adapter's MCP tools run on", () => {
     expect(codex.mcpDelivery).toBe("host-executed");
-    expect(codex.supportsHostExecutedToolApproval).toBe(false);
-    const stillApproves = {
+    // The MCP flag is the WRONG one for host-executed delivery: claiming it
+    // must not make up for a host-executed surface that cannot pause.
+    const cannotGateHostTools = {
       ...codex,
-      supportsNativeToolApproval: true,
-      supportsHostExecutedToolApproval: true,
-      // Left false on purpose: under host-executed delivery this must not be
-      // what the gate consults.
-      supportsMcpToolApproval: false,
+      supportsHostExecutedToolApproval: false,
+      supportsMcpToolApproval: true,
     } as typeof codex;
     expect(
       harnessToolApprovalRefusalReason({
-        adapter: stillApproves,
+        adapter: cannotGateHostTools,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      }),
+    ).toMatch(/MCP-server tools/);
+    expect(codex.supportsMcpToolApproval).toBe(false);
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: codex,
         requireToolApproval: true,
         hasSelectedMcpServers: true,
       }),
@@ -759,24 +811,68 @@ describe("reasoning effort on a harness (refuse, never drop)", () => {
   });
 
   it.each([
-    ["claude-code", "anthropic/claude-haiku-4.5"],
-    ["codex", "openai/gpt-5-nano"],
+    ["claude-code", "anthropic/claude-haiku-4.5", "high"],
+    ["codex", "openai/gpt-5-nano", "max"],
+    ["codex", "openai/gpt-5-nano", "none"],
   ] as const)(
     "refuses an effort %s has not verified, before any model rule",
-    (harnessId, modelId) => {
+    (harnessId, modelId, reasoningEffort) => {
       setFullyAvailable();
       const verdict = checkHarnessRuntimeAvailable(
         args({
           harnessId,
           model: { id: modelId },
-          reasoningEffort: "high",
+          reasoningEffort,
         }),
       );
       expect(verdict.ok).toBe(false);
       if (verdict.ok) throw new Error("unreachable");
       expect(verdict.kind).toBe("setting-unsupported");
       expect(verdict.reason).toContain(getHarnessAdapter(harnessId).displayName);
-      expect(verdict.reason).toContain('"high"');
+      expect(verdict.reason).toContain(`"${reasoningEffort}"`);
+    },
+  );
+
+  it.each(["low", "medium", "high", "xhigh"] as const)(
+    "admits the verified Codex effort %s",
+    (reasoningEffort) => {
+      setFullyAvailable();
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "codex",
+            model: { id: "openai/gpt-5-nano" },
+            reasoningEffort,
+          }),
+        ),
+      ).toEqual({ ok: true });
+    },
+  );
+
+  // STILL REFUSED PENDING THE LIVE CHECK. Claude Code's mapping code exists
+  // (`effort` option + adaptive thinking + the effort env), but the evidence
+  // that the AI Gateway accepts it (adaptive thinking + `output_config.effort`
+  // per model, and the wire effort at the proxy) needs staging access that has
+  // not been run. Until those rows exist this must stay empty: do not add a
+  // level to `HARNESS_REASONING_EFFORTS["claude-code"]` without that evidence.
+  it.each(MODEL_REASONING_EFFORTS)(
+    "still refuses %s on Claude Code (live check pending)",
+    (reasoningEffort) => {
+      setFullyAvailable();
+      expect(HARNESS_REASONING_EFFORTS["claude-code"]).toEqual([]);
+      expect(getHarnessAdapter("claude-code").supportedReasoningEfforts).toEqual(
+        [],
+      );
+      const verdict = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "claude-code",
+          model: { id: "anthropic/claude-haiku-4.5" },
+          reasoningEffort,
+        }),
+      );
+      expect(verdict.ok).toBe(false);
+      if (verdict.ok) throw new Error("unreachable");
+      expect(verdict.kind).toBe("setting-unsupported");
     },
   );
 
@@ -811,6 +907,30 @@ describe("reasoning effort on a harness (refuse, never drop)", () => {
   });
 });
 
+describe("an effort the adapter applies but the model does not list", () => {
+  it("is refused up front, before any sandbox is reserved", () => {
+    const adapter = getHarnessAdapter("codex");
+    expect(
+      harnessReasoningEffortRefusalReason({
+        adapter,
+        reasoningEffort: "xhigh",
+        modelEfforts: ["minimal", "low", "medium", "high"],
+      }),
+    ).toContain('doesn\'t accept the "xhigh"');
+    expect(
+      harnessReasoningEffortRefusalReason({
+        adapter,
+        reasoningEffort: "high",
+        modelEfforts: ["minimal", "low", "medium", "high"],
+      }),
+    ).toBeUndefined();
+    // Unknown model levels are not checked here (the SDK picker fails closed).
+    expect(
+      harnessReasoningEffortRefusalReason({ adapter, reasoningEffort: "xhigh" }),
+    ).toBeUndefined();
+  });
+});
+
 describe("reading an effort off untyped input", () => {
   it("accepts only the SDK's levels", () => {
     expect(readReasoningEffort("xhigh")).toBe("xhigh");
@@ -825,6 +945,27 @@ describe("reading an effort off untyped input", () => {
     expect(selectionReasoningEffort({ settings: {} })).toBeUndefined();
     expect(selectionReasoningEffort(undefined)).toBeUndefined();
     expect(selectionReasoningEffort("nope")).toBeUndefined();
+  });
+});
+
+describe("the effort a turn asked for", () => {
+  it("reads the typed field, then the top-level body field, then the selection", () => {
+    const selection = { settings: { reasoningEffort: "low" } };
+    expect(
+      turnReasoningEffortOf({
+        reasoningEffort: "high",
+        extraBodyFields: { reasoningEffort: "medium", modelSelection: selection },
+      }),
+    ).toBe("high");
+    expect(
+      turnReasoningEffortOf({
+        extraBodyFields: { reasoningEffort: "medium", modelSelection: selection },
+      }),
+    ).toBe("medium");
+    expect(
+      turnReasoningEffortOf({ extraBodyFields: { modelSelection: selection } }),
+    ).toBe("low");
+    expect(turnReasoningEffortOf({ extraBodyFields: {} })).toBeUndefined();
   });
 });
 

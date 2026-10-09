@@ -143,11 +143,13 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ getAccessToken: mockState.getAccessToken }),
 }));
 
-vi.mock("convex/react", () => ({
-  useConvexAuth: () => mockState.convexAuth,
-  useQuery: () => undefined,
-  useConvex: () => ({ mutation: mockState.convexMutation }),
-}));
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
+    useConvexAuth: () => mockState.convexAuth,
+    useQuery: () => undefined,
+    useConvex: () => ({ mutation: mockState.convexMutation }),
+  }),
+);
 
 vi.mock("@ai-sdk/react", () => ({
   useChat: vi.fn((options: { onData?: (part: unknown) => void }) => {
@@ -174,7 +176,6 @@ vi.mock("ai", () => ({
   lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
   convertToModelMessages: vi.fn(async () => []),
 }));
-
 
 const server = {
   name: "orders",
@@ -253,16 +254,16 @@ describe("useChatSession mid-session sign-in", () => {
       });
     });
     await waitFor(() => {
-      expect(
-        Object.values(useAuthChallengeCardStore.getState().cards),
-      ).toEqual([
-        expect.objectContaining({
-          serverName: "orders",
-          toolCallId: "call-1",
-          action: "prompt",
-          surface: "chat",
-        }),
-      ]);
+      expect(Object.values(useAuthChallengeCardStore.getState().cards)).toEqual(
+        [
+          expect.objectContaining({
+            serverName: "orders",
+            toolCallId: "call-1",
+            action: "prompt",
+            surface: "chat",
+          }),
+        ],
+      );
     });
     expect(readPendingChatScopeStepUp()).toMatchObject({
       phase: "awaiting_click",
@@ -332,14 +333,17 @@ describe("useChatSession mid-session sign-in", () => {
     act(() => {
       mockState.chatOnData?.({
         type: AUTH_REQUIRED_DATA_PART_TYPE,
-        data: authRequiredEvent({ action: "notify", continuationId: undefined }),
+        data: authRequiredEvent({
+          action: "notify",
+          continuationId: undefined,
+        }),
         transient: true,
       });
     });
     await waitFor(() =>
-      expect(
-        Object.values(useAuthChallengeCardStore.getState().cards),
-      ).toEqual([expect.objectContaining({ action: "notify" })]),
+      expect(Object.values(useAuthChallengeCardStore.getState().cards)).toEqual(
+        [expect.objectContaining({ action: "notify" })],
+      ),
     );
     expect(readPendingChatScopeStepUp()).toBeUndefined();
   });
@@ -363,7 +367,9 @@ describe("useChatSession mid-session sign-in", () => {
         transient: true,
       });
     });
-    expect(useAuthChallengeNoticeStore.getState().notices["call-9"]).toMatchObject({
+    expect(
+      useAuthChallengeNoticeStore.getState().notices["call-9"],
+    ).toMatchObject({
       explanation: "This host ignores _meta challenges.",
     });
     expect(orchestrator.applyToolCallAuthChallenge).not.toHaveBeenCalled();
@@ -398,9 +404,9 @@ describe("useChatSession mid-session sign-in", () => {
     ];
     await renderChatSession();
     await waitFor(() =>
-      expect(
-        Object.values(useAuthChallengeCardStore.getState().cards),
-      ).toEqual([expect.objectContaining({ toolCallId: "call-1" })]),
+      expect(Object.values(useAuthChallengeCardStore.getState().cards)).toEqual(
+        [expect.objectContaining({ toolCallId: "call-1" })],
+      ),
     );
   });
 });

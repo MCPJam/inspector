@@ -115,6 +115,24 @@ export function isPlatformApiError(error: unknown): error is PlatformApiError {
 }
 
 /**
+ * True when the platform refused because a feature is not enabled for the
+ * caller's organization (a beta that has not reached it yet).
+ *
+ * The wire code for that refusal is the generic `FORBIDDEN`, so `code` alone
+ * cannot tell it from a permission denial. The reason rides in
+ * `details.code` (`"FEATURE_UNAVAILABLE"`), and `details.feature` names the
+ * feature when the server sent one. Branch on this rather than on the
+ * message, which is customer-facing copy.
+ */
+export function isFeatureUnavailable(
+  error: unknown
+): error is PlatformApiError {
+  return (
+    isPlatformApiError(error) && error.details?.code === "FEATURE_UNAVAILABLE"
+  );
+}
+
+/**
  * What a caller may safely say about a RATE_LIMITED refusal, read from the
  * error rather than its prose.
  *
@@ -197,4 +215,47 @@ export function platformRefusalHint(refusal: PlatformRefusal): string {
   return refusal.canTopUp === false
     ? `${when} This is a usage limit: topping up credits does not lift it.`
     : when;
+}
+
+/** Wire code for a launch whose `expectedSponsored` no longer matched. */
+export const SWARM_FUNDING_CHANGED_CODE = "swarm_funding_changed";
+
+export interface SwarmFundingChange {
+  /** What the caller expected to be sponsored. */
+  expectedSponsored: number;
+  /** What would be sponsored now. */
+  actualSponsored: number;
+  /** Conversations in the launch. */
+  totalConversations: number;
+}
+
+/**
+ * The typed reading of a 409 `swarm_funding_changed`: the sponsored split moved
+ * between the caller's preview and the launch, so nothing was created. Returns
+ * `undefined` for any other error. Re-read the split, then launch again with
+ * the new `expectedSponsored`; do not retry blindly, because the retry would
+ * run more conversations on the organization's credits than the caller agreed to.
+ */
+export function describeSwarmFundingChange(
+  error: unknown
+): SwarmFundingChange | undefined {
+  if (!isPlatformApiError(error) || error.status !== 409) return undefined;
+  const details = error.details ?? {};
+  if (details.code !== SWARM_FUNDING_CHANGED_CODE) return undefined;
+  const count = (key: string): number | undefined => {
+    const value = details[key];
+    return typeof value === "number" && Number.isInteger(value) && value >= 0
+      ? value
+      : undefined;
+  };
+  const expectedSponsored = count("expectedSponsored");
+  const actualSponsored = count("actualSponsored");
+  const totalConversations = count("totalConversations");
+  if (
+    expectedSponsored === undefined ||
+    actualSponsored === undefined ||
+    totalConversations === undefined
+  )
+    return undefined;
+  return { expectedSponsored, actualSponsored, totalConversations };
 }

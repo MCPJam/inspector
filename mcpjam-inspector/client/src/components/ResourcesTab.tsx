@@ -1,3 +1,4 @@
+import { FileOpenWith } from "./host-workspace/file-actions";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -1176,6 +1177,7 @@ export function ResourcesTab({
                             <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
                               {resource.name}
                             </code>
+                            <FileOpenWith reference={serverName ? { serverId: serverName, resourceUri: resource.uri } : null} />
                           </div>
                           {resource.description && (
                             <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">

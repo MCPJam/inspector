@@ -5,14 +5,33 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
   FileText,
-  FolderTree,
   Globe,
   Laptop,
   Loader2,
   PanelRightClose,
+  Plus,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
+import { useExtensionWorkspaceState } from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import {
+  useExtensionRail,
+  type RailAppTab,
+} from "@/components/host-workspace/use-extension-rail";
+import { ExtensionIcon } from "@/components/host-workspace/ExtensionIcon";
+import {
+  entrypointIconSources,
+  usePluginIconDirectory,
+} from "@/components/host-workspace/plugin-icon-directory";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { LoggerView } from "@/components/logger-view";
@@ -35,7 +54,10 @@ import {
   useComputerEngine,
   type ComputerEngineState,
 } from "@/hooks/useComputerEngine";
-import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
+import {
+  useHarnessRanOnDisposable,
+  useHarnessWorkdir,
+} from "@/stores/harness-workdir-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
@@ -70,7 +92,15 @@ export function PlaygroundRightRail({
 }) {
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
-  if (computersEnabled !== true && browsersEnabled !== true) {
+  // With plugin extensions on, the rail is always the tabbed side panel: App
+  // tabs live beside Logs, and their container must never be swapped out.
+  const extensionsEnabled =
+    useExtensionWorkspaceState((state) => state.enabled) === true;
+  if (
+    computersEnabled !== true &&
+    browsersEnabled !== true &&
+    !extensionsEnabled
+  ) {
     return <LoggerView onClose={onClose} />;
   }
   return (
@@ -115,9 +145,20 @@ function RightRailTabbed({
 }) {
   const [activeTab, setActiveTab] = useState<RightRailTab>("logs");
   const leftBrowserForLogs = useRef(false);
+  // Plugin App tabs (this chat's thread, file and quick-action Apps, and open
+  // settings) share the header with the built-in panes. An App tab, when one
+  // is selected, wins over `activeTab`; choosing a built-in pane deselects it
+  // and the App stays retained.
+  const rail = useExtensionRail();
+  const appActive = rail.enabled && rail.activeId !== null;
+  const railRef = useRef(rail);
+  railRef.current = rail;
   const computersEnabled = useComputersEnabledState();
   const browsersEnabled = useBrowserEnabledState();
-  const shellAvailable = computersEnabled === true && !!hostConfig?.computer;
+  // No Shell for a harness client: it runs on a throwaway per-conversation box,
+  // not the personal computer this tab would open.
+  const shellAvailable =
+    computersEnabled === true && !!hostConfig?.computer && !hostConfig?.harness;
   // Which engine serves this project's computer work. The rail is an INDICATOR
   // only — switching lives on the Computer tab, which owns the consent gate.
   //
@@ -223,11 +264,13 @@ function RightRailTabbed({
     if (!hasBrowser || !browserSessionId) return;
     if (browseRevealId !== browserSessionId) return;
     if (leftBrowserForLogs.current) return;
+    railRef.current.deselect();
     setActiveTab("browser");
   }, [browseRevealSeq, browseRevealId, browserSessionId, hasBrowser]);
 
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
+      if (railRef.current.activeId !== null) railRef.current.deselect();
       if (next === activeTab) return;
       leftBrowserForLogs.current = next !== "browser";
       track("playground_right_rail_tab_changed", {
@@ -255,7 +298,7 @@ function RightRailTabbed({
 
   // Browser-only hosts must reach the tabbed rail (and its consent gate)
   // without mounting a shell or requiring a Computer attachment.
-  if (!shellAvailable && !hasBrowser) {
+  if (!shellAvailable && !hasBrowser && !rail.enabled) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="min-h-0 flex-1">
@@ -269,29 +312,60 @@ function RightRailTabbed({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
-        <TabButton
-          icon={FileText}
-          label="Logs"
-          isActive={activeTab === "logs"}
-          onClick={() => handleTabClick("logs")}
-        />
-        {shellAvailable ? (
+        <div
+          role="tablist"
+          aria-label="Side panel"
+          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]"
+        >
           <TabButton
-            icon={TerminalSquare}
-            label="Shell"
-            isActive={activeTab === "shell"}
-            onClick={() => handleTabClick("shell")}
+            icon={FileText}
+            label="Logs"
+            isActive={!appActive && activeTab === "logs"}
+            onClick={() => handleTabClick("logs")}
           />
-        ) : null}
-        {hasBrowser ? (
-          <TabButton
-            icon={Globe}
-            label="Browser"
-            isActive={activeTab === "browser"}
-            onClick={() => handleTabClick("browser")}
-          />
-        ) : null}
-        <div className="ml-auto flex items-center gap-1">
+          {shellAvailable ? (
+            <TabButton
+              icon={TerminalSquare}
+              label="Shell"
+              isActive={!appActive && activeTab === "shell"}
+              onClick={() => handleTabClick("shell")}
+            />
+          ) : null}
+          {hasBrowser ? (
+            <TabButton
+              icon={Globe}
+              label="Browser"
+              isActive={!appActive && activeTab === "browser"}
+              onClick={() => handleTabClick("browser")}
+            />
+          ) : null}
+          {rail.tabs.map((tab) => (
+            <AppTabButton
+              key={tab.id}
+              tab={tab}
+              isActive={rail.activeId === tab.id}
+              onSelect={() => rail.select(tab.id)}
+              onClose={() => rail.close(tab.id)}
+            />
+          ))}
+          {rail.enabled ? (
+            <NewTabMenu
+              builtIns={[
+                { id: "logs", label: "Logs", icon: FileText },
+                ...(shellAvailable
+                  ? [{ id: "shell" as const, label: "Shell", icon: TerminalSquare }]
+                  : []),
+                ...(hasBrowser
+                  ? [{ id: "browser" as const, label: "Browser", icon: Globe }]
+                  : []),
+              ]}
+              onBuiltIn={handleTabClick}
+              entrypoints={rail.entrypoints}
+              onEntrypoint={(entry) => void rail.launch(entry)}
+            />
+          ) : null}
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={onClose}
@@ -305,10 +379,10 @@ function RightRailTabbed({
       {/* Keep BOTH bodies mounted — toggling tabs must not drop the live
           terminal WebSocket or the log stream. */}
       <div
-        hidden={activeTab !== "logs"}
+        hidden={appActive || activeTab !== "logs"}
         className={cn(
           "min-h-0 flex-1",
-          activeTab === "logs" ? "flex flex-col" : "hidden",
+          !appActive && activeTab === "logs" ? "flex flex-col" : "hidden",
         )}
       >
         <div className="min-h-0 flex-1">
@@ -320,7 +394,7 @@ function RightRailTabbed({
         <div
           className={cn(
             "min-h-0 flex-1 flex-col",
-            activeTab === "browser" ? "flex" : "hidden",
+            !appActive && activeTab === "browser" ? "flex" : "hidden",
           )}
         >
           {/* Mounted-hidden like the others: switching tabs must not drop the
@@ -371,7 +445,7 @@ function RightRailTabbed({
         <div
           className={cn(
             "min-h-0 flex-1 flex-col",
-            activeTab === "shell" ? "flex" : "hidden",
+            !appActive && activeTab === "shell" ? "flex" : "hidden",
           )}
         >
           {/* The local body deliberately does NOT mount the cloud terminal
@@ -394,7 +468,152 @@ function RightRailTabbed({
           )}
         </div>
       ) : null}
+      {rail.enabled ? (
+        // Thread, file and quick-action Apps (and settings) are portaled in
+        // here. Mounted once and never moved: a new parent reloads an iframe.
+        <div
+          ref={rail.setSlot}
+          data-testid="right-rail-app-area"
+          className={cn("min-h-0 flex-1 flex-col", appActive ? "flex" : "hidden")}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** One App tab: icon, title and a close button (reference: Codex side panel). */
+function AppTabButton({
+  tab,
+  isActive,
+  onSelect,
+  onClose,
+}: {
+  tab: RailAppTab;
+  isActive: boolean;
+  onSelect: () => void;
+  onClose: () => void;
+}) {
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const theme = themeMode === "dark" ? "dark" : "light";
+  const label = tab.ambiguous ? `${tab.title} · ${tab.serverName}` : tab.title;
+  return (
+    <div
+      className={cn(
+        "group flex min-w-0 max-w-48 shrink-0 items-center rounded-md text-xs font-medium transition-colors",
+        isActive
+          ? "bg-accent text-foreground"
+          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+      )}
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={isActive}
+        onClick={onSelect}
+        title={`${tab.title} · ${tab.serverName}`}
+        className="flex min-w-0 items-center gap-1.5 py-1 pl-2 pr-1"
+      >
+        {tab.loading ? (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+        ) : (
+          <ExtensionIcon
+            kind="sidebar"
+            theme={theme}
+            size={14}
+            sources={tab.icons ?? {}}
+          />
+        )}
+        <span className="truncate">{label}</span>
+      </button>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label={`Close ${tab.title}`}
+        className="mr-1 rounded p-0.5 opacity-70 hover:bg-accent hover:opacity-100"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The "+" at the end of the tab strip: the built-in panes, then this chat's
+ * thread entrypoints under "Plugins and MCPs".
+ */
+function NewTabMenu({
+  builtIns,
+  onBuiltIn,
+  entrypoints,
+  onEntrypoint,
+}: {
+  builtIns: { id: RightRailTab; label: string; icon: typeof FileText }[];
+  onBuiltIn: (id: RightRailTab) => void;
+  entrypoints: ReturnType<typeof useExtensionRail>["entrypoints"];
+  onEntrypoint: (
+    entry: ReturnType<typeof useExtensionRail>["entrypoints"][number],
+  ) => void;
+}) {
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const theme = themeMode === "dark" ? "dark" : "light";
+  const iconDirectory = usePluginIconDirectory();
+  const titles = new Map<string, number>();
+  for (const entry of entrypoints)
+    titles.set(
+      entry.declaration.title,
+      (titles.get(entry.declaration.title) ?? 0) + 1,
+    );
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Open a panel"
+          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-56">
+        {builtIns.map((item) => (
+          <DropdownMenuItem key={item.id} onSelect={() => onBuiltIn(item.id)}>
+            <item.icon className="h-3.5 w-3.5" />
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Plugins and MCPs
+        </DropdownMenuLabel>
+        {entrypoints.length === 0 ? (
+          <DropdownMenuItem disabled>No side panels in this chat</DropdownMenuItem>
+        ) : (
+          entrypoints.map((entry) => (
+            <DropdownMenuItem
+              key={`${entry.server.serverId}:${entry.declaration.toolName}`}
+              onSelect={() => onEntrypoint(entry)}
+            >
+              <ExtensionIcon
+                kind="sidebar"
+                theme={theme}
+                size={14}
+                sources={entrypointIconSources(
+                  iconDirectory,
+                  entry.server,
+                  entry.declaration,
+                )}
+              />
+              <span className="truncate">{entry.declaration.title}</span>
+              {(titles.get(entry.declaration.title) ?? 0) > 1 ? (
+                <span className="ms-auto truncate text-xs text-muted-foreground">
+                  {entry.server.name}
+                </span>
+              ) : null}
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -532,9 +751,6 @@ function CloudShellBody({
   hostConfig: HostConfigDtoV2 | null;
   hostId: string | null;
 }) {
-  // Bumped to remount (and thus reconnect) the terminal into the latest harness
-  // workdir on demand — cwd only applies at connect time.
-  const [reloadKey, setReloadKey] = useState(0);
   // One controller for the rail so the terminal session survives Logs ⇄ Shell
   // toggles (both bodies stay mounted; we only show/hide).
   const ct = useComputerTerminal({ projectId, isAuthenticated });
@@ -544,12 +760,22 @@ function CloudShellBody({
   // Read with the SAME key the chat stream writes (previewedHostId), not
   // hostConfig.id — those are different identifiers and would never match.
   const streamedWorkdir = useHarnessWorkdir(projectId, hostId);
+  // The latest turn of the conversation on screen ran on its DISPOSABLE
+  // computer (a harness that signs in with your own account), not the one this
+  // terminal opens. Per conversation: a compare column or another chat on the
+  // same host says nothing about this one.
+  const activeChatSessionId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const ranOnDisposable = useHarnessRanOnDisposable(activeChatSessionId);
   // COMP-16: open the terminal in the configured working directory. For a
   // harness host use the streamed per-session dir; for a plain computer host
   // fall back to the host-configured `computer.workdir` (the same dir the bash
   // tool runs in) so the Shell opens where the model works.
   const harnessCwd = isHarnessHost
-    ? streamedWorkdir
+    ? ranOnDisposable
+      ? undefined
+      : streamedWorkdir
     : hostConfig?.computer?.workdir;
   // Only offer "Open terminal" once the data-plane config has resolved to a
   // usable plane — opening while it's still loading mounts the terminal at the
@@ -583,26 +809,25 @@ function CloudShellBody({
             )}
             Open terminal
           </Button>
-        ) : ct.terminalOpen && harnessCwd ? (
-          // cwd is applied at connect time; remount to reconnect into the
-          // latest harness workdir (e.g. after a new turn ran).
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setReloadKey((k) => k + 1)}
-            title={`Reconnect in ${harnessCwd}`}
-          >
-            <FolderTree className="mr-1.5 h-3.5 w-3.5" />
-            Reload in harness dir
-          </Button>
         ) : null}
       </div>
-      {/* Key on reloadKey ONLY (explicit reconnect) — NOT on cwd, so a newer
-          harness workdir streaming in mid-session doesn't yank the user's open
-          terminal. Reopening the terminal already picks up the latest cwd
-          (ComputerTerminal remounts when terminalOpen flips). */}
+      {isHarnessHost && ranOnDisposable ? (
+        <p
+          data-testid="shell-rail-disposable-notice"
+          className="mx-3 mb-2 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+        >
+          The last turn ran on a disposable computer for this conversation, not
+          your personal computer. This terminal is your personal computer, so
+          the turn's files aren't here.
+        </p>
+      ) : null}
+      {/* The Shell is there to watch where the harness works, so it FOLLOWS
+          the harness's workdir: cwd only applies at connect time, and keying
+          the pane on it reconnects the terminal there as soon as the dir is
+          known or a new harness session moves it. Within a conversation the
+          dir is stable, so an open terminal is not disturbed between turns. */}
       <ComputerTerminalPane
-        key={reloadKey}
+        key={harnessCwd ?? ""}
         controller={ct}
         className="px-3 pb-3"
         {...(harnessCwd ? { cwd: harnessCwd } : {})}

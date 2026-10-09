@@ -48,6 +48,8 @@ Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: 
 
    `MCP error -32001: Request timed out` during `initialize` means the server didn't respond to the handshake in time — usually because it's still loading models, opening a database, or waiting on an upstream. Raise the **Request timeout** in **Clients → your client → Request timeout** (default 30,000ms), or reduce the server's startup work.
 
+   In the **hosted app**, the Connect check has a 45-second deadline from the moment the request arrives. If your MCP server hasn't responded by then, the connect fails with "The MCP server did not respond in time" — you'll see this before the Connect button gives up on its own. Servers that connect within the window are unaffected. For servers that consistently take longer to initialize, use the [local inspector](/installation) instead.
+
 If all five check out and you still see a failure, copy the full error from the JSON-RPC log into a [GitHub issue](https://github.com/MCPJam/inspector/issues) or [Discord](https://discord.gg/JEnDtz8X6z) thread.
 
 ### `(intermediate value).subtle is undefined`
@@ -260,6 +262,12 @@ The fix is included in 3.8.1 and later. If you are on an affected version:
 - **If neither works:** use the **Reset app data and quit** option in the recovery dialog, or download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
 
 ## Getting Help
+
+### "Reference" line on an error toast
+
+When an unexpected failure occurs in the app — for example, while inviting a member, changing a role, or connecting to a registry — the error toast shows a **Reference `<id>`** line beneath the message. You can hover the toast and click **Copy error message** to copy both the message and the reference together.
+
+That reference is a request ID you can include when reporting the issue. It lets the MCPJam team look up the exact failure in the logs, so you don't need to reproduce it or capture a stack trace — a screenshot of the toast (or the copied text) is enough.
 
 If you're still experiencing issues:
 

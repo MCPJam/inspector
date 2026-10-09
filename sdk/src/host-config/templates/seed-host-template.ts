@@ -1243,6 +1243,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
         },
         apps: {
+          // OpenAI plugin extensions (sidebar Apps, forms, …) are on for
+          // ChatGPT; each one can be switched off in the client's Apps tab.
+          // This seed emulates ChatGPT on the web, so the extensions the
+          // OpenAI extensions spec's Platform Support table marks "Not
+          // supported" on Web start off: fileViewers, localFiles,
+          // fileResources and mentions. Mirrors the backend template.
+          pluginExtensions: {
+            capabilities: {
+              fileResources: false,
+              fileViewers: false,
+              localFiles: false,
+              mentions: false,
+            },
+            enabled: true,
+          },
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo
           // above — apps that branch on `hostInfo.name === "chatgpt"`
@@ -1986,10 +2001,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           [MCP_UI_EXTENSION_ID]: {
             mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE, "text/html+skybridge"],
           },
+          // Since 0.158 (2026-09-29) Codex also advertises OpenAI's form
+          // extensions. The plugin extension host answers
+          // `openai/elicitation/create`, so mirror the real client; turning
+          // the client's plugin extensions (or forms) off removes both.
+          "openai/elicitation": { form: {} },
+          "openai/form": {},
         },
-        // 0.158 also advertises `openai/elicitation` and `openai/form`.
-        // Left out on purpose: they invite OpenAI's custom elicitation
-        // requests, which the inspector does not answer.
         elicitation: { form: {}, url: {} },
       };
       base.hostContext = {
@@ -2022,6 +2040,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
         },
         apps: {
+          // OpenAI plugin extensions are on by default for Codex; each one
+          // can be switched off in the client's Apps tab.
+          pluginExtensions: { enabled: true },
           sandbox: {
             // Codex honors the widget's declared CSP lists; the directives
             // below are its own baseline, merged on top of that declaration.

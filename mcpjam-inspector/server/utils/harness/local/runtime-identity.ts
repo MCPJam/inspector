@@ -28,15 +28,18 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { LocalHarnessCompatibility } from "./compatibility.js";
 import {
   localPackTarget,
+  LOCAL_HARNESS_POLICY_VERSION,
   type LocalPlatform,
   type SupportedLocalHarnessId,
 } from "./targets.js";
+import { ensureInspectorLayer, inspectorLayerDigest, verifyInspectorLayer } from "./inspector-layer.js";
 import { setWindowsJobLauncherVerified } from "./process-identity.js";
-
-/** Cap on the bundle tree the digest will walk. A managed bundle is a bridge
- *  plus a vendor CLI; anything past this is not the artifact we shipped. */
-const MAX_BUNDLE_FILES = 50_000;
-const MAX_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024;
+import { rehashPolicyFor } from "./runtime-rehash-policy.js";
+import {
+  computeTreeDigest,
+  walkTree,
+  type TreeEntrySnapshot,
+} from "./tree-digest.js";
 /** Identity probes get a short leash and bounded output. */
 const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_MAX_BUFFER = 64 * 1024;
@@ -51,8 +54,22 @@ export interface ResolvedRuntime {
   /** Absolute path of the verified bundle root (managed) or executable
    *  (system). Local trusted state only — never sent to a renderer. */
   rootPath: string;
-  /** Absolute path of the launcher the supervisor spawns. */
+  /** Absolute path of the launcher the supervisor spawns — inside the
+   *  Inspector layer, or inside the pack for a harness whose bridge still
+   *  ships there. */
   launcherPath: string;
+  /**
+   * The Inspector layer this launch runs (invariant 1's second trusted
+   * source), when the harness's launcher comes from one. Re-hashed against the
+   * digest compiled into this build before every exec, and part of
+   * `runtimeId`. Absent for a pack-launcher harness and a system install.
+   */
+  layer?: {
+    root: string;
+    digest: string;
+    /** Relative names of the layer's files. */
+    files: readonly string[];
+  };
   /**
    * Absolute path of the Node binary inside the verified pack, which is the
    * ONLY interpreter a bridge is launched with.
@@ -92,22 +109,11 @@ export type RuntimeResolution =
   | ({ ok: false } & RuntimeResolutionFailure);
 
 /**
- * Canonical tree digest of a directory.
- *
- * Deterministic across machines: entries are sorted by their POSIX-normalized
- * relative path, and each contributes path, type, executable bit, size, and
- * content hash. The executable bit is in the digest deliberately — flipping a
- * data file to executable is a meaningful change to what a bundle can do, and
- * a content-only digest would not notice.
- *
- * Symlinks are a HARD failure rather than being followed or recorded: a bundle
- * is package data we built, a link inside it is not something we ship, and
- * following one would let a link planted in the runtime root read or execute
- * outside it.
+ * Canonical tree digest of a directory — defined in `tree-digest.ts`, which is
+ * the shared pack input (see its header), and re-exported here for the callers
+ * that have always imported it from this module.
  */
-export async function computeTreeDigest(root: string): Promise<string> {
-  return (await digestTreeWithSnapshot(root)).digest;
-}
+export { computeTreeDigest };
 
 /**
  * One entry of a tree's stat snapshot: everything a cheap re-check can compare
@@ -116,35 +122,20 @@ export async function computeTreeDigest(root: string): Promise<string> {
  * Size and mtime alone are forgeable by anything that can write the file, so
  * two harder fields carry the check: `ino`, which a replacement lands on a new
  * value of unless it was written in place, and `ctimeMs`, which a write in
- * place cannot avoid moving and no syscall can set back. Together they are what
- * makes skipping the full digest on an unchanged tree defensible — the digest
- * itself remains the authority whenever anything here disagrees.
+ * place cannot avoid moving and no syscall can set back. `mtime` is forgeable:
+ * `utimes` sets it to anything. `ctime` is not, because no syscall sets it —
+ * the kernel stamps it on every metadata change, and `utimes` itself bumps it.
+ * Together they are what makes skipping the full digest on an unchanged tree
+ * defensible — the digest itself remains the authority whenever anything here
+ * disagrees.
  */
-export interface RuntimeTreeEntrySnapshot {
-  /** Path relative to the tree root, POSIX separators. */
-  path: string;
-  size: number;
-  mtimeMs: number;
-  /**
-   * Inode CHANGE time — the field that makes the stat compare detect a
-   * rewrite rather than merely notice a careless one.
-   *
-   * `mtime` is forgeable: `utimes` sets it to anything. `ctime` is not, because
-   * no syscall sets it — the kernel stamps it on every metadata change, and
-   * `utimes` itself bumps it. So a tamper that opens a file, rewrites its
-   * bytes, and restores size, mtime and mode still leaves a ctime strictly
-   * later than the one recorded here.
-   *
-   * Not a substitute for the digest, which remains the authority; it is what
-   * makes skipping the digest on an unchanged tree defensible.
-   */
-  ctimeMs: number;
-  ino: number;
-  mode: number;
-}
+export type RuntimeTreeEntrySnapshot = TreeEntrySnapshot;
 
 export interface RuntimeTreeSnapshot {
   root: string;
+  /** Whose rehash policy picked `executableDigests` (see
+   *  `runtime-rehash-policy.ts`), so a re-check reads the same set. */
+  harnessId: string;
   digest: string;
   entries: readonly RuntimeTreeEntrySnapshot[];
   /**
@@ -170,70 +161,16 @@ export interface RuntimeTreeSnapshot {
  */
 async function digestTreeWithSnapshot(
   root: string,
+  harnessId: string,
 ): Promise<RuntimeTreeSnapshot> {
-  const hash = createHash("sha256");
-  const entriesSnapshot: RuntimeTreeEntrySnapshot[] = [];
-  const executableDigests: Record<string, string> = {};
-  let files = 0;
-  let bytes = 0;
-
-  const walk = async (dir: string): Promise<void> => {
-    const entries = await readdir(dir, { withFileTypes: true });
-    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      const rel = relative(root, full).split(sep).join("/");
-      if (entry.isSymbolicLink()) {
-        throw new Error(
-          `managed runtime bundle contains a symlink at ${rel}; bundles are ` +
-            `built as plain files so their digest describes exactly what runs`,
-        );
-      }
-      if (entry.isDirectory()) {
-        hash.update(`d\0${rel}\0`);
-        await walk(full);
-        continue;
-      }
-      if (!entry.isFile()) {
-        throw new Error(
-          `managed runtime bundle contains a non-regular file at ${rel}`,
-        );
-      }
-      if (++files > MAX_BUNDLE_FILES) {
-        throw new Error(
-          "managed runtime bundle exceeds the file-count ceiling",
-        );
-      }
-      const info = await stat(full);
-      bytes += info.size;
-      if (bytes > MAX_BUNDLE_BYTES) {
-        throw new Error("managed runtime bundle exceeds the size ceiling");
-      }
-      const content = await readFile(full);
-      const executable = (info.mode & 0o111) !== 0 ? "1" : "0";
-      const contentDigest = createHash("sha256").update(content).digest();
-      hash.update(`f\0${rel}\0${executable}\0${info.size}\0`);
-      hash.update(contentDigest);
-      entriesSnapshot.push({
-        path: rel,
-        size: info.size,
-        mtimeMs: info.mtimeMs,
-        ctimeMs: info.ctimeMs,
-        ino: Number(info.ino),
-        mode: info.mode,
-      });
-      if (isBaselineHashed(rel)) {
-        executableDigests[rel] = contentDigest.toString("hex");
-      }
-    }
-  };
-
-  await walk(root);
+  const policy = rehashPolicyFor(harnessId);
+  const walked = await walkTree(root, (rel) => isBaselineHashed(policy, rel));
   return {
     root,
-    digest: `sha256:${hash.digest("hex")}`,
-    entries: entriesSnapshot,
-    executableDigests,
+    harnessId,
+    digest: walked.digest,
+    entries: walked.entries,
+    executableDigests: walked.baselineDigests,
   };
 }
 
@@ -265,17 +202,11 @@ async function digestTreeWithSnapshot(
  * binaries join them under `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY=true`.
  *
  * The vendor CLI is matched by pattern because its name is platform-suffixed
- * inside the vendor's own platform package.
+ * inside the vendor's own platform package. Which files those are is PER
+ * HARNESS and lives in `runtime-rehash-policy.ts`, outside this module: this
+ * file is a shared pack input (it defines the tree digest), and a Codex path
+ * pattern edited here would otherwise change Claude Code's pack fingerprint.
  */
-const ALWAYS_REHASHED_RELATIVE_PATHS: readonly string[] = [
-  "launcher.mjs",
-  "bridge.mjs",
-];
-const STRICT_REHASHED_PATH_PATTERNS: readonly RegExp[] = [
-  /^bin\/node(\.exe)?$/,
-  /(^|\/)claude-agent-sdk-[a-z0-9-]+\/(claude|claude\.exe)$/,
-  /(^|\/)claude-code-[a-z0-9-]+\/(claude|claude\.exe)$/,
-];
 
 /**
  * Read on every call rather than once at module load, so a test — and an
@@ -294,19 +225,25 @@ function strictReverifyEnabled(): boolean {
  * to compare against, and the first strict re-verify would have to either
  * refuse a healthy tree or silently skip the file it was turned on for.
  */
-function isBaselineHashed(relativePath: string): boolean {
+function isBaselineHashed(
+  policy: ReturnType<typeof rehashPolicyFor>,
+  relativePath: string,
+): boolean {
   return (
-    ALWAYS_REHASHED_RELATIVE_PATHS.includes(relativePath) ||
-    STRICT_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
+    policy.always.includes(relativePath) ||
+    policy.strict.some((pattern) => pattern.test(relativePath))
   );
 }
 
 /** Whether a pre-spawn re-verify should re-read this path's bytes. */
-function isRehashedOnRevalidate(relativePath: string): boolean {
-  if (ALWAYS_REHASHED_RELATIVE_PATHS.includes(relativePath)) return true;
+function isRehashedOnRevalidate(
+  policy: ReturnType<typeof rehashPolicyFor>,
+  relativePath: string,
+): boolean {
+  if (policy.always.includes(relativePath)) return true;
   return (
     strictReverifyEnabled() &&
-    STRICT_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
+    policy.strict.some((pattern) => pattern.test(relativePath))
   );
 }
 
@@ -336,8 +273,12 @@ const verifiedRuntimeCache = new Map<string, RuntimeTreeSnapshot>();
  */
 const inFlightVerifications = new Map<string, Promise<RuntimeVerification>>();
 
-function verificationCacheKey(root: string, expectedDigest: string): string {
-  return `${root}\u0000${expectedDigest}`;
+function verificationCacheKey(
+  root: string,
+  expectedDigest: string,
+  harnessId: string,
+): string {
+  return `${root}\u0000${expectedDigest}\u0000${harnessId}`;
 }
 
 /**
@@ -383,15 +324,23 @@ export type RuntimeVerification =
 export async function verifyRuntime(
   root: string,
   expectedDigest: string,
+  /** Picks which files get a re-check baseline (`runtime-rehash-policy.ts`). */
+  harnessId: SupportedLocalHarnessId,
 ): Promise<RuntimeVerification> {
-  const key = verificationCacheKey(root, expectedDigest);
+  const key = verificationCacheKey(root, expectedDigest, harnessId);
   const cached = verifiedRuntimeCache.get(key);
   if (cached !== undefined) {
     return { ok: true, digest: cached.digest, snapshot: cached, cached: true };
   }
   const running = inFlightVerifications.get(key);
   if (running !== undefined) return running;
-  const started = digestOnce(root, expectedDigest, key, cacheGeneration);
+  const started = digestOnce(
+    root,
+    expectedDigest,
+    harnessId,
+    key,
+    cacheGeneration,
+  );
   inFlightVerifications.set(key, started);
   try {
     return await started;
@@ -408,12 +357,13 @@ export async function verifyRuntime(
 async function digestOnce(
   root: string,
   expectedDigest: string,
+  harnessId: string,
   key: string,
   generation: number,
 ): Promise<RuntimeVerification> {
   let snapshot: RuntimeTreeSnapshot;
   try {
-    snapshot = await digestTreeWithSnapshot(root);
+    snapshot = await digestTreeWithSnapshot(root, harnessId);
   } catch (error) {
     return {
       ok: false,
@@ -449,6 +399,36 @@ function runtimeIdOf(parts: readonly string[]): string {
 }
 
 /**
+ * The `runtimeId` a managed pack WOULD resolve to, without digesting it.
+ *
+ * Exactly the tuple `resolveManagedBundle` folds once it has verified the
+ * tree, with the layer digest this build compiled in. Selection uses it to
+ * keep a turn on the pack its grant names while that pack is still
+ * selectable; nothing is launched on this answer — availability still
+ * resolves and verifies the tree and compares the real id.
+ */
+export function predictManagedRuntimeId(
+  manifest: LocalHarnessCompatibility,
+  platform: LocalPlatform,
+  treeDigest: string,
+): string | null {
+  const policy = manifest.runtime;
+  if (policy.source !== "managed-bundle") return null;
+  const layerDigest =
+    policy.launcherSource === "inspector-layer" ? inspectorLayerDigest(manifest.harnessId) : "pack-launcher";
+  if (layerDigest === null) return null;
+  return runtimeIdOf([
+    "managed-bundle",
+    manifest.harnessId,
+    manifest.adapterVersion,
+    platform,
+    treeDigest,
+    layerDigest,
+    LOCAL_HARNESS_POLICY_VERSION,
+  ]);
+}
+
+/**
  * Verify a managed runtime bundle and freeze its identity.
  *
  * Called before consent AND again immediately before spawn — a bundle that
@@ -467,6 +447,12 @@ export async function resolveManagedBundle(args: {
    * darwin-arm64 digest.
    */
   arch?: string;
+  /**
+   * The runtime root the Inspector layer is written under. Defaults to this
+   * machine's (`runtimeInstallRoot()`), which is where every Inspector on it
+   * looks; a test or a conformance run with its own root passes it.
+   */
+  layerRuntimeRoot?: string;
 }): Promise<RuntimeResolution> {
   const { manifest, runtimeRoot, platform } = args;
   if (manifest.runtime.source !== "managed-bundle") {
@@ -513,7 +499,11 @@ export async function resolveManagedBundle(args: {
     };
   }
 
-  const verification = await verifyRuntime(canonicalRoot, expectedDigest);
+  const verification = await verifyRuntime(
+    canonicalRoot,
+    expectedDigest,
+    manifest.harnessId,
+  );
   if (!verification.ok && verification.reason === "unreadable") {
     return {
       ok: false,
@@ -537,10 +527,13 @@ export async function resolveManagedBundle(args: {
   }
   const digest = verification.digest;
 
-  // The digest covers the TREE; both the launcher and the Node binary that
-  // interprets it must be files inside it. A `..` in either manifest-relative
-  // path would otherwise resolve outside the bytes consent verified, and the
-  // supervisor would launch that.
+  // Invariant 1: every executable comes from the verified pack or from the
+  // Inspector distribution itself, and from nowhere else. The pack's digest
+  // covers the TREE, so the Node binary (and, on Windows, the job launcher)
+  // must be files inside it; a `..` in a manifest-relative path would
+  // otherwise resolve outside the bytes consent verified. The bridge launcher
+  // is either inside the pack too (`launcherSource: "pack"`) or the Inspector
+  // layer's, verified against the digest compiled into this build.
   const insideBundle = async (
     relativePath: string,
     label: string,
@@ -583,15 +576,34 @@ export async function resolveManagedBundle(args: {
     return { ok: true, path: full };
   };
 
-  const launcher = await insideBundle(
-    policy.launcherRelativePath,
-    "launcher",
-    false,
-  );
-  if (!launcher.ok) {
-    return { ok: false, status: "bundle-corrupt", message: launcher.message };
+  let launcherPath: string;
+  let layer: ResolvedRuntime["layer"];
+  if (policy.launcherSource === "inspector-layer") {
+    const ensured = await ensureInspectorLayer(manifest.harnessId, {
+      ...(args.layerRuntimeRoot !== undefined
+        ? { runtimeRoot: args.layerRuntimeRoot }
+        : {}),
+    });
+    if (!ensured.ok) {
+      return { ok: false, status: "bundle-corrupt", message: ensured.message };
+    }
+    launcherPath = ensured.layer.launcherPath;
+    layer = {
+      root: ensured.layer.root,
+      digest: ensured.layer.digest,
+      files: ensured.layer.files,
+    };
+  } else {
+    const launcher = await insideBundle(
+      policy.launcherRelativePath,
+      "launcher",
+      false,
+    );
+    if (!launcher.ok) {
+      return { ok: false, status: "bundle-corrupt", message: launcher.message };
+    }
+    launcherPath = launcher.path;
   }
-  const launcherPath = launcher.path;
 
   // The pack's own Node. Both distributions use it — Electron's `RunAsNode`
   // fuse is off, and the npx server's own `process.execPath` is outside the
@@ -636,12 +648,20 @@ export async function resolveManagedBundle(args: {
   return {
     ok: true,
     runtime: {
+      // The LAUNCH IDENTITY (invariant 2): vendor pack digest, Inspector layer
+      // digest, platform and policy version. The permission profile is bound
+      // alongside it in the grant (`HarnessGrantBinding`), so a grant names the
+      // whole tuple, and a change to any part of it is a different runtime
+      // that needs a fresh grant — re-minted under the durable authorization,
+      // never at a wider profile (invariant 3).
       runtimeId: runtimeIdOf([
         "managed-bundle",
         manifest.harnessId,
         manifest.adapterVersion,
         platform,
         digest,
+        layer?.digest ?? "pack-launcher",
+        LOCAL_HARNESS_POLICY_VERSION,
       ]),
       source: "managed-bundle",
       harnessId: manifest.harnessId,
@@ -649,6 +669,7 @@ export async function resolveManagedBundle(args: {
       adapterVersion: manifest.adapterVersion,
       rootPath: canonicalRoot,
       launcherPath,
+      ...(layer !== undefined ? { layer } : {}),
       nodePath: bundledNode.path,
       ...(jobLauncherPath !== undefined ? { jobLauncherPath } : {}),
       digest,
@@ -1114,6 +1135,7 @@ export async function resolveSystemInstall(
 async function detectSnapshotDrift(
   snapshot: RuntimeTreeSnapshot,
 ): Promise<string | null> {
+  const policy = rehashPolicyFor(snapshot.harnessId);
   const recorded = new Map(snapshot.entries.map((e) => [e.path, e]));
   let seen = 0;
 
@@ -1142,7 +1164,7 @@ async function detectSnapshotDrift(
       ) {
         return `${rel} was modified`;
       }
-      if (isRehashedOnRevalidate(rel)) {
+      if (isRehashedOnRevalidate(policy, rel)) {
         const content = await readFile(full);
         const fileDigest = createHash("sha256").update(content).digest("hex");
         if (fileDigest !== snapshot.executableDigests[rel]) {
@@ -1187,14 +1209,26 @@ export async function revalidateRuntime(
   runtime: ResolvedRuntime,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
+    if (runtime.layer !== undefined) {
+      // The layer first: it is small, so this is a full digest every time,
+      // and a launcher or bridge that changed after resolution is refused
+      // here — never rewritten under a session that is about to exec it.
+      const layer = await verifyInspectorLayer({
+        harnessId: runtime.harnessId,
+        root: runtime.layer.root,
+        digest: runtime.layer.digest,
+      });
+      if (!layer.ok) return { ok: false, message: layer.message };
+    }
     if (runtime.source === "managed-bundle") {
       const snapshot = verifiedRuntimeCache.get(
-        verificationCacheKey(runtime.rootPath, runtime.digest),
+        verificationCacheKey(runtime.rootPath, runtime.digest, runtime.harnessId),
       );
       if (snapshot === undefined) {
         const verification = await verifyRuntime(
           runtime.rootPath,
           runtime.digest,
+          runtime.harnessId,
         );
         if (!verification.ok) {
           return {
@@ -1220,9 +1254,13 @@ export async function revalidateRuntime(
       // digest decides, exactly as it does on first admission, and the cheap
       // check only ever buys skipping it.
       verifiedRuntimeCache.delete(
-        verificationCacheKey(runtime.rootPath, runtime.digest),
+        verificationCacheKey(runtime.rootPath, runtime.digest, runtime.harnessId),
       );
-      const reverified = await verifyRuntime(runtime.rootPath, runtime.digest);
+      const reverified = await verifyRuntime(
+        runtime.rootPath,
+        runtime.digest,
+        runtime.harnessId,
+      );
       if (reverified.ok) return { ok: true };
       return {
         ok: false,

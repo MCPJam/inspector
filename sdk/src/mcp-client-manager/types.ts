@@ -33,6 +33,32 @@ import type { TraceContextProvider } from "./trace-context.js";
 import type { HttpExchangeLogger } from "./http-exchange-log.js";
 import type { ToolSet } from "ai";
 
+import type {
+  ManagedMcpClientRequestHandler,
+  ManagedMcpClientRequestSchemas,
+} from "./managed-mcp-client.js";
+
+/** Host-owned extension handlers. Schemas and authority stay at the adapter boundary. */
+export interface ExtensionRequestBinding {
+  method: string;
+  schemas: ManagedMcpClientRequestSchemas;
+  handler: ManagedMcpClientRequestHandler;
+  /** Human input uses the same bounded timeout suspension as ordinary elicitation. */
+  waitsForInput?: boolean;
+  /**
+   * The `extensions` capability key this handler is the only answer for
+   * (e.g. `"openai/elicitation"` for `openai/elicitation/create`).
+   *
+   * A server-to-client request exists only on a 2025-era (stateful)
+   * connection. An unpinned connection advertises the key at connect time,
+   * because its `initialize` (if it lands on a 2025 era) is the only place
+   * the claim can travel; once the connection classifies as 2026-era the key
+   * is withheld from the capabilities every later request carries, since
+   * nothing could ever deliver the request this handler answers.
+   */
+  legacyClaim?: string;
+}
+
 // Re-export ElicitResult for convenience
 export type { ElicitResult };
 
@@ -593,9 +619,7 @@ export interface BaseClientState {
  * Retained for compatibility with external type consumers.
  */
 export interface ManagedClientState extends BaseClientState {
-  promise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
+  promise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
 }
 
 /**
@@ -611,12 +635,8 @@ export interface RegisteredServerState {
  */
 export interface LiveClientState extends BaseClientState {
   stdioStderrCleanup?: () => void;
-  connectPromise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
-  retryPromise?: Promise<
-    import("./managed-mcp-client.js").ManagedMcpClient
-  >;
+  connectPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
+  retryPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
   initializedClientCapabilities?: ClientCapabilityOptions;
   /**
    * The last 401/403 challenge seen on this HTTP connection. Read back when an
@@ -671,6 +691,10 @@ export type ProgressHandler = (event: ProgressEvent) => void;
  * Options for MCPClientManager constructor
  */
 export interface MCPClientManagerOptions {
+  /** Installed before connect; registering alone advertises no capability. */
+  extensionRequestHandlers?: Readonly<
+    Record<string, readonly ExtensionRequestBinding[]>
+  >;
   /** Default client name to report to servers */
   defaultClientName?: string;
   /** Default client version to report */
@@ -785,6 +809,8 @@ export type TaskOptions = {
  * Preferred executeTool options shape.
  */
 export interface ExecuteToolRequest {
+  /** Complete tools/call metadata; host adapters sanitize reserved keys. */
+  metadata?: Record<string, unknown>;
   /** Request options for the tool call */
   request?: ClientRequestOptions;
   /** Task options for task-augmented tool calls (2025-11-25 legacy wire only) */

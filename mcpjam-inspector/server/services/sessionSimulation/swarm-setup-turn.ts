@@ -7,9 +7,15 @@ import {
 } from "../../../shared/swarm-grounding";
 import type { PinnedHostExecutionSpec, PersonaSnapshot } from "../swarm-agent";
 import type { JourneyManagerFactory } from "./swarm-runner";
+import {
+  sponsoredPlatformFailure,
+  type SponsoredPlatformFailure,
+} from "../../../shared/swarm-sponsorship";
+import { spendRefusalOf } from "./admission-retry";
 import { withDeadline } from "../../utils/run-supervisor/deadline";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 import { drainAssistantTurn } from "./runner";
+import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { abortable, type DiscoveryTool } from "./target-discovery";
 import { computeSetupExcludedToolNames } from "./swarm-setup-policy";
 import {
@@ -18,7 +24,16 @@ import {
   parseSetupReport,
 } from "./swarm-setup-evidence";
 export class SwarmSetupError extends Error {
-  constructor(readonly partial: SetupRecord) {
+  constructor(
+    readonly partial: SetupRecord,
+    /**
+     * Set when a SPONSORED setup turn stopped because the platform could not
+     * pay for it (capacity, or a claim the backend would not honour). The
+     * target's attempts then end as a platform problem, not as missing
+     * prerequisites, and setup is never retried.
+     */
+    readonly platformFailure?: SponsoredPlatformFailure,
+  ) {
     super("Prerequisites unavailable");
     this.name = "SwarmSetupError";
   }
@@ -97,6 +112,8 @@ export async function runSwarmSetupTurn(args: {
   authHeader: string;
   signal?: AbortSignal;
   retried?: boolean;
+  /** The target has sponsored conversations: the setup turn carries the claim. */
+  sponsored?: boolean;
 }): Promise<SetupRecord> {
   const deadline = withDeadline(args.signal, GROUNDING_LIMITS.setupMs, "setup");
   const setup: SetupRecord = {
@@ -210,7 +227,13 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
         mcpClientManager: connection.manager,
         tools,
         maxSteps: GROUNDING_LIMITS.setupSteps,
+        maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
         abortSignal: deadline.signal,
+        // Target-level turn: no sessionIdx, the backend requires the target to
+        // have at least one sponsored attempt.
+        ...(args.sponsored && args.target.targetId
+          ? { sponsorship: { targetId: args.target.targetId } }
+          : {}),
       }),
       deadline.signal,
     );
@@ -235,7 +258,7 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
     setup.status = "completed";
     Object.assign(setup, judgeReadiness(setup, report));
     return setup;
-  } catch {
+  } catch (error) {
     Object.assign(
       setup,
       deriveCreatedEntities({
@@ -247,7 +270,16 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
     setup.status = "failed";
     setup.readiness = "unavailable";
     setup.reason = deadline.signal.aborted ? "timeout" : "transport_failed";
-    throw new SwarmSetupError(setup);
+    const platformFailure = args.sponsored
+      ? sponsoredPlatformFailure({
+          code:
+            spendRefusalOf(error)?.code ??
+            ((error as { errorRefusal?: { code?: string } })?.errorRefusal
+              ?.code),
+          message: error instanceof Error ? error.message : String(error),
+        })
+      : undefined;
+    throw new SwarmSetupError(setup, platformFailure);
   } finally {
     setup.durationMs = Date.now() - setup.startedAt;
     deadline.dispose();

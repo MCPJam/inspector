@@ -97,41 +97,63 @@ tools.post("/list", async (c) =>
  * One server's failure inside a batch, answered as its own request would
  * have been: `mapEphemeralServerFailure` picks the status and code (the
  * egress guard's 400 included, since the manager dials lazily and a refused
- * target surfaces inside `listTools`), and the hosted projection (MJ-001)
- * reduces the message, so a batch says no more about a target than a
- * single-server call does. The client rebuilds its usual `WebApiError` from
- * these three fields.
+ * target surfaces inside `listTools`; an authorization refusal arrives as the
+ * `WebRouteError` the connection built and passes through), and the hosted
+ * projection (MJ-001) reduces the message and details, so a batch says no
+ * more about a target than a single-server call does. The client rebuilds its
+ * usual `WebApiError` from these fields. `details` carry what the client acts
+ * on (`oauthRequired`, `exportDenied`), and `retryAfterSeconds` stands in for
+ * the `Retry-After` header a 200 cannot carry per server.
  */
 function batchFailure(error: unknown): {
   status: number;
   code: ErrorCode;
   message: string;
+  details?: Record<string, unknown>;
+  retryAfterSeconds?: number;
 } {
   const { routeError } = projectRouteFailure(
     mapEphemeralServerFailure(error),
     error,
     undefined,
   );
+  const retryAfterSeconds = Number(routeError.headers?.["Retry-After"]);
   return {
     status: routeError.status,
     code: routeError.code,
     message: routeError.message,
+    ...(routeError.details ? { details: routeError.details } : {}),
+    ...(Number.isFinite(retryAfterSeconds) ? { retryAfterSeconds } : {}),
   };
 }
 
 tools.post("/list-multi", async (c) =>
-  withEphemeralConnection(c, toolsListMultiSchema, async (manager, body) => {
-    const { results, failures } = await listToolsMulti(manager, {
-      ...body,
-      cacheMode: "bypass",
-    });
-    if (!failures) return { results };
-    const errors: Record<string, ReturnType<typeof batchFailure>> = {};
-    for (const [serverId, failure] of Object.entries(failures)) {
-      errors[serverId] = batchFailure(failure);
-    }
-    return { results, errors };
-  }),
+  withEphemeralConnection(
+    c,
+    toolsListMultiSchema,
+    async (manager, body, _forwardLogMessages, refusedServers) => {
+      // A server the connection refused (a stale grant, a missing XAA
+      // registration) is answered here, next to the servers that failed
+      // while listing, instead of answering for the whole batch. Each server
+      // is listed independently, so the rest are not held up by it.
+      const { results, failures } = await listToolsMulti(manager, {
+        ...body,
+        serverIds: body.serverIds.filter(
+          (serverId) => !Object.hasOwn(refusedServers, serverId),
+        ),
+        cacheMode: "bypass",
+      });
+      const errors: Record<string, ReturnType<typeof batchFailure>> = {};
+      for (const [serverId, failure] of Object.entries({
+        ...refusedServers,
+        ...failures,
+      })) {
+        errors[serverId] = batchFailure(failure);
+      }
+      return Object.keys(errors).length > 0 ? { results, errors } : { results };
+    },
+    { tolerateServerRefusals: true },
+  ),
 );
 
 tools.post("/execute", async (c) =>

@@ -111,6 +111,7 @@ export async function startWorkosEmulator(opts?: {
   });
 
   vi.stubEnv("WORKOS_API_KEY", emulator.apiKey);
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-service-token");
   vi.stubEnv("WORKOS_API_BASE_URL", emulator.url);
   vi.stubEnv("WORKOS_CLIENT_ID", clientId);
   vi.stubEnv("MCPJAM_WORKOS_SESSION_SECRET", "test-workos-session-secret");

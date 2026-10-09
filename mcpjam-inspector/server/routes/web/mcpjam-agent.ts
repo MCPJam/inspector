@@ -52,7 +52,7 @@ import {
  *
  * Auth to the platform worker: the worker verifies AuthKit JWTs from the
  * same issuer the inspector authenticates with (prod `login.mcpjam.com`,
- * staging `dynamic-echo-14-staging`), so the caller's bearer is forwarded
+ * staging `deep-vanilla-68-test`), so the caller's bearer is forwarded
  * as the MCP `accessToken`. Local dev tokens come from the dev AuthKit app,
  * which only the LOCAL worker (`wrangler dev --env dev`) trusts — `npm run
  * dev` starts that worker automatically, so the agent talks to it on
@@ -87,6 +87,10 @@ import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import {
+  checkAgentLoopGuard,
+  refuseAgentLoop,
+} from "../../utils/agent-loop-guard.js";
+import {
   validateUiToolEntries,
   UiToolValidationError,
 } from "../../utils/chat-v2-orchestration.js";
@@ -110,6 +114,13 @@ import {
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import { describeError } from "@mcpjam/sdk";
+import { maybeCaptureOriginError } from "../../utils/error-origin-capture.js";
+import {
+  agentCapturePolicy,
+  agentRouteCapture,
+  MCPJAM_AGENT_FAILURE_CAPTURE,
+} from "../../utils/agent-failure-capture.js";
 
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
@@ -329,6 +340,17 @@ mcpjamAgent.post("/", async (c) => {
       return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval sessions require an explicit scope.");
     }
     if (body.evalScope) validatedUiTools = validatedUiTools.filter(tool => EVAL_AGENT_TOOL_NAMES.has(tool.name));
+
+    // Before the MCP manager exists: a continuation this turn's step budget
+    // cannot serve is refused without connecting the docs servers, calling the
+    // model or persisting a turn. `AGENT_MAX_STEPS` is the ceiling the engine
+    // enforces below, so the two cannot disagree about when the budget is gone.
+    const loopVerdict = checkAgentLoopGuard({
+      messages: body.messages,
+      maxSteps: AGENT_MAX_STEPS,
+    });
+    if (loopVerdict) return refuseAgentLoop(c, loopVerdict, "mcpjam_agent");
+
     const platformToolsEnabled = !body.evalScope && agentPlatformToolsEnabled();
 
     manager = new MCPClientManager(
@@ -384,6 +406,28 @@ mcpjamAgent.post("/", async (c) => {
                 : String(result.reason),
           }
         );
+        // docs.mcpjam.com is OUR docs server. The turn carries on without it,
+        // so this is a warning, not a failed turn — but it is our outage and
+        // every agent answer about MCPJam degrades while it lasts, so it is an
+        // incident. The Axiom row above stays a warning; only Sentry hears
+        // more. The protocol docs server is a third party's, and its
+        // preflight degrading the turn is not ours to page on.
+        if (serverId === DOCS_SERVER_ID) {
+          maybeCaptureOriginError(
+            result.reason,
+            describeError(result.reason),
+            {
+              source: "route:mcpjam-agent.docs-preflight",
+              extra: { serverId },
+              capture: agentCapturePolicy({
+                source: "mcpjam-agent.docs-preflight",
+                serverId,
+                pageClass: "incident",
+                level: "warning",
+              }),
+            }
+          );
+        }
         return false;
       });
 
@@ -461,6 +505,8 @@ mcpjamAgent.post("/", async (c) => {
               chatSessionId: body.chatSessionId,
               // Web search follows the turn: platform-paid when the turn is.
               ...(billingFeature ? { billingFeature } : {}),
+              // And its failures are the agent's failures.
+              failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
             }
           )
         : undefined;
@@ -531,10 +577,12 @@ mcpjamAgent.post("/", async (c) => {
           // sends it unconditionally.
           maxSteps: AGENT_MAX_STEPS,
           // The claim itself IS a billing decision. Sent on every per-step
-          // Convex request, alongside the service token that makes it
-          // credible. Absent for guests, whose steps stay on the customer rail
+          // Convex request, which authorizes it on the signed-in user's own
+          // login. Absent for guests, whose steps stay on the customer rail
           // exactly as before.
           ...(billingFeature ? { billingFeature } : {}),
+          // Every failure of this turn reaches Sentry, guests' included.
+          failureCapture: MCPJAM_AGENT_FAILURE_CAPTURE,
           c,
         },
       });
@@ -554,14 +602,25 @@ mcpjamAgent.post("/", async (c) => {
         rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
-    const routeError = mapRuntimeError(error);
+    const routeError = mapRuntimeError(error, {
+      capture: agentRouteCapture("web.mcpjam-agent"),
+    });
     return webError(
       c,
       routeError.status,
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+      {
+        ...((rpcCollector?.buildEnvelope() as
+          | Record<string, unknown>
+          | undefined) ?? {}),
+        // The outcome of the capture decision just made, for the request-log
+        // backstop: it captures only what nothing else did.
+        ...(typeof routeError.captured === "boolean"
+          ? { captured: routeError.captured }
+          : {}),
+      }
     );
   }
 });
@@ -725,13 +784,18 @@ mcpjamAgent.post("/widget-content", async (c) => {
       await manager.disconnectAllServers();
     }
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    const routeError = mapRuntimeError(error, {
+      capture: agentRouteCapture("web.mcpjam-agent.widget-content"),
+    });
     return webError(
       c,
       routeError.status,
       routeError.code,
       routeError.message,
-      routeError.details
+      routeError.details,
+      typeof routeError.captured === "boolean"
+        ? { captured: routeError.captured }
+        : undefined
     );
   }
 });

@@ -48,11 +48,13 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
 }));
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+    };
+  }),
 }));
 
 import v1Routes from "../index.js";
@@ -719,6 +721,221 @@ describe("v1 project environment routes", () => {
         reason: "environment_model_required",
         hostId: "h1",
       });
+    });
+  });
+
+  describe("model selection and reasoning effort", () => {
+    const SELECTION = {
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      settings: { reasoningEffort: "high" },
+      fallback: { provider: "none", model: "none" },
+    };
+
+    it("reports the modelSelections capability, false when the backend predates it", async () => {
+      mockQuery({
+        "projectEnvironments:getCapabilities": {
+          modelOverrides: true,
+          modelSelections: true,
+        },
+      });
+      const on = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities",
+      );
+      expect(await on.json()).toMatchObject({ modelSelections: true });
+
+      mockQuery({
+        "projectEnvironments:getCapabilities": { modelOverrides: true },
+      });
+      const off = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities",
+      );
+      expect(await off.json()).toMatchObject({ modelSelections: false });
+    });
+
+    it("forwards a selection on create and reads it back", async () => {
+      convexMutationMock.mockResolvedValue({
+        ...ENV_ROW,
+        modelId: "openai/gpt-5",
+        modelSelection: SELECTION,
+      });
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: {
+          name: "Staging",
+          hostId: "h1",
+          modelId: "openai/gpt-5",
+          modelSelection: SELECTION,
+        },
+      });
+      expect(res.status).toBe(201);
+      expect(
+        mutationArgs("projectEnvironments:createEnvironment").modelSelection,
+      ).toEqual(SELECTION);
+      expect(
+        ((await res.json()) as { modelSelection?: unknown }).modelSelection,
+      ).toEqual(SELECTION);
+    });
+
+    it("pins the selection's own model when modelId is omitted", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", modelSelection: SELECTION },
+      });
+      expect(mutationArgs("projectEnvironments:createEnvironment")).toMatchObject({
+        modelId: "openai/gpt-5",
+        modelSelection: SELECTION,
+      });
+    });
+
+    it("refuses a selection for a different model, and an unknown effort", async () => {
+      const mismatch = await request("POST", "/api/v1/projects/p1/environments", {
+        body: {
+          name: "Staging",
+          hostId: "h1",
+          modelId: "anthropic/claude-sonnet-4.5",
+          modelSelection: SELECTION,
+        },
+      });
+      expect(mismatch.status).toBe(400);
+      const badEffort = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/ensure-adhoc",
+        {
+          body: {
+            hostId: "h1",
+            modelSelection: {
+              ...SELECTION,
+              settings: { reasoningEffort: "turbo" },
+            },
+          },
+        },
+      );
+      expect(badEffort.status).toBe(400);
+      expect(((await badEffort.json()) as { message: string }).message).toContain(
+        "modelSelection.settings.reasoningEffort",
+      );
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("PATCH refuses a selection beside a different modelId up front", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: {
+          expectedRevision: 3,
+          modelId: "anthropic/claude-sonnet-4.5",
+          modelSelection: SELECTION,
+        },
+      });
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("passes a selection through ensure-adhoc", async () => {
+      convexMutationMock.mockResolvedValue({
+        environment: { ...ENV_ROW, name: undefined, origin: "adhoc" },
+        created: true,
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/ensure-adhoc",
+        { body: { hostId: "h1", modelSelection: SELECTION } },
+      );
+      expect(res.status).toBe(200);
+      expect(
+        mutationArgs("projectEnvironments:ensureAdhocEnvironment"),
+      ).toMatchObject({ modelId: "openai/gpt-5", modelSelection: SELECTION });
+    });
+
+    it("PATCH: a value replaces, null clears, omission leaves it alone", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, modelSelection: SELECTION },
+      });
+      expect(
+        mutationArgs("projectEnvironments:updateEnvironment"),
+      ).toMatchObject({ modelSelection: SELECTION });
+
+      convexMutationMock.mockClear();
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, modelSelection: null },
+      });
+      expect(
+        mutationArgs("projectEnvironments:updateEnvironment").modelSelection,
+      ).toBeNull();
+
+      convexMutationMock.mockClear();
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, name: "Renamed" },
+      });
+      expect(
+        "modelSelection" in mutationArgs("projectEnvironments:updateEnvironment"),
+      ).toBe(false);
+    });
+  });
+
+  describe("store-once selections", () => {
+    const LEGACY = { source: "legacy", modelId: "llama3" };
+
+    it("computes modelId from the selection and returns the conversion marker", async () => {
+      // A store-once row: no bare `modelId`, the selection is the only copy.
+      convexMutationMock.mockResolvedValue({
+        ...ENV_ROW,
+        modelSelection: LEGACY,
+        modelSelectionOrigin: "backfill",
+      });
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", modelId: "llama3" },
+      });
+      expect(res.status).toBe(201);
+      expect(await res.json()).toMatchObject({
+        modelId: "llama3",
+        modelSelection: LEGACY,
+        modelSelectionOrigin: "backfill",
+      });
+    });
+
+    it("sends a bare modelId as the shorthand, with no invented selection", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", modelId: "openai/gpt-5" },
+      });
+      const args = mutationArgs("projectEnvironments:createEnvironment");
+      expect(args.modelId).toBe("openai/gpt-5");
+      expect("modelSelection" in args).toBe(false);
+    });
+
+    it("accepts a stored legacy selection sent back verbatim, and refuses a malformed one", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      const ok = await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, modelSelection: LEGACY },
+      });
+      expect(ok.status).toBe(200);
+      expect(mutationArgs("projectEnvironments:updateEnvironment")).toMatchObject({
+        modelId: "llama3",
+        modelSelection: LEGACY,
+      });
+
+      convexMutationMock.mockClear();
+      const bad = await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: {
+          expectedRevision: 3,
+          modelSelection: { source: "legacy", modelId: "llama3", apiKey: "sk" },
+        },
+      });
+      expect(bad.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("never reports a marker without a selection beside it", async () => {
+      convexMutationMock.mockResolvedValue({
+        ...ENV_ROW,
+        modelSelectionOrigin: "backfill",
+      });
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1" },
+      });
+      expect(await res.json()).not.toHaveProperty("modelSelectionOrigin");
     });
   });
 

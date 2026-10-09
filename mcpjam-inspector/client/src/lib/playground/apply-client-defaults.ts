@@ -8,6 +8,7 @@ import {
 } from "@mcpjam/sdk/host-compat";
 import type { ChatUiOverride } from "@/lib/client-styles";
 import { replaceLeadModelId } from "@/lib/selected-model-storage";
+import { harnessModelRefusalReason } from "@/lib/harness-model-locks";
 import { getCanonicalModelId, isModelSupported } from "@/shared/types";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
@@ -21,6 +22,7 @@ type HostConfigForPlayground = Pick<
   HostConfigInputV2,
   | "hostStyle"
   | "modelId"
+  | "harness"
   | "hostContext"
   | "mcpProfile"
   | "hostCapabilitiesOverride"
@@ -40,15 +42,28 @@ type HostConfigForPlayground = Pick<
  * Fall through to the host style's template default only when the
  * configured id is empty/whitespace or doesn't resolve at all. BYO
  * host ids with no catalog fallback entry leave the picker unchanged.
+ *
+ * A harness client (Codex, Claude Code) never resolves to a model its
+ * harness cannot run: this id becomes the lead model every chat surface
+ * reads back, so writing one here would put the next chat on a model the
+ * server then refuses.
  */
 export function resolvePlaygroundModelId(
   desiredModelId: string | undefined,
-  hostStyle: string
+  hostStyle: string,
+  harnessId?: string | null
 ): string | undefined {
+  const runnable = (modelId: string) =>
+    isModelSupported(modelId) &&
+    harnessModelRefusalReason(
+      modelId,
+      harnessId ? { harnessId } : null,
+      "chat"
+    ) === undefined;
   const trimmed = desiredModelId?.trim();
   if (trimmed) {
     const canonical = getCanonicalModelId(trimmed);
-    if (isModelSupported(canonical)) return canonical;
+    if (runnable(canonical)) return canonical;
   }
   const fallback = getCatalogTemplate(
     bundledHostCompatCatalog(),
@@ -56,7 +71,7 @@ export function resolvePlaygroundModelId(
   )?.modelId?.trim();
   if (!fallback) return undefined;
   const canonicalFallback = getCanonicalModelId(fallback);
-  return isModelSupported(canonicalFallback) ? canonicalFallback : undefined;
+  return runnable(canonicalFallback) ? canonicalFallback : undefined;
 }
 
 /**
@@ -120,7 +135,11 @@ export function applyHostConfigToPlayground(
   // without adding or removing columns. The product rule is "column count
   // is a workspace preference, not a host property" — switching hosts
   // must never grow or shrink the multi-model grid.
-  const modelId = resolvePlaygroundModelId(config.modelId, config.hostStyle);
+  const modelId = resolvePlaygroundModelId(
+    config.modelId,
+    config.hostStyle,
+    config.harness
+  );
   if (modelId) {
     replaceLeadModelId(modelId);
   }

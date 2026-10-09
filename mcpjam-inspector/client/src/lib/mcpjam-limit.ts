@@ -1,5 +1,9 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
-import { isCreditExhaustion } from "@/shared/credit-exhaustion";
+import { isCreditExhaustion, isHoldRefusal } from "@/shared/credit-exhaustion";
+import {
+  AGENT_STEP_LIMIT_CODE,
+  STEP_LIMIT_REFUSAL_MESSAGE,
+} from "@/shared/turn-step-budget";
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
@@ -49,6 +53,11 @@ type MCPJamLimitErrorInput = {
   code?: string;
   /** Stable run identity, shared by live streams and persisted failure updates. */
   runId?: string;
+  /**
+   * The run's wave. Every run of a swarm meets the same wall, so the dialog
+   * opens once per wave, not once per run.
+   */
+  swarmRunGroupId?: string;
   message?: string | null;
   details?: unknown;
   organizationId?: string;
@@ -285,6 +294,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
     ...(args.runId ? { runId: args.runId } : {}),
+    ...(args.swarmRunGroupId ? { swarmRunGroupId: args.swarmRunGroupId } : {}),
     limitKind: args.limitKind,
     organizationId: findMCPJamLimitOrganizationId(args),
     ...(args.surface ? { surface: args.surface } : {}),
@@ -424,6 +434,15 @@ export function describeAgentRefusalMessage(
   if (!message) return null;
   const codes = new Set<string>();
   collectCodes(message, codes);
+  if (codes.has(AGENT_STEP_LIMIT_CODE)) {
+    // The loop guard's refusal carries its own user-facing sentence (which of
+    // the two stops it was); the envelope around it is not for reading.
+    for (const parsed of collectJsonCandidates(message)) {
+      const text = getStringProperty(parsed, "message");
+      if (text) return text;
+    }
+    return STEP_LIMIT_REFUSAL_MESSAGE;
+  }
   // Unconditional, not a fallback for an unparseable body. `collectCodes` only
   // records a `code` PROPERTY, so a refusal nested as plain text under some
   // other envelope — `{"code":"RATE_LIMITED","details":"agent_turn_limit"}` —
@@ -456,14 +475,11 @@ export function describeMCPJamLimitMessage(
   message: string | null | undefined,
 ): string | null {
   if (!message) return null;
-  if (
-    collectJsonCandidates(message).some(
-      (parsed) =>
-        findStringPropertyDeep(parsed, "refusalReason") === "holds_committed",
-    )
-  ) {
-    return MCPJAM_HOLDS_COMMITTED_MESSAGE;
-  }
+  // The predicate the dialog uses decides, so the panel never contradicts an
+  // open dialog: the backend's structured verdict at any depth, its sentence
+  // only as the fallback for a stored attempt row, and a quoted hold, or one
+  // joined with a stated exhaustion, is not a retry here either.
+  if (isHoldRefusal(message)) return MCPJAM_HOLDS_COMMITTED_MESSAGE;
   if (!isMCPJamModelLimitError({ message })) return null;
   const described = describeError(message);
   const entry = MCPJAM_LIMIT_SLUGS.has(described.slug)

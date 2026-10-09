@@ -30,13 +30,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1 # full file tree (code + docs) so feature greps work
           persist-credentials: false # job has write perms; Claude uses gh, not git auth
 
       - name: Classify and act
-        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
+        uses: anthropics/claude-code-action@12dd8d74c712f5f3669365b2369b558c495b1104 # v1.0.238
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # This workflow only ever fires for mintlify[bot] PRs (see the job

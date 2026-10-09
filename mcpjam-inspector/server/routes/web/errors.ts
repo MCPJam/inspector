@@ -12,6 +12,7 @@ import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-seriali
 import {
   markOriginCaptureHandled,
   maybeCaptureOriginError,
+  type CapturePolicy,
   type OriginCaptureBoundary,
 } from "../../utils/error-origin-capture.js";
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
@@ -21,6 +22,12 @@ import {
   onlyFallbackAnswered,
   upstreamTransportStatus,
 } from "../../utils/hosted-connect-failure.js";
+import { HOSTED_MODE } from "../../config.js";
+import { isServiceCredentialUnavailableError } from "../../services/service-credential.js";
+import {
+  DEFAULT_HOSTED_API_URL,
+  resolveHostedApiOrigin,
+} from "../../services/api-keys-relay.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -111,6 +118,11 @@ export const ErrorCode = {
   // "SESSION_REVOKED"`, the v1 convention for a specific 401; the mapping sits
   // in `routes/v1/envelope.ts` beside UPSTREAM_AUTH_FAILED's.
   SESSION_REVOKED: "SESSION_REVOKED",
+  // A chat continuation refused before any model call (409): the user
+  // message's step budget is spent, or the model keeps sending the same tool
+  // call with input that cannot run. The browser stops resuming on it and the
+  // user continues by sending a message. See `utils/agent-loop-guard.ts`.
+  AGENT_STEP_LIMIT: "AGENT_STEP_LIMIT",
   // The USER'S MCP server answered with an HTTP error status (a 404 for a
   // wrong endpoint path, a 405, its own 500). Served at 424 by
   // `mapTargetServerError`. Not SERVER_UNREACHABLE: the chat client words that
@@ -123,7 +135,8 @@ export const ErrorCode = {
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 export class WebRouteError extends Error {
-  setupFailureSource?: "oauth_refresh" | "xaa_mint" | "authorization_required";
+  setupFailureSource?:
+    "oauth_refresh" | "xaa_mint" | "authorization_required" | "secret_reveal";
   status: number;
   code: ErrorCode;
   details?: Record<string, unknown>;
@@ -148,6 +161,13 @@ export class WebRouteError extends Error {
    * decision, in which case the declared value is the best available answer.
    */
   origin?: ErrorOrigin;
+
+  /**
+   * Whether `mapRuntimeError`'s capture decision sent this to Sentry. Rides
+   * into `webErrorMeta` so the request-log backstop knows the outcome rather
+   * than guessing it from the stamp, which a decline sets too.
+   */
+  captured?: boolean;
 
   /**
    * Response headers this error must carry to the wire.
@@ -214,10 +234,20 @@ export function webError(
   // `extras` is permissive (rpc-log collectors, etc.). If it carries a
   // `normalized` key, hoist it to the top-level response body — clients
   // pluck the rich block off the JSON envelope without re-classifying.
-  const { normalized, effectiveOrigin, hop, responseHeaders, ...restExtras } =
+  const {
+    normalized,
+    effectiveOrigin,
+    hop,
+    responseHeaders,
+    captured,
+    ...restExtras
+  } =
     (extras ?? {}) as Record<string, unknown> & {
       normalized?: NormalizedError;
       effectiveOrigin?: ErrorOrigin;
+      // Telemetry, like `hop`: whether the route's capture decision sent this
+      // failure to Sentry. Rides on `webErrorMeta` only.
+      captured?: boolean;
       // Destructured OUT for the same reason as `responseHeaders`: this is
       // telemetry, not part of the client contract. It rides on
       // `webErrorMeta` only.
@@ -257,6 +287,7 @@ export function webError(
       // positively-MCPJam verdict, which is the one direction of this change
       // that must stay impossible.
       ...(hop ? { hop } : {}),
+      ...(typeof captured === "boolean" ? { captured } : {}),
     });
   }
   // A hosted 500 INTERNAL_ERROR answers with a generic sentence and the
@@ -330,8 +361,75 @@ export function webErrorFromRoute(
       // the way to the serializer and is then thrown away at the last step.
       ...(routeError.origin ? { effectiveOrigin: routeError.origin } : {}),
       ...(routeError.headers ? { responseHeaders: routeError.headers } : {}),
+      ...(typeof routeError.captured === "boolean"
+        ? { captured: routeError.captured }
+        : {}),
     }
   );
+}
+
+/**
+ * `details.reason` on the shared hosted-only answer. Stable: the client keys
+ * its "available in the hosted app" copy on it.
+ */
+export const FEATURE_REQUIRES_HOSTED = "FEATURE_REQUIRES_HOSTED";
+
+/**
+ * Status of the hosted-only answer. 422, the status the public v1 contract
+ * already gives `FEATURE_NOT_SUPPORTED`, so the web and v1 surfaces agree and
+ * a self-hosted build's missing credential never counts against the 5xx
+ * budget or pages anyone.
+ */
+export const FEATURE_REQUIRES_HOSTED_STATUS = 422;
+
+function hostedAppUrl(): string {
+  try {
+    return resolveHostedApiOrigin();
+  } catch {
+    return DEFAULT_HOSTED_API_URL;
+  }
+}
+
+/**
+ * THE hosted-only answer: this Inspector cannot do `feature` because it holds
+ * no MCPJam service credential (every self-hosted build), and the hosted app
+ * can. `feature` is human copy, shown verbatim. On a hosted deployment the
+ * same condition is a misconfiguration and answers 500 instead.
+ *
+ * Reuses `FEATURE_NOT_SUPPORTED` rather than minting a code (the v1 code
+ * table is a contract shared with the backend); the specific reason rides in
+ * `details`, the convention `SESSION_REVOKED` already follows.
+ */
+export function hostedOnlyRouteError(
+  feature: string,
+  hosted: boolean = HOSTED_MODE,
+  /** What the hosted server lacks, for the hosted 500 (the operator's clue). */
+  missing: string = "its service credential",
+): WebRouteError {
+  // On the hosted app itself a missing credential is a deployment fault, not
+  // a limitation of the build: telling a user to "use the hosted app" while
+  // they are on it would be wrong. Answer the generic hosted 500 (the detail
+  // stays in the request log and Sentry), the way the hosted startup check
+  // reports the same condition.
+  if (hosted) {
+    return new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      `${feature} is unavailable: this hosted server is missing ${missing}.`,
+    );
+  }
+  const hostedUrl = hostedAppUrl();
+  return new WebRouteError(
+    FEATURE_REQUIRES_HOSTED_STATUS,
+    ErrorCode.FEATURE_NOT_SUPPORTED,
+    `${feature} is only available in the hosted MCPJam app (${hostedUrl}).`,
+    { reason: FEATURE_REQUIRES_HOSTED, feature, hostedUrl },
+  );
+}
+
+/** Respond with {@link hostedOnlyRouteError} from a Hono handler. */
+export function hostedOnlyResponse(c: any, feature: string) {
+  return webErrorFromRoute(c, mapRuntimeError(hostedOnlyRouteError(feature)));
 }
 
 export function parseErrorMessage(error: unknown): string {
@@ -401,6 +499,15 @@ export interface MapRuntimeErrorOptions {
    * makes the decision.
    */
   boundary?: OriginCaptureBoundary;
+  /**
+   * A surface's own capture rule, computed from the MAPPED error (its status
+   * and code), for the same reason `boundary` travels with the mapping: the
+   * first capture decision stamps the error, so a policy applied afterwards
+   * would decide nothing. See `CapturePolicy`.
+   */
+  capture?: (mapped: { status: number; code: string }) =>
+    | CapturePolicy
+    | undefined;
 }
 
 /**
@@ -481,11 +588,17 @@ export function mapRuntimeError(
     // Keep the EFFECTIVE origin the capture decision produced. Discarding it
     // here is what forced serialization to fall back to the declared catalog
     // value, so a promoted `mcpjam` failure logged as `ambiguous`.
+    const capture = options?.capture?.({
+      status: error.status,
+      code: error.code,
+    });
     const decision = maybeCaptureOriginError(error, error.normalized, {
       source: "web.mapRuntimeError",
       boundary: effectiveBoundary(error, options),
       extra: { status: error.status, code: error.code },
+      ...(capture ? { capture } : {}),
     });
+    error.captured = error.captured === true || decision.captured;
     // Never downgrade an origin that is already set. A boundary-less call can
     // only ever reproduce the DECLARED catalog value — remapping an error whose
     // origin was already promoted at an `mcpjam_internal` hop would otherwise
@@ -497,12 +610,18 @@ export function mapRuntimeError(
 
   const routeError = classifyRuntimeError(error);
   attachCause(routeError, error);
+  const capture = options?.capture?.({
+    status: routeError.status,
+    code: routeError.code,
+  });
   const decision = maybeCaptureOriginError(routeError, routeError.normalized, {
     source: "web.mapRuntimeError",
     boundary: effectiveBoundary(routeError, options),
     extra: { status: routeError.status, code: routeError.code },
+    ...(capture ? { capture } : {}),
   });
   routeError.origin = decision.origin;
+  routeError.captured = decision.captured;
   // Stamp the ORIGINAL as well. The cause link above makes the original
   // reachable from `routeError`, but the walk only goes that direction: a
   // handler that keeps its own reference and later calls `logger.error(error)`
@@ -673,6 +792,11 @@ function isTargetDependencyFailure(routeError: WebRouteError): boolean {
  * branches below produce, instead of being duplicated down five return paths.
  */
 function classifyRuntimeError(error: unknown): WebRouteError {
+  // A self-hosted build without the service credential asked for a
+  // credential-backed feature. Not a fault anywhere: answer hosted-only.
+  if (isServiceCredentialUnavailableError(error)) {
+    return hostedOnlyRouteError(error.feature);
+  }
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);

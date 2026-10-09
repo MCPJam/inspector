@@ -1,3 +1,5 @@
+import { GuestTabRecoveryBoundary } from "@/components/GuestTabRecoveryBoundary";
+import { guestTabRecovery } from "../auth/guest-tab-recovery";
 import { useEffect } from "react";
 import { SignOutBoundary } from "@/components/SignOutBoundary";
 import { showSignOutScreen, useSignOutStore } from "@/stores/sign-out-store";
@@ -35,6 +37,10 @@ vi.mock("@/lib/guest-session", () => ({
   forceRefreshGuestSessionOrThrow: guest.refresh,
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: () => null,
+}));
+
+vi.mock("@/hooks/use-actor-key", () => ({
+  useActorKey: () => guest.cached?.guestId ?? null,
 }));
 
 vi.mock("@sentry/react", () => ({ captureMessage: vi.fn() }));
@@ -212,6 +218,7 @@ beforeEach(() => {
     retryNonce: 0,
     queriesPaused: false,
     authConfirmed: false,
+    authEpoch: 0,
     recoveryId: null,
     recoveryAt: 0,
     pauseQueries,
@@ -226,7 +233,7 @@ function UngatedQueries() {
   useQuery(makeFunctionReference<"query">("unguarded:query"), {});
   return <div>App content</div>;
 }
-function setup() {
+function setup(withGuestRecovery = false) {
   const peer = protocolPeer();
   const client = new ConvexReactClient("https://test.convex.cloud", {
     webSocketConstructor: peer.Socket as unknown as typeof WebSocket,
@@ -238,7 +245,13 @@ function setup() {
     <ConvexProviderWithAuth client={client} useAuth={useUnifiedConvexAuth}>
       <SignOutBoundary>
         <AuthRecoveryBoundary>
-          <Shell />
+          {withGuestRecovery ? (
+            <GuestTabRecoveryBoundary>
+              <Shell />
+            </GuestTabRecoveryBoundary>
+          ) : (
+            <Shell />
+          )}
         </AuthRecoveryBoundary>
       </SignOutBoundary>
     </ConvexProviderWithAuth>
@@ -310,6 +323,77 @@ it.each(["same", "fresh", "null", "network"])(
   15000,
 );
 
+it("a rejection during a scheduled refresh recovers with the shared fresh token", async () => {
+  // The token provider dedupes concurrent refreshes: every caller waiting on
+  // the in-flight refresh gets the same new token.
+  let release!: (token: string) => void;
+  const inFlight = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  auth.getAccessToken.mockImplementation(() => {
+    calls += 1;
+    return calls === 1
+      ? Promise.resolve(jwt(1))
+      : calls === 2
+        ? Promise.resolve(jwt(2))
+        : inFlight;
+  });
+  const { peer, close } = setup();
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    // jwt(2) was accepted, so Convex scheduled its next refresh; it is now
+    // waiting on the provider when a function's expired auth is refused.
+    await waitFor(() => expect(calls).toBe(3));
+    await act(async () => peer.rejectIdentity());
+    await waitFor(() => expect(calls).toBe(4));
+    await act(async () => release(jwt(3)));
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
+    expect(peer.clearCounts).toEqual([]);
+    expect(peer.unauthenticatedAdds).toEqual([]);
+    expect(reportCaught).not.toHaveBeenCalled();
+  } finally {
+    await close();
+  }
+});
+
+it("renews an expiring token when the page comes back, without a rejection", async () => {
+  auth.getAccessToken.mockResolvedValue(jwt(1));
+  const { peer, close } = setup();
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    await waitFor(() =>
+      expect(useSessionRefreshStore.getState().authConfirmed).toBe(true),
+    );
+    const before = peer.messages.filter(
+      (m) => m === "Authenticate:User",
+    ).length;
+    auth.getAccessToken.mockResolvedValue(jwt(2));
+    // jwt(1) expired long ago: the page was away longer than its lifetime.
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("pageshow"));
+    });
+    await waitFor(() =>
+      expect(
+        peer.messages.filter((m) => m === "Authenticate:User").length,
+      ).toBeGreaterThan(before),
+    );
+    await waitFor(() =>
+      expect(useSessionRefreshStore.getState().authConfirmed).toBe(true),
+    );
+    expect(peer.active.size).toBe(9);
+    expect(appMounts).toHaveBeenCalledTimes(1);
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
+    expect(peer.unauthenticatedAdds).toEqual([]);
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+  } finally {
+    await close();
+  }
+});
+
 it("keeps the spinner until replacement confirmation; Retry recovers after an unchanged token", async () => {
   auth.getAccessToken.mockResolvedValue(jwt(1));
   const { peer, view, close } = setup();
@@ -376,7 +460,8 @@ it.each(["logout", "account", "retry"])(
       );
       await act(async () => peer.rejectIdentity());
       await waitFor(() => expect(finish).toBeTypeOf("function"));
-      expect(view.queryByText("App content")).toBeNull();
+      // A refresh in flight keeps the app (and whatever it has open) mounted.
+      expect(view.queryByText("App content")).not.toBeNull();
       if (transition === "logout") act(() => showSignOutScreen());
       else {
         auth.getAccessToken.mockResolvedValue(jwt(3));
@@ -411,7 +496,13 @@ it("repeated rejection of fresh tokens stays blocked after the SDK gives up", as
       expect(useSessionRefreshStore.getState().status).toBe("failed"),
     );
     expect(peer.active.size).toBe(0);
-    expect(peer.unauthenticatedAdds).toEqual([]);
+    // The app stays mounted while the first replacement is tried, so the one
+    // restart that carries it re-subscribes with it. Once the server refuses
+    // the replacement too, every subscription is cancelled before Convex
+    // tries another token, and nothing is subscribed after it gives up.
+    expect(peer.unauthenticatedAdds.length).toBeLessThanOrEqual(
+      names.length + 1,
+    );
     expect(view.queryByText("App content")).toBeNull();
     const episodes = vi
       .mocked(reportCaught)
@@ -455,25 +546,68 @@ it("normal background refresh does not unmount the app or record a rejection", a
   }
 });
 
-it("authentication alone does not resume queries until database readiness", async () => {
+it("a refresh that recovers keeps the app mounted and its subscriptions live", async () => {
+  auth.getAccessToken.mockResolvedValue(jwt(1));
+  const { peer, view, close } = setup();
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    let release!: (token: string) => void;
+    auth.getAccessToken.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await act(async () => peer.rejectIdentity());
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    // The auth gap: identity is being replaced, the app is still there.
+    expect(view.queryByText("App content")).not.toBeNull();
+    expect(useSessionRefreshStore.getState().authConfirmed).toBe(false);
+    expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
+    const epoch = useSessionRefreshStore.getState().authEpoch;
+    await act(async () => release(jwt(2)));
+    await waitFor(() =>
+      expect(useSessionRefreshStore.getState().authEpoch).toBeGreaterThan(
+        epoch,
+      ),
+    );
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    expect(appMounts).toHaveBeenCalledTimes(1);
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
+    expect(peer.unauthenticatedAdds).toEqual([]);
+    expect(Sentry.captureMessage).toHaveBeenCalledWith(
+      "Convex authentication recovery",
+      expect.objectContaining({
+        extra: expect.objectContaining({ outcome: "recovered" }),
+      }),
+    );
+  } finally {
+    await close();
+  }
+});
+
+it("after a failed recovery, authentication alone does not resume queries until database readiness", async () => {
   auth.getAccessToken.mockResolvedValue(jwt(1));
   const { peer, view, rerender, close } = setup();
   try {
     await waitFor(() => expect(peer.active.size).toBe(9));
+    // The provider hands back the rejected token: the recovery fails.
+    await act(async () => peer.rejectIdentity());
+    await waitFor(() =>
+      expect(useSessionRefreshStore.getState().status).toBe("failed"),
+    );
     databaseReady = false;
     auth.getAccessToken.mockResolvedValue(jwt(2));
-    await act(async () => peer.rejectIdentity());
+    act(() => useSessionRefreshStore.getState().retry());
     await waitFor(() =>
       expect(useSessionRefreshStore.getState().authConfirmed).toBe(true),
     );
     expect(peer.active.size).toBe(0);
     expect(view.queryByText("App content")).toBeNull();
-    expect(Sentry.captureMessage).not.toHaveBeenCalled();
     databaseReady = true;
     rerender();
     await waitFor(() => expect(peer.active.size).toBe(9));
     expect(peer.unauthenticatedAdds).toEqual([]);
-    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
   } finally {
     await close();
   }
@@ -537,5 +671,31 @@ it("upstream logout cancels ungated queries before clearing authentication", asy
     expect(peer.unauthenticatedAdds).toEqual([]);
   } finally {
     await close();
+  }
+});
+
+it("a sibling guest promotion removes every SDK subscription before identity loss", async () => {
+  auth.user = null;
+  guest.cached = { token: jwt(1), guestId: "protocol-guest" };
+  guest.mint.mockResolvedValue(guest.cached);
+  guestTabRecovery.setGuest(null);
+  const { peer, client, close } = setup(true);
+  try {
+    await waitFor(() => expect(peer.active.size).toBe(9));
+    await act(async () =>
+      guestTabRecovery.receive({
+        guestId: "protocol-guest",
+        attempt: "promotion",
+        startedAt: Date.now(),
+        phase: "started",
+      }),
+    );
+    await waitFor(() => expect(peer.active.size).toBe(0));
+    await act(async () => client.clearAuth());
+    expect(peer.clearCounts.every((count) => count === 0)).toBe(true);
+    expect(peer.unauthenticatedAdds).toEqual([]);
+  } finally {
+    await close();
+    guestTabRecovery.setGuest(null);
   }
 });

@@ -45,12 +45,14 @@ vi.mock("../../web/auth.js", async () => {
 });
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-    mutation: convexMutationMock,
-    action: convexActionMock,
-  })),
+  ConvexHttpClient: vi.fn().mockImplementation(function () {
+    return {
+      setAuth: vi.fn(),
+      query: convexQueryMock,
+      mutation: convexMutationMock,
+      action: convexActionMock,
+    };
+  }),
 }));
 
 import { deriveItemIdempotencyKey } from "../../../utils/idempotency.js";
@@ -401,6 +403,68 @@ describe("v1 eval-edit routes", () => {
     expect(args.minIterations).toBeNull();
   });
 
+  it("PATCH executionBudgets reaches the mutation, and null clears it", async () => {
+    // The settings-parity ratchet proves the SCHEMA parses
+    // `settings.executionBudgets.*`. It cannot prove the handler forwards it,
+    // and the first cut of this feature did not: the field parsed, the route
+    // returned 200, and the budget was silently dropped — the same shape as a
+    // runtime that shipped dark with green CI on both repos. This test is the
+    // half the ratchet structurally cannot cover.
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { executionBudgets: { turnTimeoutMs: 300_000 } } },
+    );
+    expect(res.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      )![1].executionBudgets,
+    ).toEqual({ turnTimeoutMs: 300_000 });
+
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string) =>
+      defaultMutationImpl(name),
+    );
+
+    // `null` CLEARS back to the platform defaults and must survive as null.
+    const cleared = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { executionBudgets: null } },
+    );
+    expect(cleared.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args).toHaveProperty("executionBudgets");
+    expect(args.executionBudgets).toBeNull();
+  });
+
+  it("PATCH rejects an executionBudget above its platform ceiling", async () => {
+    // Refused by PARSING, before the ladder is consulted: the contract
+    // schema's `max` on each field is the platform ceiling.
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      // 31 minutes; the per-turn ceiling is 30.
+      { settings: { executionBudgets: { turnTimeoutMs: 1_860_000 } } },
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      ),
+    ).toBe(false);
+  });
+
   it("PATCH rejects a minimumIterations outside 1–10", async () => {
     for (const value of [0, 11, 2.5]) {
       vi.clearAllMocks();
@@ -415,6 +479,68 @@ describe("v1 eval-edit routes", () => {
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
     }
+  });
+
+  it("GET projects executionBudgets, and null when nothing is authored", async () => {
+    // The READ half of the pair. PATCH forwarding is covered above, but a
+    // caller that can write a budget and never read it back cannot tell a
+    // stored value from a dropped one — and a DTO that silently omitted the
+    // field would pass every assertion in this file without this test. That
+    // is not hypothetical: this exact surface shipped once with the schema
+    // accepting a path the handler and the DTO both ignored.
+    const unset = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    const unsetBody = (await unset.json()) as any;
+    // `null`, not absent: the key has to be PRESENT and empty, so a reader can
+    // distinguish "inherits the platform defaults" from "this build of the API
+    // does not know about budgets".
+    expect(unsetBody.settings).toHaveProperty("executionBudgets");
+    expect(unsetBody.settings.executionBudgets).toBeNull();
+
+    const stored = {
+      turnTimeoutMs: 300_000,
+      toolCallTimeoutMs: 60_000,
+      iterationTimeoutMs: 900_000,
+      runTimeoutMs: 3_600_000,
+      turnRetries: 0,
+    };
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, executionBudgets: stored })
+        : defaultQueryImpl(name),
+    );
+    const set = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    // Every clock, by value. A partial projection is the same failure as no
+    // projection for whichever field it drops, so this asserts the whole
+    // object rather than spot-checking one key.
+    expect(((await set.json()) as any).settings.executionBudgets).toEqual(
+      stored,
+    );
+  });
+
+  it("GET reports an authored zero, which is not the same as unauthored", async () => {
+    // `turnRetries: 0` is a real choice — never retry — and the one value a
+    // `??`-style projection is most likely to collapse into the empty case.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            executionBudgets: { turnRetries: 0 },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "GET",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
+    expect(((await res.json()) as any).settings.executionBudgets).toEqual({
+      turnRetries: 0,
+    });
   });
 
   it("GET reports minimumIterations, null when the suite has no floor", async () => {
@@ -632,6 +758,110 @@ describe("v1 eval-edit routes", () => {
         autoRun: true,
         threshold: 0.9,
       },
+    });
+  });
+
+  // CONVEX-33X: the documented `mcpjam/<vendor>/<model>` spelling is stored as
+  // the catalog id; anything that is not exactly a catalog id is sent as typed
+  // (trimmed), so the backend's refusal names it.
+  it.each([
+    ["mcpjam/openai/gpt-5.4-mini", "openai/gpt-5.4-mini"],
+    ["openai/gpt-5.4-mini ", "openai/gpt-5.4-mini"],
+    ["mcpjam/anthropic/claude-sonnet-4-6", "mcpjam/anthropic/claude-sonnet-4-6"],
+  ])("PATCH judge.model %j is stored as %j", async (sent, stored) => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: sent } } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.judgeConfig.goalCompletion.judgeModel).toBe(stored);
+  });
+
+  it("PATCH refuses a blank judge.model instead of storing it", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: "   " } } },
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      ),
+    ).toBe(false);
+  });
+
+  it("PATCH judge.model drops a stored judgeSelection that names another model", async () => {
+    // A judge picked in the app stores a selection beside the model, and the
+    // backend refuses the pair when they disagree. The v1 body cannot carry a
+    // selection, so keeping the stale one made every model change a 400.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+                judgeSelection: {
+                  source: "hosted",
+                  modelId: "anthropic/claude-haiku-4.5",
+                },
+              },
+            },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: "mcpjam/openai/gpt-5.4-mini" } } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: { enabled: true, judgeModel: "openai/gpt-5.4-mini" },
+    });
+  });
+
+  it("PATCH judge.model keeps a stored judgeSelection that names the same model", async () => {
+    const selection = {
+      source: "hosted",
+      modelId: "anthropic/claude-haiku-4.5",
+    };
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "anthropic/claude-haiku-4.5",
+                judgeSelection: selection,
+              },
+            },
+          })
+        : defaultQueryImpl(name),
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { settings: { judge: { model: "mcpjam/anthropic/claude-haiku-4.5" } } },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    )![1];
+    expect(args.judgeConfig.goalCompletion).toEqual({
+      enabled: true,
+      judgeModel: "anthropic/claude-haiku-4.5",
+      judgeSelection: selection,
     });
   });
 
@@ -1540,6 +1770,19 @@ describe("v1 eval-edit routes", () => {
       maxExtraToolCalls: null,
       argumentMatching: "exact",
     });
+  });
+
+  it("PATCH case preserves null as the instruction to clear its scenario", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      { scenario: null },
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestCase",
+    )![1];
+    expect(args.scenario).toBeNull();
   });
 
   it("PATCH prompt-case steps never forward caseType", async () => {
@@ -4843,5 +5086,453 @@ describe("authoring job ID validation", () => {
     const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/not-an-id${method === "POST" ? "/commit" : ""}`);
     expect(response.status).toBe(404);
     expect(convexQueryMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── Saved model selections and reasoning effort ─────────────────────────────
+
+const SUITE_URL =
+  "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+const CASE_URL = `${SUITE_URL}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`;
+
+const HAIKU = "anthropic/claude-haiku-4.5";
+const HAIKU_SELECTION = {
+  modelId: HAIKU,
+  source: "hosted",
+  settings: { reasoningEffort: "high" },
+  fallback: { provider: "none", model: "none" },
+};
+
+function setSuiteConfigInput(): any {
+  const calls = convexMutationMock.mock.calls.filter(
+    (c) => c[0] === "hostConfigsV2:setSuiteConfig",
+  );
+  return calls[calls.length - 1]?.[1]?.input;
+}
+
+describe("v1 eval routes: model selections and reasoning effort", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args),
+    );
+  });
+
+  describe("suite executionConfig.modelSelection", () => {
+    function withSuiteSelection() {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "hostConfigsV2:getSuiteConfig"
+          ? Promise.resolve({ ...EXEC_CONFIG, modelSelection: HAIKU_SELECTION })
+          : defaultQueryImpl(name),
+      );
+    }
+
+    it("saves a selection and pins its model when only the selection is sent", async () => {
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { modelSelection: HAIKU_SELECTION },
+      });
+      expect(res.status).toBe(200);
+      const input = setSuiteConfigInput();
+      expect(input.modelSelection).toEqual(HAIKU_SELECTION);
+      expect(input.modelId).toBe(HAIKU);
+    });
+
+    it("refuses a selection for a different model than `model`", async () => {
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { model: "openai/gpt-5", modelSelection: HAIKU_SELECTION },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).message).toContain("must match model");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("names the bad field on an invalid effort", async () => {
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: {
+          modelSelection: {
+            ...HAIKU_SELECTION,
+            settings: { reasoningEffort: "ludicrous" },
+          },
+        },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).message).toContain(
+        "modelSelection.settings.reasoningEffort",
+      );
+    });
+
+    it("keeps the selection across a same-model edit", async () => {
+      withSuiteSelection();
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { temperature: 0.9 },
+      });
+      expect(res.status).toBe(200);
+      expect(setSuiteConfigInput().modelSelection).toEqual(HAIKU_SELECTION);
+    });
+
+    it("a bare model change drops the old selection instead of sending a disagreeing pair", async () => {
+      withSuiteSelection();
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { model: "openai/gpt-5" },
+      });
+      expect(res.status).toBe(200);
+      const input = setSuiteConfigInput();
+      expect(input.modelId).toBe("openai/gpt-5");
+      expect("modelSelection" in input).toBe(false);
+    });
+
+    it("`null` clears the selection and keeps the bare model", async () => {
+      withSuiteSelection();
+      const res = await request("PATCH", SUITE_URL, {
+        executionConfig: { modelSelection: null },
+      });
+      expect(res.status).toBe(200);
+      const input = setSuiteConfigInput();
+      expect("modelSelection" in input).toBe(false);
+      expect(input.modelId).toBe(HAIKU);
+    });
+
+    it("reads the selection back on the suite DTO", async () => {
+      withSuiteSelection();
+      const res = await request("GET", SUITE_URL);
+      expect(((await res.json()) as any).executionConfig.modelSelection).toEqual(
+        HAIKU_SELECTION,
+      );
+    });
+  });
+
+  describe("case models[].selection", () => {
+    const SAVED = {
+      ...CASE_DOC,
+      models: [
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+        { model: "openai/gpt-5", provider: "openai" },
+      ],
+    };
+
+    function withSavedCase() {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestCase"
+          ? Promise.resolve(SAVED)
+          : defaultQueryImpl(name),
+      );
+    }
+
+    it("persists a selection on create", async () => {
+      const res = await request("POST", `${SUITE_URL}/cases`, {
+        title: "with effort",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        models: [{ model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION }],
+      });
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().models).toEqual([
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+      ]);
+    });
+
+    it("refuses a selection that is for another model", async () => {
+      const res = await request("POST", `${SUITE_URL}/cases`, {
+        title: "mismatch",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        models: [{ model: "openai/gpt-5", selection: HAIKU_SELECTION }],
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).message).toContain("models[].selection");
+    });
+
+    it("reads the stored selection back", async () => {
+      withSavedCase();
+      const res = await request("GET", CASE_URL);
+      expect(((await res.json()) as any).models).toEqual([
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+        { model: "openai/gpt-5", provider: "openai" },
+      ]);
+    });
+
+    it("a `models` PATCH keeps the existing selection for a model that omits one", async () => {
+      withSavedCase();
+      const res = await request("PATCH", CASE_URL, {
+        models: [{ model: HAIKU, provider: "anthropic" }, { model: "openai/gpt-5" }],
+      });
+      expect(res.status).toBe(200);
+      expect(updateArgs().models).toEqual([
+        { model: HAIKU, provider: "anthropic", selection: HAIKU_SELECTION },
+        { model: "openai/gpt-5", provider: "openai" },
+      ]);
+    });
+
+    it("`selection: null` drops it, and a new selection replaces it", async () => {
+      withSavedCase();
+      const dropped = await request("PATCH", CASE_URL, {
+        models: [{ model: HAIKU, selection: null }],
+      });
+      expect(dropped.status).toBe(200);
+      expect(updateArgs().models).toEqual([
+        { model: HAIKU, provider: "anthropic" },
+      ]);
+
+      const replaced = await request("PATCH", CASE_URL, {
+        models: [
+          {
+            model: HAIKU,
+            selection: { ...HAIKU_SELECTION, settings: { reasoningEffort: "low" } },
+          },
+        ],
+      });
+      expect(replaced.status).toBe(200);
+      expect(updateArgs().models[0].selection.settings).toEqual({
+        reasoningEffort: "low",
+      });
+    });
+
+    it("does not attach a stored selection to a model it was not saved for", async () => {
+      withSavedCase();
+      const res = await request("PATCH", CASE_URL, {
+        models: [{ model: "google/gemini-2.5-pro" }],
+      });
+      expect(res.status).toBe(200);
+      expect(updateArgs().models).toEqual([
+        { model: "google/gemini-2.5-pro", provider: "google" },
+      ]);
+    });
+  });
+});
+
+// ── Store-once DTOs: computed model ids, stored legacy selections, markers ──
+
+describe("v1 eval routes: store-once selections", () => {
+  const LEGACY = { source: "legacy", modelId: "llama3", provider: "ollama" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name),
+    );
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args),
+    );
+  });
+
+  function withQuery(name: string, value: unknown) {
+    convexQueryMock.mockImplementation((query: string) =>
+      query === name ? Promise.resolve(value) : defaultQueryImpl(query),
+    );
+  }
+
+  it("case models: `model` is computed from the selection, and the marker rides beside it", async () => {
+    withQuery("testSuites:getTestCase", {
+      ...CASE_DOC,
+      models: [
+        // A store-once entry: the selection is the only copy of the model.
+        { selection: HAIKU_SELECTION, selectionOrigin: "backfill" },
+        { model: "llama3", provider: "ollama", selection: LEGACY, selectionOrigin: "backfill" },
+        { model: "openai/gpt-5", provider: "openai" },
+      ],
+    });
+    const res = await request("GET", CASE_URL);
+    expect(((await res.json()) as any).models).toEqual([
+      { model: HAIKU, selection: HAIKU_SELECTION, selectionOrigin: "backfill" },
+      {
+        model: "llama3",
+        provider: "ollama",
+        selection: LEGACY,
+        selectionOrigin: "backfill",
+      },
+      { model: "openai/gpt-5", provider: "openai" },
+    ]);
+  });
+
+  it("a case `models` PATCH accepts a stored legacy selection sent back verbatim", async () => {
+    withQuery("testSuites:getTestCase", CASE_DOC);
+    const res = await request("PATCH", CASE_URL, {
+      models: [{ model: "llama3", provider: "ollama", selection: LEGACY }],
+    });
+    expect(res.status).toBe(200);
+    expect(updateArgs().models).toEqual([
+      { model: "llama3", provider: "ollama", selection: LEGACY },
+    ]);
+  });
+
+  it("a case `models` PATCH that omits the selection keeps it AND its marker", async () => {
+    withQuery("testSuites:getTestCase", {
+      ...CASE_DOC,
+      models: [
+        { model: "llama3", provider: "ollama", selection: LEGACY, selectionOrigin: "backfill" },
+      ],
+    });
+    const res = await request("PATCH", CASE_URL, {
+      models: [{ model: "llama3", provider: "ollama" }],
+    });
+    expect(res.status).toBe(200);
+    expect(updateArgs().models).toEqual([
+      {
+        model: "llama3",
+        provider: "ollama",
+        selection: LEGACY,
+        selectionOrigin: "backfill",
+      },
+    ]);
+  });
+
+  it("a malformed legacy selection is refused, never stored", async () => {
+    withQuery("testSuites:getTestCase", CASE_DOC);
+    const res = await request("PATCH", CASE_URL, {
+      models: [
+        { model: "llama3", selection: { source: "legacy", modelId: "llama3", apiKey: "sk" } },
+      ],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("suite executionConfig: `model` is computed, the selection and its marker are returned", async () => {
+    const { modelId: _bare, ...withoutModelId } = EXEC_CONFIG;
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...withoutModelId,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("GET", SUITE_URL);
+    expect(((await res.json()) as any).executionConfig).toMatchObject({
+      model: HAIKU,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+  });
+
+  it("suite executionConfig PATCH re-sending the same `model` keeps the selection and its marker", async () => {
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...EXEC_CONFIG,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: { model: HAIKU, temperature: 0.2 },
+    });
+    expect(res.status).toBe(200);
+    const input = setSuiteConfigInput();
+    expect(input.modelSelection).toEqual(HAIKU_SELECTION);
+    expect(input.modelSelectionOrigin).toBe("backfill");
+  });
+
+  it("suite executionConfig PATCH re-sending the stored selection keeps its marker", async () => {
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...EXEC_CONFIG,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: { modelSelection: { ...HAIKU_SELECTION } },
+    });
+    expect(res.status).toBe(200);
+    expect(setSuiteConfigInput().modelSelectionOrigin).toBe("backfill");
+  });
+
+  it("suite executionConfig PATCH with a new selection drops the old marker", async () => {
+    withQuery("hostConfigsV2:getSuiteConfig", {
+      ...EXEC_CONFIG,
+      modelSelection: HAIKU_SELECTION,
+      modelSelectionOrigin: "backfill",
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: {
+        modelSelection: { ...HAIKU_SELECTION, settings: { reasoningEffort: "low" } },
+      },
+    });
+    expect(res.status).toBe(200);
+    expect("modelSelectionOrigin" in setSuiteConfigInput()).toBe(false);
+  });
+
+  it("suite executionConfig PATCH accepts a stored legacy selection", async () => {
+    const res = await request("PATCH", SUITE_URL, {
+      executionConfig: { modelSelection: { source: "legacy", modelId: "llama3" } },
+    });
+    expect(res.status).toBe(200);
+    const input = setSuiteConfigInput();
+    expect(input.modelSelection).toEqual({ source: "legacy", modelId: "llama3" });
+    expect(input.modelId).toBe("llama3");
+  });
+
+  it("judge: returns judgeSelection and computes `model` from it", async () => {
+    const judgeSelection = {
+      modelId: "openai/gpt-5",
+      source: "hosted",
+      fallback: { provider: "none", model: "none" },
+    };
+    withQuery("testSuites:getTestSuite", {
+      ...SUITE_DOC,
+      judgeConfig: {
+        goalCompletion: {
+          enabled: true,
+          judgeSelection,
+          judgeSelectionOrigin: "backfill",
+        },
+      },
+    });
+    const res = await request("GET", SUITE_URL);
+    expect(((await res.json()) as any).settings.judge).toMatchObject({
+      model: "openai/gpt-5",
+      judgeSelection,
+      judgeSelectionOrigin: "backfill",
+    });
+  });
+
+  it("judge PATCH: a bare model change drops a selection saved for the old model", async () => {
+    withQuery("testSuites:getTestSuite", {
+      ...SUITE_DOC,
+      judgeConfig: {
+        goalCompletion: {
+          enabled: true,
+          judgeModel: "openai/gpt-5-mini",
+          judgeSelection: { source: "legacy", modelId: "openai/gpt-5-mini" },
+          judgeSelectionOrigin: "backfill",
+        },
+      },
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      settings: { judge: { model: "anthropic/claude-haiku-4.5" } },
+    });
+    expect(res.status).toBe(200);
+    const call = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    );
+    expect(call![1].judgeConfig.goalCompletion).toEqual({
+      enabled: true,
+      judgeModel: "anthropic/claude-haiku-4.5",
+    });
+  });
+
+  it("judge PATCH: re-sending the same model keeps its selection and marker", async () => {
+    const judgeSelection = { source: "legacy", modelId: "openai/gpt-5-mini" };
+    withQuery("testSuites:getTestSuite", {
+      ...SUITE_DOC,
+      judgeConfig: {
+        goalCompletion: {
+          enabled: true,
+          judgeModel: "openai/gpt-5-mini",
+          judgeSelection,
+          judgeSelectionOrigin: "backfill",
+        },
+      },
+    });
+    const res = await request("PATCH", SUITE_URL, {
+      settings: { judge: { model: "openai/gpt-5-mini", threshold: 0.5 } },
+    });
+    expect(res.status).toBe(200);
+    const call = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite",
+    );
+    expect(call![1].judgeConfig.goalCompletion).toMatchObject({
+      judgeSelection,
+      judgeSelectionOrigin: "backfill",
+    });
   });
 });

@@ -491,6 +491,57 @@ export function buildLiveEffectiveCapabilities(args: {
   };
 }
 
+/**
+ * An environment's capability set with the project's live standalone skills
+ * added after its own.
+ *
+ * For the Playground's HIDDEN environment only (the chat route's
+ * `includeProjectSkills`): a chat whose environments UI is hidden runs its
+ * plugins through an ad-hoc environment, yet its skills must stay the ones a
+ * client turn delivers — the project's pool — next to the plugins'. Nothing
+ * else changes: servers, plugin versions and the environment's own skills are
+ * the environment's.
+ *
+ * The environment's entries win. A live skill already in the set (the client
+ * selected it, so it arrived on the host channel) is not added twice; a live
+ * skill whose ref another entry already holds is left out and reported, the
+ * same rule every other builder here applies.
+ */
+export function withLiveProjectSkills(
+  set: EffectiveCapabilitySet,
+  live: EffectiveCapabilitySet
+): EffectiveCapabilitySet {
+  const usedRefs = new Set(allEffectiveSkills(set).map((skill) => skill.ref));
+  const knownSkillIds = new Set(
+    set.standaloneSkills.map((skill) => skill.skillId)
+  );
+  const problems = [...set.problems];
+  const added: RuntimeStandaloneSkill[] = [];
+  for (const skill of live.standaloneSkills) {
+    if (knownSkillIds.has(skill.skillId)) continue;
+    if (usedRefs.has(skill.ref)) {
+      problems.push({
+        code: "skill_ref_collision",
+        message: `Two skills resolved to the reference "${skill.ref}"; only the first is loadable.`,
+        ref: skill.ref,
+        skillId: skill.skillId,
+      });
+      continue;
+    }
+    usedRefs.add(skill.ref);
+    knownSkillIds.add(skill.skillId);
+    added.push(skill);
+  }
+  if (added.length === 0 && problems.length === set.problems.length) {
+    return set;
+  }
+  return {
+    ...set,
+    standaloneSkills: [...set.standaloneSkills, ...added],
+    problems,
+  };
+}
+
 export function allEffectiveSkills(
   set: EffectiveCapabilitySet
 ): Array<

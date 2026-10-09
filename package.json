@@ -27,8 +27,9 @@
     "check:permalink-concatenation": "node scripts/check-permalink-concatenation.mjs",
     "codemod:evals-vocabulary:report": "node scripts/codemod/evals-vocabulary/report.mjs",
     "check:hosted-manager-base-fetch": "node mcpjam-inspector/scripts/check-hosted-manager-base-fetch.mjs",
+    "check:service-credential-reads": "node mcpjam-inspector/scripts/check-service-credential-reads.mjs",
     "check:platform-runtime-safety:dist": "node scripts/check-runtime-guards.mjs platform-runtime-safety-dist",
-    "test:checks": "npm run check:mcp-v1-runtime-imports && npm run check:bundled-runtime-paths && npm run check:permalink-concatenation && npm run check:hosted-manager-base-fetch && npm run check:platform-runtime-safety && npm run build -w @mcpjam/sdk && npm run check:platform-runtime-safety:dist",
+    "test:checks": "npm run check:mcp-v1-runtime-imports && npm run check:bundled-runtime-paths && npm run check:permalink-concatenation && npm run check:hosted-manager-base-fetch && npm run check:service-credential-reads && npm run check:platform-runtime-safety && npm run build -w @mcpjam/sdk && npm run check:platform-runtime-safety:dist",
     "test": "npm run test:checks && npm run test:parallel && npm run test:packaging -w @mcpjam/sdk",
     "test:ci:rest": "npm run test:checks && npm run test:parallel:rest && npm run test:packaging:assert -w @mcpjam/sdk",
     "test:ci:packaging": "npm run build -w @mcpjam/sdk && npm run test:packaging -w @mcpjam/vitest",
@@ -47,26 +48,34 @@
     "claude-policy:check": "node scripts/sync-claude-policy-manifest.mjs --check",
     "openai-policy:sync": "node scripts/sync-openai-policy-manifest.mjs",
     "openai-policy:check": "node scripts/sync-openai-policy-manifest.mjs --check",
+    "muse-policy:sync": "node scripts/sync-muse-policy-manifest.mjs",
+    "muse-policy:check": "node scripts/sync-muse-policy-manifest.mjs --check",
     "release:status": "changeset status",
     "release:version": "changeset version",
     "release:publish": "changeset publish",
     "check:mirrors": "node scripts/check-authoring-mirror.mjs"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.7",
+    "@changesets/cli": "^3.0.3",
     "@google/design.md": "0.4.0",
     "@types/dagre": "^0.7.54",
     "concurrently": "^10.0.5",
-    "@changesets/changelog-github": "^1.0.1"
+    "@changesets/changelog-github": "^1.0.1",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
-    "react-force-graph-2d": "^1.29.1"
+    "react-force-graph-2d": "^1.29.2"
   },
   "overrides": {
     "shell-quote": "^1.8.4",
     "tar": "^7.5.22",
     "ws": "^8.21.3",
     "ip-address": "^10.7.0",
-    "postcss": "^8.5.23"
+    "postcss": "^8.5.23",
+    "@ai-sdk/provider-utils@^3.0.0": "3.0.30",
+    "external-editor": {
+      "tmp": "^0.2.6"
+    }
   }
 }

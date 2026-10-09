@@ -46,6 +46,7 @@
           "installation",
           "hosted/overview",
           "hosted/slack",
+          "hosted/claude-connector",
           "hosted/sso",
           "github-checks",
           "troubleshooting/common-errors",
@@ -142,12 +143,12 @@
       },
       {
         "tab": "SDK",
-        "tag": "v3",
+        "tag": "v9",
         "groups": [
           {
             "group": "Get Started",
             "icon": "rocket",
-            "pages": ["sdk/index", "sdk/quickstart", "sdk/migrating-to-v3"]
+            "pages": ["sdk/index", "sdk/quickstart", "sdk/migrating-to-v9", "sdk/migrating-to-v3"]
           },
           {
             "group": "Concepts",
@@ -180,7 +181,8 @@
               "sdk/reference/oauth-emulation",
               "sdk/reference/apps-conformance",
               "sdk/reference/tasks-conformance",
-              "sdk/reference/host-compat"
+              "sdk/reference/host-compat",
+              "sdk/reference/muse-readiness"
             ]
           }
         ]

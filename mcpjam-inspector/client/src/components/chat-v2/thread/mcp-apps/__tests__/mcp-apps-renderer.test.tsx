@@ -54,7 +54,8 @@ const {
   const appBridgeArgsRef = { current: null as any };
   const mockAppBridgeCtor = vi
     .fn()
-    .mockImplementation((client, hostInfo, hostCapabilities, options) => {
+    // Constructed with `new`, which Vitest 4 rejects for arrow implementations.
+    .mockImplementation(function (client, hostInfo, hostCapabilities, options) {
       appBridgeArgsRef.current = {
         client,
         hostInfo,
@@ -131,10 +132,16 @@ vi.mock("sonner", () => ({ toast: { info: vi.fn(), dismiss: vi.fn() } }));
 vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
 
 // ── Module mocks ───────────────────────────────────────────────────────────
-vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
-  AppBridge: mockAppBridgeCtor,
-  PostMessageTransport: mockPostMessageTransport,
-}));
+vi.mock(
+  "@modelcontextprotocol/ext-apps/app-bridge",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@modelcontextprotocol/ext-apps/app-bridge")
+    >()),
+    AppBridge: mockAppBridgeCtor,
+    PostMessageTransport: mockPostMessageTransport,
+  }),
+);
 
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
 // The renderer relocated to @mcpjam/widget-react imports `./sandboxed-iframe`
@@ -267,6 +274,10 @@ vi.mock("../../../../../../../../widget-react/src/mcp-apps-modal", () => ({
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
 import {
+  WidgetFullscreenPlacementContext,
+  WidgetHostProvider,
+} from "@mcpjam/widget-react";
+import {
   WidgetSurfaceHost,
   WidgetSurfaceHostProvider,
 } from "../widget-surface-host";
@@ -281,7 +292,12 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
-import { InspectorWidgetHostProvider } from "../use-widget-host";
+import { InspectorWidgetHostProvider, useWidgetHost } from "../use-widget-host";
+import {
+  createThreadAppHost,
+  type ThreadAppPresentation,
+} from "@/components/host-workspace/thread-app-host";
+import type { ThreadAppHandle } from "@/components/host-workspace/thread-app-api";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { toast } from "sonner";
 import { captureSentryMessage } from "@/lib/sentry";
@@ -576,6 +592,38 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();
     expect(sandboxedIframeMountsRef.current).toBe(1);
     expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("reloads the guest when its bridge is rebuilt, so it initializes the new bridge", async () => {
+    const renderTree = (override: Record<string, unknown>) => (
+      <ScenarioHostCapabilitiesOverrideProvider value={override}>
+        <HostedRenderer {...baseProps} />
+      </ScenarioHostCapabilitiesOverrideProvider>
+    );
+    const { rerender } = render(renderTree({ openLinks: {} }));
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+    });
+    const firstLoad = sandboxedIframePropsRef.current.reloadKey;
+    act(() => triggerReady());
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sandboxed-iframe").style.opacity).toBe("1"),
+    );
+
+    // New advertised capabilities need a new bridge. The guest already
+    // initialized the old one, so it must load again for the new one.
+    rerender(renderTree({ openLinks: {}, logging: {} }));
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
+      expect(sandboxedIframePropsRef.current.reloadKey).not.toBe(firstLoad);
+    });
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    act(() => triggerReady());
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sandboxed-iframe").style.opacity).toBe("1"),
+    );
   });
 
   it("renders separate iframes for distinct tool calls on the same widget", async () => {
@@ -1067,6 +1115,415 @@ describe("MCPAppsRenderer tool input streaming", () => {
       | Record<string, unknown>
       | undefined;
     expect(hostContext).not.toHaveProperty("toolInfo");
+  });
+
+  it("does not feed debug-store writes back into fresh equivalent host context", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/stores/widget-debug-store")
+    >("@/stores/widget-debug-store");
+    const store = actual.useWidgetDebugStore;
+    stableStoreFns.setWidgetDebugInfo.mockImplementation(
+      store.getState().setWidgetDebugInfo,
+    );
+    stableStoreFns.setWidgetGlobals.mockImplementation(
+      store.getState().setWidgetGlobals,
+    );
+    let renders = 0;
+    function LiveDebugSubscriber() {
+      React.useSyncExternalStore(
+        store.subscribe,
+        () => store.getState().widgets,
+      );
+      renders++;
+      if (renders > 20) throw new Error("debug context feedback loop");
+      mockHostContextStoreState.draftHostContext = {
+        deviceCapabilities: { hover: true, touch: false },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        availableDisplayModes: ["fullscreen"],
+      };
+      return (
+        <HostedRenderer
+          {...baseProps}
+          hostManagedPresentation
+          displayMode="fullscreen"
+        />
+      );
+    }
+    try {
+      render(<LiveDebugSubscriber />);
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      expect(renders).toBeLessThan(20);
+      expect(store.getState().widgets.get("call-1")).toBeDefined();
+    } finally {
+      stableStoreFns.setWidgetDebugInfo.mockReset();
+      stableStoreFns.setWidgetGlobals.mockReset();
+    }
+  });
+
+  it("leaves fullscreen geometry and toolbar to its workspace while preserving protocol mode", async () => {
+    const { container, rerender } = render(
+      <HostedRenderer
+        {...baseProps}
+        hostManagedPresentation
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />,
+    );
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    expect(appBridgeArgsRef.current?.options?.hostContext.displayMode).toBe(
+      "fullscreen",
+    );
+    expect(container.querySelector(".fixed")).toBeNull();
+    expect(screen.queryByLabelText("Exit fullscreen")).not.toBeInTheDocument();
+    const mounts = sandboxedIframeMountsRef.current;
+    rerender(
+      <HostedRenderer
+        {...baseProps}
+        hostManagedPresentation
+        displayMode="inline"
+      />,
+    );
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+    expect(container.querySelector(".fixed")).toBeNull();
+  });
+
+  it("draws a fullscreen App in a host-given rectangle with Exit full screen, without remounting", async () => {
+    const onEnter = vi.fn();
+    const onExit = vi.fn();
+    const onDisplayModeChange = vi.fn();
+    const placement = (rect: { top: number; left: number; width: number; height: number } | null) => ({
+      rect,
+      exitLabel: "Exit full screen",
+      onEnter,
+      onExit,
+    });
+    const view = (rect: Parameters<typeof placement>[0]) => (
+      <WidgetFullscreenPlacementContext.Provider value={placement(rect)}>
+        <HostedRenderer
+          {...baseProps}
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+          onDisplayModeChange={onDisplayModeChange}
+        />
+      </WidgetFullscreenPlacementContext.Provider>
+    );
+    const { container, rerender } = render(view(null));
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    // No rectangle yet: today's window fullscreen.
+    expect(container.querySelector("[data-mcp-app-fullscreen-placed]")).toBeNull();
+    const mounts = sandboxedIframeMountsRef.current;
+    rerender(view({ top: 40, left: 600, width: 400, height: 500 }));
+    const placed = container.querySelector(
+      "[data-mcp-app-fullscreen-placed]",
+    ) as HTMLElement;
+    expect(placed).not.toBeNull();
+    expect(placed.style.top).toBe("40px");
+    expect(placed.style.left).toBe("600px");
+    expect(placed.style.width).toBe("400px");
+    expect(placed.style.height).toBe("500px");
+    // Above the host panel holding the rectangle, which a narrow window lays
+    // over the chat at z-40 — level with it, the App was hidden behind it.
+    expect(placed).toHaveClass("z-50");
+    expect(placed).not.toHaveClass("inset-0");
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+    expect(onEnter).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "test-server" }),
+    );
+    const exit = screen.getByRole("button", { name: "Exit fullscreen" });
+    expect(exit).toHaveTextContent("Exit full screen");
+    // The rail tab's close uses the same exit as the header, and the host
+    // that ended it already knows: no onExit.
+    act(() => onEnter.mock.calls.at(-1)![0].exit());
+    expect(onDisplayModeChange).toHaveBeenCalledWith("inline");
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("tells the host when the person leaves a placed fullscreen from the App's own control", async () => {
+    const onExit = vi.fn();
+    const onDisplayModeChange = vi.fn();
+    render(
+      <WidgetFullscreenPlacementContext.Provider
+        value={{
+          rect: { top: 40, left: 600, width: 400, height: 500 },
+          exitLabel: "Exit full screen",
+          onExit,
+        }}
+      >
+        <HostedRenderer
+          {...baseProps}
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+          onDisplayModeChange={onDisplayModeChange}
+        />
+      </WidgetFullscreenPlacementContext.Provider>,
+    );
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Exit fullscreen" }));
+    expect(onDisplayModeChange).toHaveBeenCalledWith("inline");
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps covering the window, without onExit, when its fullscreen is not placed", async () => {
+    const onExit = vi.fn();
+    const { container } = render(
+      <WidgetFullscreenPlacementContext.Provider value={{ rect: null, onExit }}>
+        <HostedRenderer
+          {...baseProps}
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+        />
+      </WidgetFullscreenPlacementContext.Provider>,
+    );
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    const cover = container.querySelector(".fixed") as HTMLElement;
+    expect(cover).toHaveClass("inset-0", "z-40");
+    fireEvent.click(screen.getByRole("button", { name: "Exit fullscreen" }));
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  describe("a model App placed in the side panel", () => {
+    const rect = { top: 40, left: 600, width: 400, height: 500 };
+    const handle = {
+      instanceToken: "token",
+      instanceId: "instance",
+      generation: 1,
+      operationId: "operation",
+      resourceUri: baseProps.resourceUri,
+      toolTitle: "App",
+      appToolsEnabled: true,
+      widgetContent: {
+        html: "<html><body>model app</body></html>",
+        mimeTypeValid: true,
+      },
+    } as unknown as ThreadAppHandle;
+    function OwnedHost({
+      presentation,
+      children,
+    }: {
+      presentation: ThreadAppPresentation;
+      children: React.ReactNode;
+    }) {
+      const base = useWidgetHost();
+      const host = React.useMemo(
+        () =>
+          createThreadAppHost(base, handle, baseProps.serverId, presentation),
+        [base, presentation],
+      );
+      return <WidgetHostProvider value={host}>{children}</WidgetHostProvider>;
+    }
+    /**
+     * The Thread + Playground contract: one displayMode, the fullscreen
+     * owner, and a placement in the side panel while that owner is
+     * fullscreen. `entered` is the side-panel tab's handle on the App.
+     */
+    function mountChat(presentation: ThreadAppPresentation = "model") {
+      const entered: { current: { label: string; exit: () => void } | null } =
+        { current: null };
+      const state = { mode: "inline" as string };
+      function Chat() {
+        const [mode, setMode] = React.useState<"inline" | "pip" | "fullscreen">(
+          "inline",
+        );
+        const [owner, setOwner] = React.useState<string | null>(null);
+        state.mode = mode;
+        const placed = mode === "fullscreen" && owner !== null;
+        return (
+          <WidgetFullscreenPlacementContext.Provider
+            value={{
+              rect: placed ? rect : null,
+              exitLabel: "Exit full screen",
+              onEnter: (app) => {
+                entered.current = app;
+              },
+              onLeave: () => {
+                entered.current = null;
+              },
+            }}
+          >
+            <InspectorWidgetHostProvider>
+              <OwnedHost presentation={presentation}>
+                <MCPAppsRenderer
+                  {...baseProps}
+                  displayMode={mode}
+                  fullscreenWidgetId={owner}
+                  onDisplayModeChange={setMode}
+                  onRequestFullscreen={setOwner}
+                  onExitFullscreen={(id) =>
+                    setOwner((current) => (current === id ? null : current))
+                  }
+                />
+              </OwnedHost>
+            </InspectorWidgetHostProvider>
+          </WidgetFullscreenPlacementContext.Provider>
+        );
+      }
+      const view = render(<Chat />);
+      return { ...view, entered, state };
+    }
+    /** An App with its own tools goes fullscreen once it initializes. */
+    async function goFullscreen() {
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      mockBridge.getAppCapabilities.mockReturnValue({
+        tools: {},
+        availableDisplayModes: ["inline", "fullscreen"],
+      });
+      await act(async () => {
+        triggerReady();
+        await Promise.resolve();
+      });
+      mockBridge.getAppCapabilities.mockReturnValue(undefined);
+    }
+    const placedApp = (container: HTMLElement) =>
+      container.querySelector("[data-mcp-app-fullscreen-placed]");
+
+    it("opens inline in its message", async () => {
+      const { container, state, entered } = mountChat();
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      await act(async () => {
+        triggerReady();
+        await Promise.resolve();
+      });
+      expect(state.mode).toBe("inline");
+      expect(placedApp(container)).toBeNull();
+      expect(entered.current).toBeNull();
+    });
+
+    it.each([
+      ["its side-panel tab (closing it or choosing another tab)", "tab"],
+      ["Exit full screen", "header"],
+      ["the App's own Return (a request for inline)", "app"],
+    ] as const)(
+      "leaves fullscreen for good with %s",
+      async (_name, control) => {
+        const { container, state, entered } = mountChat();
+        await goFullscreen();
+        expect(state.mode).toBe("fullscreen");
+        expect(placedApp(container)).not.toBeNull();
+        expect(entered.current?.label).toBe("test-server");
+
+        await act(async () => {
+          if (control === "tab") entered.current!.exit();
+          else if (control === "header")
+            fireEvent.click(
+              screen.getByRole("button", { name: "Exit fullscreen" }),
+            );
+          else {
+            const request = mockBridge.onrequestdisplaymode as (args: {
+              mode: "inline";
+            }) => Promise<{ mode: string }>;
+            expect((await request({ mode: "inline" })).mode).toBe("inline");
+          }
+          await Promise.resolve();
+        });
+        // Nothing snaps it back: the tab ends and the App stays inline.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        expect(state.mode).toBe("inline");
+        expect(placedApp(container)).toBeNull();
+        expect(entered.current).toBeNull();
+      },
+    );
+
+    it("keeps an entrypoint (not a model App) fullscreen only", async () => {
+      const { state } = mountChat("thread");
+      await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+    });
+
+    it("opens an entrypoint whose App declares only inline, in the fullscreen the host chose", async () => {
+      const owned = handle as unknown as { widgetContent: unknown };
+      const original = owned.widgetContent;
+      owned.widgetContent = {
+        html: "<html><body>inline-only fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: {
+          preferredDisplayMode: "inline",
+          availableDisplayModes: ["inline"],
+        },
+      };
+      try {
+        const { state } = mountChat("global");
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        mockBridge.getAppCapabilities.mockReturnValue({
+          availableDisplayModes: ["inline"],
+        });
+        await act(async () => {
+          triggerReady();
+          await Promise.resolve();
+        });
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        expect(
+          screen.queryByText(/This App has no supported display mode/),
+        ).toBeNull();
+      } finally {
+        owned.widgetContent = original;
+        mockBridge.getAppCapabilities.mockReturnValue(undefined);
+      }
+    });
+  });
+
+  it("applies resource preference before the first bridge and narrows after init without remounting", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        html: "<html><body>display fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: {
+          preferredDisplayMode: "fullscreen",
+          availableDisplayModes: ["inline", "fullscreen"],
+        },
+      }),
+    } as Response);
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    expect(appBridgeArgsRef.current?.options?.hostContext).toEqual(
+      expect.objectContaining({
+        displayMode: "fullscreen",
+        availableDisplayModes: ["inline", "fullscreen"],
+      }),
+    );
+    const mounts = sandboxedIframeMountsRef.current;
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["inline"],
+    });
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() =>
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          availableDisplayModes: ["inline"],
+          displayMode: "inline",
+        }),
+      ),
+    );
+    expect(sandboxedIframeMountsRef.current).toBe(mounts);
+    mockBridge.getAppCapabilities.mockReturnValue(undefined);
+  });
+
+  it("refuses an App with no supported post-init display mode", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        html: "<html><body>display fixture</body></html>",
+        mimeTypeValid: true,
+        resourceDisplayHints: { availableDisplayModes: ["inline"] },
+      }),
+    } as Response);
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["fullscreen"],
+    });
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+    expect(
+      await screen.findByText(/This App has no supported display mode/),
+    ).toBeInTheDocument();
+    mockBridge.getAppCapabilities.mockReturnValue(undefined);
   });
 
   it("advertises matrix-clamped HostContext.availableDisplayModes (Copilot: inline + fullscreen, no pip)", async () => {

@@ -1109,3 +1109,163 @@ describe("expired background update records", () => {
     );
   });
 });
+
+it("keeps a shutdown outcome through recovery-marker cleanup and reports the next launch", async () => {
+  downloaded();
+  mod.__setStalledQuitTimeoutForTests(100);
+  mod.installUpdateOnQuit();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(status().reason).toBe("shutdown_stuck");
+  const journal = path.join("/tmp/userData", ".update-install-outcomes.json");
+  const pending = JSON.parse(mocks.files.get(journal)!)[0];
+  const failure = mocks.capture.mock.calls.find(
+    ([e]) => e.event_id === pending.failureEventId,
+  )?.[0];
+  expect(failure?.message).toContain("Download completed");
+  mocks.files.delete(file);
+  mocks.version = "3.11.0";
+  await boot();
+  await settle();
+  const outcome = mocks.capture.mock.calls.find(
+    ([e]) => e.tags.update_reason === "install_outcome",
+  )?.[0];
+  expect(outcome?.contexts.update).toMatchObject({
+    attempt_id: pending.id,
+    failure_event_id: pending.failureEventId,
+    install_outcome: "installed",
+  });
+  expect(JSON.parse(mocks.files.get(journal)!)).toEqual([]);
+});
+
+it("attaches the automatic trigger and late-completion timeline without authorizing install", async () => {
+  mod.startUpdatePolling();
+  emit("update-available");
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  expect(status().kind).toBe("failed");
+  mocks.power.get("suspend")?.();
+  await vi.advanceTimersByTimeAsync(60 * 60_000);
+  mocks.power.get("resume")?.();
+  emit("update-downloaded", {}, "Notes", "3.11.0");
+  const diagnostic =
+    mocks.capture.mock.calls.at(-1)![0].contexts.update_diagnostics;
+  expect(diagnostic.timeline.map((line: string) => JSON.parse(line))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ step: "attempt_started", trigger: "startup" }),
+      expect.objectContaining({ step: "download_timeout" }),
+      expect.objectContaining({ step: "download_completed" }),
+    ]),
+  );
+  expect(diagnostic.sleep_ms).toBe(60 * 60_000);
+  expect(diagnostic.after_timeout_ms).toBe(60 * 60_000);
+  expect(mocks.install).not.toHaveBeenCalled();
+});
+it("distinguishes scheduled checks, automatic retries, and user installation", async () => {
+  mod.startUpdatePolling();
+  emit("update-not-available");
+  await vi.advanceTimersByTimeAsync(mod.UPDATE_POLL_INTERVAL_MS);
+  emit("update-available");
+  emit("error", Object.assign(new Error("secret"), { code: "ECONNRESET" }));
+  await vi.advanceTimersByTimeAsync(30_000);
+  downloaded();
+  click();
+  await vi.advanceTimersByTimeAsync(30_000);
+  const timeline = mocks.capture.mock.calls.find(
+    ([e]) => e.tags.update_reason === "install_timeout",
+  )![0].contexts.update_diagnostics.timeline;
+  expect(timeline.map((line: string) => JSON.parse(line))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        step: "attempt_started",
+        trigger: "scheduled",
+      }),
+      expect.objectContaining({
+        step: "retry_scheduled",
+        trigger: "automatic_retry",
+      }),
+      expect.objectContaining({
+        step: "check_requested",
+        trigger: "automatic_retry",
+      }),
+      expect.objectContaining({ step: "native_error", code: "ECONNRESET" }),
+      expect.objectContaining({
+        step: "install_requested",
+        trigger: "user_install",
+      }),
+    ]),
+  );
+  expect(JSON.stringify(timeline)).not.toContain("secret");
+});
+
+it("keeps recovery shutdown stages in the existing failure event", async () => {
+  downloaded();
+  click();
+  await vi.advanceTimersByTimeAsync(30_000);
+  await settle();
+  const { recordUpdateShutdown } = await import(
+    "../../src/ipc/update/update-shutdown.js"
+  );
+  recordUpdateShutdown("before_quit");
+  recordUpdateShutdown("browser_cleanup_started");
+  recordUpdateShutdown("window_close_blocked");
+  await vi.advanceTimersByTimeAsync(30_000);
+  const failure = mocks.capture.mock.calls.find(
+    ([e]) => e.tags.update_reason === "shutdown_stuck",
+  )![0];
+  expect(
+    failure.contexts.update_diagnostics.timeline.map(
+      (line: string) => JSON.parse(line).step,
+    ),
+  ).toEqual(
+    expect.arrayContaining([
+      "restart_requested",
+      "before_quit",
+      "browser_cleanup_started",
+      "window_close_blocked",
+    ]),
+  );
+  expect(mocks.install).toHaveBeenCalledTimes(1);
+});
+it("records a user download retry without duplicate clicks starting overlapping checks", async () => {
+  mod.startUpdatePolling();
+  emit("update-available");
+  for (const delay of [30_000, 120_000]) {
+    emit("error", new Error("native"));
+    await vi.advanceTimersByTimeAsync(delay);
+    emit("update-available");
+  }
+  emit("error", new Error("native"));
+  const before = mocks.check.mock.calls.length;
+  mocks.ipc.get("app:retry-update-download")?.(event);
+  mocks.ipc.get("app:retry-update-download")?.(event);
+  expect(mocks.check).toHaveBeenCalledTimes(before + 1);
+  emit("update-available");
+  emit("update-downloaded", {}, "", "3.11.0");
+  const recovered = mocks.capture.mock.calls.at(-1)![0];
+  expect(recovered.contexts.update_diagnostics.trigger).toBe("user_retry");
+  expect(
+    recovered.contexts.update_diagnostics.timeline
+      .map((line: string) => JSON.parse(line))
+      .filter((entry: { step: string }) => entry.step === "check_requested")
+      .map((entry: { trigger: string }) => entry.trigger),
+  ).toEqual(["user_retry"]);
+  expect(mocks.install).not.toHaveBeenCalled();
+});
+
+it("a diagnostics-only restart journal never authorizes installation or relaunch", async () => {
+  downloaded();
+  click();
+  await vi.advanceTimersByTimeAsync(30_000);
+  await settle();
+  expect(
+    mocks.files.has(path.join("/tmp/userData", ".update-diagnostics.json")),
+  ).toBe(true);
+  mocks.files.delete(file);
+  mocks.install.mockClear();
+  mocks.relaunch.mockClear();
+  await boot();
+  mod.startUpdatePolling();
+  downloaded();
+  expect(mocks.install).not.toHaveBeenCalled();
+  expect(mocks.relaunch).not.toHaveBeenCalled();
+  expect(status().kind).toBe("downloaded");
+});

@@ -33,8 +33,10 @@ import {
   createDirectoryPluginFileSource,
   createZipPluginFileSource,
   gatherClaudeReadinessEvidence,
+  gatherMuseReadinessEvidence,
   gatherOpenAIReadinessEvidence,
   gradeClaudeReadiness,
+  gradeMuseReadiness,
   gradeOpenAIReadiness,
   xmldomParseXml,
   DIRECTORY_FEATURE_CLAIMS,
@@ -77,10 +79,12 @@ import {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   startClaudeReadinessRunOperation,
+  startMuseReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   type ListReadinessRunsInput,
   type ReadinessRunScopedInput,
   type StartClaudeReadinessInput,
+  type StartMuseReadinessInput,
   type StartOpenAIReadinessInput,
 } from "@mcpjam/sdk/platform";
 
@@ -96,6 +100,7 @@ interface ReadinessCheckOptions {
   lazyAuthProbe?: boolean;
   lazyAuthTool?: string;
   lazyAuthPublicTool?: string;
+  submissionProfile?: string;
 }
 
 /** Commander collector for a repeatable option. */
@@ -424,6 +429,53 @@ async function runOpenAICheck(
 }
 
 /**
+ * Read a Muse submission profile. Parsed as JSON here and VALIDATED by the
+ * grader, so a malformed field becomes a finding that names it rather than a
+ * usage error that hides the rest of the grade.
+ */
+async function readSubmissionProfile(path: string): Promise<unknown> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    throw usageError(`Cannot read --submission-profile ${path}.`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw usageError(`--submission-profile ${path} is not valid JSON.`);
+  }
+}
+
+async function runMuseCheck(
+  target: string,
+  options: ReadinessCheckOptions,
+  command: Command,
+): Promise<void> {
+  const reporter = parseReporterFormat(options.reporter);
+  const format = getFormat(command, reporter);
+
+  const evidence = await gatherMuseReadinessEvidence({
+    enteredUrl: target,
+    // The global fetch — see `runClaudeCheck`.
+    fetchFn: fetch,
+    headers: mcpRequestHeaders(options, target),
+    timeoutMs: options.timeout,
+    submissionProfile: options.submissionProfile
+      ? await readSubmissionProfile(options.submissionProfile)
+      : undefined,
+  });
+
+  const result = gradeMuseReadiness(evidence);
+  writeReadinessOutput(renderConformanceForCli(result, reporter, format));
+  reportReadinessVerdict(result, command);
+  reportReadinessGaps(result, command);
+
+  const exitCode = directoryReadinessExitCode(result);
+  if (exitCode !== 0) setProcessExitCode(exitCode);
+}
+
+/**
  * Register the `readiness` group and its local `check` command.
  *
  * Hosted run commands attach to the same noun in this function —
@@ -518,6 +570,38 @@ export function registerReadinessCommands(program: Command): void {
     },
   );
 
+  check
+    .command("muse")
+    .description("Grade an MCP server against Meta's Muse connector guidelines")
+    .argument("<url>", "MCP server URL")
+    .option(
+      "--submission-profile <path>",
+      "JSON submission profile (overview, contacts, docs, credentials, tool classes). Without it the submission verdict stays incomplete.",
+    )
+    .option("--access-token <token>", "Bearer access token for the server")
+    .option(
+      "--credentials-file <path>",
+      "Load the access token from a file written by oauth login",
+    )
+    .option(
+      "--header <header>",
+      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
+      "--timeout <ms>",
+      "Per-request timeout in milliseconds",
+      (value: string) => parsePositiveInteger(value, "Timeout"),
+    )
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
+    .action(async (url: string, options: ReadinessCheckOptions, command) => {
+      await runMuseCheck(url, options, command);
+    });
+
   registerHostedReadinessCommands(readiness);
 }
 
@@ -594,7 +678,7 @@ interface HostedRunOptions extends PlatformOptions {
 
 interface HostedListOptions extends PlatformOptions {
   project?: string;
-  kind?: "claude" | "openai";
+  kind?: "claude" | "openai" | "muse";
   server?: string;
   limit?: number;
 }
@@ -663,6 +747,25 @@ function registerHostedReadinessCommands(readiness: Command): void {
     }),
   );
 
+  const startMuse = addProjectOption(
+    start
+      .command("muse")
+      .description("Grade a saved server against Meta's Muse guidelines")
+      .requiredOption("--server <idOrName>", "Saved server to grade")
+      .option("--idempotency-key <key>", "Replay guard for a retried start"),
+  );
+  bindOperation<HostedStartOptions, StartMuseReadinessInput>(
+    startMuse,
+    startMuseReadinessRunOperation,
+    (options) => ({
+      project: options.project,
+      server: options.server,
+      ...(options.idempotencyKey
+        ? { idempotencyKey: options.idempotencyKey }
+        : {}),
+    }),
+  );
+
   const status = addProjectOption(
     readiness
       .command("status")
@@ -679,7 +782,7 @@ function registerHostedReadinessCommands(readiness: Command): void {
     readiness
       .command("list")
       .description("List hosted readiness runs, newest first")
-      .option("--kind <publisher>", "Narrow to claude or openai")
+      .option("--kind <publisher>", "Narrow to claude, openai or muse")
       .option("--server <idOrName>", "Narrow to one saved server")
       .option("--limit <n>", "Rows to return (1-100)", (value: string) =>
         parsePositiveInteger(value, "Limit"),

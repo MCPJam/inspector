@@ -33,12 +33,14 @@
  * nothing. An approval also stops being honoured at the end of its lifetime,
  * {@link TOOL_APPROVAL_TOKEN_MAX_AGE_MS}.
  *
- * THE KEY. Derived from `INSPECTOR_SERVICE_TOKEN`, which every hosted
- * deployment already sets (it authenticates the inspector to Convex) and which
- * is identical across replicas, so a resume verifies on whichever replica it
- * lands on. The derivation label keeps the two uses apart. A non-hosted
- * process (npx, desktop, a single self-hosted container) without that token
- * uses a random per-process key: approvals then do not survive a restart,
+ * THE KEY. Derived from `TOOL_APPROVAL_SIGNING_SECRET` (a verify-only
+ * `TOOL_APPROVAL_SIGNING_SECRET_PREVIOUS` makes rotating it a non-event), and,
+ * while that is unset, from `INSPECTOR_SERVICE_TOKEN` — kept as a verify-only
+ * fallback for one release so approvals issued before the switch still
+ * resolve. See `utils/signing-keys.ts`. Either is identical across replicas,
+ * so a resume verifies on whichever replica it lands on, and the derivation
+ * label keeps the uses apart. A non-hosted process (npx, desktop, a single
+ * self-hosted container) with neither uses a random per-process key: approvals then do not survive a restart,
  * which only costs a pending pill. A HOSTED process without it has no key at
  * all, and `isToolApprovalSigningAvailable()` is how the rest of the server
  * finds out — workspace operations that would ask are then left out of the
@@ -52,6 +54,12 @@ import {
 } from "node:crypto";
 import { decodeJwt } from "jose";
 import { recordToolApprovalClaim } from "../services/tool-approval-claims.js";
+import { getServiceCredential } from "../services/service-credential.js";
+import {
+  resolveSigningKeyRing,
+  TOOL_APPROVAL_SIGNING_SECRET_ENV,
+  type SigningKeyRing,
+} from "./signing-keys.js";
 
 /** Version tag; also the prefix that marks an id as signed. */
 export const TOOL_APPROVAL_TOKEN_PREFIX = "mjap1";
@@ -123,7 +131,6 @@ export const EXPIRED_APPROVAL_RESULT = `Not run: this approval expired before it
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 const KEY_DERIVATION_LABEL = "mcpjam/tool-approval/v1";
-const MIN_SERVICE_TOKEN_LENGTH = 16;
 
 /** Who and where an approval was asked. All three must match on resume. */
 export interface ToolApprovalBinding {
@@ -174,37 +181,50 @@ export function requiresServerVerifiedApproval(tool: unknown): boolean {
 let ephemeralKey: Buffer | undefined;
 
 /**
- * A key derived from `INSPECTOR_SERVICE_TOKEN` for one purpose, named by
- * `label`, or null when the token is missing or too short to be a secret.
- * Distinct labels give independent keys, so no two uses can stand in for
- * each other, and the token itself is never used as a key.
+ * The deployment-wide key ring (dedicated secret, its predecessor, and the
+ * legacy service-token key), or null when there is no shared secret at all.
  */
-export function deriveServiceTokenKey(
-  label: string,
+export function resolveToolApprovalKeyRing(
   env: NodeJS.ProcessEnv = process.env,
-): Buffer | null {
-  const serviceToken = env.INSPECTOR_SERVICE_TOKEN?.trim();
-  if (!serviceToken || serviceToken.length < MIN_SERVICE_TOKEN_LENGTH) {
-    return null;
-  }
-  return createHmac("sha256", serviceToken).update(label).digest();
+): SigningKeyRing | null {
+  return resolveSigningKeyRing({
+    secretEnv: TOOL_APPROVAL_SIGNING_SECRET_ENV,
+    label: KEY_DERIVATION_LABEL,
+    env,
+  });
 }
 
 /**
- * The HMAC key, or null when this deployment cannot issue verifiable
- * approvals. Parameters exist for tests; production reads the process env.
+ * The HMAC key new approvals are signed with, or null when this deployment
+ * cannot issue verifiable approvals. Parameters exist for tests; production
+ * reads the process env.
  */
 export function resolveToolApprovalSigningKey(
   env: NodeJS.ProcessEnv = process.env,
   hosted: boolean = process.env.VITE_MCPJAM_HOSTED_MODE === "true",
 ): Buffer | null {
-  const derived = deriveServiceTokenKey(KEY_DERIVATION_LABEL, env);
-  if (derived) return derived;
+  const ring = resolveToolApprovalKeyRing(env);
+  if (ring) return ring.signing;
   if (!hosted) {
     ephemeralKey ??= randomBytes(32);
     return ephemeralKey;
   }
   return null;
+}
+
+/**
+ * Every key an approval may verify under: the ring's accept-list, or this
+ * process's own key when there is no shared secret (local), or none (hosted
+ * without a secret).
+ */
+export function resolveToolApprovalVerificationKeys(
+  env: NodeJS.ProcessEnv = process.env,
+  hosted: boolean = process.env.VITE_MCPJAM_HOSTED_MODE === "true",
+): readonly Buffer[] {
+  const ring = resolveToolApprovalKeyRing(env);
+  if (ring) return ring.accepted;
+  const own = resolveToolApprovalSigningKey(env, hosted);
+  return own ? [own] : [];
 }
 
 export function isToolApprovalSigningAvailable(): boolean {
@@ -360,9 +380,15 @@ export function verifyToolApprovalId(args: {
   key?: Buffer | null;
   nowMs?: number;
 }): ToolApprovalVerification {
-  const key =
-    args.key === undefined ? resolveToolApprovalSigningKey() : args.key;
-  if (!key) return { ok: false, reason: "no_key" };
+  // An explicit key (tests, callers that pin one) verifies under that key
+  // alone; otherwise under every key the ring accepts.
+  const keys =
+    args.key === undefined
+      ? resolveToolApprovalVerificationKeys()
+      : args.key
+        ? [args.key]
+        : [];
+  if (keys.length === 0) return { ok: false, reason: "no_key" };
   if (
     typeof args.approvalId !== "string" ||
     !isSignedToolApprovalId(args.approvalId)
@@ -388,15 +414,23 @@ export function verifyToolApprovalId(args: {
   } catch {
     return { ok: false, reason: "malformed" };
   }
-  const expected = macFor(
-    key,
-    issuedAt,
-    nonce,
-    args.call,
-    inputDigest,
-    args.binding,
-  );
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+  // Every accepted key is tried (no early exit), so timing does not say which
+  // key — or whether any — matched.
+  let matched = false;
+  for (const key of keys) {
+    const expected = macFor(
+      key,
+      issuedAt,
+      nonce,
+      args.call,
+      inputDigest,
+      args.binding,
+    );
+    const equal =
+      given.length === expected.length && timingSafeEqual(given, expected);
+    matched = equal || matched;
+  }
+  if (!matched) {
     return { ok: false, reason: "signature_mismatch" };
   }
   // Checked AFTER the MAC so an expired-but-forged id reports as forged.
@@ -488,8 +522,8 @@ export type ToolApprovalClaim = "claimed" | "already_claimed" | "unconfirmed";
  *
  * The claim is made in this process first, and a claim this process already
  * holds answers `already_claimed` without asking anyone. Where approvals are
- * signed with the service-token key, any process holding that token verifies
- * the same approval, so the claim is then also recorded with the backend
+ * signed with a shared key and this process holds the service credential, any
+ * replica verifies the same approval, so the claim is then also recorded with the backend
  * (`POST /internal/v1/tool-approvals/claim`), whose answer decides. When that
  * cannot be confirmed — no backend configured, an error, a timeout — nothing
  * runs, and this process lets go of its own claim so that a retry asks the
@@ -513,10 +547,19 @@ export async function claimToolApproval(
   const env = options.env ?? process.env;
   // Signed with this process's own key: no other process can verify it, so
   // this process's ledger is the whole ledger.
-  if (!deriveServiceTokenKey(KEY_DERIVATION_LABEL, env)) return "claimed";
+  if (!resolveToolApprovalKeyRing(env)) return "claimed";
+
+  const serviceToken = getServiceCredential(env);
+  // A self-hosted server signing with TOOL_APPROVAL_SIGNING_SECRET but holding
+  // no service credential can never reach the backend ledger. It runs as one
+  // process, so its own ledger is the whole ledger here too. (Replicas sharing
+  // that secret without the credential each keep their own.) A hosted
+  // deployment without the credential is misconfigured and stays fail-closed.
+  if (!serviceToken && env.VITE_MCPJAM_HOSTED_MODE !== "true") {
+    return "claimed";
+  }
 
   const convexHttpUrl = env.CONVEX_HTTP_URL?.trim();
-  const serviceToken = env.INSPECTOR_SERVICE_TOKEN?.trim();
   const claimKey = toolApprovalClaimKey(approvalId);
   const recorded =
     convexHttpUrl && serviceToken && claimKey

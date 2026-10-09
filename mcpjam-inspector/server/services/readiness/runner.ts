@@ -1,7 +1,7 @@
 /**
  * The publisher-neutral readiness runner.
  *
- * ONE implementation for both publishers and both execution modes. A local
+ * ONE implementation for every publisher and both execution modes. A local
  * `/api/mcp/…` request and a hosted durable run reach the same four steps in
  * the same order — gather pinned evidence, optionally ask the backend broker
  * for model observations, validate and map them, grade — and differ only in
@@ -24,9 +24,11 @@
 
 import {
   gatherClaudeReadinessEvidence,
+  gatherMuseReadinessEvidence,
   gatherOpenAIReadinessEvidence,
   DIRECTORY_OBSERVATION_REASONS,
   gradeClaudeReadiness,
+  gradeMuseReadiness,
   gradeOpenAIReadiness,
   parseClaudeExperienceObservations,
   parseOpenAIExperienceObservations,
@@ -36,16 +38,18 @@ import {
   type DirectoryFeatureClaim,
   type DirectoryLazyAuthProbeConfig,
   type DirectoryObservationState,
+  type MuseReadinessResult,
   type OpenAIReadinessResult,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 
-export type ReadinessPublisher = "claude" | "openai";
+export type ReadinessPublisher = "claude" | "openai" | "muse";
 
-/** The result either publisher produces, discriminated by `readinessKind`. */
+/** The result any publisher produces, discriminated by `readinessKind`. */
 export type DirectoryReadinessResult =
   | ClaudeReadinessResult
-  | OpenAIReadinessResult;
+  | OpenAIReadinessResult
+  | MuseReadinessResult;
 
 /**
  * How this run asks for model observations, when it asks at all.
@@ -344,6 +348,31 @@ export async function runDirectoryReadiness(
   options: RunReadinessOptions,
 ): Promise<ReadinessRunOutcome> {
   assertNotCancelled(options.signal);
+
+  if (options.publisher === "muse") {
+    const evidence = await gatherMuseReadinessEvidence({
+      enteredUrl: options.target,
+      fetchFn: options.fetchFn,
+      timeoutMs: options.timeoutMs,
+      headers: options.headers,
+      // Threaded IN, not merely checked between steps — see the OpenAI branch.
+      signal: options.signal,
+      now: options.now,
+    });
+    assertNotCancelled(options.signal);
+
+    // NO OBSERVATION PASS, whatever the caller passed. Muse has no catalogue
+    // for a model to grade against, and the platform refuses the opt-in at
+    // start — so a requester here is a caller bug, and it must not spend.
+    return {
+      result: gradeMuseReadiness(evidence),
+      observations: {
+        status: "not-requested",
+        reason: "not_requested",
+        detail: "Muse readiness has no model-backed observations",
+      },
+    };
+  }
 
   if (options.publisher === "openai") {
     const mode = options.submissionMode;

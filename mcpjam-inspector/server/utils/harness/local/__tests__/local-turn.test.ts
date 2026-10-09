@@ -1,3 +1,5 @@
+import { readLocalHarnessAuthorization } from "../authorization.js";
+vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: vi.fn(async () => ({ autoApproveAcknowledgedAt: "2026-10-04T00:00:00.000Z" })) }));
 import { toAdapterPath } from "../adapter-path.js";
 import { resetLocalHarnessRegistryForTests } from "../session-registry.js";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -20,12 +22,16 @@ const startLoopbackModelBroker = vi.fn(async () => ({
 }));
 const gatewayRevoke = vi.fn();
 const gatewayClose = vi.fn(async () => undefined);
+const gatewayHold = vi.fn();
+const gatewayRebind = vi.fn();
 const startLocalModelGateway = vi.fn(async () => ({
   baseUrl: "http://127.0.0.1:1",
   port: 1,
   sessionCapability: "cap",
   revoke: gatewayRevoke,
   close: gatewayClose,
+  hold: gatewayHold,
+  rebind: gatewayRebind,
   stats: () => ({ requests: 0, rejected: 0, forwarded: 0, upstreamErrors: 0 }),
 }));
 const resolveNodeLauncher = vi.fn(() => ({ command: "node", args: [] }));
@@ -69,6 +75,7 @@ vi.mock("../runtime-install.js", () => ({
   // file fail with EACCES on any machine that is not root, which is what CI
   // caught and a root-owned sandbox did not.
   runtimeInstallRoot: () => installRoot,
+  noteRuntimeLaunch: vi.fn(async () => {}),
 }));
 // Mutable so a test can drive the `keyId === null` refusal — an Inspector
 // whose local installation is not registered yet.
@@ -111,6 +118,7 @@ vi.mock("../grants.js", () => ({
 const supervisorFixture = vi.hoisted(() => ({
   stopOutcome: { stopped: true } as { stopped: boolean; escaped?: number },
   stopCalls: 0,
+  live: 1,
 }));
 vi.mock("../supervisor.js", () => ({
   LocalHarnessSupervisor: class {
@@ -121,10 +129,16 @@ vi.mock("../supervisor.js", () => ({
       supervisorFixture.stopCalls += 1;
       return supervisorFixture.stopOutcome;
     }
+    liveProcessCount() {
+      return supervisorFixture.live;
+    }
   },
 }));
 
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
+const { resetApprovalParkForTests, describeParkedLocalSession } = await import(
+  "../approval-park.js"
+);
 // Real, not mocked: whether a reservation is still held is the subject here.
 const { runtimeUseState } = await import("../runtime-lifecycle.js");
 const { localPackTarget } = await import("../targets.js");
@@ -168,11 +182,13 @@ beforeEach(async () => {
   identityFixture.keyId = "key_1";
   supervisorFixture.stopOutcome = { stopped: true };
   supervisorFixture.stopCalls = 0;
+  supervisorFixture.live = 1;
   // `reset`, not `clear`: a `…Once` override that a failing test never consumed
   // would otherwise leak into the next one. Vitest 3's reset restores the
   // implementation each spy was created with, which is the base behaviour here.
   vi.resetAllMocks();
   resetLocalHarnessRegistryForTests();
+  resetApprovalParkForTests();
 });
 
 afterEach(async () => {
@@ -420,6 +436,38 @@ describe("local lane state lifetime", () => {
     await result.prepared.discardState();
   });
 
+  it("lands composer attachments in the session's own state, never the workspace", async () => {
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    if (!result.ok) throw new Error(result.message);
+    const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][])[0][0] as any;
+    const attachments = join(providerArgs.sessionStateDir, "attachments");
+    // Inside the state root the session's file API is confined to, and
+    // outside the user's checkout.
+    expect(result.prepared.attachmentsDir).toEqual({
+      writeDir: toAdapterPath(attachments),
+      agentDir: attachments,
+    });
+    expect(providerArgs.workspacePath).toEqual(expect.any(String));
+    expect(attachments.startsWith(providerArgs.workspacePath)).toBe(false);
+    await result.prepared.discardState();
+  });
+
+  it("records each bridge start against the pack it ran on — the signal that rolls a bad update back", async () => {
+    const { noteRuntimeLaunch } = await import("../runtime-install.js");
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    if (!result.ok) throw new Error(result.message);
+    const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][]).at(-1)![0] as any;
+    await providerArgs.onBridgeStarted({ pid: 1, port: 1 });
+    expect(noteRuntimeLaunch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: { ok: true }, status: expect.objectContaining({ packVersion: "test-pack-1" }) }),
+    );
+    providerArgs.onBridgeFailed({ phase: "readiness", message: "bridge never listened" });
+    expect(noteRuntimeLaunch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: { ok: false, reason: "readiness: bridge never listened" } }),
+    );
+    await result.prepared.discardState();
+  });
+
   it("reports missing state before mkdir, including after a previous turn discarded it", async () => {
     const args = turnArgs();
     const first = await prepareLocalHarnessTurn(args);
@@ -476,4 +524,207 @@ describe("local lane state lifetime", () => {
     await result.prepared.discardState();
     expect(await readFile(stateFile, "utf8")).toBe("prior turn");
   });
+});
+
+function codexArgs(overrides: Record<string, unknown> = {}) {
+  return {
+    ...turnArgs(),
+    harnessId: "codex" as const,
+    modelId: "openai/gpt-5.5",
+    ...overrides,
+  } as unknown as Parameters<typeof prepareLocalHarnessTurn>[0];
+}
+
+describe("local Codex", () => {
+  it("gets the capability as CODEX_API_KEY over the gateway's bare origin, with skills under .agents", async () => {
+    const result = await prepareLocalHarnessTurn(codexArgs());
+    if (!result.ok) throw new Error(result.message);
+    // Bare origin: Codex appends `/responses`, and the gateway forwards exactly
+    // that under the broker's own `/openai/v1`.
+    expect(result.prepared.auth).toEqual({
+      CODEX_API_KEY: "cap",
+      OPENAI_BASE_URL: "http://127.0.0.1:1",
+    });
+    expect(result.prepared.skillsBaseDir).toMatch(/[/\\]\.agents[/\\]skills$/);
+    expect(createSupervisedLocalHarnessProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ harnessId: "codex" }),
+    );
+    await result.prepared.teardown();
+  });
+
+  it("refuses OPENAI_ and CODEX_ project secrets for Codex only", async () => {
+    await expect(
+      prepareLocalHarnessTurn(codexArgs({ scopedEnv: { OPENAI_API_KEY: "k" } })),
+    ).rejects.toThrow(/conflicts with the local harness runtime/);
+    await expect(
+      prepareLocalHarnessTurn(codexArgs({ scopedEnv: { CODEX_HOME: "/x" } })),
+    ).rejects.toThrow();
+    // A Claude Code project may carry an OPENAI_API_KEY for its MCP server.
+    const claude = await prepareLocalHarnessTurn({
+      ...turnArgs(),
+      scopedEnv: { OPENAI_API_KEY: "k" },
+    } as never);
+    expect(claude.ok).toBe(true);
+    if (claude.ok) await claude.prepared.teardown();
+  });
+});
+
+describe("a local Codex runtime parked on an approval", () => {
+  async function parkedSession() {
+    const first = await prepareLocalHarnessTurn(codexArgs());
+    if (!first.ok) throw new Error(first.message);
+    expect(
+      first.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] }),
+    ).toBe(true);
+    return first.prepared;
+  }
+
+  it("holds model traffic and revokes the lease while it waits", async () => {
+    await parkedSession();
+    expect(gatewayHold).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(revokeHarnessModelBroker).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: "run_1" }),
+      ),
+    );
+    // Still registered (stop-all can reach it) and not torn down.
+    expect(getLocalHarnessSession("s_local_1")).toBeDefined();
+    expect(supervisorFixture.stopCalls).toBe(0);
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("awaiting-approval");
+  });
+
+  it("is re-adopted for the decision with a FRESH lease on the same gateway", async () => {
+    const parked = await parkedSession();
+    startLoopbackModelBroker.mockResolvedValueOnce({
+      ok: true,
+      runId: "run_2",
+      expiresAt: Date.now() + 60_000,
+      protocol: "openai" as never,
+      proxyBaseUrl: "https://api.example.test/proxy",
+      delivery: "inspector-loopback-gateway",
+      lease: "lease.two.value",
+    });
+    const adopted = await prepareLocalHarnessTurn(
+      codexArgs({
+        requireToolApproval: false,
+        approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+      }),
+    );
+    if (!adopted.ok) throw new Error(adopted.message);
+    // The same live process: same provider, same capability and gateway.
+    expect(adopted.prepared.sandbox).toBe(parked.sandbox);
+    expect(adopted.prepared.auth).toEqual(parked.auth);
+    expect(startLocalModelGateway).toHaveBeenCalledOnce();
+    expect(gatewayRebind).toHaveBeenCalledWith("lease.two.value");
+    expect(adopted.prepared.brokerRunId).toBe("run_2");
+    // Teardown after the continuation revokes the CURRENT lease.
+    adopted.prepared.unpark();
+    await adopted.prepared.teardown();
+    expect(revokeHarnessModelBroker).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run_2" }),
+    );
+  });
+
+  it("refuses the same decision a second time", async () => {
+    await parkedSession();
+    const continuation = {
+      approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+    };
+    const first = await prepareLocalHarnessTurn(codexArgs(continuation));
+    expect(first.ok).toBe(true);
+    const again = await prepareLocalHarnessTurn(codexArgs(continuation));
+    expect(again).toMatchObject({ ok: false, status: "approval-duplicate-approval" });
+  });
+
+  it("ends the session when the renewed lease cannot be obtained; nothing runs", async () => {
+    await parkedSession();
+    startLoopbackModelBroker.mockResolvedValueOnce({
+      ok: false,
+      error: "lease refused",
+    } as never);
+    const adopted = await prepareLocalHarnessTurn(
+      codexArgs({
+        approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+      }),
+    );
+    expect(adopted).toMatchObject({ ok: false, status: "broker-unavailable" });
+    expect(gatewayRebind).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(supervisorFixture.stopCalls).toBe(1));
+    expect(getLocalHarnessSession("s_local_1")).toBeUndefined();
+  });
+
+  it("refuses a decision for a process that died, without starting another", async () => {
+    await parkedSession();
+    supervisorFixture.live = 0;
+    const adopted = await prepareLocalHarnessTurn(
+      codexArgs({
+        approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+      }),
+    );
+    expect(adopted).toMatchObject({ ok: false, status: "approval-process-died" });
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+  });
+
+  it("refuses when the process dies while the decision is being delivered", async () => {
+    await parkedSession();
+    // Alive at claim time, gone by the time the renewed lease comes back.
+    startLoopbackModelBroker.mockImplementationOnce(async () => {
+      supervisorFixture.live = 0;
+      return {
+        ok: true,
+        runId: "run_2",
+        expiresAt: Date.now() + 60_000,
+        protocol: "openai" as never,
+        proxyBaseUrl: "https://api.example.test/proxy",
+        delivery: "inspector-loopback-gateway",
+        lease: "lease.two.value",
+      };
+    });
+    const adopted = await prepareLocalHarnessTurn(
+      codexArgs({
+        approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+      }),
+    );
+    expect(adopted).toMatchObject({ ok: false, status: "approval-process-died" });
+    expect(gatewayRebind).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(revokeHarnessModelBroker).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: "run_2" }),
+      ),
+    );
+  });
+
+  it("is ended — not re-adopted — when a new prompt arrives instead of a decision", async () => {
+    await parkedSession();
+    const fresh = await prepareLocalHarnessTurn(codexArgs());
+    // The parked tree was stopped first, then a fresh one prepared.
+    expect(supervisorFixture.stopCalls).toBe(1);
+    expect(fresh.ok).toBe(true);
+    if (fresh.ok) await fresh.prepared.teardown();
+    expect(describeParkedLocalSession("s_local_1")?.state ?? "terminal").toBe("terminal");
+  });
+
+  it("stops accepting the decision the moment Stop is pressed", async () => {
+    await parkedSession();
+    await endLocalHarnessSession("s_local_1");
+    const adopted = await prepareLocalHarnessTurn(
+      codexArgs({
+        approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+      }),
+    );
+    expect(adopted).toMatchObject({ ok: false, status: "approval-terminal" });
+  });
+});
+
+it("refuses Off without acknowledgement before spawning or minting a lease", async () => {
+  vi.mocked(readLocalHarnessAuthorization).mockResolvedValueOnce(null);
+  expect(await prepareLocalHarnessTurn({ ...turnArgs(), requireToolApproval: false })).toMatchObject({ ok: false, status: "auto-approve-consent-required" });
+  expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+  expect(createSupervisedLocalHarnessProvider).not.toHaveBeenCalled();
+});
+it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async requireToolApproval => {
+  const result = await prepareLocalHarnessTurn({ ...turnArgs(), requireToolApproval });
+  if (!result.ok) throw new Error(result.message);
+  expect(result.prepared.permissionMode).toBe("allow-reads");
+  await result.prepared.teardown();
 });

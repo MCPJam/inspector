@@ -1,3 +1,4 @@
+import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEnsureDbUser } from "../useEnsureDbUser";
@@ -77,7 +78,28 @@ describe("useEnsureDbUser", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("announces promotion before the mutation and completes after cookie retirement", async () => {
+    mockState.auth.user = { id: "workos-1" };
+    mockState.actorKey = "workos-1";
+    mockState.getExistingGuestId.mockResolvedValue("guest-1");
+    mockState.isGuestActivated.mockReturnValue(true);
+    mockState.getGuestPromotionProof.mockResolvedValue("proof");
+    const finish = vi.fn();
+    const begin = vi.spyOn(guestTabRecovery, "begin").mockReturnValue(finish);
+    mockState.ensureUser.mockImplementation(async () => {
+      expect(begin).toHaveBeenCalledWith("guest-1");
+      expect(finish).not.toHaveBeenCalled();
+    });
+    mockState.revokeGuestSessionAndCookie.mockImplementation(async () => {
+      expect(finish).not.toHaveBeenCalled();
+      return true;
+    });
+    renderHook(() => useEnsureDbUser());
+    await waitFor(() => expect(finish).toHaveBeenCalledExactlyOnceWith(true));
   });
 
   it("reports the user as ready only after ensureUser succeeds", async () => {

@@ -9,6 +9,8 @@
  * value must be computed by one implementation on both sides — this one.
  */
 
+import { readModelOutputImage } from "@mcpjam/sdk/browser";
+
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -55,11 +57,7 @@ export function isModelVisibleImageOutput(value: unknown): boolean {
         partRecord.text.startsWith("[embedded image resource omitted:")
       );
     }
-    return (
-      (partRecord.type === "media" || partRecord.type === "image-data") &&
-      typeof partRecord.mediaType === "string" &&
-      partRecord.mediaType.startsWith("image/")
-    );
+    return readModelOutputImage(partRecord) !== undefined;
   });
 }
 
@@ -72,6 +70,25 @@ export function isModelVisibleImageOutput(value: unknown): boolean {
 export function readHydratedToolOutput(part: Record<string, unknown>): unknown {
   const hasResult = hasOwn(part, "result");
   const hasOutput = hasOwn(part, "output");
+  // The model-facing copy intentionally omits host ownership metadata. Keep
+  // the original UI result when that control is present, including malformed
+  // or expired controls: the owned renderer must refuse them, never silently
+  // fall back to an ordinary catalog App. This selects presentation data only;
+  // every owned service still freshly admits the original server-side handle.
+  const raw = unwrapJsonEnvelope(part.result);
+  const meta =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)._meta
+      : undefined;
+  const hasOwnedControl =
+    meta !== null &&
+    typeof meta === "object" &&
+    !Array.isArray(meta) &&
+    hasOwn(meta as Record<string, unknown>, "mcpjam/model-app");
+  const modelOutput = part.output as Record<string, unknown> | undefined;
+  const failedOutput =
+    modelOutput?.type === "error-text" || modelOutput?.type === "error-json";
+  if (hasResult && hasOwnedControl && !failedOutput) return part.result;
   if (hasResult && hasOutput && isModelVisibleImageOutput(part.output)) {
     return part.result;
   }

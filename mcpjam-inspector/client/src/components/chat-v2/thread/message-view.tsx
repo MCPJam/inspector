@@ -1,3 +1,4 @@
+import { messagePartPlainText } from "@/shared/plugin-message";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { UIMessage } from "@ai-sdk/react";
 import { MessageCircle } from "lucide-react";
@@ -272,16 +273,9 @@ function areMessageViewPropsEqual(
  * "everything the user can read" semantics as editing.
  */
 function extractEditableUserMessageText(message: UIMessage): string {
-  const parts = (message.parts ?? []) as Array<{
-    type?: string;
-    text?: unknown;
-  }>;
-  return parts
-    .filter(
-      (part): part is { type: string; text: string } =>
-        part.type === "text" && typeof part.text === "string",
-    )
-    .map((part) => part.text)
+  return (message.parts ?? [])
+    .map(messagePartPlainText)
+    .filter((text): text is string => text !== undefined)
     .join("\n\n");
 }
 

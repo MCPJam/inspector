@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen } from "@/test";
+import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDashboard } from "../suite-dashboard";
 import type { EvalSuite, EvalSuiteRun } from "../types";
 
@@ -146,4 +146,14 @@ describe("SuiteDashboard", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("latest + trends per client")).toBeInTheDocument();
   });
+});
+
+it("keeps Load more available for an empty filtered page and disables it during loading", async () => {
+  const loadMore = vi.fn();
+  const props = { suite, cases: [], allIterations: [], runs: [], runsLoading: false, runTrendData: [], modelStats: [], onTestCaseClick: () => {}, onRunClick: () => {}, onLoadMoreRuns: loadMore };
+  const { rerender } = renderWithProviders(<SuiteDashboard {...props} runHistoryStatus="CanLoadMore" />);
+  await userEvent.click(screen.getByRole("button", { name: "Load more runs" }));
+  expect(loadMore).toHaveBeenCalledOnce();
+  rerender(<SuiteDashboard {...props} runHistoryStatus="LoadingMore" />);
+  expect(screen.getByRole("button", { name: "Load more runs" })).toBeDisabled();
 });

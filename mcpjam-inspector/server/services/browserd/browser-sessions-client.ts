@@ -17,6 +17,7 @@
  * be able to read or write one.
  */
 import { logger } from "../../utils/logger.js";
+import { getServiceCredential } from "../service-credential.js";
 
 /** Why the backend refused to hand back an otherwise-existing session. */
 export type BrowserSessionStale =
@@ -223,7 +224,7 @@ async function postServiceAuthorized(
   signal?: AbortSignal,
 ): Promise<unknown | null> {
   const base = process.env.CONVEX_HTTP_URL?.trim();
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
+  const serviceToken = getServiceCredential();
   if (!base || !serviceToken) return null;
 
   // Every request here carries the service token, and the responses carry a

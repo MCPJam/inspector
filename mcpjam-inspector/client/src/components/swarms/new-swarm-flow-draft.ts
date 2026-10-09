@@ -27,6 +27,7 @@
  */
 import {
   emptyModelSelection,
+  parseStoredModelSelection,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import type {
@@ -268,24 +269,23 @@ function isComposerState(value: unknown): value is EnvironmentComposerState {
  *
  * The shape is tolerated rather than required, like `name` above — a draft
  * written before the model slot existed is still resumable, and its stack is
- * exactly what a client-defaults selection means. Normalizing on the way out
- * keeps every reader working on a complete stack.
+ * exactly what a client-defaults selection means. A draft written before
+ * targets were keyed by `comparisonKey` (parallel `explicitModelIds` +
+ * `explicitModelSelections`) is read into `explicitTargets`. Normalizing on
+ * the way out keeps every reader working on a complete stack.
  */
 function withModelSelection(
   state: EnvironmentComposerState,
 ): EnvironmentComposerState {
-  const selection = (state.stack as { modelSelection?: unknown })
-    .modelSelection;
-  if (
-    isRecord(selection) &&
-    typeof selection.includeClientDefaults === "boolean" &&
-    isStringArray(selection.explicitModelIds)
-  ) {
-    return state;
-  }
+  const selection = parseStoredModelSelection(
+    (state.stack as { modelSelection?: unknown }).modelSelection,
+  );
   return {
     ...state,
-    stack: { ...state.stack, modelSelection: emptyModelSelection() },
+    stack: {
+      ...state.stack,
+      modelSelection: selection ?? emptyModelSelection(),
+    },
   };
 }
 
@@ -364,6 +364,8 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     return null;
   }
   if (!isLaunchIdentity(value.launch)) return null;
+  const reusedIds = value.reusedIds;
+  const proposed = value.proposed;
 
   return {
     step: step as NewSwarmFlowStep,
@@ -383,7 +385,20 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     generatingSince: value.generatingSince,
     attachingFile:
       typeof value.attachingFile === "string" ? value.attachingFile : null,
-    launch: value.launch,
+    launch: {
+      ...value.launch,
+      targets: value.launch.targets?.map((target) => {
+        if (target.iterationsKey !== undefined) return target;
+        if (reusedIds.includes(target.personaId))
+          return { ...target, iterationsKey: target.personaId };
+        const matches = proposed.filter((persona) =>
+          persona.name === target.personaName && persona.role === target.personaRole,
+        );
+        return matches.length === 1
+          ? { ...target, iterationsKey: matches[0]!.key }
+          : target;
+      }) ?? null,
+    },
   };
 }
 

@@ -18,6 +18,13 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR supersedes its in-flight audit. Every other event gets a
+# group of its own (run_id), so main pushes and the weekly run never cancel or
+# queue behind each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: "24.14.0"
 
@@ -28,10 +35,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
