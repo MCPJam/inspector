@@ -1232,6 +1232,33 @@ export function useServerState({
     isAuthenticated,
     useLocalFallback,
   ]);
+  // Auto's OAuth escalation marker must survive the OAuth redirect, so key it
+  // by the Convex project id; the local project id is regenerated on load.
+  const escalationProjectId = activeProject?.sharedProjectId ?? null;
+
+  // Markers are written under this hook's identity, so App-side cleanup must
+  // go through here instead of rebuilding the key from its own ids.
+  const clearAutoOAuthEscalation = useCallback(
+    (serverName: string) => {
+      const resolved = tryResolveProjectServer(serverName);
+      autoOAuthEscalation.markFailed({
+        // Use the escalation identity even when a stale resolver entry points
+        // at a different project.
+        projectId: escalationProjectId,
+        serverId: resolved?.serverId ?? null,
+        serverName,
+      });
+      // A connect may have marked Auto before its hosted id was available.
+      // Clear that name-keyed fallback as well so Cancel never suppresses the
+      // next deliberate authorization attempt.
+      autoOAuthEscalation.markFailed({
+        projectId: escalationProjectId,
+        serverId: null,
+        serverName,
+      });
+    },
+    [escalationProjectId],
+  );
 
   const effectiveServers = useMemo(() => {
     return activeProject?.servers || {};
@@ -3091,6 +3118,8 @@ export function useServerState({
         }
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
+          // The round trip is over; a later 401 should re-prompt.
+          clearAutoOAuthEscalation(serverName);
           // Prefer the runtime entry over the project catalog: it holds the
           // user's freshly-saved OAuth config (clientId/secret/scopes/issuer),
           // which the catalog round-trip can lag or drop. Rebuilding from the
@@ -3332,6 +3361,7 @@ export function useServerState({
           failPendingOAuthConnection(errorMessage, oauthTrace) ??
           pendingServerName;
         if (failedServerName) {
+          clearAutoOAuthEscalation(failedServerName);
           markPendingChatScopeStepUpCancelled(failedServerName, errorMessage);
           cancelPendingDirectScopeStepUpReplay(failedServerName);
           logger.warn("Marked pending OAuth connection as failed", {
@@ -3342,6 +3372,7 @@ export function useServerState({
       }
     },
     [
+      clearAutoOAuthEscalation,
       dispatch,
       failPendingOAuthConnection,
       recoverProjectOAuth,
@@ -3804,7 +3835,7 @@ export function useServerState({
           // projects don't share escalation state; name is the last-resort
           // key for servers that haven't synced an id yet.
           const escalationIdentity: AutoEscalationIdentity = {
-            projectId: appState.activeProjectId,
+            projectId: escalationProjectId,
             serverId: hostedServerId ?? null,
             serverName: formData.name,
           };
@@ -4284,6 +4315,7 @@ export function useServerState({
       appState.servers,
       appState.projects,
       appState.activeProjectId,
+      escalationProjectId,
       notifyIfClientConfigSyncPending,
       notifyIfProjectNotProvisioned,
       prepareHostedProjectOAuthRedirect,
@@ -5163,30 +5195,14 @@ export function useServerState({
       if (queuedScope)
         serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
-      const resolved = tryResolveProjectServer(serverName);
-      autoOAuthEscalation.markFailed({
-        // Auto escalation is created in the active project scope. Use that
-        // same identity for cleanup even when a stale resolver entry points at
-        // a different project.
-        projectId: appState.activeProjectId,
-        serverId: resolved?.serverId ?? null,
-        serverName,
-      });
-      // A connect may have marked Auto before its hosted id was available.
-      // Clear that name-keyed fallback as well so Cancel never suppresses the
-      // next deliberate authorization attempt.
-      autoOAuthEscalation.markFailed({
-        projectId: appState.activeProjectId,
-        serverId: null,
-        serverName,
-      });
+      clearAutoOAuthEscalation(serverName);
       clearPendingOAuthAttempt(serverName);
       if (readHostedOAuthPendingMarker()?.serverName === serverName) {
         clearHostedOAuthPendingState();
       }
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [appState.activeProjectId, dispatch],
+    [clearAutoOAuthEscalation, dispatch],
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -5704,7 +5720,7 @@ export function useServerState({
       // immediately. Keyed by project + server id so identically named
       // servers across projects don't share state.
       const escalationIdentity: AutoEscalationIdentity = {
-        projectId: appState.activeProjectId,
+        projectId: escalationProjectId,
         serverId: hostedProjectServerId ?? null,
         serverName,
       };
@@ -6040,6 +6056,7 @@ export function useServerState({
     },
     [
       activeProjectServersFlat,
+      escalationProjectId,
       isAuthenticated,
       isClientConfigSyncPending,
       getProjectNotProvisionedError,
@@ -6716,6 +6733,7 @@ export function useServerState({
     handleConnect,
     handleDisconnect,
     handleRuntimeDisconnect,
+    clearAutoOAuthEscalation,
     handleReconnect,
     reconnectServerWithResult,
     connectServerWithResult,

@@ -1856,8 +1856,10 @@ describe("useServerState OAuth callback failures", () => {
     sessionStorage.setItem(
       "mcp-auto-oauth-escalated",
       JSON.stringify([
-        "default::srv_demo",
-        "default::name:demo-server",
+        // No Convex project id: the marker is keyed "local", which survives
+        // the OAuth redirect (the local project id does not).
+        "local::srv_demo",
+        "local::name:demo-server",
       ])
     );
     localStorage.setItem("mcp-oauth-pending", "demo-server");
@@ -1883,6 +1885,63 @@ describe("useServerState OAuth callback failures", () => {
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
     expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
+  });
+
+  it("finds an Auto escalation marker written before the OAuth redirect", async () => {
+    // Written by the pre-redirect page; this render is the reloaded one.
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify([
+        "project_default::srv_demo",
+        "project_default::name:demo-server",
+      ]),
+    );
+    reconnectServerMock.mockResolvedValue({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    for (const bucket of [
+      appState.projects.default.servers,
+      appState.servers,
+    ]) {
+      (bucket["demo-server"] as any).authMethod = "auto";
+    }
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    let outcome: Awaited<
+      ReturnType<typeof result.current.reconnectServerWithResult>
+    > | null = null;
+    await act(async () => {
+      outcome = await result.current.reconnectServerWithResult("demo-server", {
+        allowInteractiveOAuthFlow: false,
+        suppressErrors: true,
+      });
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("still returns 401 after OAuth"),
+    });
+  });
+
+  it("clears the Auto escalation marker under the identity the hook writes", () => {
+    sessionStorage.setItem(
+      "mcp-auto-oauth-escalated",
+      JSON.stringify([
+        "project_default::srv_demo",
+        "project_default::name:demo-server",
+      ]),
+    );
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(vi.fn(), appState);
+
+    act(() => result.current.clearAutoOAuthEscalation("demo-server"));
+
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]");
   });
 
   it("does not resurrect a stale 2026 pin when the form downgrades to 2025", async () => {
@@ -2160,6 +2219,42 @@ describe("useServerState OAuth callback failures", () => {
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
+
+  it.each([
+    [
+      "succeeds",
+      {
+        success: true,
+        serverName: "demo-server",
+        serverConfig: { type: "http", url: "https://example.com/mcp" },
+      },
+    ],
+    ["fails", { success: false, error: "Token exchange failed" }],
+  ])(
+    "clears the Auto escalation marker when the OAuth callback %s",
+    async (_outcome, callbackResult) => {
+      sessionStorage.setItem(
+        "mcp-auto-oauth-escalated",
+        JSON.stringify([
+          "project_default::srv_demo",
+          "project_default::name:demo-server",
+        ]),
+      );
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      handleOAuthCallbackMock.mockResolvedValue(callbackResult);
+      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+      const appState = createAppState();
+      appState.projects.default.sharedProjectId = "project_default";
+
+      renderUseServerState(vi.fn(), appState);
+
+      // A finished round trip is terminal: a later 401 must re-prompt, not
+      // report "still returns 401 after OAuth".
+      await waitFor(() =>
+        expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toBe("[]"),
+      );
+    },
+  );
 
   it("bounces browser OAuth callbacks back into Electron when the OAuth state is tagged for desktop", async () => {
     window.isElectron = false;
@@ -4012,7 +4107,9 @@ describe("useServerState auth mode regressions", () => {
     initiateOAuthMock.mockResolvedValueOnce({ success: true });
     const requestOAuthAuthorization = vi.fn().mockResolvedValue(true);
     const dispatch = vi.fn();
-    const { result } = renderUseServerState(dispatch);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(dispatch, appState);
 
     await act(async () => {
       await result.current.handleConnect(
@@ -4036,6 +4133,10 @@ describe("useServerState auth mode regressions", () => {
     expect(initiateOAuthMock).toHaveBeenCalledOnce();
     expect(toastError).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
+    // Keyed by the Convex project id so the marker survives the redirect.
+    expect(sessionStorage.getItem("mcp-auto-oauth-escalated")).toContain(
+      "project_default::name:auto-server",
+    );
   });
 
   it("persists authorization edits before starting Auto's OAuth redirect", async () => {
