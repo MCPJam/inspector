@@ -487,7 +487,7 @@ export function WidgetAssertionFields({
         </div>
       ) : null}
       {paper ? (
-        <details className="text-xs text-muted-foreground">
+        <details className="text-xs text-card-foreground">
           <summary className="cursor-pointer">Check settings</summary>
           <div className="pt-2">{assertionKindPicker}</div>
         </details>

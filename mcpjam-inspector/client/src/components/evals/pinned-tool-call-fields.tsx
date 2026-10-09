@@ -270,7 +270,7 @@ export function PinnedToolCallFields({
         <div
           className={
             paper
-              ? "flex items-center gap-1.5 text-[13px] text-secondary-foreground"
+              ? "flex items-center gap-1.5 text-[13px] text-card-foreground"
               : undefined
           }
         >

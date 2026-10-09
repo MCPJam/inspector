@@ -367,7 +367,7 @@ export function ActionRow({
                 onChange={(action) => onUpdate({ ...step, action })}
                 readOnly={readOnly}
               />
-              <details className="text-xs text-muted-foreground">
+              <details className="text-xs text-card-foreground">
                 <summary className="cursor-pointer">Detailed settings</summary>
                 <div className="space-y-2 pt-2">
                   <Label htmlFor={`action-view-${step.id}`} className="text-xs">

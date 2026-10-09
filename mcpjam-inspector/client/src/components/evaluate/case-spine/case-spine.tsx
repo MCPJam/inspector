@@ -1146,7 +1146,7 @@ export function CaseSpine({
               className="min-h-[72px] resize-y rounded-lg border-input bg-card px-3.5 py-3 font-sans text-[15px] leading-[22px] text-card-foreground md:text-[15px]"
             />
             {onJudgeConfigOverrideChange || onOpenSuiteSettings ? (
-              <details className="text-sm text-muted-foreground">
+              <details className="text-sm text-card-foreground">
                 <summary className="cursor-pointer">Judge settings</summary>
                 <ul className="mt-2">
                   <JudgeBlock
