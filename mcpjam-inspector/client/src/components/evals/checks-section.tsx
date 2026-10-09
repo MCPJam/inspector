@@ -587,7 +587,7 @@ export function CheckRow({
           ? cn(
               "min-w-0 space-y-3",
               paper &&
-                "text-foreground [&_label]:text-sm [&_label]:font-medium [&_details_label]:text-xs [&_details_label]:font-normal",
+                "[font-synthesis:none] antialiased text-card-foreground [&_label:not(details_*)]:text-sm [&_label:not(details_*)]:font-medium [&_details_label]:text-xs [&_details_label]:font-normal",
             )
           : cn(
               "rounded-md border p-3",
@@ -1576,7 +1576,7 @@ export function ToolCalledWithFields({
           )}
           <details className="text-xs text-foreground">
             <summary className="cursor-pointer">Argument settings</summary>
-            <div className="space-y-3 pt-2">
+            <div className="space-y-2 pt-2">
               <ArgumentMatchingField
                 value={predicate.args.argumentMatching ?? "partial"}
                 onChange={(argumentMatching) =>
@@ -1588,7 +1588,10 @@ export function ToolCalledWithFields({
                 readOnly={readOnly}
               />
               <div className="space-y-1">
-                <Label htmlFor={minCountId} className="text-sm font-medium">
+                <Label
+                  htmlFor={minCountId}
+                  className="text-xs font-normal leading-4"
+                >
                   Minimum matching calls (optional)
                 </Label>
                 <PaperNumberField
@@ -1675,9 +1678,13 @@ function ArgumentMatchingField({
   readOnly: boolean;
 }) {
   const modeId = useId();
+  const paper = useContext(PaperFieldsContext);
   return (
     <div className="space-y-1">
-      <Label htmlFor={modeId} className="text-[11px]">
+      <Label
+        htmlFor={modeId}
+        className={paper ? "text-xs font-normal leading-4" : "text-[11px]"}
+      >
         Argument matching
       </Label>
       <Select
@@ -1685,7 +1692,10 @@ function ArgumentMatchingField({
         onValueChange={(next) => onChange(next as ArgMatchMode)}
         disabled={readOnly}
       >
-        <SelectTrigger id={modeId} className="h-8 w-full text-xs">
+        <SelectTrigger
+          id={modeId}
+          className={cn("h-8 w-full text-xs", paper && "font-normal")}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
