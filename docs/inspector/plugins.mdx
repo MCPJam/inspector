@@ -196,9 +196,14 @@ Click a plugin server card, or click **⋮ → Configure**, to open its **Settin
 
 Lifecycle actions (Activate, Disable/Enable, Uninstall) require project admin. Project members can view the settings and configure credential values.
 
-### Plugins with no active version
+### Plugins with no visible components
 
-A plugin that has been installed but has no active version ("Install only") shows a single card labelled with the plugin's name. Click it to open Settings, where you can activate a version or uninstall the plugin.
+A plugin shows a single card labelled with the plugin's name when it has nothing else to display in the grid. This happens in two cases:
+
+- **No active version ("Install only")** — the plugin was installed without activating a version.
+- **Active version with no servers or skills** — the active version's components were all skipped at import, or the bundle contains only app mappings or assets.
+
+Click the card to open Settings, where you can activate a version, disable the plugin, or uninstall it.
 
 ## Plugin skills on the Skills tab
 
