@@ -491,7 +491,7 @@ describe("PosthogUtils", () => {
 
   describe("server-evaluated feature flags (MJ-015)", () => {
     const serverFlags = {
-      "computers-enabled": true,
+      "sandbox-images-enabled": true,
       "guest-credit-wall-copy": "treatment",
     };
 
