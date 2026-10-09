@@ -3339,7 +3339,7 @@ function ToolResultContainsFields({
       ) : null}
       <div className="space-y-1">
         <Label htmlFor={id} className="text-[11px]">
-          {paper ? "Text" : "Text the result must contain"}
+          Text the result must contain
         </Label>
         <Input
           id={id}
