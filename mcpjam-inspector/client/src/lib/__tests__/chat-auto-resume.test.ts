@@ -17,9 +17,13 @@ import {
   type UIMessageChunk,
 } from "ai";
 import {
+  autoResumeStopReason,
+  autoResumeStoppedNotice,
   lastStepHasPendingApproval,
   shouldAutoResumeTurn,
 } from "../chat-auto-resume";
+import { AGENT_MAX_STEPS } from "@/shared/mcpjam-agent-model";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 
 /** Minimal assistant message; only role/parts are read by the predicates. */
 function assistant(parts: unknown[]): { messages: UIMessage[] } {
@@ -165,5 +169,178 @@ describe("shouldAutoResumeTurn (real ai package)", () => {
       ]);
       expect(shouldAutoResumeTurn({ messages: [message] })).toBe(false);
     });
+  });
+});
+
+describe("shouldAutoResumeTurn — bounded resumes (real ai package)", () => {
+  const user = (id: string, text = "go") => ({
+    id,
+    role: "user",
+    parts: [{ type: "text", text }],
+  });
+  /** A server-run docs search the SDK reads as settled — the step shape the
+   *  runaway ended on. */
+  const settledDocsSearch = (id: string) => ({
+    type: "tool-search_mcpjam",
+    toolCallId: id,
+    state: "output-available",
+    input: { query: "evals" },
+    output: { content: [] },
+  });
+  const assistantWithSteps = (steps: number, id = "a") => ({
+    id,
+    role: "assistant",
+    parts: Array.from({ length: steps }).flatMap((_, index) => [
+      { type: "step-start" },
+      settledDocsSearch(`${id}-${index}`),
+    ]),
+  });
+  const conversation = (...messages: unknown[]) =>
+    messages as unknown as UIMessage[];
+
+  it("resumes a settled tool step when the reply ended normally", () => {
+    const messages = conversation(user("u1"), assistantWithSteps(2));
+    expect(shouldAutoResumeTurn({ messages, finishReason: "tool-calls" })).toBe(
+      true,
+    );
+    expect(
+      autoResumeStoppedNotice({ messages, finishReason: "tool-calls" }),
+    ).toBeNull();
+  });
+
+  it("does NOT resume a reply the output-token limit cut off", () => {
+    const messages = conversation(user("u1"), assistantWithSteps(2));
+    expect(lastAssistantMessageIsCompleteWithToolCalls({ messages })).toBe(
+      true,
+    );
+    expect(shouldAutoResumeTurn({ messages, finishReason: "length" })).toBe(
+      false,
+    );
+    expect(autoResumeStopReason({ messages, finishReason: "length" })).toBe(
+      "cut_off",
+    );
+    expect(autoResumeStoppedNotice({ messages, finishReason: "length" })).toBe(
+      "The reply was cut off. Send a message to continue.",
+    );
+  });
+
+  it("stops at the surface's step ceiling, and not one step before", () => {
+    const under = conversation(
+      user("u1"),
+      assistantWithSteps(AGENT_MAX_STEPS - 1),
+    );
+    const spent = conversation(user("u1"), assistantWithSteps(AGENT_MAX_STEPS));
+    const options = { finishReason: "tool-calls", maxSteps: AGENT_MAX_STEPS };
+
+    expect(shouldAutoResumeTurn({ messages: under, ...options })).toBe(true);
+    expect(shouldAutoResumeTurn({ messages: spent, ...options })).toBe(false);
+    expect(autoResumeStoppedNotice({ messages: spent, ...options })).toBe(
+      "This reply reached its step limit. Send a message to continue.",
+    );
+  });
+
+  it("defaults the ceiling to the engine's own", () => {
+    const spent = conversation(
+      user("u1"),
+      assistantWithSteps(DEFAULT_TURN_MAX_STEPS),
+    );
+    expect(autoResumeStopReason({ messages: spent })).toBe("step_limit");
+  });
+
+  it("gives a new user message a fresh budget", () => {
+    const messages = conversation(
+      user("u1"),
+      assistantWithSteps(AGENT_MAX_STEPS, "a1"),
+      user("u2", "keep going"),
+      assistantWithSteps(1, "a2"),
+    );
+    expect(
+      shouldAutoResumeTurn({
+        messages,
+        finishReason: "tool-calls",
+        maxSteps: AGENT_MAX_STEPS,
+      }),
+    ).toBe(true);
+  });
+
+  it("still sends an answered approval — each of those is a user's click", () => {
+    const messages = conversation(user("u1"), {
+      id: "a",
+      role: "assistant",
+      parts: [
+        { type: "step-start" },
+        {
+          ...pendingBash,
+          state: "approval-responded",
+          approval: { id: "appr-bash", approved: true },
+        },
+      ],
+    });
+    expect(shouldAutoResumeTurn({ messages, finishReason: "length" })).toBe(
+      true,
+    );
+    expect(
+      autoResumeStoppedNotice({ messages, finishReason: "length" }),
+    ).toBeNull();
+  });
+
+  it("shows no notice for a turn that simply finished", () => {
+    const messages = conversation(user("u1"), {
+      id: "a",
+      role: "assistant",
+      parts: [{ type: "step-start" }, { type: "text", text: "Done." }],
+    });
+    expect(
+      autoResumeStoppedNotice({ messages, finishReason: "length" }),
+    ).toBeNull();
+  });
+
+  it("replays the runaway: the same spent prompt, re-posted, is never resumed", () => {
+    // Ten prompts in, the last one spent Ask MCPJam's step budget on docs
+    // searches and the server answered each re-post with an empty `length`
+    // finish. The old predicate said yes every time.
+    const earlier = Array.from({ length: 9 }).flatMap((_, index) => [
+      user(`u${index}`, `question ${index}`),
+      {
+        id: `a${index}`,
+        role: "assistant",
+        parts: [
+          { type: "step-start" },
+          { type: "text", text: `answer ${index}` },
+        ],
+      },
+    ]);
+    const messages = conversation(
+      ...earlier,
+      user("u9", "walk me through an eval"),
+      assistantWithSteps(AGENT_MAX_STEPS, "a9"),
+    );
+
+    expect(lastAssistantMessageIsCompleteWithToolCalls({ messages })).toBe(
+      true,
+    );
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect(
+        shouldAutoResumeTurn({
+          messages,
+          finishReason: "length",
+          maxSteps: AGENT_MAX_STEPS,
+        }),
+      ).toBe(false);
+    }
+    // Named for what actually happened: the server reports a spent budget
+    // as `length` too, but this is not a truncated reply.
+    expect(
+      autoResumeStopReason({
+        messages,
+        finishReason: "length",
+        maxSteps: AGENT_MAX_STEPS,
+      }),
+    ).toBe("step_limit");
+    // Even a response with no finish reason at all cannot restart it: the
+    // budget alone is enough.
+    expect(shouldAutoResumeTurn({ messages, maxSteps: AGENT_MAX_STEPS })).toBe(
+      false,
+    );
   });
 });
