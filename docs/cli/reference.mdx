@@ -1033,6 +1033,31 @@ Show one skill, including its SKILL.md body.
 
 ---
 
+## `cloud goals` commands
+
+Launch and manage swarm goals (persona-driven conversation runs). All `goals` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`. `cloud journeys` is a deprecated alias for `cloud goals`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable. Also `MCPJAM_API_HEADERS`, one per line. |
+
+### `cloud goals run`
+
+Launch a goal run. **Spends model credits** — fans out into `targets × iterations` chat sessions.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--goal <id-or-name>` | Yes | Goal name or ID (`--journey` is a deprecated alias) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started and starts no second runner |
+| `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` and nothing is created. Omit to accept whatever split applies. |
+
+---
+
 ## `cloud projects servers` commands
 
 Manage the MCP servers saved in a project and connect new ones. All `projects servers` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
