@@ -61,7 +61,16 @@ describe("hostConfigInputsEqual", () => {
       ...makeInput({ modelId: legacy.modelId }),
       modelSelection: legacy,
     };
-    expect(hostConfigInputsEqual(saved, { ...saved })).toBe(true);
+    // A second literal with the keys in wire order, so equality is
+    // structural rather than a shared object reference.
+    const reloaded = {
+      ...makeInput({ modelId: legacy.modelId }),
+      modelSelection: {
+        modelId: legacy.modelId,
+        source: "legacy",
+      } as unknown as ModelSelection,
+    };
+    expect(hostConfigInputsEqual(saved, reloaded)).toBe(true);
     expect(
       hostConfigInputsEqual(saved, makeInput({ modelId: legacy.modelId })),
     ).toBe(false);
