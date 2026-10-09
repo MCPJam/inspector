@@ -9,6 +9,7 @@ import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { buildAvailableModels } from "@/components/chat-v2/shared/model-helpers";
+import { toast } from "sonner";
 
 const mockState = vi.hoisted(() => ({
   appState: null as any,
@@ -1740,6 +1741,32 @@ describe("useChatSession — environment execution target", () => {
     expect(useHarnessWorkdirStore.getState().byKey["h:host_env"]).toBe(
       "/home/user/claude-code-abc",
     );
+    unmount();
+  });
+
+  it("says a replaced computer reset the session, without guessing why", () => {
+    // `sandbox-replaced` fires for an idle timeout, the box's max age, a
+    // changed environment or secrets, and a first turn after deploy alike, so
+    // the copy names none of them.
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "toast-id");
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: environmentContext,
+      }),
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-reset",
+        data: { reason: "sandbox-replaced" },
+      });
+    });
+
+    expect(info).toHaveBeenCalledWith(
+      "Started a new session — this conversation's computer was replaced, so earlier context isn't available.",
+    );
+    info.mockRestore();
     unmount();
   });
 
