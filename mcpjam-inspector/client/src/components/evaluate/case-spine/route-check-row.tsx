@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { MoreHorizontal, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -48,11 +49,11 @@ export function RouteCheckRow({
         <p className="text-[13px] font-semibold leading-[18px] text-card-foreground">
           {label}
         </p>
-        <p className="text-[13px] leading-[18px] text-secondary-foreground dark:text-muted-foreground">
-          {kind === "noTools"
-            ? "Passes when the agent makes no tool calls."
-            : "Calls must follow this order, with no extra calls. Edit arguments in each tool’s check."}
-        </p>
+        {kind === "noTools" && (
+          <p className="text-[13px] leading-[18px] text-secondary-foreground dark:text-muted-foreground">
+            Passes when the agent makes no tool calls.
+          </p>
+        )}
         {kind === "exactOrder" && (
           <SpineDragProvider
             disabled={false}
@@ -62,10 +63,7 @@ export function RouteCheckRow({
                 onReorder(String(active.id).slice(9), String(over.id).slice(9));
             }}
           >
-            <ol
-              aria-label="Expected tool call order"
-              className="divide-y divide-border rounded-md border border-input"
-            >
+            <ol aria-label="Expected tool call order" className="space-y-1.5">
               {tools.map((tool, index) => (
                 <SequenceTool
                   key={tool.id}
@@ -91,9 +89,11 @@ export function RouteCheckRow({
         )}
       </div>
       <div className="absolute right-2 top-2 flex items-center gap-2">
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-secondary-foreground dark:text-muted-foreground">
-          Required
-        </span>
+        {kind === "noTools" && (
+          <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium leading-[18px] text-secondary-foreground dark:text-muted-foreground">
+            Required
+          </span>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -107,6 +107,17 @@ export function RouteCheckRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {kind === "exactOrder" && (
+              <DropdownMenuItem disabled className="items-start">
+                <div>
+                  <div className="text-xs font-medium">Required check</div>
+                  <div className="text-xs font-normal">
+                    Calls must follow this order, with no extra calls. Edit
+                    arguments in each tool’s check.
+                  </div>
+                </div>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={onRemove}>Remove</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -128,6 +139,13 @@ function SequenceTool({
   onChange: (name: string) => void;
   onRemove: () => void;
 }) {
+  const inputId = useId();
+  const fieldLabel =
+    index === 0
+      ? "First tool"
+      : index === 1
+        ? "Second tool"
+        : `Tool ${index + 1}`;
   const drag = useSpineDrag({
     id: `sequence:${tool.id}`,
     phase: "case",
@@ -136,15 +154,21 @@ function SequenceTool({
   return (
     <li
       {...drag.rowProps}
-      className="relative flex items-center gap-2 bg-card py-2 pl-8 pr-2"
+      className="relative flex flex-col gap-1.5 pr-8 [&>button:first-child]:-left-7 [&>button:first-child]:top-6"
     >
       {drag.handle(`expected tool ${index + 1}`)}
-      <span className="text-xs text-muted-foreground">{index + 1}.</span>
+      <label
+        htmlFor={inputId}
+        className="block text-sm font-medium leading-[18px] text-card-foreground"
+      >
+        {fieldLabel}
+      </label>
       <Input
+        id={inputId}
         aria-label={`Expected tool ${index + 1}`}
         value={tool.toolName}
         placeholder="Tool name…"
-        className="h-7 text-xs"
+        className="h-9 px-3 text-sm font-normal text-card-foreground"
         aria-invalid={!tool.toolName.trim()}
         onChange={(event) => onChange(event.target.value)}
       />
@@ -152,7 +176,7 @@ function SequenceTool({
         type="button"
         variant="ghost"
         size="icon"
-        className="size-6 shrink-0"
+        className="absolute bottom-1.5 right-0 size-6 shrink-0"
         disabled={!canRemove}
         aria-label={`Remove expected tool ${index + 1}`}
         onClick={onRemove}
