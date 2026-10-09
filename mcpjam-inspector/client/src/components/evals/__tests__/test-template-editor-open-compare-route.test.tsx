@@ -91,6 +91,13 @@ vi.mock("@/components/evaluate/suite-run-review", () => ({
   },
 }));
 
+vi.mock("../run-cost-estimate-hint", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../run-cost-estimate-hint")>()),
+  QuickCaseRunCostEstimateHint: ({ runs }: { runs: number }) => (
+    <output data-testid="quick-case-cost-estimate">{runs}</output>
+  ),
+}));
+
 vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
@@ -1230,6 +1237,30 @@ describe("TestTemplateEditor run view from route", () => {
         {...props}
       />,
     );
+
+  it.each([false, true])(
+    "keeps the quick-run header estimate outside the workspace: workspace=%s",
+    async (simpleCaseEditor) => {
+      activeCaseDoc = { ...goldenCaseDoc, runs: 7 };
+      renderGoldenCase({ simpleCaseEditor });
+      await screen.findByRole("button", {
+        name: simpleCaseEditor ? "Setup Run" : "Quick Run",
+      });
+      if (simpleCaseEditor) {
+        expect(screen.queryByTestId("quick-case-cost-estimate")).toBeNull();
+      } else {
+        expect(screen.getByTestId("quick-case-cost-estimate")).toHaveTextContent(
+          "7",
+        );
+        fireEvent.change(screen.getByLabelText("Iterations for the next run"), {
+          target: { value: "3" },
+        });
+        expect(screen.getByTestId("quick-case-cost-estimate")).toHaveTextContent(
+          "3",
+        );
+      }
+    },
+  );
 
   it("uses the parent launch data while its suite query is loading, including client names", async () => {
     const user = userEvent.setup();

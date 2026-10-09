@@ -762,6 +762,7 @@ describe("PlaygroundMain — multi-host render path", () => {
       messages: [],
       multiModelEnabled: false,
       selectedModelIds: [],
+      chatSessionId: "chat-session-1",
     });
     mockUseChatSession.startChatWithMessages.mockReset();
     mockMultiModelPlaygroundCard.mockClear();
@@ -807,26 +808,27 @@ describe("PlaygroundMain — multi-host render path", () => {
       }),
     );
     const onConsumed = vi.fn();
-    render(
-      <PlaygroundMain
-        {...defaultProps}
-        enableMultiModelChat={false}
-        autoRunInput="Show products"
-        evalChatHandoff={{
-          id: "eval-live:case-1",
-          messages: [],
-          serverNames: ["test-server"],
-          executionConfig: { modelId: "anthropic/claude-sonnet-4.5" },
-        }}
-        onEvalChatHandoffConsumed={onConsumed}
-      />,
-    );
+    const props = {
+      ...defaultProps,
+      enableMultiModelChat: false,
+      autoRunInput: "Show products",
+      evalChatHandoff: {
+        id: "eval-live:case-1",
+        messages: [],
+        serverNames: ["test-server"],
+        executionConfig: { modelId: "anthropic/claude-sonnet-4.5" },
+      },
+      onEvalChatHandoffConsumed: onConsumed,
+    };
+    const { rerender } = render(<PlaygroundMain {...props} />);
     await act(async () => {
       await Promise.resolve();
     });
     expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(1);
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     expect(onConsumed).not.toHaveBeenCalled();
+    mockUseChatSession.chatSessionId = "recording-session";
+    rerender(<PlaygroundMain {...props} />);
     await act(async () => {
       finishHydration("recording-session");
     });
@@ -837,6 +839,93 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect.objectContaining({ text: "Show products" }),
     );
     expect(onConsumed).toHaveBeenCalledWith("eval-live:case-1");
+  });
+
+  it("allows the same eval handoff to retry after hydration fails", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    localHarnessFixture.requestedTarget = null;
+    let failHydration!: (error: Error) => void;
+    let finishRetry!: (id: string) => void;
+    mockUseChatSession.startChatWithMessages
+      .mockReturnValueOnce(
+        new Promise<string>((_, reject) => {
+          failHydration = reject;
+        }),
+      )
+      .mockReturnValue(
+        new Promise<string>((resolve) => {
+          finishRetry = resolve;
+        }),
+      );
+    const onConsumed = vi.fn();
+    const props = {
+      ...defaultProps,
+      enableMultiModelChat: false,
+      autoRunInput: "Show products",
+      evalChatHandoff: {
+        id: "eval-live:case-1",
+        messages: [],
+        serverNames: ["test-server"],
+        executionConfig: { modelId: "anthropic/claude-sonnet-4.5" },
+      },
+      onEvalChatHandoffConsumed: onConsumed,
+    };
+    const { rerender } = render(<PlaygroundMain {...props} />);
+    await act(async () => {
+      failHydration(new Error("Couldn't hydrate the session"));
+    });
+    expect(onConsumed).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    rerender(
+      <PlaygroundMain
+        {...props}
+        evalChatHandoff={{ ...props.evalChatHandoff }}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(2),
+    );
+    await act(async () => {
+      finishRetry("chat-session-1");
+    });
+    await waitFor(() =>
+      expect(onConsumed).toHaveBeenCalledWith("eval-live:case-1"),
+    );
+    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(2);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores eval hydration after another chat session becomes active", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    localHarnessFixture.requestedTarget = null;
+    let finishHydration!: (id: string) => void;
+    mockUseChatSession.startChatWithMessages.mockReturnValue(
+      new Promise<string>((resolve) => {
+        finishHydration = resolve;
+      }),
+    );
+    const onConsumed = vi.fn();
+    const props = {
+      ...defaultProps,
+      enableMultiModelChat: false,
+      autoRunInput: "Show products",
+      evalChatHandoff: {
+        id: "eval-live:case-1",
+        messages: [],
+        serverNames: ["test-server"],
+        executionConfig: { modelId: "anthropic/claude-sonnet-4.5" },
+      },
+      onEvalChatHandoffConsumed: onConsumed,
+    };
+    const { rerender } = render(<PlaygroundMain {...props} />);
+    mockUseChatSession.chatSessionId = "another-session";
+    rerender(<PlaygroundMain {...props} />);
+    await act(async () => {
+      finishHydration("recording-session");
+    });
+    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(1);
+    expect(onConsumed).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {

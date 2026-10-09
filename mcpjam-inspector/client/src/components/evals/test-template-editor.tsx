@@ -4919,33 +4919,35 @@ export function TestTemplateEditor({
                     execute and the CURRENT (possibly unsaved) prompt size.
                     Suppressed when the Run control can't run — an unsaved draft,
                     a render check, or no model selected. */}
-                  <QuickCaseRunCostEstimateHint
-                    suiteId={suiteId}
-                    caseId={draftKind ? null : (currentTestCase?._id ?? null)}
-                    models={draftRunEstimateModels}
-                    runs={iterationOverride}
-                    draft={draftRunEstimateHeuristic}
-                    // Mirrors `runPrimaryDisabled` for its STRUCTURAL blockers —
-                    // unsaved draft, render check, no model, no suite servers,
-                    // invalid steps — each of which means this Run can't launch
-                    // as configured. `isRunningCompare` is deliberately excluded:
-                    // that's transient, and the estimate stays accurate for the
-                    // next run (same line drawn for the per-case controls, which
-                    // keep the hint while servers are merely disconnected).
-                    suppressed={
-                      isDraft ||
-                      casePinnedOnly ||
-                      draftRunEstimateModels.length === 0 ||
-                      !canRun ||
-                      // `canRun` lets a DIRECT GUEST through with zero servers,
-                      // but `handleRunCompare` still rejects with "No MCP servers
-                      // are configured for this suite." — so gate on the server
-                      // list itself, not just `canRun`.
-                      !hasConfiguredSuiteServers ||
-                      !arePromptTurnsValid
-                    }
-                    side="top"
-                  />
+                  {!useWorkspace && (
+                    <QuickCaseRunCostEstimateHint
+                      suiteId={suiteId}
+                      caseId={draftKind ? null : (currentTestCase?._id ?? null)}
+                      models={draftRunEstimateModels}
+                      runs={iterationOverride}
+                      draft={draftRunEstimateHeuristic}
+                      // Mirrors `runPrimaryDisabled` for its STRUCTURAL blockers —
+                      // unsaved draft, render check, no model, no suite servers,
+                      // invalid steps — each of which means this Run can't launch
+                      // as configured. `isRunningCompare` is deliberately excluded:
+                      // that's transient, and the estimate stays accurate for the
+                      // next run (same line drawn for the per-case controls, which
+                      // keep the hint while servers are merely disconnected).
+                      suppressed={
+                        isDraft ||
+                        casePinnedOnly ||
+                        draftRunEstimateModels.length === 0 ||
+                        !canRun ||
+                        // `canRun` lets a DIRECT GUEST through with zero servers,
+                        // but `handleRunCompare` still rejects with "No MCP servers
+                        // are configured for this suite." — so gate on the server
+                        // list itself, not just `canRun`.
+                        !hasConfiguredSuiteServers ||
+                        !arePromptTurnsValid
+                      }
+                      side="top"
+                    />
+                  )}
                 </div>
               )}
             </div>

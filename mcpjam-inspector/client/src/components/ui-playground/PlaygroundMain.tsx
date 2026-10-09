@@ -1576,6 +1576,8 @@ export function PlaygroundMain({
   // while an eval-chat handoff is still pending. The handoff-consume
   // effect that flips this ref runs later in the file.
   const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  const liveChatSessionIdRef = useRef(chatSessionId);
+  liveChatSessionIdRef.current = chatSessionId;
   const [readyEvalChatHandoffId, setReadyEvalChatHandoffId] = useState<
     string | null
   >(null);
@@ -3332,12 +3334,19 @@ export function PlaygroundMain({
     // and the case settings from a fresh render.
     const handoffId = evalChatHandoff.id;
     void Promise.resolve(handoffHydration).then(
-      () => {
-        if (appliedEvalChatHandoffIdRef.current !== handoffId) return;
+      (hydratedSessionId) => {
+        if (
+          appliedEvalChatHandoffIdRef.current !== handoffId ||
+          hydratedSessionId !== liveChatSessionIdRef.current
+        ) {
+          return;
+        }
         setReadyEvalChatHandoffId(handoffId);
         onEvalChatHandoffConsumed?.(handoffId);
       },
       (error) => {
+        if (appliedEvalChatHandoffIdRef.current !== handoffId) return;
+        appliedEvalChatHandoffIdRef.current = null;
         console.error("[PlaygroundMain] Failed to load eval chat", error);
         toast.error(
           "Couldn't start the recording chat. Close it and try again.",
