@@ -100,6 +100,11 @@ import {
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import {
+  checkAgentLoopGuard,
+  refuseAgentLoop,
+} from "../../utils/agent-loop-guard.js";
+import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
@@ -893,6 +898,26 @@ chatV2.post("/", async (c) => {
       // precedence can't leak them from the body).
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+
+    // A continuation whose step budget is already spent is refused here,
+    // before any MCP server is connected (see `utils/agent-loop-guard.ts`).
+    // Every non-harness engine behind this route runs with the default
+    // per-message ceiling. A harness counts its own steps from the last user
+    // message, and an explicit MRTR / scope step-up continuation is a
+    // one-shot answer the user gave, not an automatic resume — neither is
+    // checked.
+    const explicitContinuation =
+      rawBody.mrtrResume !== undefined ||
+      rawBody.scopeStepUpResume !== undefined ||
+      rawBody.scopeStepUpCancel !== undefined;
+    if (!resolvedExecution.harness && !explicitContinuation) {
+      const loopVerdict = checkAgentLoopGuard({
+        messages,
+        maxSteps: DEFAULT_TURN_MAX_STEPS,
+      });
+      if (loopVerdict) return refuseAgentLoop(c, loopVerdict, "chat_v2");
+    }
+
     // What this turn will RECORD about the configuration it ran with. Computed
     // from the POST-narrowing spec (plugin overrides filtered `environmentSpec`
     // above), so it reflects what actually ran rather than what the environment

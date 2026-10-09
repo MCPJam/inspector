@@ -40,7 +40,7 @@ const DESCRIPTIONS: Record<string, string> = {
   INSTANCE_RESPONSE_INVALID: "The host returned a response the App can't use.",
   INSTANCE_RESPONSE_TOO_LARGE: "The App's response was too large.",
   INSTANCE_UI_UNAVAILABLE:
-    "The App's UI resource couldn't be read, isn't text/html;profile=mcp-app, or is over 1 MB.",
+    "The App's UI resource couldn't be read, isn't text/html;profile=mcp-app, or is over 5 MB.",
   INSTANCE_UNSUPPORTED_CONTINUATION:
     "The tool asked for input in a way this client can't answer.",
   INSTANCE_LIMIT: "Too many Apps are open. Close one and try again.",
