@@ -305,6 +305,26 @@ describe("saveHarnessAttachments", () => {
     expect(session.writeBinaryFile).toHaveBeenCalledTimes(2);
   });
 
+  it("refuses an oversized percent-encoded data URL before decoding it", async () => {
+    const session = fakeSession();
+    const MB = 1024 * 1024;
+    const decodeSpy = vi.spyOn(globalThis, "decodeURIComponent");
+    const outcomes = await saveHarnessAttachments({
+      session,
+      dir: "/d",
+      attachments: [
+        attachment("first.bin", new Uint8Array(20 * MB)),
+        attachment("encoded.txt", `data:text/plain,${"%41".repeat(11 * MB)}`),
+      ],
+    });
+    expect(outcomes.map((o) => ("error" in o ? o.error : "saved"))).toEqual([
+      "saved",
+      "over the 30 MB total limit",
+    ]);
+    expect(decodeSpy).not.toHaveBeenCalled();
+    decodeSpy.mockRestore();
+  });
+
   it("reports a failed write instead of throwing, and logs no contents", async () => {
     const secret = "TOP-SECRET-CONTENTS";
     const session = {

@@ -204,6 +204,10 @@ function decodeDataUrl(url: string, remaining: number): DecodedAttachment {
   const meta = url.slice("data:".length, comma);
   const payload = url.slice(comma + 1);
   if (/;base64$/i.test(meta)) return decodeBase64(payload, remaining);
+  // Every three payload characters decode to at least one byte, so a payload
+  // that long is refused before decodeURIComponent expands it.
+  const floor = overLimit(Math.ceil(payload.length / 3), remaining);
+  if (floor) return { error: floor };
   let bytes: Uint8Array;
   try {
     bytes = new TextEncoder().encode(decodeURIComponent(payload));
