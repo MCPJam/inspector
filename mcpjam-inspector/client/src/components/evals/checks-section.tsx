@@ -3037,16 +3037,20 @@ function ResultToolFilterField({
   const encode = (toolName: string) => `tool:${toolName}`;
   const decode = (option: string) =>
     option === ALL ? undefined : option.slice("tool:".length);
-  const useDropdown = availableTools && availableTools.length > 0;
+  const tools = availableTools ?? [];
+  const useDropdown = paper || tools.length > 0;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
         {label}
       </Label>
-      {useDropdown && !readOnly ? (
+      {useDropdown && (paper || !readOnly) ? (
         <Select
           value={value === undefined ? ALL : encode(value)}
-          onValueChange={(next) => onChange(decode(next))}
+          disabled={readOnly}
+          onValueChange={(next) => {
+            if (!readOnly) onChange(decode(next));
+          }}
         >
           <SelectTrigger
             id={id}
@@ -3059,10 +3063,10 @@ function ResultToolFilterField({
             <SelectItem value={ALL} className="text-xs">
               {anyLabel}
             </SelectItem>
-            {value && !availableTools!.includes(value) ? (
+            {value && !tools.includes(value) ? (
               <SelectItem value={encode(value)}>{value}</SelectItem>
             ) : null}
-            {availableTools!.map((t) => (
+            {tools.map((t) => (
               <SelectItem key={t} value={encode(t)} className="text-xs">
                 {t}
               </SelectItem>
