@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-09
+
+#### Changed
+
+- **Cloud harness turns now run on a per-conversation throwaway computer** — every cloud Claude Code and Codex turn in the Playground now runs on a disposable, per-conversation sandbox instead of the member's personal computer. The box is created when the conversation starts and released after 30 minutes of idle time. Cursor turns and compare-column turns already used a per-conversation box; this change extends the same model to all cloud harness turns. If the box is replaced (idle timeout, environment change, or first turn after a deploy), the chat shows: "Started a new session — this conversation's computer was replaced, so earlier context isn't available."
+
 ### 2026-10-07
 
 #### Added
