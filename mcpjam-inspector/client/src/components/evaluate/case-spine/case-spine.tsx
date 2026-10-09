@@ -41,6 +41,7 @@ import {
 import { Target } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   actionRows,
   insertStepAfter,
@@ -97,7 +98,6 @@ import {
   type DeleteActionPlan,
 } from "./case-spine-model";
 import { SuiteRowsDisclosure } from "../case-scorecard/suite-rows-disclosure";
-import { JudgeBlock } from "../case-scorecard/judge-block";
 import { withCaseJudgeSkipped } from "../case-scorecard/case-scorecard-model";
 
 export type CaseSpineProps = {
@@ -1145,30 +1145,28 @@ export function CaseSpine({
               }
               className="min-h-[72px] resize-y rounded-lg border-input bg-card px-3.5 py-3 font-sans text-[15px] leading-[22px] text-card-foreground md:text-[15px]"
             />
-            {onJudgeConfigOverrideChange || onOpenSuiteSettings ? (
-              <details className="text-sm text-card-foreground">
-                <summary className="cursor-pointer">Judge settings</summary>
-                <ul className="mt-2">
-                  <JudgeBlock
-                    row={card.judge}
-                    readOnly={readOnly}
-                    showGoalInput={false}
-                    onExpectedOutputChange={onExpectedOutputChange}
-                    onOpenSuiteSettings={onOpenSuiteSettings}
-                    onSkippedChange={
-                      onJudgeConfigOverrideChange
-                        ? (skipped) =>
-                            onJudgeConfigOverrideChange(
-                              withCaseJudgeSkipped(
-                                judgeConfigOverride,
-                                skipped,
-                              ),
-                            )
-                        : undefined
-                    }
-                  />
-                </ul>
-              </details>
+            {!readOnly &&
+            onJudgeConfigOverrideChange &&
+            card.judge.judge &&
+            card.judge.judge.suiteMode !== "off" ? (
+              <div className="flex items-center gap-2 pt-1">
+                <Switch
+                  id="case-judge-skip"
+                  checked={card.judge.judge.skippedForCase}
+                  onCheckedChange={(skipped) =>
+                    onJudgeConfigOverrideChange(
+                      withCaseJudgeSkipped(judgeConfigOverride, skipped),
+                    )
+                  }
+                  aria-label="Skip the judge for this case"
+                />
+                <Label
+                  htmlFor="case-judge-skip"
+                  className="text-xs font-normal text-foreground"
+                >
+                  Skip the judge for this case
+                </Label>
+              </div>
             ) : null}
           </section>
 

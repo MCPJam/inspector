@@ -1837,7 +1837,6 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("case-spine")).toBeInTheDocument();
     });
-    await user.click(screen.getByText("Judge settings"));
     await user.click(
       screen.getByRole("switch", { name: "Skip the judge for this case" }),
     );
@@ -1864,7 +1863,6 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("case-spine")).toBeInTheDocument();
     });
-    await user.click(screen.getByText("Judge settings"));
     const skip = screen.getByRole("switch", {
       name: "Skip the judge for this case",
     });

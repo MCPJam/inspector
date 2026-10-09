@@ -455,6 +455,56 @@ describe("the spine", () => {
     expect(screen.getByLabelText("Expected outcome")).toBe(outcome);
   });
 
+  it("keeps only the case judge opt-out below Expected outcome", async () => {
+    const user = userEvent.setup();
+    const onJudgeConfigOverrideChange = vi.fn();
+    const props = {
+      onJudgeConfigOverrideChange,
+      suiteJudgeConfig: { goalCompletion: { enabled: true } },
+    };
+    const { rerender } = render(<StatefulSpine {...props} />);
+    const section = screen.getByTestId("spine-expected-outcome-section");
+    const toggle = within(section).getByRole("switch", {
+      name: "Skip the judge for this case",
+    });
+    expect(toggle).not.toBeChecked();
+    expect(
+      screen.getByLabelText("Expected outcome").compareDocumentPosition(toggle) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByText("Judge settings")).toBeNull();
+    expect(screen.queryByTestId("case-judge-block")).toBeNull();
+    expect(screen.queryByTestId("case-judge-facts")).toBeNull();
+
+    await user.click(toggle);
+    expect(onJudgeConfigOverrideChange).toHaveBeenLastCalledWith({
+      goalCompletion: { enabled: false },
+    });
+    rerender(
+      <StatefulSpine
+        {...props}
+        judgeConfigOverride={{ goalCompletion: { enabled: false } }}
+      />,
+    );
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(onJudgeConfigOverrideChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it.each([
+    { readOnly: true, onJudgeConfigOverrideChange: vi.fn() },
+    {
+      suiteJudgeConfig: { goalCompletion: { enabled: false } },
+      onJudgeConfigOverrideChange: vi.fn(),
+    },
+    {},
+  ])("hides the judge opt-out when it cannot be used (%j)", (props) => {
+    render(<StatefulSpine {...props} />);
+    expect(
+      screen.queryByRole("switch", { name: "Skip the judge for this case" }),
+    ).toBeNull();
+  });
+
   it("nests each check under the action it follows", async () => {
     await openSpine({ steps: withClick });
     const [prompt, click] = screen.getAllByTestId("spine-action-row");
