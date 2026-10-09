@@ -384,7 +384,7 @@
     },
     {
       "__label": "hosted suite, suite-wide storage with no declared threshold",
-      "__why": "Every legacy producer spells the fallback `run.passCriteria?.minimumPassRate ?? 100`. It is a producer fallback, not a stored value, so reading it here changes no storage.",
+      "__why": "No declared threshold resolves to the default `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` (70), which run start stamps onto every new run. Runs from before the stamp stored no criteria and were judged at 100 by the finalizers' own `?? 100`; this row describes new runs, so it changes no storage.",
       "input": {
         "source": "hostedSuite",
         "value": {}
@@ -392,7 +392,7 @@
       "expected": {
         "passCriterion": {
           "scope": "suiteWide",
-          "thresholdPercent": 100,
+          "thresholdPercent": 70,
           "population": "iterations",
           "emptyPopulationRate": 1
         },
@@ -419,7 +419,7 @@
       "expected": {
         "passCriterion": {
           "scope": "suiteWide",
-          "thresholdPercent": 100,
+          "thresholdPercent": 70,
           "population": "iterations",
           "emptyPopulationRate": 1
         },
@@ -446,7 +446,7 @@
       "expected": {
         "passCriterion": {
           "scope": "suiteWide",
-          "thresholdPercent": 100,
+          "thresholdPercent": 70,
           "population": "iterations",
           "emptyPopulationRate": 1
         },
@@ -519,7 +519,7 @@
     },
     {
       "__label": "run reporting, no declared threshold",
-      "__why": "Same `?? 100` producer fallback as a suite with no `defaultPassCriteria`.",
+      "__why": "Same default (70) as a suite with no `defaultPassCriteria`.",
       "input": {
         "source": "runReporting",
         "value": {
@@ -529,7 +529,7 @@
       "expected": {
         "passCriterion": {
           "scope": "suiteWide",
-          "thresholdPercent": 100,
+          "thresholdPercent": 70,
           "population": "iterations",
           "emptyPopulationRate": 0
         },

@@ -2160,10 +2160,10 @@ describe("eval export — which policy owns the threshold", () => {
     verdictPolicyDefaults: { repetitions: 5, passThreshold: 0.9 },
   };
 
-  test("writes the legacy fallback (1) for a legacy suite with no minimum accuracy", async () => {
-    // Every legacy producer grades an unset threshold at
-    // LEGACY_SUITE_WIDE_THRESHOLD_PERCENT (100, "every unit must pass"), so
-    // this is the threshold the suite already runs at, not an invented one.
+  test("writes the default (0.7) for a legacy suite with no minimum accuracy", async () => {
+    // Every new run of a suite with no threshold is stamped with
+    // LEGACY_SUITE_WIDE_THRESHOLD_PERCENT (70), so this is the threshold the
+    // suite already runs at, not an invented one.
     await withTempDir(async () => {
       const run = await runExport(
         {
@@ -2185,7 +2185,7 @@ describe("eval export — which policy owns the threshold", () => {
       );
       assert.equal(reloaded.ok, true);
       if (!reloaded.ok) return;
-      assert.equal(reloaded.authored.defaults.passThreshold, 1);
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.7);
     });
   });
 

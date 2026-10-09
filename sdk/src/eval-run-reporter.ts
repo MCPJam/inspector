@@ -692,8 +692,9 @@ class EvalRunReporterImpl implements EvalRunReporter {
    * the same empty run `1`. The arithmetic is deliberately unchanged;
    * `resolveGradingPolicyFromRunReporting({ producer: "localFallback" })` is
    * how a surface names which rule decided a summary from here, and
-   * `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` replaces the bare `100` so the
-   * producer fallback is spelled once across the repo.
+   * `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` (70) is the same default the
+   * backend stamps onto a run started with no criteria, so the local fallback
+   * and the hosted verdict agree.
    */
   private buildLocalFallbackResult(): ReportEvalResultsOutput {
     const total = this.addedCount;

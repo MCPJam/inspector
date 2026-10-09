@@ -583,8 +583,8 @@ describe("grading policy — the closed vocabularies", () => {
     }
   });
 
-  it("the producer fallback threshold is the one every legacy producer spells", () => {
-    expect(LEGACY_SUITE_WIDE_THRESHOLD_PERCENT).toBe(100);
+  it("the default threshold new runs are stamped with is 70%", () => {
+    expect(LEGACY_SUITE_WIDE_THRESHOLD_PERCENT).toBe(70);
   });
 
   it("every fixture row's expected policy validates", () => {

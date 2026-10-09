@@ -578,14 +578,14 @@ export type HostedSuiteGradingStorage = {
 };
 
 /**
- * The suite-wide threshold a run falls back to when the suite declared none.
+ * The suite-wide threshold a NEW run falls back to when the suite declared none.
  *
- * `100` — every legacy producer spells it `run.passCriteria?.minimumPassRate ??
- * 100`, which is "every unit must pass". It is a PRODUCER fallback and not a
- * stored value, so a suite with no `defaultPassCriteria` resolves to it here
- * and still writes nothing back until somebody edits the threshold.
+ * `70`. The backend stamps it onto a new run's `passCriteria` at run start, so
+ * every run started since then carries the threshold it is judged at. Runs from
+ * before that stored no criteria and were judged at 100 — readers of a STORED
+ * run keep their own `?? 100` and must not read this constant.
  */
-export const LEGACY_SUITE_WIDE_THRESHOLD_PERCENT = 100;
+export const LEGACY_SUITE_WIDE_THRESHOLD_PERCENT = 70;
 
 /**
  * A hosted suite's grading policy, from its stored fields.
