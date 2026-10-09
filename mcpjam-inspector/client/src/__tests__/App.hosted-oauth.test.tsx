@@ -1,3 +1,4 @@
+import { projectTransitionRecovery } from "../lib/auth/project-transition-recovery";
 import { type ReactNode, useLayoutEffect, useState } from "react";
 import {
   act,
@@ -570,6 +571,8 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
+    projectTransitionRecovery.clear();
+    projectTransitionRecovery.observeActor("guest:reset", "/");
     mockServersById.clear();
     mockFetchServerSecrets.mockReset();
     resetSignOutLatchForTests();
@@ -2248,9 +2251,11 @@ describe("App hosted OAuth callback handling", () => {
 
   it("recovers a stale scoped sign-in return without painting the unavailable screen", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
     const currentProjectId = "k5700000000000000000000000b";
     const stalePath = `/p/${staleProjectId}/evals?view=runs#case-3`;
+    projectTransitionRecovery.remember(stalePath, "guest:old");
     writeAppSignInReturnPath(stalePath);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockUseAppState.mockImplementation(() => ({
@@ -2291,9 +2296,9 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(`${window.location.pathname}${window.location.search}`).toBe(
-        `/p/${currentProjectId}/evaluate?view=runs`,
+        `/p/${currentProjectId}/home`,
       );
-      expect(window.location.hash).toBe("#case-3");
+      expect(window.location.hash).toBe("");
     });
     expect(
       screen.queryByTestId("project-route-inaccessible"),
@@ -2302,8 +2307,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(sonnerToast.success).not.toHaveBeenCalled();
     expect(
       replaceStateSpy.mock.calls.filter(
-        ([, , target]) =>
-          target === `/p/${currentProjectId}/evals?view=runs#case-3`,
+        ([, , target]) => target === `/p/${currentProjectId}/home`,
       ),
     ).toHaveLength(1);
     expect(mockTrack).toHaveBeenCalledWith(
@@ -2318,8 +2322,10 @@ describe("App hosted OAuth callback handling", () => {
 
   it("opens a valid scoped sign-in return unchanged", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const projectId = "k5700000000000000000000000b";
     const savedPath = `/p/${projectId}/servers?view=grid#tools`;
+    projectTransitionRecovery.remember(savedPath, "guest:old");
     writeAppSignInReturnPath(savedPath);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockUseAppState.mockImplementation(() => ({
@@ -2380,8 +2386,13 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps a scoped callback loading until the database user is ready", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
     const currentProjectId = "k5700000000000000000000000b";
+    projectTransitionRecovery.remember(
+      `/p/${staleProjectId}/servers`,
+      "guest:old",
+    );
     writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockDbUserState.isEnsuringUser = true;
@@ -2428,7 +2439,7 @@ describe("App hosted OAuth callback handling", () => {
     view.rerender(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe(`/p/${currentProjectId}/servers`);
+      expect(window.location.pathname).toBe(`/p/${currentProjectId}/home`);
     });
   });
 
@@ -2485,9 +2496,11 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps recovery armed while a cached active project waits for membership", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
     const currentProjectId = "k5700000000000000000000000b";
     const stalePath = `/p/${staleProjectId}/playground?model=test#chat`;
+    projectTransitionRecovery.remember(stalePath, "guest:old");
     writeAppSignInReturnPath(stalePath);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
@@ -2545,13 +2558,17 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/callback");
     expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
 
+    // A reload/remount during membership loading must keep the one-use intent.
+    view.unmount();
+    const reloaded = render(<App />);
+    expect(window.location.pathname).toBe("/callback");
     projectsLoaded = true;
-    view.rerender(<App />);
+    reloaded.rerender(<App />);
 
     await waitFor(() => {
       expect(
         `${window.location.pathname}${window.location.search}${window.location.hash}`,
-      ).toBe(`/p/${currentProjectId}/playground?model=test#chat`);
+      ).toBe(`/p/${currentProjectId}/home`);
     });
     expect(
       screen.queryByTestId("project-route-inaccessible"),
@@ -2570,10 +2587,12 @@ describe("App hosted OAuth callback handling", () => {
     vi.useFakeTimers();
     try {
       clearScenarioSession();
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
       const staleProjectId = "k5700000000000000000000000a";
       const currentProjectId = "k5700000000000000000000000b";
       const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
       let projectsLoaded = false;
+      projectTransitionRecovery.remember(stalePath, "guest:old");
       writeAppSignInReturnPath(stalePath);
       window.history.replaceState({}, "", "/callback?code=oauth-code");
       mockUseAppState.mockImplementation(() => ({
@@ -2650,7 +2669,7 @@ describe("App hosted OAuth callback handling", () => {
       await waitFor(() => {
         expect(
           `${window.location.pathname}${window.location.search}${window.location.hash}`,
-        ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+        ).toBe(`/p/${currentProjectId}/home`);
       });
       expect(readAppSignInReturnPath()).toBeNull();
     } finally {
@@ -2660,7 +2679,12 @@ describe("App hosted OAuth callback handling", () => {
 
   it("returns a no-project account home without claiming it switched projects", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
+    projectTransitionRecovery.remember(
+      `/p/${staleProjectId}/playground?model=test#chat`,
+      "guest:old",
+    );
     writeAppSignInReturnPath(`/p/${staleProjectId}/playground?model=test#chat`);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
@@ -2784,6 +2808,9 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     sessionStorage.clear();
+    const oldPath = "/p/k5700000000000000000000000a/home";
+    projectTransitionRecovery.remember(oldPath, "guest:old");
+    writeAppSignInReturnPath(oldPath);
     persistCheckoutIntent({ plan: "team", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     writeScenarioSignInReturnPath("/user-testing/demo/token-123");
@@ -2801,6 +2828,7 @@ describe("App hosted OAuth callback handling", () => {
         "/user-testing/demo/token-123",
       );
     });
+    expect(projectTransitionRecovery.store.getState().marker).toBeNull();
   });
 
   it("keeps billing resume behind the checkout spinner for signed-in users", async () => {
