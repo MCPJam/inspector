@@ -18,7 +18,9 @@ import { blankPredicate } from "@/shared/predicate-kinds";
 import { EVAL_ADD_CATALOG } from "@/components/evals/eval-add-catalog";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 import { PaperCheckRow } from "../case-spine/paper-check-row";
-import { WidgetAssertionFields } from "@/components/evals/step-fields";
+import { WidgetAssertionFields, defaultWidgetAssertion } from "@/components/evals/step-fields";
+import { SpineCheckRow } from "../case-spine/spine-check-row";
+import { PinnedToolCallFields } from "@/components/evals/pinned-tool-call-fields";
 import {
   InteractCommandField,
   interactionCommand,
@@ -391,3 +393,279 @@ describe("short interaction commands", () => {
     expect(onChange).toHaveBeenLastCalledWith({ kind: "key", key: "Enter" });
   });
 });
+
+
+const primaryFields: Record<Predicate["type"], readonly string[]> = {
+  toolDescriptionsPresent: ["Minimum description length"],
+  toolAnnotationsPresent: [],
+  toolNamesUnique: [],
+  toolInputSchemasWellFormed: [],
+  toolOutputSchemasPresent: [],
+  noDeprecatedToolExposed: [],
+  toolCalledWith: ["Tool", "Arguments"],
+  toolCalledAtLeastOnce: ["Tool"],
+  toolNeverCalled: ["Tool"],
+  onlyToolsCalled: [],
+  firstToolWas: ["Tool"],
+  toolCalledBefore: ["First tool", "Second tool"],
+  noDestructiveToolCalled: [],
+  noDeprecatedToolCalled: [],
+  argumentsMatchToolSchema: [],
+  toolInputMatches: ["Tool", "Pattern 1"],
+  noRepeatedIdenticalCall: [],
+  noToolErrors: [],
+  toolLatencyUnder: ["Tool", "Strictly under (ms)"],
+  toolResultSizeUnder: ["Tool", "Strictly under (bytes)"],
+  toolCallCountUnder: ["Strictly under (tool calls)"],
+  toolResultContains: ["Tool", "Text"],
+  toolResultMatches: ["Tool", "Pattern 1"],
+  toolResultMatchesSchema: ["Tool", "Schema"],
+  toolErrorNamesInput: [],
+  fullPageHasContinuation: [],
+  responseContains: ["Text"],
+  responseCloseTo: ["Reference response"],
+  responseMatches: ["Pattern"],
+  finalAssistantMessageNonEmpty: [],
+  widgetRendered: ["View"],
+  widgetRenderLatencyUnder: ["Strictly under (ms)"],
+  widgetNoConsoleErrors: ["View"],
+  noEndingQuestion: [],
+  tokenBudgetUnder: ["Strictly under (tokens)"],
+  turnCountUnder: ["Strictly under (user turns)"],
+};
+
+it.each(EVAL_ADD_CATALOG.filter((entry) => entry.choice.kind === "check"))(
+  "shows the Paper primary fields for $label",
+  (entry) => {
+    if (entry.choice.kind !== "check") throw new Error("Expected a check");
+    render(<Fields initial={blankPredicate(entry.choice.predicateKind)} />);
+    for (const label of primaryFields[entry.choice.predicateKind]) {
+      expect(screen.getByLabelText(label)).toBeVisible();
+    }
+  },
+);
+
+it.each(
+  EVAL_ADD_CATALOG.filter((entry) => entry.choice.kind === "widget-check"),
+)("keeps the drawer heading and editable View for $label", (entry) => {
+  if (entry.choice.kind !== "widget-check")
+    throw new Error("Expected a view check");
+  const assertion = defaultWidgetAssertion(
+    entry.choice.widgetKind,
+    "list_services",
+  );
+  const step = { id: "view-check", kind: "assert" as const, assertion };
+  const row = buildCaseScorecard({
+    toolsChoice: "unset",
+    steps: [{ id: "prompt", kind: "prompt", prompt: "Test" }, step],
+  })
+    .groups.flatMap((group) => group.rows)
+    .find((row) => row.stepId === step.id)!;
+  const onChange = vi.fn();
+  render(
+    <ul>
+      <SpineCheckRow
+        step={step}
+        row={row}
+        availableTools={[]}
+        readOnly={false}
+        checkPolicy
+        status={undefined}
+        defaultOpen
+        onChange={onChange}
+        onRemove={vi.fn()}
+      />
+    </ul>,
+  );
+  expect(
+    screen.getByRole("button", { name: `Edit ${entry.label}` }),
+  ).toHaveTextContent(entry.label);
+  fireEvent.change(screen.getByLabelText("View"), {
+    target: { value: "get_service" },
+  });
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...step,
+    assertion: { ...assertion, toolName: "get_service" },
+  });
+});
+
+it("keeps schema draft validation and the tool filter in the Paper detail row", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn(),
+    onValidityChange = vi.fn();
+  render(
+    <Fields
+      initial={{
+        type: "toolResultMatchesSchema",
+        toolName: "list_services",
+        schema: { type: "object" },
+      }}
+      onChange={onChange}
+      onValidityChange={onValidityChange}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Schema"), {
+    target: { value: '{"type":' },
+  });
+  expect(onChange).not.toHaveBeenCalled();
+  expect(onValidityChange).toHaveBeenLastCalledWith(true);
+  fireEvent.change(screen.getByLabelText("Schema"), {
+    target: { value: '{"type":"array"}' },
+  });
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    schema: { type: "array" },
+    toolName: "list_services",
+  });
+  expect(onValidityChange).toHaveBeenLastCalledWith(false);
+  await user.click(screen.getByRole("combobox", { name: "Tool" }));
+  await user.click(screen.getByRole("option", { name: "get_service" }));
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    schema: { type: "array" },
+    toolName: "get_service",
+  });
+});
+
+it("keeps the extra pattern controls working behind More options", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  render(
+    <Fields
+      initial={{
+        type: "toolInputMatches",
+        toolName: "list_services",
+        patterns: ["users"],
+      }}
+      onChange={onChange}
+    />,
+  );
+  expect(screen.getByLabelText("Pattern 1")).toBeVisible();
+  expect(screen.getByLabelText("Ignore case")).not.toBeVisible();
+  await user.click(screen.getByText("More options"));
+  await user.click(screen.getByLabelText("Ignore case"));
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    flags: "i",
+    patterns: ["users"],
+    toolName: "list_services",
+  });
+  fireEvent.change(screen.getByLabelText("At least"), {
+    target: { value: "2" },
+  });
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({ min: 2, flags: "i" });
+});
+
+it("keeps Call tool server, arguments, and timeout editing in the Paper layout", () => {
+  const onChange = vi.fn();
+  render(
+    <PinnedToolCallFields
+      paper
+      seedKey="call"
+      value={{
+        serverName: "srv",
+        toolName: "list_services",
+        arguments: { service: "users" },
+        renderTimeoutMs: 1000,
+      }}
+      suiteServers={[]}
+      availableTools={[]}
+      onChange={onChange}
+    />,
+  );
+  expect(screen.getByLabelText("Server")).toHaveValue("srv");
+  expect(screen.getByLabelText("Tool")).toHaveValue("list_services");
+  fireEvent.change(screen.getByLabelText("Arguments"), {
+    target: { value: '{"service":"products"}' },
+  });
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    arguments: { service: "products" },
+    renderTimeoutMs: 1000,
+  });
+  fireEvent.change(screen.getByLabelText("Render timeout ms (optional)"), {
+    target: { value: "" },
+  });
+  expect(onChange.mock.lastCall?.[0]).not.toHaveProperty("renderTimeoutMs");
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    arguments: { service: "products" },
+    serverName: "srv",
+    toolName: "list_services",
+  });
+});
+
+
+it("keeps Response close to settings and reference text when folded", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  render(
+    <Fields
+      initial={{
+        type: "responseCloseTo",
+        reference: "API Gateway",
+        maxDistance: 0.2,
+        normalizeWhitespace: true,
+      }}
+      onChange={onChange}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Reference response"), {
+    target: { value: "User Service" },
+  });
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    reference: "User Service",
+    maxDistance: 0.2,
+    normalizeWhitespace: true,
+  });
+  await user.click(screen.getByText("Response settings"));
+  fireEvent.change(screen.getByLabelText("Maximum text distance (0–1)"), {
+    target: { value: "0.1" },
+  });
+  await user.click(screen.getByLabelText("Case sensitive"));
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    reference: "User Service",
+    maxDistance: 0.1,
+    normalizeWhitespace: true,
+    caseSensitive: true,
+  });
+});
+
+
+it("keeps annotation requirements behind Annotation settings", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  render(
+    <Fields
+      initial={{ type: "toolAnnotationsPresent", require: ["readOnlyHint"] }}
+      onChange={onChange}
+    />,
+  );
+  expect(screen.getByLabelText("readOnlyHint")).not.toBeVisible();
+  await user.click(screen.getByText("Annotation settings"));
+  await user.click(screen.getByLabelText("destructiveHint"));
+  expect(onChange.mock.lastCall?.[0]).toMatchObject({
+    require: ["readOnlyHint", "destructiveHint"],
+  });
+});
+
+it.each([
+  "argumentsMatchToolSchema",
+  "noRepeatedIdenticalCall",
+  "toolErrorNamesInput",
+  "fullPageHasContinuation",
+] as const)(
+  "keeps the optional tool filter for the sentence row %s",
+  async (type) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <Fields
+        initial={{ type, toolName: "list_services" }}
+        onChange={onChange}
+      />,
+    );
+    await user.click(screen.getByText("Tool filter"));
+    await user.click(
+      screen.getByRole("combobox", { name: "Limit to tool (optional)" }),
+    );
+    await user.click(screen.getByRole("option", { name: "All tools" }));
+    expect(onChange.mock.lastCall?.[0]).toMatchObject({ type });
+    expect(onChange.mock.lastCall?.[0]).not.toHaveProperty("toolName");
+  },
+);

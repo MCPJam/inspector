@@ -357,7 +357,7 @@ export function WidgetAssertionFields({
   const target =
     "target" in value ? (value.target as ElementLocator) : undefined;
   const viewTools = invokableTools(availableTools);
-  const fieldClass = paper ? "h-9 text-[13px]" : "h-7 text-[11px]";
+  const fieldClass = paper ? "h-9 text-sm" : "h-7 text-[11px]";
   const assertionKindPicker = (
     <div className="space-y-1">
       <Label className="text-[11px]">Assertion</Label>
@@ -389,7 +389,9 @@ export function WidgetAssertionFields({
     <div className="flex flex-col gap-2">
       <div className={paper ? "space-y-2" : "grid gap-2 sm:grid-cols-2"}>
         <div className="space-y-1">
-          <Label className="text-xs">{paper ? "View" : "View (tool)"}</Label>
+          <Label className={paper ? "text-sm font-medium" : "text-xs"}>
+            {paper ? "View" : "View (tool)"}
+          </Label>
           {viewTools.length > 0 ? (
             <Select
               value={value.toolName || undefined}
@@ -428,7 +430,7 @@ export function WidgetAssertionFields({
       </div>
       {value.kind === "textVisible" ? (
         <div className="space-y-1">
-          {paper ? <Label className="text-xs">Text</Label> : null}
+          {paper ? <Label className="text-sm font-medium">Text</Label> : null}
           <Input
             aria-label="Text"
             value={value.text}
@@ -440,7 +442,7 @@ export function WidgetAssertionFields({
       ) : null}
       {value.kind === "widgetToolCalled" ? (
         <div className="space-y-1">
-          {paper ? <Label className="text-xs">Tool</Label> : null}
+          {paper ? <Label className="text-sm font-medium">Tool</Label> : null}
           <Input
             aria-label="Called tool"
             value={value.calledToolName}
@@ -456,17 +458,25 @@ export function WidgetAssertionFields({
       (value.kind === "elementVisible" ||
         value.kind === "elementHidden" ||
         value.kind === "inputValue") ? (
-        <LocatorFields
-          value={target}
-          onChange={(nextTarget) =>
-            onChange({ ...value, target: nextTarget } as WidgetAssertion)
+        <div
+          className={
+            paper
+              ? "[&_input]:h-9 [&_input]:text-sm [&_label]:text-sm [&_label]:font-medium"
+              : undefined
           }
-          readOnly={readOnly}
-        />
+        >
+          <LocatorFields
+            value={target}
+            onChange={(nextTarget) =>
+              onChange({ ...value, target: nextTarget } as WidgetAssertion)
+            }
+            readOnly={readOnly}
+          />
+        </div>
       ) : null}
       {value.kind === "inputValue" ? (
         <div className="space-y-1">
-          {paper ? <Label className="text-xs">Value</Label> : null}
+          {paper ? <Label className="text-sm font-medium">Value</Label> : null}
           <Input
             aria-label="Expected input value"
             value={value.equals}

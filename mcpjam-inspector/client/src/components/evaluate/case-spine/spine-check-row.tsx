@@ -160,13 +160,13 @@ function WidgetCheckRow({
         <button
           type="button"
           aria-expanded={open}
-          aria-label={`Edit ${row.label}`}
+          aria-label={`Edit ${readOnly ? row.label : row.kindLabel}`}
           onClick={() => setOpen(true)}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           title={row.tooltip}
         >
           <span className="min-w-0 text-sm font-semibold leading-[18px] text-card-foreground">
-            {row.label}
+            {readOnly ? row.label : row.kindLabel}
           </span>
         </button>
         <StatusDot status={status} />

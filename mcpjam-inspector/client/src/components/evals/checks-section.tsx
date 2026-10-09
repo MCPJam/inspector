@@ -587,7 +587,7 @@ export function CheckRow({
           ? cn(
               "min-w-0 space-y-3",
               paper &&
-                "[&_input:not([type=number])]:h-9 [&_input:not([type=number])]:text-[13px] [&_label]:text-xs",
+                "[&_label]:text-sm [&_label]:font-medium",
             )
           : cn(
               "rounded-md border p-3",
@@ -859,6 +859,18 @@ function OnlyToolsField({
   );
 }
 
+const PAPER_CHECK_SENTENCES: Partial<Record<Predicate["type"], string>> = {
+  toolNamesUnique: "Passes when tool names are unique within each server.",
+  noDeprecatedToolExposed:
+    "Warns when a tool description marks itself deprecated.",
+  toolInputSchemasWellFormed:
+    "Passes when input schemas have an object root and documented parameters.",
+  toolOutputSchemasPresent: "Passes when every tool declares an output schema.",
+  finalAssistantMessageNonEmpty: "Passes when the final reply contains text.",
+  noDeprecatedToolCalled: "Warns when a tool marked deprecated is called.",
+  noDestructiveToolCalled: "Passes when no tool marked destructive is called.",
+};
+
 function CheckFields({
   predicate,
   onChange,
@@ -880,6 +892,13 @@ function CheckFields({
 }) {
   const widgetTools = widgetToolNames ?? availableTools;
   const paper = useContext(PaperFieldsContext);
+  const sentence = PAPER_CHECK_SENTENCES[predicate.type];
+  if (paper && sentence)
+    return (
+      <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
+        {sentence}
+      </p>
+    );
   if (
     paper &&
     (predicate.type === "tokenBudgetUnder" ||
@@ -903,6 +922,23 @@ function CheckFields({
   }
   switch (predicate.type) {
     case "toolDescriptionsPresent":
+      if (paper)
+        return (
+          <div className="space-y-1">
+            <div className="text-sm font-medium">
+              Minimum description length
+            </div>
+            <PaperNumberField
+              value={predicate.minLength ?? 20}
+              ariaLabel="Minimum description length"
+              unit="characters"
+              readOnly={readOnly}
+              onChange={(minLength) => {
+                if (minLength > 0) onChange({ ...predicate, minLength });
+              }}
+            />
+          </div>
+        );
       return (
         <label className="text-xs">
           Minimum description length
@@ -920,8 +956,8 @@ function CheckFields({
           />
         </label>
       );
-    case "toolAnnotationsPresent":
-      return (
+    case "toolAnnotationsPresent": {
+      const fields = (
         <div className="space-y-2 text-xs">
           Require boolean annotations (leave both off to check presence only):
           {(["readOnlyHint", "destructiveHint"] as const).map((key) => (
@@ -950,6 +986,20 @@ function CheckFields({
           ))}
         </div>
       );
+      return paper ? (
+        <div className="space-y-2">
+          <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
+            Passes when every tool declares annotations.
+          </p>
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Annotation settings</summary>
+            <div className="pt-2">{fields}</div>
+          </details>
+        </div>
+      ) : (
+        fields
+      );
+    }
     case "toolNamesUnique":
     case "noDeprecatedToolExposed":
     case "toolInputSchemasWellFormed":
@@ -1358,7 +1408,7 @@ function ToolNameField({
               inline
                 ? "h-7 w-auto min-w-24 text-xs"
                 : paper
-                  ? "h-9 w-full text-[13px]"
+                  ? "h-9 w-full text-sm"
                   : compact
                     ? "h-7 w-full border-0 bg-transparent font-mono text-xs shadow-none"
                     : "h-8 text-xs"
@@ -1399,7 +1449,7 @@ function ToolNameField({
             inline
               ? "h-7 w-40 text-xs"
               : paper
-                ? "h-9 text-[13px]"
+                ? "h-9 text-sm"
                 : "h-8 text-xs"
           }
           disabled={readOnly}
@@ -1537,7 +1587,25 @@ export function ToolCalledWithFields({
                 }
                 readOnly={readOnly}
               />
-              {minimumMatchingCalls}
+              <div className="space-y-1">
+                <Label htmlFor={minCountId} className="text-sm font-medium">
+                  Minimum matching calls (optional)
+                </Label>
+                <PaperNumberField
+                  id={minCountId}
+                  ariaLabel="Minimum matching calls (optional)"
+                  value={predicate.minCount}
+                  placeholder="1"
+                  unit="calls"
+                  readOnly={readOnly}
+                  onChange={(minCount) => onChange({ ...predicate, minCount })}
+                  onClear={() => {
+                    const next = { ...predicate };
+                    delete next.minCount;
+                    onChange(next);
+                  }}
+                />
+              </div>
             </div>
           </details>
         </div>
@@ -2059,7 +2127,7 @@ function RawArgsJsonEditor({
         aria-invalid={jsonError ? true : undefined}
         className={
           paper
-            ? "min-h-9 h-9 resize-y border-input px-3 py-2 font-sans text-[13px] md:text-[13px]"
+            ? "min-h-9 h-9 resize-y border-input px-3 py-2 font-sans text-sm md:text-sm"
             : `min-h-[80px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
                 jsonError ? "border-destructive/60" : "border-border/60"
               }`
@@ -2120,7 +2188,7 @@ function ResponseContainsFields({
           }}
           onBlur={markTouched}
           placeholder="e.g. refund issued"
-          className={paper ? "h-9 text-[13px]" : "h-8 text-xs"}
+          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
         {error ? (
@@ -2193,7 +2261,7 @@ function ResponseMatchesFields({
         }}
         onBlur={markTouched}
         placeholder="e.g. ^Order #\\d{4} confirmed$"
-        className="h-8 font-mono text-xs"
+        className={paper ? "h-9 text-sm" : "h-8 font-mono text-xs"}
         disabled={readOnly}
       />
       {error ? (
@@ -2443,6 +2511,7 @@ export function PatternMatchFields({
   pathSchemas?: ToolArgSchemas;
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const patternsLabelId = useId();
   const patternRowId = useId();
   const ignoreCaseId = useId();
@@ -2462,6 +2531,7 @@ export function PatternMatchFields({
     () =>
       letters.has("m") ||
       letters.has("s") ||
+      (paper && predicate.path !== undefined) ||
       predicate.min !== undefined ||
       predicate.max !== undefined,
   );
@@ -2556,22 +2626,26 @@ export function PatternMatchFields({
           readOnly={readOnly}
         />
       )}
-      <MatchPathField
-        path={predicate.path}
-        onChange={(path) => update({ path })}
-        keys={pathKeys}
-        label={copy.pathLabel}
-        wholeLabel={copy.whole}
-        readOnly={readOnly}
-      />
+      {!paper ? (
+        <MatchPathField
+          path={predicate.path}
+          onChange={(path) => update({ path })}
+          keys={pathKeys}
+          label={copy.pathLabel}
+          wholeLabel={copy.whole}
+          readOnly={readOnly}
+        />
+      ) : null}
       <div className="space-y-1.5">
         <Label id={patternsLabelId} className="text-[11px]">
           Patterns
         </Label>
-        <p className="text-[11px] text-muted-foreground">
-          A {unit} passes only if it matches every pattern. Use{" "}
-          <code className="font-mono">A|B</code> for either.
-        </p>
+        {!paper ? (
+          <p className="text-[11px] text-muted-foreground">
+            A {unit} passes only if it matches every pattern. Use{" "}
+            <code className="font-mono">A|B</code> for either.
+          </p>
+        ) : null}
         <ul aria-labelledby={patternsLabelId} className="space-y-1.5">
           {patterns.map((pattern, index) => {
             const rowId = `${patternRowId}-${index}`;
@@ -2599,7 +2673,7 @@ export function PatternMatchFields({
                     }}
                     onBlur={markTouched}
                     placeholder={copy.placeholders[index === 0 ? 0 : 1]}
-                    className="h-8 font-mono text-xs"
+                    className={paper ? "h-9 text-sm" : "h-8 font-mono text-xs"}
                     disabled={readOnly}
                   />
                   {readOnly ? null : (
@@ -2651,17 +2725,19 @@ export function PatternMatchFields({
           </Button>
         )}
       </div>
-      <div className="flex items-center gap-2">
-        <Switch
-          id={ignoreCaseId}
-          checked={letters.has("i")}
-          onCheckedChange={(on) => setFlag("i", on)}
-          disabled={readOnly}
-        />
-        <Label htmlFor={ignoreCaseId} className="text-[11px]">
-          Ignore case
-        </Label>
-      </div>
+      {!paper ? (
+        <div className="flex items-center gap-2">
+          <Switch
+            id={ignoreCaseId}
+            checked={letters.has("i")}
+            onCheckedChange={(on) => setFlag("i", on)}
+            disabled={readOnly}
+          />
+          <Label htmlFor={ignoreCaseId} className="text-[11px]">
+            Ignore case
+          </Label>
+        </div>
+      ) : null}
       <details
         open={moreOpen}
         onToggle={(event) =>
@@ -2671,6 +2747,33 @@ export function PatternMatchFields({
       >
         <summary className="cursor-pointer py-1">More options</summary>
         <div className="mt-2 space-y-3">
+          {paper ? (
+            <>
+              <MatchPathField
+                path={predicate.path}
+                onChange={(path) => update({ path })}
+                keys={pathKeys}
+                label={copy.pathLabel}
+                wholeLabel={copy.whole}
+                readOnly={readOnly}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                A {unit} passes only if it matches every pattern. Use{" "}
+                <code className="font-mono">A|B</code> for either.
+              </p>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id={ignoreCaseId}
+                  checked={letters.has("i")}
+                  onCheckedChange={(on) => setFlag("i", on)}
+                  disabled={readOnly}
+                />
+                <Label htmlFor={ignoreCaseId} className="text-[11px]">
+                  Ignore case
+                </Label>
+              </div>
+            </>
+          ) : null}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Switch
@@ -2713,7 +2816,7 @@ export function PatternMatchFields({
                 aria-invalid={countError ? true : undefined}
                 onChange={(e) => setCount("min", e.target.value)}
                 placeholder="1"
-                className="h-8 w-20 text-xs"
+                className={paper ? "h-6 w-12 px-2 text-xs" : "h-8 w-20 text-xs"}
                 disabled={readOnly}
               />
               <Label htmlFor={maxId} className="text-[11px]">
@@ -2728,7 +2831,7 @@ export function PatternMatchFields({
                 aria-invalid={countError ? true : undefined}
                 onChange={(e) => setCount("max", e.target.value)}
                 placeholder="No limit"
-                className="h-8 w-24 text-xs"
+                className={paper ? "h-6 w-20 px-2 text-xs" : "h-8 w-24 text-xs"}
                 disabled={readOnly}
               />
             </div>
@@ -2766,19 +2869,23 @@ function WidgetToolFilterField({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   const ALL = "__all__";
   const useDropdown = availableTools && availableTools.length > 0;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Limit to tool (optional)
+        {paper ? "View" : "Limit to tool (optional)"}
       </Label>
       {useDropdown && !readOnly ? (
         <Select
           value={value ?? ALL}
           onValueChange={(next) => onChange(next === ALL ? undefined : next)}
         >
-          <SelectTrigger id={id} className="h-8 text-xs">
+          <SelectTrigger
+            id={id}
+            className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -2800,7 +2907,7 @@ function WidgetToolFilterField({
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
           placeholder="All widgets"
-          className="h-8 text-xs"
+          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
       )}
@@ -2929,7 +3036,7 @@ function ResultToolFilterField({
         >
           <SelectTrigger
             id={id}
-            className={paper ? "h-9 text-[13px]" : "h-8 text-xs"}
+            className={paper ? "h-9 text-sm" : "h-8 text-xs"}
             aria-label={label}
           >
             <SelectValue />
@@ -2957,7 +3064,7 @@ function ResultToolFilterField({
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
           placeholder={anyLabel}
-          className={paper ? "h-9 text-[13px]" : "h-8 text-xs"}
+          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
       )}
@@ -2990,15 +3097,45 @@ function ObservationFields<
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
+  const filter = (
+    <ResultToolFilterField
+      value={predicate.toolName}
+      onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+      availableTools={availableTools}
+      readOnly={readOnly}
+    />
+  );
+  if (paper) {
+    const sentences = {
+      argumentsMatchToolSchema:
+        "Passes when tool arguments match their declared schema.",
+      noRepeatedIdenticalCall:
+        "Warns when the same tool is called twice in a row with identical arguments.",
+      toolErrorNamesInput:
+        "Warns when a tool error names none of its input keys or values.",
+      fullPageHasContinuation:
+        "Warns when a full result page has no continuation metadata.",
+    };
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
+          {sentences[predicate.type]}
+        </p>
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Tool filter</summary>
+          <div className="space-y-2 pt-2">
+            {filter}
+            <p>{copy}</p>
+          </div>
+        </details>
+      </div>
+    );
+  }
   return (
     <div className="space-y-2">
       <div className="text-xs text-muted-foreground">{copy}</div>
-      <ResultToolFilterField
-        value={predicate.toolName}
-        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
-        availableTools={availableTools}
-        readOnly={readOnly}
-      />
+      {filter}
     </div>
   );
 }
@@ -3199,7 +3336,7 @@ function ToolResultContainsFields({
           }}
           onBlur={markTouched}
           placeholder="ISS-4412"
-          className="h-8 text-xs"
+          className={paper ? "h-9 text-sm" : "h-8 text-xs"}
           disabled={readOnly}
         />
         {error ? (
@@ -3261,6 +3398,7 @@ function ToolResultSchemaFields({
   readOnly: boolean;
 }) {
   const id = useId();
+  const paper = useContext(PaperFieldsContext);
   // Same draft model as `RawArgsJsonEditor`: the text knows which schema it is
   // for, and is re-derived in render when the schema arrives from outside.
   // The identity comes from ONE function in all three places (initial state,
@@ -3273,7 +3411,7 @@ function ToolResultSchemaFields({
   const formatSchema = () =>
     predicate.schema === undefined
       ? "{}"
-      : JSON.stringify(predicate.schema, null, 2);
+      : JSON.stringify(predicate.schema, null, paper ? undefined : 2);
   const [draftState, setDraftState] = useState(() => ({
     text: formatSchema(),
     forSchema: schemaKey,
@@ -3288,15 +3426,24 @@ function ToolResultSchemaFields({
   useInvalidDraftRegistration(error !== null);
   return (
     <div className="space-y-2">
+      {paper ? (
+        <ResultToolFilterField
+          label="Tool"
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
       <div className="space-y-1">
         <Label htmlFor={id} className="text-[11px]">
-          JSON Schema the result must match
+          {paper ? "Schema" : "JSON Schema the result must match"}
         </Label>
         <Textarea
           id={id}
           value={draft}
           spellCheck={false}
-          rows={6}
+          rows={paper ? 1 : 6}
           onChange={(e) => {
             const next = e.target.value;
             const { parsed, ok } = parseSchemaDraft(next);
@@ -3312,7 +3459,11 @@ function ToolResultSchemaFields({
             // keep Save closed until it parses again.
             if (ok) onChange({ ...predicate, schema: parsed });
           }}
-          className="font-mono text-xs"
+          className={
+            paper
+              ? "h-9 min-h-9 resize-y font-sans text-sm md:text-sm"
+              : "font-mono text-xs"
+          }
           disabled={readOnly}
         />
         {error ? (
@@ -3320,20 +3471,22 @@ function ToolResultSchemaFields({
             Not valid JSON: {error}. Saving now keeps the last schema that
             parsed, not what is in the box.
           </p>
-        ) : (
+        ) : !paper ? (
           <p className="text-[11px] text-muted-foreground">
             Validated against the tool's structured content, then its JSON
             output, then text that parses as JSON. Any JSON root — an array is
             legal under protocol 2026-07-28.
           </p>
-        )}
+        ) : null}
       </div>
-      <ResultToolFilterField
-        value={predicate.toolName}
-        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
-        availableTools={availableTools}
-        readOnly={readOnly}
-      />
+      {!paper ? (
+        <ResultToolFilterField
+          value={predicate.toolName}
+          onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3341,37 +3494,57 @@ function ToolResultSchemaFields({
 function PaperNumberField({
   value,
   onChange,
+  onClear,
   unit,
   prefix,
   readOnly,
+  id: fieldId,
+  ariaLabel,
+  placeholder,
 }: {
-  value: number;
+  value: number | undefined;
   onChange: (next: number) => void;
+  onClear?: () => void;
   unit: string;
   prefix?: string;
   readOnly: boolean;
+  id?: string;
+  ariaLabel?: string;
+  placeholder?: string;
 }) {
-  const id = useId();
+  const generatedId = useId();
+  const id = fieldId ?? generatedId;
   return (
-    <div className="flex items-center gap-1.5 text-xs text-secondary-foreground dark:text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-1.5 text-[13px] leading-[18px] text-secondary-foreground dark:text-muted-foreground">
       {prefix ? (
-        <Label htmlFor={id} className="text-xs font-medium">
+        <Label htmlFor={id} className="text-[13px] font-medium">
           {prefix}
         </Label>
       ) : null}
       <Input
         id={id}
-        aria-label={`Strictly under (${unit})`}
+        aria-label={ariaLabel ?? `Strictly under (${unit})`}
         type="number"
         min={1}
         step={1}
-        value={value}
+        value={value ?? ""}
+        placeholder={placeholder}
         onChange={(event) => {
+          if (event.target.value === "" && onClear) {
+            onClear();
+            return;
+          }
           const number = Number(event.target.value);
           if (Number.isFinite(number)) onChange(Math.floor(number));
         }}
         disabled={readOnly}
-        className="h-7 w-16 px-2 text-[13px]"
+        className="h-6 min-w-10 shrink-0 appearance-none px-2 py-1 text-xs leading-4 md:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        style={{
+          width: Math.max(
+            prefix ? 48 : 40,
+            String(value ?? placeholder ?? "").length * 8 + 16,
+          ),
+        }}
       />
       <label htmlFor={id}>{unit}</label>
     </div>
@@ -3781,24 +3954,17 @@ function ResponseCloseToFields({
   onChange: (next: Predicate) => void;
   readOnly: boolean;
 }) {
+  const paper = useContext(PaperFieldsContext);
   const referenceId = useId();
   const distanceId = useId();
   const caseId = useId();
   const whitespaceId = useId();
-  return (
+  const settings = (
     <div className="space-y-2">
-      <Label htmlFor={referenceId}>Reference response</Label>
-      <Input
-        id={referenceId}
-        value={predicate.reference}
-        disabled={readOnly}
-        onChange={(event) =>
-          onChange({ ...predicate, reference: event.target.value })
-        }
-      />
       <Label htmlFor={distanceId}>Maximum text distance (0–1)</Label>
       <Input
         id={distanceId}
+        className={paper ? "h-6 w-16 px-2 text-xs" : undefined}
         type="number"
         min={0}
         max={1}
@@ -3831,13 +3997,37 @@ function ResponseCloseToFields({
         />
         <Label htmlFor={whitespaceId}>Normalize whitespace</Label>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Compares characters, not meaning. Zero requires an exact match after
-        normalization. Inputs are limited to 100,000 characters. Unequal text
-        that needs more than 4 million edit-distance cells is ungradable, not a
-        failed assertion; equal prefixes and suffixes do not consume that
-        budget.
-      </p>
+    </div>
+  );
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={referenceId}>Reference response</Label>
+      <Input
+        id={referenceId}
+        className={paper ? "h-9 text-sm" : undefined}
+        value={predicate.reference}
+        disabled={readOnly}
+        onChange={(event) =>
+          onChange({ ...predicate, reference: event.target.value })
+        }
+      />
+      {paper ? (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Response settings</summary>
+          <div className="pt-2">{settings}</div>
+        </details>
+      ) : (
+        settings
+      )}
+      {!paper ? (
+        <p className="text-xs text-muted-foreground">
+          Compares characters, not meaning. Zero requires an exact match after
+          normalization. Inputs are limited to 100,000 characters. Unequal text
+          that needs more than 4 million edit-distance cells is ungradable, not
+          a failed assertion; equal prefixes and suffixes do not consume that
+          budget.
+        </p>
+      ) : null}
     </div>
   );
 }

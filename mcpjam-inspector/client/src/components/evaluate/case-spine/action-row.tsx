@@ -326,6 +326,7 @@ export function ActionRow({
 
         {open && step.kind === "toolCall" ? (
           <PinnedToolCallFields
+            paper
             seedKey={step.id}
             value={{
               ...(step.serverId ? { serverId: step.serverId } : {}),

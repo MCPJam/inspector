@@ -49,6 +49,7 @@ export interface PinnedToolCallFieldsProps {
   projectServers?: RemoteServer[];
   /** Render the fields locked (snapshot view): selects disabled, inputs read-only. */
   readOnly?: boolean;
+  paper?: boolean;
 }
 
 export function PinnedToolCallFields({
@@ -59,25 +60,31 @@ export function PinnedToolCallFields({
   availableTools,
   projectServers,
   readOnly = false,
+  paper = false,
 }: PinnedToolCallFieldsProps) {
   const [serverName, setServerName] = useState(
     value?.serverName ?? suiteServers[0] ?? "",
   );
   const [toolName, setToolName] = useState(seedToolName(value?.toolName));
   const [argsJson, setArgsJson] = useState(() =>
-    JSON.stringify(value?.arguments ?? {}, null, 2),
+    JSON.stringify(value?.arguments ?? {}, null, paper ? undefined : 2),
   );
   const [renderTimeoutMs, setRenderTimeoutMs] = useState<number | undefined>(
     value?.renderTimeoutMs,
   );
   const timeoutId = useId();
+  const serverId = useId();
+  const toolId = useId();
+  const argsId = useId();
 
   // Re-seed only when the identity changes — NOT on every `value` update, so
   // the onChange→parent→value round-trip can't clobber in-progress typing.
   useEffect(() => {
     setServerName(value?.serverName ?? suiteServers[0] ?? "");
     setToolName(seedToolName(value?.toolName));
-    setArgsJson(JSON.stringify(value?.arguments ?? {}, null, 2));
+    setArgsJson(
+      JSON.stringify(value?.arguments ?? {}, null, paper ? undefined : 2),
+    );
     setRenderTimeoutMs(value?.renderTimeoutMs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedKey]);
@@ -96,7 +103,8 @@ export function PinnedToolCallFields({
     );
     const names = availableTools
       .filter(
-        (t) => !t.serverId || acceptable.size === 0 || acceptable.has(t.serverId),
+        (t) =>
+          !t.serverId || acceptable.size === 0 || acceptable.has(t.serverId),
       )
       .map((t) => t.name);
     return Array.from(new Set(names));
@@ -105,7 +113,11 @@ export function PinnedToolCallFields({
   const parsedArgs = useMemo(() => {
     try {
       const parsed = JSON.parse(argsJson || "{}");
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      if (
+        parsed === null ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed)
+      ) {
         return { error: "Expected a JSON object" } as const;
       }
       return { value: parsed as Record<string, unknown> } as const;
@@ -138,9 +150,14 @@ export function PinnedToolCallFields({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={paper ? "space-y-2" : "grid gap-3 sm:grid-cols-2"}>
         <div className="space-y-1">
-          <Label className="text-[11px]">Server</Label>
+          <Label
+            htmlFor={serverId}
+            className={paper ? "text-sm font-medium" : "text-[11px]"}
+          >
+            Server
+          </Label>
           {suiteServers.length > 0 ? (
             <Select
               disabled={readOnly}
@@ -152,7 +169,10 @@ export function PinnedToolCallFields({
                 setServerName(nextServer);
               }}
             >
-              <SelectTrigger className="h-8 text-xs">
+              <SelectTrigger
+                id={serverId}
+                className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+              >
                 <SelectValue placeholder="Pick a server…" />
               </SelectTrigger>
               <SelectContent>
@@ -165,23 +185,32 @@ export function PinnedToolCallFields({
             </Select>
           ) : (
             <Input
+              id={serverId}
               value={serverName}
               onChange={(e) => setServerName(e.target.value)}
               placeholder="Server name"
               readOnly={readOnly}
-              className="h-8 text-xs"
+              className={paper ? "h-9 text-sm" : "h-8 text-xs"}
             />
           )}
         </div>
         <div className="space-y-1">
-          <Label className="text-[11px]">Tool</Label>
+          <Label
+            htmlFor={toolId}
+            className={paper ? "text-sm font-medium" : "text-[11px]"}
+          >
+            Tool
+          </Label>
           {toolNames.length > 0 ? (
             <Select
               disabled={readOnly}
               value={toolName || undefined}
               onValueChange={setToolName}
             >
-              <SelectTrigger className="h-8 text-xs">
+              <SelectTrigger
+                id={toolId}
+                className={paper ? "h-9 text-sm" : "h-8 text-xs"}
+              >
                 <SelectValue placeholder="Pick a tool…" />
               </SelectTrigger>
               <SelectContent>
@@ -194,58 +223,82 @@ export function PinnedToolCallFields({
             </Select>
           ) : (
             <Input
+              id={toolId}
               value={toolName}
               onChange={(e) => setToolName(e.target.value)}
               placeholder="e.g. show_map"
               readOnly={readOnly}
-              className="h-8 text-xs"
+              className={paper ? "h-9 text-sm" : "h-8 text-xs"}
             />
           )}
         </div>
       </div>
       <div className="space-y-1">
-        <Label className="text-[11px]">Arguments (JSON)</Label>
+        <Label
+          htmlFor={argsId}
+          className={paper ? "text-sm font-medium" : "text-[11px]"}
+        >
+          {paper ? "Arguments" : "Arguments (JSON)"}
+        </Label>
         <textarea
-          className={`min-h-[88px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
-            "error" in parsedArgs ? "border-destructive/60" : "border-border/60"
+          id={argsId}
+          className={`${paper ? "h-9 min-h-9 resize-y px-3 py-2 font-sans text-sm focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30" : "min-h-[88px] p-2 font-mono text-[11px] leading-tight"} w-full rounded-md border ${paper ? "bg-card" : "bg-background"} ${
+            "error" in parsedArgs
+              ? "border-destructive/60"
+              : paper
+                ? "border-input"
+                : "border-border/60"
           }`}
+          rows={paper ? 1 : undefined}
           value={argsJson}
           onChange={(e) => setArgsJson(e.target.value)}
           spellCheck={false}
           readOnly={readOnly}
-          aria-label="Arguments (JSON)"
+          aria-label={paper ? "Arguments" : "Arguments (JSON)"}
         />
         {"error" in parsedArgs ? (
-          <div className="text-[11px] text-destructive">
-            {parsedArgs.error}
-          </div>
+          <div className="text-[11px] text-destructive">{parsedArgs.error}</div>
         ) : null}
       </div>
       <div className="space-y-1">
-        <Label htmlFor={timeoutId} className="text-[11px]">
+        <Label
+          htmlFor={timeoutId}
+          className={paper ? "text-sm font-medium" : "text-[11px]"}
+        >
           Render timeout ms (optional)
         </Label>
-        <Input
-          id={timeoutId}
-          type="number"
-          min={1}
-          max={MAX_PROBE_RENDER_TIMEOUT_MS}
-          step={500}
-          value={renderTimeoutMs ?? ""}
-          onChange={(e) => {
-            const raw = e.target.value;
-            if (raw === "") {
-              setRenderTimeoutMs(undefined);
-              return;
+        <div
+          className={
+            paper
+              ? "flex items-center gap-1.5 text-[13px] text-secondary-foreground"
+              : undefined
+          }
+        >
+          <Input
+            id={timeoutId}
+            type="number"
+            min={1}
+            max={MAX_PROBE_RENDER_TIMEOUT_MS}
+            step={500}
+            value={renderTimeoutMs ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") {
+                setRenderTimeoutMs(undefined);
+                return;
+              }
+              const n = Number(raw);
+              if (!Number.isFinite(n)) return;
+              setRenderTimeoutMs(Math.floor(n));
+            }}
+            placeholder={paper ? undefined : "Harness default"}
+            readOnly={readOnly}
+            className={
+              paper ? "h-6 w-16 px-2 text-xs md:text-xs" : "h-8 w-36 text-xs"
             }
-            const n = Number(raw);
-            if (!Number.isFinite(n)) return;
-            setRenderTimeoutMs(Math.floor(n));
-          }}
-          placeholder="Harness default"
-          readOnly={readOnly}
-          className="h-8 w-36 text-xs"
-        />
+          />
+          {paper ? <span>ms</span> : null}
+        </div>
       </div>
     </div>
   );

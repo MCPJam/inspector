@@ -108,7 +108,7 @@ export function InteractCommandField({
   useInvalidDraftRegistration(invalid && !readOnly);
   return (
     <div className="space-y-1.5">
-      <p id={`${id}-help`} className="text-xs leading-4 text-muted-foreground">
+      <p id={`${id}-help`} className="text-[13px] leading-[18px] text-secondary-foreground dark:text-muted-foreground">
         Describe what should happen below. We support clicks, typing, keys,
         scrolls, and waits.
       </p>
@@ -118,7 +118,7 @@ export function InteractCommandField({
         aria-invalid={invalid || undefined}
         readOnly={readOnly}
         placeholder="Click Generate diagram"
-        className="h-9 text-[13px]"
+        className="h-9 text-sm"
         value={current.text === "Click" && !current.touched ? "" : current.text}
         onChange={(event) => {
           const text = event.target.value;
