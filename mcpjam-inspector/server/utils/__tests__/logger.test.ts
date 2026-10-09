@@ -244,17 +244,92 @@ describe("logger", () => {
         ]);
       });
 
-      it("ingests debug logs to Axiom", () => {
-        logger.debug("trace", "arg1", "arg2");
+      it("ingests debug logs to Axiom with the shape of their args", () => {
+        // `debug`'s args are whatever the caller had in hand — routinely a
+        // request or a tool result — so Axiom gets their structure only.
+        logger.debug("trace", "arg1", { city: "Lisbon", nights: 3 });
 
         expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
           {
             level: "debug",
             message: "trace",
             environment: "prod",
-            args: ["arg1", "arg2"],
+            args: "array(2)<string(4)>",
           },
         ]);
+      });
+
+      it("scrubs free-form context before it reaches Axiom", () => {
+        // The shape of the XAA connect failure log: before, only typed events
+        // were scrubbed, and this row shipped the server's URL and name raw.
+        logger.warn("[XAA connect] provider preparation failed", {
+          serverId: "srv_1",
+          serverName: "Acme Prod CRM",
+          resource: "https://mcp.acme.com/tenants/42/mcp?key=k",
+          stderr: `boom for jane@acme.com ${"x".repeat(600)}`,
+          toolArgs: { invoiceId: "INV-99" },
+        });
+
+        const [, [row]] = mockIngest.mock.calls.at(-1)!;
+        expect(row).toMatchObject({
+          level: "warn",
+          serverId: "srv_1",
+          serverName: "string(13)",
+          resource: "https://mcp.acme.com/…",
+          toolArgs: "{invoiceId: string(6)}",
+        });
+        const serialized = JSON.stringify(row);
+        expect(serialized).not.toContain("Acme");
+        expect(serialized).not.toContain("jane@acme.com");
+        expect(serialized).not.toContain("INV-99");
+        expect((row as { stderr: string }).stderr.length).toBeLessThan(600);
+      });
+
+      it("scrubs the context and message logger.error sends to Sentry", async () => {
+        const Sentry = await import("@sentry/node");
+        logger.error(
+          "connect failed for https://mcp.acme.com/tenants/42",
+          new Error("boom"),
+          { serverName: "Acme Prod CRM", serverUrl: "https://mcp.acme.com/x" },
+        );
+
+        expect(Sentry.captureException).toHaveBeenCalledWith(
+          expect.any(Error),
+          expect.objectContaining({
+            extra: {
+              message: "connect failed for https://mcp.acme.com/…",
+              serverName: "string(13)",
+              serverUrl: "https://mcp.acme.com/…",
+            },
+          }),
+        );
+      });
+
+      it("scrubs the extra an origin capture sends to Sentry", async () => {
+        const Sentry = await import("@sentry/node");
+        const { captureOriginErrorToSentry } = await import("../logger.js");
+        const error = new Error("upstream refused");
+
+        captureOriginErrorToSentry(error, {
+          tags: { error_origin: "mcpjam" },
+          extra: {
+            source: "routes.web.tools",
+            rawMessage: "refused for bob@acme.com",
+            body: { arguments: { amount: 4200 } },
+          },
+        });
+
+        expect(Sentry.captureException).toHaveBeenCalledWith(
+          error,
+          expect.objectContaining({
+            tags: { error_origin: "mcpjam" },
+            extra: {
+              source: "routes.web.tools",
+              rawMessage: "refused for [redacted-email]",
+              body: "{arguments: {amount: number}}",
+            },
+          }),
+        );
       });
 
       it("flushes Axiom on logger.flush()", async () => {

@@ -80,12 +80,23 @@ All events live in `server/utils/log-events.ts`. Add new events there before emi
 
 ## Scrubbing
 
-All payloads are scrubbed by `scrubLogPayload` before reaching Axiom. Forbidden key substrings
-(token, secret, email, authorization, cookie, apikey, stripe\*, pkce\*) are replaced with `"[redacted]"`.
-String values are scanned for Bearer tokens, JWTs, email addresses, and `sk-` keys.
+Every row — `logger.event`, `logger.info/warn/error/debug` — and the context `logger.error`
+attaches to Sentry goes through `scrubLogPayload` (`shared/log-scrubber.ts`). The Sentry SDK's own
+attachments (request body, headers, breadcrumbs, exception text) go through the same module via
+`beforeSend` / `beforeBreadcrumb` (`shared/sentry-config.ts`).
 
-Never put raw error messages containing user input directly into event payloads without first
-verifying they don't carry secrets.
+- **Credentials.** Forbidden key substrings (token, secret, email, authorization, cookie, apikey,
+  stripe\*, pkce\*) are replaced with `"[redacted]"` — unless the value is just a URL
+  (`tokenEndpoint`), which keeps its origin. String values lose Bearer tokens, JWTs, email
+  addresses, `sk-` keys and `key=value` secrets.
+- **Customer content.** A key whose last word names a prompt, message, content, input/output,
+  args/params, result, body, payload, headers, text, snapshot or title — or a typed label such as
+  `serverName` — keeps its shape (`{city: string(6), nights: number}`) and loses its values.
+- **Free text.** Every web URL is cut to its origin (`https://mcp.acme.com/…`). Strings are capped
+  at 1000 characters; error text (`error`, `message`, `cause`, `stderr`, `*Error`…) at 500.
+
+Ids, codes, statuses, counts, model ids and tool names pass through. If a field you need is being
+shaped, rename it to say what it is (`client`, not `body`) rather than widening the scrubber.
 
 ---
 

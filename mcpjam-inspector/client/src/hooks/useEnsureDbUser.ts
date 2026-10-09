@@ -48,24 +48,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/**
- * "First Last" when AuthKit has both halves, otherwise whichever half it has.
- * Undefined rather than an empty string when it has neither — a blank `name`
- * would render as an empty line in Sentry's user block instead of falling back
- * to the email.
- */
-function displayName(
-  user: {
-    firstName?: string | null;
-    lastName?: string | null;
-  } | null
-): string | undefined {
-  const parts = [user?.firstName, user?.lastName].filter(
-    (part): part is string => typeof part === "string" && part.trim() !== ""
-  );
-  return parts.length > 0 ? parts.join(" ") : undefined;
-}
-
 function isConvexWriteConflictError(err: unknown): boolean {
   if (isRecord(err)) {
     const data = err.data;
@@ -214,7 +196,7 @@ export function useEnsureDbUser() {
   //
   // WorkOS signout falls back to Convex guest auth, so Convex can stay
   // authenticated while the actor changes underneath it. `setSentryActor`
-  // replaces the user object wholesale, so the previous account's email cannot
+  // replaces the user object wholesale, so the previous account's id cannot
   // survive that switch.
   // Signed-in is checked FIRST, and on `workosUserId` rather than on
   // `actorKey`. `useActorKey` happens to return the WorkOS id ahead of the
@@ -224,12 +206,7 @@ export function useEnsureDbUser() {
   // Only the guest branch needs the key.
   useEffect(() => {
     if (workosUserId) {
-      setSentryActor({
-        kind: "signedIn",
-        id: workosUserId,
-        email: user?.email ?? undefined,
-        name: displayName(user),
-      });
+      setSentryActor({ kind: "signedIn", id: workosUserId });
       return;
     }
     if (!actorKey) {
@@ -237,7 +214,7 @@ export function useEnsureDbUser() {
       return;
     }
     setSentryActor({ kind: "guest", id: actorKey });
-  }, [actorKey, workosUserId, user?.email, user?.firstName, user?.lastName]);
+  }, [actorKey, workosUserId]);
 
   useEffect(() => {
     if (isLoading) {
