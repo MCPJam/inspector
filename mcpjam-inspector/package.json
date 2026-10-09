@@ -211,7 +211,7 @@
     "react-force-graph-2d": "^1.29.2",
     "react-hook-form": "^7.89.0",
     "react-markdown": "^10.1.0",
-    "react-resizable-panels": "^3.0.3",
+    "react-resizable-panels": "^4.14.2",
     "react-router": "^8.4.0",
     "react-textarea-autosize": "^8.5.9",
     "recharts": "^2.15.4",
