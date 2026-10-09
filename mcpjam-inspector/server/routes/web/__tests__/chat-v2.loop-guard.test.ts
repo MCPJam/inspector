@@ -26,10 +26,9 @@ const {
 }));
 
 vi.mock("convex/browser", () => ({
-  ConvexHttpClient: vi.fn().mockImplementation(() => ({
-    setAuth: vi.fn(),
-    query: convexQueryMock,
-  })),
+  ConvexHttpClient: vi.fn(function () {
+    return { setAuth: vi.fn(), query: convexQueryMock };
+  }),
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -38,7 +37,7 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation(() => {
+    MCPClientManager: vi.fn(function () {
       managerConstructions.count += 1;
       return {
         disconnectAllServers: vi.fn(),

@@ -18,12 +18,15 @@
  * automatic resend.
  *
  * Only continuations are checked: a request whose last message is the user's
- * starts a fresh budget and is never refused here.
+ * starts a fresh budget and is never refused here. Nor is one that carries an
+ * answered approval: it is a user's click, and the approved call runs without
+ * a model call.
  */
 import type { Context } from "hono";
 import {
   countAssistantStepsSincePrompt,
   isTurnContinuation,
+  lastStepHasApprovalResponse,
   repeatedToolInputFailure,
   REPEATED_TOOL_FAILURE_REFUSAL_MESSAGE,
   REPEATED_TOOL_INPUT_FAILURE_LIMIT,
@@ -61,6 +64,9 @@ export function checkAgentLoopGuard(args: {
 }): AgentLoopGuardVerdict | null {
   const { messages, maxSteps } = args;
   if (!isTurnContinuation(messages)) return null;
+  // The user's Approve/Deny click: the engine runs the answered call before
+  // any model call, so it needs no step left (see `lastStepHasApprovalResponse`).
+  if (lastStepHasApprovalResponse(messages)) return null;
   const steps = countAssistantStepsSincePrompt(messages);
   if (steps >= maxSteps) {
     return { reason: "step_limit", steps, maxSteps };

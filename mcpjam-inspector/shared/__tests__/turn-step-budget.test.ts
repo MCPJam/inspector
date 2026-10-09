@@ -246,6 +246,25 @@ describe("repeatedToolInputFailure", () => {
     expect(repeatedToolInputFailure(messages)).toBeNull();
   });
 
+  it("scans a step with many rejected names in linear time", () => {
+    // Two steps of disjoint rejected names: rebuilding the earlier step's set
+    // per name took seconds here and blocked the event loop.
+    const names = 10_000;
+    const step = (prefix: string) =>
+      stepWith(
+        ...Array.from({ length: names }, (_, index) =>
+          rejectedCall(`${prefix}_${index}`, `${prefix}-${index}`),
+        ),
+      );
+    const messages = [
+      user(),
+      { id: "a", role: "assistant", parts: [...step("a"), ...step("b")] },
+    ];
+    const startedAt = performance.now();
+    expect(repeatedToolInputFailure(messages)).toBeNull();
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+  });
+
   it("does not reach across a new user message", () => {
     const messages = [
       user("first", "u1"),

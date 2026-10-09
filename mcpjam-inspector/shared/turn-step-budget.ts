@@ -135,6 +135,35 @@ export function isTurnContinuation(messages: readonly unknown[]): boolean {
   return roleOf(messages[messages.length - 1]) === "assistant";
 }
 
+/**
+ * True when the last step of the last assistant message holds an answered
+ * approval (`approval-responded`): the request carries the user's Approve or
+ * Deny click, and the approved call has not run yet. Running it costs no model
+ * call, so a spent step budget is no reason to refuse it — a model that asks
+ * for approval on its final step must still get the answer executed.
+ *
+ * Scoped like the AI SDK's own predicates — parts after the last `step-start`.
+ */
+export function lastStepHasApprovalResponse(
+  messages: readonly unknown[],
+): boolean {
+  const message = messages[messages.length - 1];
+  if (roleOf(message) !== "assistant") return false;
+  const parts = partsOf(message) ?? [];
+  let lastStepStart = -1;
+  parts.forEach((part, index) => {
+    if ((part as { type?: unknown } | null)?.type === "step-start") {
+      lastStepStart = index;
+    }
+  });
+  return parts
+    .slice(lastStepStart + 1)
+    .some(
+      (part) =>
+        (part as { state?: unknown } | null)?.state === "approval-responded",
+    );
+}
+
 /** The AI SDK's `InvalidToolInputError` message, unanchored because some
  *  providers wrap it in their own envelope. */
 const INVALID_TOOL_INPUT_PATTERN = /Invalid input for tool\b/;
@@ -182,18 +211,27 @@ export function repeatedToolInputFailure(
 ): { toolName: string; steps: number } | null {
   const steps = assistantStepsSincePrompt(messages);
   if (limit < 1 || steps.length < limit) return null;
-  const rejectedIn = (step: PartLike[]) =>
-    new Set(
-      step
-        .filter(isRejectedToolInputPart)
-        .map((part) => toolNameOf(part))
-        .filter((name): name is string => Boolean(name)),
-    );
-  const last = rejectedIn(steps[steps.length - 1]!);
+  // Each step's set is built at most once: rebuilding it per candidate name
+  // made a crafted history with many rejected names quadratic, which blocks
+  // the server's event loop on a single request.
+  const rejectedSets = new Map<number, Set<string>>();
+  const rejectedIn = (index: number) => {
+    let names = rejectedSets.get(index);
+    if (!names) {
+      names = new Set(
+        steps[index]!.filter(isRejectedToolInputPart)
+          .map((part) => toolNameOf(part))
+          .filter((name): name is string => Boolean(name)),
+      );
+      rejectedSets.set(index, names);
+    }
+    return names;
+  };
+  const last = rejectedIn(steps.length - 1);
   for (const toolName of last) {
     let run = 1;
     for (let index = steps.length - 2; index >= 0; index -= 1) {
-      if (!rejectedIn(steps[index]!).has(toolName)) break;
+      if (!rejectedIn(index).has(toolName)) break;
       run += 1;
     }
     if (run >= limit) return { toolName, steps: run };

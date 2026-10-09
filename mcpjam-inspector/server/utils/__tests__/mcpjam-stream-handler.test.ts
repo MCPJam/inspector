@@ -3602,6 +3602,65 @@ describe("mcpjam-stream-handler", () => {
         expect(onConversationComplete).not.toHaveBeenCalled();
       });
 
+      it("still processes an answered approval on the budget's last step", async () => {
+        // The model asked for approval on its final allowed step; the user's
+        // click must still be honored. Answering it costs no model call.
+        vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+        (global.fetch as any).mockClear();
+
+        await handleMCPJamFreeChatModel({
+          messages: [
+            { role: "user", content: "go" },
+            ...Array.from({ length: 5 }).map((_, index) => ({
+              role: "assistant",
+              content: [{ type: "text", text: `s${index + 1}` }],
+            })),
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-last",
+                  toolName: "ui_execute_tool",
+                  input: {},
+                },
+                {
+                  type: "tool-approval-request",
+                  approvalId: "approval-last",
+                  toolCallId: "call-last",
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-approval-response",
+                  approvalId: "approval-last",
+                  approved: false,
+                },
+              ],
+            },
+          ] as any,
+          modelId: "gpt-4.1-mini",
+          systemPrompt: "You are helpful",
+          tools: { ui_execute_tool: { needsApproval: true } } as any,
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+          maxSteps: 6,
+          clientSuppliedHistory: true,
+          heartbeatIntervalMs: 0,
+        });
+        await lastExecution;
+
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(writtenChunks.some((c: any) => c?.type === "error")).toBe(false);
+        expect(
+          writtenChunks.filter((c: any) => c.type === "tool-output-denied"),
+        ).toMatchObject([{ toolCallId: "call-last" }]);
+      });
+
       it("keeps the quiet `length` finish for history the server built itself", async () => {
         // Eval / swarm / durable callers never re-post on their own; their
         // behavior at the ceiling is unchanged.

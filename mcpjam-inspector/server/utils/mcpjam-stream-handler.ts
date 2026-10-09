@@ -5175,13 +5175,16 @@ export async function runChatEngineLoop(
       //
       // Only for browser-sent history, where the browser drives the loop. An
       // explicit MRTR / scope step-up continuation is exempt: it answers a
-      // suspended call the user acted on, not an automatic resume. The hosted
+      // suspended call the user acted on, not an automatic resume. So is an
+      // answered approval: `handlePendingApprovals` runs the approved call
+      // without a model call, even on the step budget's last step. The hosted
       // routes refuse this case before connecting anything
       // (`agent-loop-guard.ts`); this is the engine's backstop for any caller
       // that reaches it anyway.
       if (
         options.clientSuppliedHistory === true &&
         !(scopeStepUpResume ?? mrtrResume) &&
+        !hasUnresolvedApprovalResponses(messageHistory) &&
         hitStepCap()
       ) {
         logger.warn(

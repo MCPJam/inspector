@@ -33,7 +33,7 @@ vi.mock("@mcpjam/sdk", async () => {
   return {
     ...actual,
     isMCPAuthError: vi.fn().mockReturnValue(false),
-    MCPClientManager: vi.fn().mockImplementation(() => {
+    MCPClientManager: vi.fn(function () {
       managerConstructions.count += 1;
       return {
         disconnectAllServers: disconnectAllServersMock,
@@ -230,6 +230,33 @@ describe("web routes — mcpjam-agent loop guard", () => {
       reason: "repeated_tool_input_error",
       toolName: "ui_create_eval_case",
     });
+  });
+
+  it("lets the user's answer to an approval on the final step through", async () => {
+    // The model asked for approval on its last allowed step; the click posts
+    // the history back with the part answered. The engine runs the approved
+    // call without a model call, so the spent budget is no reason to refuse.
+    const history = incidentHistory(AGENT_MAX_STEPS - 1);
+    const response = await post([
+      ...history.slice(0, -1),
+      {
+        ...history[history.length - 1]!,
+        parts: [
+          ...(history[history.length - 1] as { parts: unknown[] }).parts,
+          { type: "step-start" },
+          {
+            type: "tool-search_mcpjam",
+            toolCallId: "approved",
+            state: "approval-responded",
+            input: { query: "evals" },
+            approval: { id: "approval-1", approved: true },
+          },
+        ],
+      },
+    ]);
+
+    expect(response.status).toBe(200);
+    expect(streamWebChatTurnMock).toHaveBeenCalledTimes(1);
   });
 
   it("lets an ordinary multi-step tool loop under the ceiling continue", async () => {
