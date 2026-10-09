@@ -587,7 +587,7 @@ export function CheckRow({
           ? cn(
               "min-w-0 space-y-3",
               paper &&
-                "text-card-foreground [&_label]:text-sm [&_label]:font-medium",
+                "text-foreground [&_label]:text-sm [&_label]:font-medium [&_details_label]:text-xs [&_details_label]:font-normal",
             )
           : cn(
               "rounded-md border p-3",
@@ -991,7 +991,7 @@ function CheckFields({
           <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
             Passes when every tool declares annotations.
           </p>
-          <details className="text-xs text-card-foreground">
+          <details className="text-xs text-foreground">
             <summary className="cursor-pointer">Annotation settings</summary>
             <div className="pt-2">{fields}</div>
           </details>
@@ -1574,7 +1574,7 @@ export function ToolCalledWithFields({
               }
             />
           )}
-          <details className="text-xs text-card-foreground">
+          <details className="text-xs text-foreground">
             <summary className="cursor-pointer">Argument settings</summary>
             <div className="space-y-3 pt-2">
               <ArgumentMatchingField
@@ -2745,7 +2745,7 @@ export function PatternMatchFields({
         }
         className={
           paper
-            ? "text-[11px] text-card-foreground"
+            ? "text-[11px] text-foreground"
             : "text-[11px] text-muted-foreground"
         }
       >
@@ -2941,7 +2941,7 @@ function WidgetLatencyFields({
           readOnly={readOnly}
           onChange={(ms) => onChange({ ...predicate, ms })}
         />
-        <details className="text-xs text-card-foreground">
+        <details className="text-xs text-foreground">
           <summary className="cursor-pointer">View filter</summary>
           <WidgetToolFilterField
             value={predicate.toolName}
@@ -3126,7 +3126,7 @@ function ObservationFields<
         <p className="text-xs text-secondary-foreground dark:text-muted-foreground">
           {sentences[predicate.type]}
         </p>
-        <details className="text-xs text-card-foreground">
+        <details className="text-xs text-foreground">
           <summary className="cursor-pointer">Tool filter</summary>
           <div className="space-y-2 pt-2">
             {filter}
@@ -3249,7 +3249,7 @@ function ToolResultNumberFields<
           }
         />
         {field === "count" ? (
-          <details className="text-xs text-card-foreground">
+          <details className="text-xs text-foreground">
             <summary className="cursor-pointer">Tool filter</summary>
             <ResultToolFilterField
               value={predicate.toolName}
@@ -3519,7 +3519,7 @@ function PaperNumberField({
   const generatedId = useId();
   const id = fieldId ?? generatedId;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[13px] leading-[18px] text-card-foreground">
+    <div className="flex flex-wrap items-center gap-1.5 text-[13px] leading-[18px] text-foreground">
       {prefix ? (
         <Label htmlFor={id} className="text-[13px] font-medium">
           {prefix}
@@ -4016,7 +4016,7 @@ function ResponseCloseToFields({
         }
       />
       {paper ? (
-        <details className="text-xs text-card-foreground">
+        <details className="text-xs text-foreground">
           <summary className="cursor-pointer">Response settings</summary>
           <div className="pt-2">{settings}</div>
         </details>
