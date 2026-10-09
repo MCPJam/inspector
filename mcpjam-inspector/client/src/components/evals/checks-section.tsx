@@ -3339,7 +3339,7 @@ function ToolResultContainsFields({
       ) : null}
       <div className="space-y-1">
         <Label htmlFor={id} className="text-[11px]">
-          Text the result must contain
+          Text or JSON the result must contain
         </Label>
         <Input
           id={id}

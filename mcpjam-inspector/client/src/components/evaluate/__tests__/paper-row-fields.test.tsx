@@ -351,7 +351,7 @@ const primaryFields: Record<Predicate["type"], readonly string[]> = {
   toolLatencyUnder: ["Tool", "Strictly under (ms)"],
   toolResultSizeUnder: ["Tool", "Strictly under (bytes)"],
   toolCallCountUnder: ["Strictly under (tool calls)"],
-  toolResultContains: ["Tool", "Text the result must contain"],
+  toolResultContains: ["Tool", "Text or JSON the result must contain"],
   toolResultMatches: ["Tool", "Pattern 1"],
   toolResultMatchesSchema: ["Tool", "Schema"],
   toolErrorNamesInput: [],
