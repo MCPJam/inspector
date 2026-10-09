@@ -10,12 +10,13 @@ name: Unapproved merge report
 # merge was acceptable is a reviewer's call, not this job's.
 on:
   schedule:
-    # Mondays, 13:30 UTC, covering the previous seven days.
+    # Mondays, 13:30 UTC, covering the seven days up to 13:30. The script
+    # anchors scheduled windows to this time; change both together.
     - cron: "30 13 * * 1"
   workflow_dispatch:
     inputs:
       days:
-        description: Days to look back.
+        description: Days to look back from now (at most 31).
         default: "7"
 
 # Reads pull requests and their reviews; writes nothing to the repository.
@@ -52,4 +53,5 @@ jobs:
         with:
           name: unapproved-merges-${{ github.run_id }}
           path: unapproved-merges.json
+          if-no-files-found: error
           retention-days: 90

@@ -3,35 +3,87 @@
 // approval, but admins on a bypass list can merge without it, and the merge
 // API records no flag saying a bypass happened — so this reconstructs it from
 // the reviews. Report only: it never fails the run on what it finds.
+// Direct pushes to the default branch never go through a PR and are not
+// covered by this report.
 import { appendFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_DAYS = 31;
+const MERGER_UNKNOWN = "(merger unknown)";
+
 /**
- * Whether `pr` merged with an approval that counts: state APPROVED, from a
- * human account (bot approvals such as review assistants do not satisfy the
- * control), not the author, and submitted before the merge.
+ * Whether `pr` merged with an approval that counts. Like the ruleset, it reads
+ * each reviewer's latest non-COMMENTED review submitted by the merge, so a
+ * later CHANGES_REQUESTED or a dismissal replaces an earlier approval. One of
+ * those stances must be APPROVED, from a human account (bot approvals such as
+ * review assistants do not satisfy the control) other than the author. The
+ * comparison is inclusive because auto-merge lands the approval and the merge
+ * in the same second.
  */
 export function hasQualifyingApproval(pr, reviews) {
   const mergedAt = Date.parse(pr.merged_at);
-  return reviews.some(
+  const stances = new Map();
+  for (const review of reviews) {
+    // `!(<=)` also drops a review with no submitted_at (PENDING).
+    if (
+      !review.user ||
+      review.state === "COMMENTED" ||
+      !(Date.parse(review.submitted_at) <= mergedAt)
+    ) {
+      continue;
+    }
+    const prior = stances.get(review.user.login);
+    // The API lists reviews oldest first, so on a tie the later entry wins.
+    if (
+      !prior ||
+      Date.parse(review.submitted_at) >= Date.parse(prior.submitted_at)
+    ) {
+      stances.set(review.user.login, review);
+    }
+  }
+  return [...stances.values()].some(
     (review) =>
       review.state === "APPROVED" &&
-      review.user?.type === "User" &&
-      review.user.login !== pr.user.login &&
-      Date.parse(review.submitted_at) <= mergedAt,
+      review.user.type === "User" &&
+      review.user.login !== pr.user.login,
   );
+}
+
+/**
+ * The window a run reports on. Scheduled runs start minutes after the cron
+ * time, so they anchor `until` to the most recent Monday 13:30 UTC (the cron
+ * in unapproved-merge-report.yml) and cover the seven days before it, which
+ * makes consecutive weekly windows tile with no gap or overlap. A manual run
+ * reports the last `days` up to now.
+ */
+export function reportWindow({ now, days, scheduled }) {
+  if (!scheduled) {
+    return { since: new Date(now.getTime() - days * DAY_MS), until: now };
+  }
+  const until = new Date(now);
+  until.setUTCHours(13, 30, 0, 0);
+  // getUTCDay() is 0 on Sunday and 1 on Monday.
+  until.setUTCDate(until.getUTCDate() - ((until.getUTCDay() + 6) % 7));
+  if (until > now) {
+    until.setUTCDate(until.getUTCDate() - 7);
+  }
+  return { since: new Date(until.getTime() - 7 * DAY_MS), until };
 }
 
 export function summarize(merges) {
   const unapproved = merges.filter((m) => !m.approved);
   const selfMerged = unapproved.filter((m) => m.mergedBy === m.author);
+  const mergerUnknown = unapproved.filter((m) => m.mergedBy === null);
   return {
     total: merges.length,
     unapproved: unapproved.length,
     selfMerged: selfMerged.length,
+    mergerUnknown: mergerUnknown.length,
     byMerger: Object.entries(
       unapproved.reduce((acc, m) => {
-        acc[m.mergedBy] = (acc[m.mergedBy] ?? 0) + 1;
+        const merger = m.mergedBy ?? MERGER_UNKNOWN;
+        acc[merger] = (acc[merger] ?? 0) + 1;
         return acc;
       }, {}),
     ).sort((a, b) => b[1] - a[1]),
@@ -49,6 +101,11 @@ export function renderMarkdown({ repo, since, until, merges }) {
     `- Without an approving review from someone other than the author: **${s.unapproved}**`,
     `- Of those, merged by their own author: **${s.selfMerged}**`,
   ];
+  if (s.mergerUnknown) {
+    lines.push(
+      `- Of those, merged with no merger recorded by GitHub, so a self-merge cannot be ruled out: **${s.mergerUnknown}**`,
+    );
+  }
   if (s.byMerger.length) {
     lines.push(
       "",
@@ -65,7 +122,7 @@ export function renderMarkdown({ repo, since, until, merges }) {
       "|---|---|---|---|",
       ...unapproved.map(
         (m) =>
-          `| [#${m.number}](${m.url}) ${m.title.replaceAll("|", "\\|")} | ${m.author} | ${m.mergedBy} | ${m.mergedAt} |`,
+          `| [#${m.number}](${m.url}) ${m.title.replaceAll("|", "\\|")} | ${m.author} | ${m.mergedBy ?? MERGER_UNKNOWN} | ${m.mergedAt} |`,
       ),
     );
   }
@@ -101,24 +158,30 @@ export async function allPages(path, get) {
   }
 }
 
-async function mergedSince(repo, base, since, token) {
-  const merged = [];
+/**
+ * PRs merged in [since, until), read from a list of closed PRs sorted by last
+ * update, newest first. `get` fetches one page.
+ */
+export async function mergedBetween(path, since, until, get) {
+  const merged = new Map();
+  let pastWindow = false;
   for (let page = 1; ; page++) {
-    const prs = await github(
-      `/repos/${repo}/pulls?state=closed&base=${base}&sort=updated&direction=desc&per_page=100&page=${page}`,
-      token,
-    );
+    const prs = await get(`${path}&per_page=100&page=${page}`);
     for (const pr of prs) {
-      if (pr.merged_at && Date.parse(pr.merged_at) >= since.getTime()) {
-        merged.push(pr);
+      const mergedAt = Date.parse(pr.merged_at);
+      if (mergedAt >= since.getTime() && mergedAt < until.getTime()) {
+        // An update between two page fetches moves a PR to page 1 and shifts
+        // the rest down one, so the same PR can be listed on two pages.
+        merged.set(pr.number, pr);
       }
     }
-    // Sorted by last update, and a merge is an update, so once a page ends
-    // before the window no later page can hold a merge inside it.
-    const last = prs.at(-1);
-    if (prs.length < 100 || Date.parse(last.updated_at) < since.getTime()) {
-      return merged;
+    // A merge is an update, so once a page ends before the window no later
+    // page can hold a merge inside it. The same shift can push a PR from
+    // this page onto the next, so read one more page before stopping.
+    if (prs.length < 100 || pastWindow) {
+      return [...merged.values()];
     }
+    pastWindow = Date.parse(prs.at(-1).updated_at) < since.getTime();
   }
 }
 
@@ -131,14 +194,30 @@ async function main() {
       "GITHUB_TOKEN, GITHUB_REPOSITORY and a positive REPORT_DAYS are required",
     );
   }
-  const until = new Date();
-  const since = new Date(until.getTime() - days * 24 * 60 * 60 * 1000);
+  if (days > MAX_DAYS) {
+    // Each merged PR costs at least two sequential calls, and the 1,000
+    // requests an hour GITHUB_TOKEN gets are shared with every other workflow.
+    throw new Error(
+      `REPORT_DAYS is ${days}; the maximum is ${MAX_DAYS}. A longer window can exhaust the GITHUB_TOKEN rate limit, which fails as a 403. Report a longer period as several runs.`,
+    );
+  }
+  const { since, until } = reportWindow({
+    now: new Date(),
+    days,
+    scheduled: process.env.GITHUB_EVENT_NAME === "schedule",
+  });
   const { default_branch: base } = await github(`/repos/${repo}`, token);
 
+  const listed = await mergedBetween(
+    `/repos/${repo}/pulls?state=closed&base=${base}&sort=updated&direction=desc`,
+    since,
+    until,
+    (path) => github(path, token),
+  );
   const merges = [];
-  for (const listed of await mergedSince(repo, base, since, token)) {
+  for (const { number } of listed) {
     // The list endpoint omits `merged_by`; only the single-PR read has it.
-    const pr = await github(`/repos/${repo}/pulls/${listed.number}`, token);
+    const pr = await github(`/repos/${repo}/pulls/${number}`, token);
     // An approval past the first page still counts.
     const reviews = await allPages(
       `/repos/${repo}/pulls/${pr.number}/reviews`,
@@ -149,7 +228,9 @@ async function main() {
       title: pr.title,
       url: pr.html_url,
       author: pr.user.login,
-      mergedBy: pr.merged_by?.login ?? "unknown",
+      // Nullable on this endpoint. Kept as null so the report shows it as an
+      // anomaly instead of a login that never matches the author.
+      mergedBy: pr.merged_by?.login ?? null,
       mergedAt: pr.merged_at,
       approved: hasQualifyingApproval(pr, reviews),
     });
