@@ -210,6 +210,72 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("sends the canonical id to /stream when a bare pinned id resolves to an MCPJam-hosted model", async () => {
+    // PLB-147: a swarm snapshot pinned before selections existed carries the
+    // bare `gpt-5.6-luna`. The hosted check canonicalizes it to
+    // `openai/gpt-5.6-luna` and routes the turn to `/stream`, whose catalog
+    // only knows the prefixed id — so sending the bare one came back
+    // `invalid_model` on every attempt.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        journeyRunId: "run-1",
+        hostId: "host-1",
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream");
+    expect(opts.modelDefinition.id).toBe("openai/gpt-5.6-luna");
+    expect(opts.modelDefinition.provider).toBe("openai");
+  });
+
+  it("keeps an already-prefixed hosted id unchanged on /stream", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect((calls[0] as any).modelDefinition.id).toBe("openai/gpt-4o-mini");
+  });
+
+  it("keeps a bare id bare on the org-BYOK rail, where the provider expects its own id", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "openai" },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        modelId: "gpt-5.6-luna",
+        modelDefinition: {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.endpointPath).toBe("/stream/org");
+    expect(opts.modelDefinition.id).toBe("gpt-5.6-luna");
+  });
+
   it("carries a swarm turn's effort to the harness checks on a harness host (refused, not dropped)", async () => {
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
