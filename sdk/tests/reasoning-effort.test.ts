@@ -346,6 +346,24 @@ describe("selectionConfigKey", () => {
         '"fallback":{"provider":"openrouter","model":"none"}}'
     );
   });
+
+  it("keys a stored legacy selection, which carries no fallback", () => {
+    // A host saved with a model id outside the hosted catalog stores
+    // `{ source: "legacy", modelId }` and the DTO hands it back as-is.
+    const legacy: RequestedModelSelection = {
+      source: "legacy",
+      modelId: "ollama/llama3",
+    };
+    expect(selectionConfigKey(legacy)).toBe(
+      '{"source":"legacy","modelId":"ollama/llama3"}'
+    );
+    expect(selectionConfigKey({ ...legacy, provider: "ollama" })).toBe(
+      '{"source":"legacy","modelId":"ollama/llama3","provider":"ollama"}'
+    );
+    expect(selectionConfigKey(legacy)).not.toBe(
+      selectionConfigKey({ ...HOSTED, modelId: legacy.modelId })
+    );
+  });
 });
 
 describe("selectionIfMatches", () => {
