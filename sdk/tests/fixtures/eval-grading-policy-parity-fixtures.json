@@ -384,7 +384,7 @@
     },
     {
       "__label": "hosted suite, suite-wide storage with no declared threshold",
-      "__why": "No declared threshold resolves to the default `LEGACY_SUITE_WIDE_THRESHOLD_PERCENT` (70), which run start stamps onto every new run. Runs from before the stamp stored no criteria and were judged at 100 by the finalizers' own `?? 100`; this row describes new runs, so it changes no storage.",
+      "__why": "No declared threshold resolves to the default `DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT` (70), which run start stamps onto every new run. Runs from before the stamp stored no criteria and were judged at 100 by the finalizers' own `?? 100`; this row describes new runs, so it changes no storage.",
       "input": {
         "source": "hostedSuite",
         "value": {}

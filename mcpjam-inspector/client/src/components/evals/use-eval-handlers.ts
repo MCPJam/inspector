@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
-import { LEGACY_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
+import { DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
 import { track } from "@/lib/analytics";
@@ -625,8 +625,7 @@ export function useEvalHandlers({
         options?.minimumPassRate ??
         run.passCriteria?.minimumPassRate ??
         suite.defaultPassCriteria?.minimumPassRate ??
-        selectedSuiteEntry?.latestRun?.passCriteria?.minimumPassRate ??
-        LEGACY_SUITE_WIDE_THRESHOLD_PERCENT;
+        DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT;
       const criteriaNote = `Replay of run ${run._id}. Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
       setReplayingRunId(run._id);
@@ -982,7 +981,7 @@ export function useEvalHandlers({
         // would pin a suite with no setting to whatever its first run used.
         const minimumPassRate =
           suite.defaultPassCriteria?.minimumPassRate ??
-          LEGACY_SUITE_WIDE_THRESHOLD_PERCENT;
+          DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
         const testsPayload = executionContext.tests.map((test) => ({

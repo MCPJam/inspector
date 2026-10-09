@@ -2162,7 +2162,7 @@ describe("eval export — which policy owns the threshold", () => {
 
   test("writes the default (0.7) for a legacy suite with no minimum accuracy", async () => {
     // Every new run of a suite with no threshold is stamped with
-    // LEGACY_SUITE_WIDE_THRESHOLD_PERCENT (70), so this is the threshold the
+    // DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT (70), so this is the threshold the
     // suite already runs at, not an invented one.
     await withTempDir(async () => {
       const run = await runExport(

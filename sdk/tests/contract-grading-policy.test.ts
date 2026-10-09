@@ -12,7 +12,7 @@ import {
   EVAL_GRADING_POLICY_ORIGINS,
   EVAL_GRADING_POLICY_REFUSALS,
   EVAL_SUITE_WIDE_POPULATIONS,
-  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   MAX_MINIMUM_ITERATIONS,
   SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_VALIDITY_DEFAULTS,
@@ -584,7 +584,7 @@ describe("grading policy — the closed vocabularies", () => {
   });
 
   it("the default threshold new runs are stamped with is 70%", () => {
-    expect(LEGACY_SUITE_WIDE_THRESHOLD_PERCENT).toBe(70);
+    expect(DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT).toBe(70);
   });
 
   it("every fixture row's expected policy validates", () => {

@@ -22,6 +22,7 @@
  */
 
 import {
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
   LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
   hostedGradingStorageFromDto,
   planEvalGradingPolicyEdit,
@@ -285,4 +286,8 @@ export function gradingPolicyForReportedRun(args: {
  * inspector client spell the default once. It is a PRODUCER fallback, not a
  * stored value.
  */
-export { LEGACY_SUITE_WIDE_THRESHOLD_PERCENT };
+export {
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
+  /** @deprecated Use `DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT`. */
+  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+};

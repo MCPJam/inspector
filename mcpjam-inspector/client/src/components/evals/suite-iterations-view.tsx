@@ -25,7 +25,7 @@ import {
   EVAL_PASS_CRITERION_SCOPE_HINTS,
   EVAL_PASS_CRITERION_SCOPE_LABELS,
   EXECUTION_BUDGET_DEFAULTS,
-  LEGACY_SUITE_WIDE_THRESHOLD_PERCENT,
+  DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT,
 } from "@mcpjam/sdk/contract";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
@@ -965,7 +965,7 @@ export function SuiteIterationsView({
   );
   const defaultMinimumPassRate =
     draft.current.defaultPassCriteria?.minimumPassRate ??
-    LEGACY_SUITE_WIDE_THRESHOLD_PERCENT;
+    DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT;
   const draftChanges = useMemo(() => describeDraft(draft), [draft]);
   // Memoized with the changes: `canCommit` re-runs `dirtyKeys` (a stringify per
   // key) and a zod parse over every default check, and this component re-renders
