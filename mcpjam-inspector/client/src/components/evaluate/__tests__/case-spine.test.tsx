@@ -814,7 +814,8 @@ describe("the spine", () => {
   it("locks the route on a model-free case but keeps the call editable", async () => {
     await openSpine({ steps: pinnedFirst });
     expect(screen.getByTestId("simple-case-route-locked")).toBeTruthy();
-    expect(screen.getByLabelText("Edit step 1")).toBeTruthy();
+    expect(screen.getByLabelText("Arguments")).toBeVisible();
+    expect(screen.getByLabelText("Arguments")).not.toHaveAttribute("readonly");
   });
 
   it("never prints a wire enum for a kind this build knows", async () => {
@@ -1025,6 +1026,26 @@ it("allows typing an allow-list tool without a connected tool catalog", async ()
   ]);
 });
 
+it.each([false, true])(
+  "keeps Interact and Call tool fields open without heading buttons (readOnly=%s)",
+  (readOnly) => {
+    render(
+      <StatefulSpine
+        steps={[...withClick, ...pinnedFirst]}
+        readOnly={readOnly}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Interact" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Call tool" })).toBeVisible();
+    expect(screen.getByLabelText("View tool for step 2")).toBeVisible();
+    expect(screen.getByLabelText("Interaction type")).toBeVisible();
+    const args = screen.getByLabelText("Arguments");
+    expect(args).toBeVisible();
+    expect(args.readOnly).toBe(readOnly);
+    expect(screen.queryByRole("button", { name: /Edit step/ })).toBeNull();
+  },
+);
+
 describe("historical case layout", () => {
   it("retains prompt and outcome fields, preserves action order, and removes mutation controls", () => {
     render(
@@ -1100,10 +1121,7 @@ it.each(["click", "type", "key", "scroll", "wait"] as const)(
       action: { kind: actionKind },
     });
     expect(screen.getByLabelText("View tool for step 2")).toBeVisible();
-    expect(screen.getByLabelText("Edit step 2")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    expect(screen.queryByLabelText("Edit step 2")).toBeNull();
   },
 );
 

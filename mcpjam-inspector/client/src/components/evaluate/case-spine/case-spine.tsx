@@ -926,7 +926,6 @@ export function CaseSpine({
       }
       newest={addedKey === `action:${action.step.id}`}
       addAfter={renderAdd(action, true)}
-      defaultOpen={addedKey === `action:${action.step.id}`}
       promptAriaLabel={
         action.ordinal === 1
           ? "What does the user ask?"

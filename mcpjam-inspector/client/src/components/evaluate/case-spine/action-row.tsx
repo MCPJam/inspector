@@ -9,13 +9,12 @@ import { useSpineDrag } from "./spine-drag";
  *
  * Bodies differ by kind on purpose. A prompt stays on screen and stays
  * editable; the last one cannot be removed, because a case has to ask
- * something. A pinned tool call and a recorded interaction are three-field
- * forms that are read far more often than edited, so they collapse to one
- * line and open on click.
+ * something. Tool calls and interactions keep their field editors visible
+ * so they can be configured directly, just like the assertion rows.
  */
 
 import { useMemo, useState, type ReactNode, type Ref } from "react";
-import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react";
+import { MoreHorizontal, Trash2 } from "lucide-react";
 import {
   Popover,
   PopoverTrigger,
@@ -66,7 +65,6 @@ export function ActionRow({
   canRemove,
   onHover,
   onSelect,
-  defaultOpen = false,
   children,
   newest = false,
   addAfter,
@@ -90,7 +88,6 @@ export function ActionRow({
   canRemove: boolean;
   onHover?: (stepId: string | null) => void;
   onSelect?: () => void;
-  defaultOpen?: boolean;
   children: ReactNode;
   newest?: boolean;
   addAfter?: ReactNode;
@@ -98,16 +95,13 @@ export function ActionRow({
   const step = action.step;
   const meta = STEP_META[step.kind];
   const Icon = meta.Icon;
-  const expandable = step.kind !== "prompt";
+  const isActionCard = step.kind !== "prompt";
   const drag = useSpineDrag({
     id: `step:${step.id}`,
     phase: "steps",
     kind: "action",
-    disabled: readOnly || !expandable,
+    disabled: readOnly || !isActionCard,
   });
-  const [open, setOpen] = useState(
-    (!readOnly && (step.kind === "interact" || newest)) || defaultOpen,
-  );
   const [optionsOpen, setOptionsOpen] = useState(false);
   // An authored tool call names its server by ID, so the row would otherwise
   // read "search-products on p570g76zwcpz1…".
@@ -142,7 +136,7 @@ export function ActionRow({
       data-active={isActive || undefined}
     >
       <div className="flex items-center gap-2">
-        {expandable ? (
+        {isActionCard ? (
           drag.handle(step.kind === "toolCall" ? "Call tool" : meta.label)
         ) : (
           <span
@@ -155,7 +149,7 @@ export function ActionRow({
             {action.ordinal}
           </span>
         )}
-        {!expandable ? (
+        {!isActionCard ? (
           <Icon
             className={cn(
               "size-4 shrink-0",
@@ -164,27 +158,13 @@ export function ActionRow({
             aria-hidden="true"
           />
         ) : null}
-        {expandable ? (
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-label={`Edit step ${action.ordinal}`}
-            onClick={() => setOpen((value) => !value)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left hover:bg-muted/50 focus-visible:outline focus-visible:outline-ring"
+        {isActionCard ? (
+          <h3
+            className="min-w-0 flex-1 text-[13px] font-semibold leading-[18px] text-card-foreground"
+            title={summarizeStep(step, serverNamesById)}
           >
-            <ChevronRight
-              className={cn(
-                "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
-                open && "rotate-90",
-              )}
-            />
-            <span
-              className="min-w-0 text-sm font-semibold leading-[18px] text-card-foreground"
-              title={summarizeStep(step, serverNamesById)}
-            >
-              {step.kind === "toolCall" ? "Call tool" : meta.label}
-            </span>
-          </button>
+            {step.kind === "toolCall" ? "Call tool" : meta.label}
+          </h3>
         ) : (
           <Label
             htmlFor={`spine-prompt-${step.id}`}
@@ -195,7 +175,7 @@ export function ActionRow({
           </Label>
         )}
         {status ? <StepStatusBadge status={status} /> : null}
-        {!readOnly && expandable ? (
+        {!readOnly && isActionCard ? (
           <Popover open={optionsOpen} onOpenChange={setOptionsOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -253,7 +233,7 @@ export function ActionRow({
             </PopoverContent>
           </Popover>
         ) : null}
-        {readOnly || total === 1 || expandable ? null : (
+        {readOnly || total === 1 || isActionCard ? null : (
           <>
             <Button
               type="button"
@@ -293,7 +273,7 @@ export function ActionRow({
         )}
       </div>
 
-      <div className={cn("space-y-5", expandable && "mt-1.5")}>
+      <div className={cn("space-y-5", isActionCard && "mt-1.5")}>
         {step.kind === "prompt" ? (
           <div className="space-y-2">
             <p
@@ -323,7 +303,7 @@ export function ActionRow({
           </div>
         ) : null}
 
-        {open && step.kind === "toolCall" ? (
+        {step.kind === "toolCall" ? (
           <PinnedToolCallFields
             paper
             seedKey={step.id}
@@ -342,7 +322,7 @@ export function ActionRow({
             readOnly={readOnly}
             onChange={(cfg) => {
               if (readOnly) return;
-              onUpdate({
+              const next = {
                 ...step,
                 serverId:
                   cfg.serverId ??
@@ -353,12 +333,22 @@ export function ActionRow({
                 toolName: cfg.toolName,
                 arguments: cfg.arguments as Record<string, unknown>,
                 renderTimeoutMs: cfg.renderTimeoutMs,
-              });
+              };
+              if (
+                next.serverId === step.serverId &&
+                next.serverName === step.serverName &&
+                next.toolName === step.toolName &&
+                next.renderTimeoutMs === step.renderTimeoutMs &&
+                JSON.stringify(next.arguments) === JSON.stringify(step.arguments)
+              ) {
+                return;
+              }
+              onUpdate(next);
             }}
           />
         ) : null}
 
-        {open && step.kind === "interact" ? (
+        {step.kind === "interact" ? (
           <fieldset disabled={readOnly} className="min-w-0">
             <div className="space-y-2 text-card-foreground">
               <div className="space-y-1.5">
