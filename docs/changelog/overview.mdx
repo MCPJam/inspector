@@ -11,6 +11,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### 2026-10-09
 
+#### Fixed
+
+- **Plugin extension Apps: 5 MB UI limit for entrypoint-opened Apps** — opening a plugin extension App from an entrypoint (the Apps menu, a thread tab, or a quick action) now accepts `ui://` HTML up to 5 MB. The previous 1 MB cap refused real-world Apps such as OpenAI's Bits & Bolts example, which ships a ~1.1 MB single-file UI. The same 5 MB limit applies to form App previews. Apps opened inline by the model are unaffected and carry no cap.
+
+- **Plugin extension Apps: entrypoint Apps always open fullscreen** — Apps opened from an entrypoint now open in fullscreen regardless of what `availableDisplayModes` the App's resource or global App resource declares. Previously, an App that declared only `inline` in its `availableDisplayModes` was refused with "This App has no supported display mode" when opened from an entrypoint. Entrypoints present every App fullscreen, matching how ChatGPT presents entrypoint Apps. Model-invoked Apps continue to negotiate their display mode as before.
+
 #### Changed
 
 - **Step-by-step case editor: "Expect a tool call" under every prompt** — in the Evaluate step-by-step editor (behind `evaluate-observe-first`), each prompt now offers an **Expect a tool call** button even when that prompt has no tool yet. Clicking it opens that prompt's tool picker and writes the chosen tool into that prompt's own steps, so the assertion grades that prompt's turn. Previously, adding a tool expectation to a later prompt required going through the generic assertion drawer. The button is not shown on a case that says no tool is called, on a pinned-first case, in a read-only view, or before the draft has a prompt step.
