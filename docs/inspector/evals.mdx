@@ -435,6 +435,22 @@ set via the API or CLI only; if a suite carries one, the settings page lists it
 read-only so you can see what the run will enforce. See [Quality gates](#ci-tab)
 for the full condition reference.
 
+## Execution budgets
+
+Each eval suite can author five execution clocks that cap how long each part of a run may take. Open **Suite settings → Execution budgets** to configure them.
+
+| Clock | What it limits |
+|-------|---------------|
+| **Per-turn timeout** | How long one model turn (prompt → response) may run. |
+| **Per-tool-call timeout** | How long a single tool call may take. |
+| **Per-iteration timeout** | How long one full case iteration (all turns) may run. |
+| **Whole-run timeout** | How long the entire suite run may run. |
+| **Model-call retries** | How many times a failed model call is retried before the iteration fails. |
+
+An empty field shows the platform default it inherits rather than a blank — "no value" means "whatever the platform decides". Clearing a field saves as `null`, which resets to the platform default. The API accepts these at `settings.executionBudgets.*` on the suite PATCH.
+
+Platform-enforced ceilings apply: a value above the platform ceiling is refused at save time, naming the field and the bound. Organization-level ceilings are enforced by the server.
+
 ## Suite execution config
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
