@@ -34,7 +34,7 @@ import type {
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 import { ConvexHttpClient } from "convex/browser";
-import type { ModelDefinition } from "@/shared/types";
+import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
 // `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
 // (org-model-config.ts) — that helper falls back to BYOK provider parsing
 // when the scenario modelId isn't in SUPPORTED_MODELS, which is the common
@@ -2234,6 +2234,25 @@ export async function drainAssistantTurn(
     };
   }
 
+  // The id `/stream` is sent must be the one the hosted check decided on. A
+  // snapshot pinned before selections existed carries the bare id
+  // (`gpt-5.6-luna`), which `isHostedCatalogModel` canonicalizes to
+  // `openai/gpt-5.6-luna` to route the turn here — but the engine writes
+  // `modelDefinition.id` into the body, and `/stream`'s catalog only knows the
+  // prefixed id, so the bare one was refused `invalid_model` (PLB-147). Same
+  // override the hosted eval turn makes. `/stream/org` keeps the bare id: that
+  // is the org provider's own model name.
+  const turnModelDefinition =
+    rt.modelSource === "mcpjam"
+      ? {
+          ...modelDefinition,
+          id: getCanonicalModelId(
+            String(modelDefinition.id),
+            modelDefinition.provider,
+          ),
+        }
+      : modelDefinition;
+
   // Hosted engines (JAM-paid `/stream`, cloud org-BYOK `/stream/org`). The
   // endpoint + extra body fields + harness selector ride `rt.runtime`.
   const result = await runUnifiedAssistantTurn({
@@ -2242,7 +2261,7 @@ export async function drainAssistantTurn(
     persistMode: "caller",
     ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     messages: args.messages,
-    modelDefinition,
+    modelDefinition: turnModelDefinition,
     systemPrompt: args.systemPrompt,
     ...(args.temperature !== undefined
       ? { temperature: args.temperature }

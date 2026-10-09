@@ -435,8 +435,10 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     async (hosted) => {
       personaDrivesOneTurn();
       await startJourneyRun(baseOpts({ modelId: "gpt-5-nano", hosted }));
+      // The source resolves to `mcpjam` here, so the bare pin reaches `/stream`
+      // under the canonical id the hosted check decided on (PLB-147).
       expect(turnOptions().modelDefinition).toMatchObject({
-        id: "gpt-5-nano",
+        id: "openai/gpt-5-nano",
         provider: "openai",
       });
       expect((turnOptions().modelDefinition as { hosted?: boolean }).hosted).toBe(
