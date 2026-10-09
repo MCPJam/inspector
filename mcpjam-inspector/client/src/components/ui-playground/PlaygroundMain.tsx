@@ -1240,6 +1240,7 @@ export function PlaygroundMain({
     computersEnabled: computersEnabled === true,
     isAuthenticated: isConvexAuthenticated,
     hostHasComputer: !!previewedHost?.config?.computer,
+    hostHasHarness: !!previewedHost?.config?.harness,
     engine: playgroundComputerEngine.engine,
   });
 

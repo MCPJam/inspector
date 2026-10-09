@@ -12,7 +12,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "browser-workspace-enabled",
   "claude-code-host-enabled",
   "codex-host-enabled",
-  "computers-enabled",
   "credit-estimate-enabled",
   "cursor-host-enabled",
   "description-experiments-enabled",

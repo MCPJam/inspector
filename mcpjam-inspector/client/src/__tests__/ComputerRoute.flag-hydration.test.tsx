@@ -26,7 +26,7 @@ vi.mock("../hooks/use-is-member-actor", () => ({
 
 vi.mock("../hooks/useComputersEnabled", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../hooks/useComputersEnabled")>()),
-  COMPUTERS_FEATURE_FLAG: "computers-enabled",
+  COMPUTERS_FEATURE_FLAG: "sandbox-images-enabled",
   useComputersEnabledState: () => flagState,
   useComputersEnabled: () => flagState === true,
   // The local-engine dark-launch flag lives in the same module and is read by

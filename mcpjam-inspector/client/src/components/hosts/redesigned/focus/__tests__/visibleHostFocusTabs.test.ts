@@ -30,6 +30,19 @@ describe("visibleHostFocusTabs", () => {
     ).toContain("computer");
   });
 
+  it("never shows Computer for a harness client, flag on or computer attached", () => {
+    const base = { hasBuiltInTools: true, hasHarness: true };
+    expect(
+      ids({ ...base, computersEnabled: true, computerAttached: false }),
+    ).not.toContain("computer");
+    expect(
+      ids({ ...base, computersEnabled: true, computerAttached: true }),
+    ).not.toContain("computer");
+    expect(
+      ids({ ...base, computersEnabled: false, computerAttached: true }),
+    ).not.toContain("computer");
+  });
+
   it("always keeps the static tabs (Agent, MCP Protocol, Apps)", () => {
     const result = ids({
       hasBuiltInTools: false,
